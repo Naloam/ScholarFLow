@@ -1,5 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel
+from schemas.agents import Chunk
 
 
 class EvidenceItem(BaseModel):
@@ -19,3 +20,8 @@ class EvidenceCoverage(BaseModel):
     total_claims: int
     covered_claims: int
     coverage_rate: float
+
+
+class EvidenceExtractRequest(BaseModel):
+    claims: list[str]
+    chunks: list[Chunk]

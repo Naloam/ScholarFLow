@@ -20,6 +20,7 @@ class PaperCreate(BaseModel):
     url: str | None = None
     pdf_url: str | None = None
     upload_id: str | None = None
+    auto_fetch: bool = False
 
 
 class PaperSummary(BaseModel):

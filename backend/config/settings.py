@@ -10,6 +10,7 @@ class Settings(BaseModel):
     arxiv_api_key: str | None = os.getenv("ARXIV_API_KEY")
     crossref_api_key: str | None = os.getenv("CROSSREF_API_KEY")
     llm_api_key: str | None = os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    grobid_url: str = os.getenv("GROBID_URL", "http://localhost:8070")
 
 
 settings = Settings()

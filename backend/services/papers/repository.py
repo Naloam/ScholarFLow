@@ -114,3 +114,15 @@ def get_paper_summary(db: Session, project_id: str, paper_id: str) -> PaperSumma
     if row is None:
         return None
     return PaperSummary(id=row.id, title=row.title or "", abstract=row.abstract, summary=None)
+
+
+def update_paper_paths(db: Session, paper_id: str, pdf_url: str | None, xml_path: str | None) -> None:
+    row = db.get(Paper, paper_id)
+    if row is None:
+        return
+    if pdf_url and not row.pdf_url:
+        row.pdf_url = pdf_url
+    if xml_path:
+        row.parsed_content_id = xml_path
+    db.add(row)
+    db.commit()

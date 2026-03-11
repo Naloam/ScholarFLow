@@ -14,6 +14,7 @@ class Evidence(Base):
     claim_text: Mapped[str] = mapped_column(Text)
     paper_id: Mapped[str] = mapped_column(String, ForeignKey("papers.id"))
     chunk_id: Mapped[str | None] = mapped_column(String, ForeignKey("chunks.id"), nullable=True)
+    draft_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(String, nullable=True)
     snippet: Mapped[str | None] = mapped_column(Text, nullable=True)

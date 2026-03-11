@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, JSON, String, Text
+from sqlalchemy import Float, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base
@@ -17,3 +17,5 @@ class Paper(Base):
     parsed_content_id: Mapped[str | None] = mapped_column(String, nullable=True)
     bibtex: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)

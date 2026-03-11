@@ -95,3 +95,24 @@ def list_chunks(
         for row in rows
     ]
     return items, int(total)
+
+
+def list_all_chunks(db: Session, project_id: str) -> list[Chunk]:
+    rows = (
+        db.execute(select(ChunkModel).where(ChunkModel.project_id == project_id))
+        .scalars()
+        .all()
+    )
+    return [
+        Chunk(
+            chunk_id=row.id,
+            text=row.text,
+            section=row.section,
+            page=row.page,
+            type=row.type,
+            embedding_id=row.embedding_id,
+            paper_id=row.paper_id,
+            project_id=row.project_id,
+        )
+        for row in rows
+    ]

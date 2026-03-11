@@ -39,6 +39,15 @@ def save_chunks(db: Session, project_id: str, paper_id: str, chunks: list[Chunk]
     return saved
 
 
+def update_embeddings(db: Session, chunk_ids: list[str], embedding_ids: list[str]) -> None:
+    for cid, eid in zip(chunk_ids, embedding_ids):
+        row = db.get(ChunkModel, cid)
+        if row:
+            row.embedding_id = eid
+            db.add(row)
+    db.commit()
+
+
 def list_chunks(
     db: Session,
     project_id: str,

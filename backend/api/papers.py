@@ -8,13 +8,15 @@ from config.db import SessionLocal
 from schemas.agents import FetchItem, FetchResult, ReadResult
 from schemas.common import IdResponse
 from schemas.papers import PaperCreate, PaperMeta, PaperSummary
+from services.embedding.embeddings import embed_texts
+from services.embedding.vector_index import add_vectors
 from services.papers.repository import (
     add_paper,
     get_paper_summary,
     list_papers,
     update_paper_paths,
 )
-from services.reader.repository import save_chunks
+from services.reader.repository import save_chunks, update_embeddings
 from services.tasks import create_task, set_task
 
 router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["papers"])
@@ -47,8 +49,16 @@ def _run_fetch_read_task(task_id: str, project_id: str, paper_id: str) -> None:
         update_paper_paths(db, paper_id, target.pdf_url, fr.grobid_xml_path)
 
         reader = ReaderAgent()
-        read_result = ReadResult(**reader.run({"paper_id": paper_id, "grobid_xml_path": fr.grobid_xml_path}))
-        save_chunks(db, project_id, paper_id, read_result.chunks)
+        read_result = ReadResult(
+            **reader.run({"paper_id": paper_id, "grobid_xml_path": fr.grobid_xml_path})
+        )
+        saved = save_chunks(db, project_id, paper_id, read_result.chunks)
+
+        texts = [c.text for c in saved]
+        vectors = embed_texts(texts)
+        add_vectors(project_id, vectors, [c.chunk_id for c in saved])
+        update_embeddings(db, [c.chunk_id for c in saved], [c.chunk_id for c in saved])
+
         set_task(db, task_id, "done")
     except Exception as exc:
         set_task(db, task_id, "failed", str(exc))
@@ -109,7 +119,13 @@ def fetch_and_read(
     reader = ReaderAgent()
     read_payload = {"paper_id": paper_id, "grobid_xml_path": fr.grobid_xml_path}
     result = ReadResult(**reader.run(read_payload))
-    save_chunks(db, project_id, paper_id, result.chunks)
+    saved = save_chunks(db, project_id, paper_id, result.chunks)
+
+    texts = [c.text for c in saved]
+    vectors = embed_texts(texts)
+    add_vectors(project_id, vectors, [c.chunk_id for c in saved])
+    update_embeddings(db, [c.chunk_id for c in saved], [c.chunk_id for c in saved])
+
     return result
 
 

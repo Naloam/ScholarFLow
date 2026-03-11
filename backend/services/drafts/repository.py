@@ -102,6 +102,30 @@ def list_drafts(db: Session, project_id: str) -> list[DraftRead]:
     ]
 
 
+def get_latest_draft(db: Session, project_id: str) -> DraftRead | None:
+    row = (
+        db.execute(
+            select(Draft)
+            .where(Draft.project_id == project_id)
+            .order_by(Draft.version.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        return None
+    return DraftRead(
+        id=row.id,
+        project_id=row.project_id,
+        version=row.version,
+        section=row.section,
+        content=row.content,
+        claims=row.claims or [],
+        created_at=row.created_at,
+    )
+
+
 def get_draft(db: Session, project_id: str, version: int) -> DraftRead | None:
     row = (
         db.execute(select(Draft).where(Draft.project_id == project_id, Draft.version == version))
@@ -143,3 +167,15 @@ def update_draft(
         claims=row.claims or [],
         created_at=row.created_at,
     )
+
+
+def update_draft_claims(db: Session, project_id: str, version: int, claims: list[dict]) -> None:
+    row = (
+        db.execute(select(Draft).where(Draft.project_id == project_id, Draft.version == version))
+        .scalars()
+        .first()
+    )
+    if row is None:
+        return
+    row.claims = claims
+    db.commit()

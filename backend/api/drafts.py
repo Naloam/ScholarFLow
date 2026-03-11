@@ -2,12 +2,22 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from agents.writing_agent import WritingAgent
+from agents.evidence_agent import EvidenceAgent
 from config.deps import get_db
 from schemas.common import IdResponse
 from schemas.drafts import DraftCreate, DraftGenerateRequest, DraftRead
-from services.drafts.repository import create_draft, get_draft, list_drafts, update_draft
+from services.drafts.repository import (
+    create_draft,
+    get_draft,
+    list_drafts,
+    update_draft,
+    update_draft_claims,
+)
 from services.papers.repository import list_papers
 from services.templates.repository import get_template_content
+from services.reader.repository import list_all_chunks
+from services.evidence.repository import save_evidence_items
+from schemas.evidence import EvidenceItem
 
 router = APIRouter(prefix="/api/projects/{project_id}/drafts", tags=["drafts"])
 
@@ -30,6 +40,42 @@ def generate_draft(
         }
     )
     draft = create_draft(db, project_id, result.get("content", ""), result.get("claims"))
+
+    claims_payload = result.get("claims") or []
+    claims = [
+        c.get("claim") for c in claims_payload if isinstance(c, dict) and c.get("claim")
+    ]
+    if claims:
+        chunks = list_all_chunks(db, project_id)
+        evidence_agent = EvidenceAgent()
+        ev_result = evidence_agent.run(
+            {"project_id": project_id, "claims": claims, "chunks": [c.model_dump() for c in chunks]}
+        )
+        items = []
+        for raw in ev_result.get("items", []):
+            item = EvidenceItem(**raw)
+            item.draft_version = draft.version
+            items.append(item)
+        saved = save_evidence_items(db, items) if items else []
+        ref_map: dict[str, list[str]] = {}
+        for s in saved:
+            ref_map.setdefault(s.claim_text, []).append(s.id or "")
+        updated_claims = []
+        for c in claims_payload:
+            if not isinstance(c, dict):
+                continue
+            claim_text = c.get("claim")
+            if not claim_text:
+                continue
+            updated_claims.append(
+                {
+                    "claim": claim_text,
+                    "evidence_refs": ref_map.get(claim_text, []),
+                    "confidence": c.get("confidence"),
+                }
+            )
+        update_draft_claims(db, project_id, draft.version, updated_claims)
+
     return IdResponse(id=draft.id or "")
 
 

@@ -10,7 +10,7 @@ from models.template import Template
 from schemas.templates import TemplateCreate, TemplateMeta
 
 
-BUILTIN_DIR = Path("backend/templates")
+BUILTIN_DIR = Path(__file__).resolve().parents[2] / "templates"
 
 
 def _load_builtin_templates() -> list[TemplateMeta]:

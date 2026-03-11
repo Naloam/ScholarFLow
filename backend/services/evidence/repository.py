@@ -61,3 +61,9 @@ def list_evidence_items(db: Session, project_id: str) -> list[EvidenceItem]:
         )
         for row in rows
     ]
+
+
+def list_evidence_claims(db: Session, project_id: str) -> set[str]:
+    stmt = select(Evidence.claim_text).where(Evidence.project_id == project_id)
+    rows = db.execute(stmt).scalars().all()
+    return {r for r in rows if r}

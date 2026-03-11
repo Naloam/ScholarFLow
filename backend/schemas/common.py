@@ -7,3 +7,8 @@ class HealthResponse(BaseModel):
 
 class IdResponse(BaseModel):
     id: str
+
+
+class TaskStatusResponse(BaseModel):
+    status: str
+    detail: str | None = None

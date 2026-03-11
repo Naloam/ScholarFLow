@@ -73,11 +73,75 @@ def add_paper(db: Session, project_id: str, payload: PaperCreate) -> str:
     _ensure_project_link(db, project_id, paper.id)
 
     meta = fetch_metadata(payload.doi, payload.url)
-    if meta:\n        _apply_metadata(paper, meta)
+    if meta:
+        _apply_metadata(paper, meta)
         db.add(paper)
 
     db.commit()
     return paper.id
+
+
+def _find_by_title(db: Session, title: str) -> Paper | None:
+    if not title:
+        return None
+    norm = title.strip().lower()
+    if not norm:
+        return None
+    stmt = select(Paper).where(func.lower(Paper.title) == norm)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def upsert_papers_from_search(
+    db: Session, project_id: str, items: list[PaperMeta]
+) -> list[str]:
+    paper_ids: list[str] = []
+    for item in items:
+        existing: Paper | None = None
+        if item.doi:
+            doi_norm = normalize_doi(item.doi)
+            existing = db.execute(
+                select(Paper).where(func.lower(Paper.doi) == doi_norm)
+            ).scalar_one_or_none()
+        if existing is None and item.url:
+            existing = db.execute(select(Paper).where(Paper.url == item.url)).scalar_one_or_none()
+        if existing is None and item.title:
+            existing = _find_by_title(db, item.title)
+
+        if existing is None:
+            existing = Paper(
+                id=str(uuid4()),
+                doi=normalize_doi(item.doi) if item.doi else None,
+                title=item.title,
+                authors=item.authors or [],
+                year=item.year,
+                abstract=item.abstract,
+                pdf_url=item.pdf_url,
+                url=item.url,
+                source=item.source,
+            )
+            db.add(existing)
+            db.flush()
+        else:
+            _apply_metadata(
+                existing,
+                {
+                    "title": item.title,
+                    "authors": item.authors,
+                    "year": item.year,
+                    "abstract": item.abstract,
+                    "doi": item.doi,
+                    "url": item.url,
+                    "pdf_url": item.pdf_url,
+                    "source": item.source,
+                },
+            )
+            db.add(existing)
+
+        _ensure_project_link(db, project_id, existing.id)
+        paper_ids.append(existing.id)
+
+    db.commit()
+    return paper_ids
 
 
 def list_papers(db: Session, project_id: str) -> list[PaperMeta]:

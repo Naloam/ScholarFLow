@@ -11,6 +11,7 @@ class Chunk(BaseModel):
     type: str | None = None
     embedding_id: str | None = None
     paper_id: str | None = None
+    project_id: str | None = None
 
 
 class FetchItem(BaseModel):

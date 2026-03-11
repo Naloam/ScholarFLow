@@ -10,3 +10,4 @@ from models.draft import Draft  # noqa: F401
 from models.review_report import ReviewReport  # noqa: F401
 from models.experiment_run import ExperimentRun  # noqa: F401
 from models.project_paper import ProjectPaper  # noqa: F401
+from models.task_run import TaskRun  # noqa: F401

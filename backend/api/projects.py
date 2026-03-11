@@ -18,7 +18,10 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 @router.post("", response_model=IdResponse)
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> IdResponse:
-    try:\n        project = create_project_db(db, payload)\n    except ValueError as exc:\n        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        project = create_project_db(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return IdResponse(id=project.id)
 
 
@@ -34,7 +37,10 @@ def get_project(project_id: str, db: Session = Depends(get_db)) -> ProjectRead:
 def update_project(
     project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)
 ) -> ProjectRead:
-    try:\n        project = update_project_db(db, project_id, payload)\n    except ValueError as exc:\n        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        project = update_project_db(db, project_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project

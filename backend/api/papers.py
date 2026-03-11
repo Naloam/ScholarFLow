@@ -14,6 +14,7 @@ from services.papers.repository import (
     list_papers,
     update_paper_paths,
 )
+from services.reader.repository import save_chunks
 from services.tasks import create_task, set_task
 
 router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["papers"])
@@ -46,7 +47,8 @@ def _run_fetch_read_task(task_id: str, project_id: str, paper_id: str) -> None:
         update_paper_paths(db, paper_id, target.pdf_url, fr.grobid_xml_path)
 
         reader = ReaderAgent()
-        reader.run({"paper_id": paper_id, "grobid_xml_path": fr.grobid_xml_path})
+        read_result = ReadResult(**reader.run({"paper_id": paper_id, "grobid_xml_path": fr.grobid_xml_path}))
+        save_chunks(db, project_id, paper_id, read_result.chunks)
         set_task(db, task_id, "done")
     except Exception as exc:
         set_task(db, task_id, "failed", str(exc))
@@ -106,7 +108,9 @@ def fetch_and_read(
 
     reader = ReaderAgent()
     read_payload = {"paper_id": paper_id, "grobid_xml_path": fr.grobid_xml_path}
-    return ReadResult(**reader.run(read_payload))
+    result = ReadResult(**reader.run(read_payload))
+    save_chunks(db, project_id, paper_id, result.chunks)
+    return result
 
 
 @router.post("/{paper_id}/fetch_read_async", response_model=IdResponse)

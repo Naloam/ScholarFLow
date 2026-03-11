@@ -39,6 +39,7 @@ class EvidenceAgent(BaseAgent):
                         project_id=project_id,
                         claim_text=claim,
                         paper_id=ch.get("paper_id") or "",
+                        chunk_id=ch.get("chunk_id"),
                         page=ch.get("page"),
                         section=ch.get("section"),
                         snippet=(ch.get("text") or "")[:400],

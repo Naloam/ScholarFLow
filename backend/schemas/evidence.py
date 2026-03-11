@@ -8,6 +8,7 @@ class EvidenceItem(BaseModel):
     project_id: str | None = None
     claim_text: str
     paper_id: str
+    chunk_id: str | None = None
     page: int | None = None
     section: str | None = None
     snippet: str | None = None

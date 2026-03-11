@@ -1,0 +1,1 @@
+MVP preview page placeholder. Implement UI in Phase 5.

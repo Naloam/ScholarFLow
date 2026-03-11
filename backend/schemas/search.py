@@ -16,6 +16,9 @@ class SearchResult(BaseModel):
     query: str
     items: list[PaperMeta]
     created_at: datetime | None = None
+    sources: list[str] | None = None
+    year_from: int | None = None
+    year_to: int | None = None
 
 
 class SearchResponse(BaseModel):

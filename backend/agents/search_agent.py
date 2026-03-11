@@ -55,5 +55,11 @@ class SearchAgent(BaseAgent):
             deduped.append(item)
 
         ranked = rank_items(deduped)
-        result = SearchResult(query=req.query, items=ranked[: req.limit])
+        result = SearchResult(
+            query=req.query,
+            items=ranked[: req.limit],
+            sources=req.sources,
+            year_from=req.year_from,
+            year_to=req.year_to,
+        )
         return SearchResponse(result=result).model_dump()

@@ -11,6 +11,7 @@ from api.experiments import router as experiments_router
 from api.export import router as export_router
 from api.templates import router as templates_router
 from api.tasks import router as tasks_router
+from api.chunks import router as chunks_router
 
 app = FastAPI(title="ScholarFlow API", version="0.1.0")
 
@@ -25,3 +26,4 @@ app.include_router(experiments_router)
 app.include_router(export_router)
 app.include_router(templates_router)
 app.include_router(tasks_router)
+app.include_router(chunks_router)

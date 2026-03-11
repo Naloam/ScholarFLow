@@ -13,6 +13,8 @@ class PaperMeta(BaseModel):
     url: str | None = None
     bibtex: str | None = None
     source: str | None = None
+    source_weight: float | None = None
+    score: float | None = None
 
 
 class PaperCreate(BaseModel):

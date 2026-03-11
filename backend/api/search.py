@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from agents.search_agent import SearchAgent
 from config.deps import get_db
 from schemas.search import SearchRequest, SearchResponse, SearchResult, SearchResultsPage
+from services.papers.repository import upsert_papers_from_search
 from services.search.repository import (
     get_latest_search_result,
     list_search_results,
@@ -23,6 +24,7 @@ def run_search(
     result_dict = agent.run(payload.model_dump())
     result = SearchResult(**result_dict["result"], created_at=datetime.utcnow())
     save_search_result(db, project_id, result)
+    upsert_papers_from_search(db, project_id, result.items)
     return SearchResponse(result=result)
 
 

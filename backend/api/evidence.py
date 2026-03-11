@@ -56,4 +56,5 @@ def extract_evidence(
     items = [EvidenceItem(**x) for x in result.get("items", [])]
     for item in items:
         item.project_id = project_id
+        item.draft_version = payload.draft_version
     return save_evidence_items(db, items)

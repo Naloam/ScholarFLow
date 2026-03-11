@@ -55,6 +55,10 @@ def _apply_metadata(paper: Paper, meta: dict) -> None:
         paper.pdf_url = meta.get("pdf_url")
     if not paper.source and meta.get("source"):
         paper.source = meta.get("source")
+    if paper.source_weight is None and meta.get("source_weight") is not None:
+        paper.source_weight = meta.get("source_weight")
+    if paper.score is None and meta.get("score") is not None:
+        paper.score = meta.get("score")
 
 
 def add_paper(db: Session, project_id: str, payload: PaperCreate) -> str:
@@ -118,6 +122,8 @@ def upsert_papers_from_search(
                 pdf_url=item.pdf_url,
                 url=item.url,
                 source=item.source,
+                source_weight=item.source_weight,
+                score=item.score,
             )
             db.add(existing)
             db.flush()
@@ -133,6 +139,8 @@ def upsert_papers_from_search(
                     "url": item.url,
                     "pdf_url": item.pdf_url,
                     "source": item.source,
+                    "source_weight": item.source_weight,
+                    "score": item.score,
                 },
             )
             db.add(existing)

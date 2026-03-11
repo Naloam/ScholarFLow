@@ -43,6 +43,8 @@ def list_chunks(
     db: Session,
     project_id: str,
     paper_id: str | None,
+    section: str | None,
+    page_num: int | None,
     page: int,
     size: int,
 ) -> tuple[list[Chunk], int]:
@@ -53,6 +55,12 @@ def list_chunks(
     if paper_id:
         stmt = stmt.where(ChunkModel.paper_id == paper_id)
         count_stmt = count_stmt.where(ChunkModel.paper_id == paper_id)
+    if section:
+        stmt = stmt.where(ChunkModel.section == section)
+        count_stmt = count_stmt.where(ChunkModel.section == section)
+    if page_num is not None:
+        stmt = stmt.where(ChunkModel.page == page_num)
+        count_stmt = count_stmt.where(ChunkModel.page == page_num)
 
     total = db.execute(count_stmt).scalar_one()
     rows = (

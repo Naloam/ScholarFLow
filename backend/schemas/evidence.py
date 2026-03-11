@@ -9,6 +9,7 @@ class EvidenceItem(BaseModel):
     claim_text: str
     paper_id: str
     chunk_id: str | None = None
+    draft_version: int | None = None
     page: int | None = None
     section: str | None = None
     snippet: str | None = None
@@ -26,3 +27,4 @@ class EvidenceCoverage(BaseModel):
 class EvidenceExtractRequest(BaseModel):
     claims: list[str]
     chunks: list[Chunk]
+    draft_version: int | None = None

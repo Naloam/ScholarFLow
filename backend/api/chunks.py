@@ -12,9 +12,11 @@ router = APIRouter(prefix="/api/projects/{project_id}/chunks", tags=["chunks"])
 def list_chunks_endpoint(
     project_id: str,
     paper_id: str | None = Query(default=None),
+    section: str | None = Query(default=None),
+    page_num: int | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> ChunkPage:
-    items, total = list_chunks(db, project_id, paper_id, page, size)
+    items, total = list_chunks(db, project_id, paper_id, section, page_num, page, size)
     return ChunkPage(items=items, page=page, size=size, total=total)

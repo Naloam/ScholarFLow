@@ -22,4 +22,7 @@ def score_item(item: PaperMeta) -> float:
 
 
 def rank_items(items: list[PaperMeta]) -> list[PaperMeta]:
-    return sorted(items, key=score_item, reverse=True)
+    for item in items:
+        item.source_weight = SOURCE_WEIGHT.get(item.source or "", 0.5)
+        item.score = score_item(item)
+    return sorted(items, key=lambda x: x.score or 0.0, reverse=True)

@@ -12,3 +12,5 @@ from models.experiment_run import ExperimentRun  # noqa: F401
 from models.project_paper import ProjectPaper  # noqa: F401
 from models.task_run import TaskRun  # noqa: F401
 from models.chunk import Chunk  # noqa: F401
+from models.template import Template  # noqa: F401
+from models.export_file import ExportFile  # noqa: F401

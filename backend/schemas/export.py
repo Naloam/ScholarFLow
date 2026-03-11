@@ -1,9 +1,18 @@
 from datetime import datetime
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, field_validator
 
 
 class ExportRequest(BaseModel):
-    format: str
+    format: Literal["markdown", "latex", "word", "docx"]
+
+    @field_validator("format", mode="before")
+    @classmethod
+    def _normalize_format(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.lower()
+        return value
 
 
 class ExportResult(BaseModel):

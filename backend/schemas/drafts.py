@@ -9,6 +9,9 @@ class ClaimRef(BaseModel):
 
 
 class DraftGenerateRequest(BaseModel):
+    topic: str | None = None
+    scope: str | None = None
+    paper_ids: list[str] | None = None
     template_id: str | None = None
     language: str | None = None
     outline: list[str] | None = None

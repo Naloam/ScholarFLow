@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from config.deps import get_db
+from config.db import SessionLocal
 from schemas.chunks import ChunkPage
 from services.embedding.embeddings import embed_texts
+from services.embedding.index_manager import rebuild_index
 from services.embedding.vector_index import search
-from services.reader.repository import list_chunks
+from services.reader.repository import list_all_chunks, list_chunks
+from services.tasks import create_task, set_task
 
 router = APIRouter(prefix="/api/projects/{project_id}/chunks", tags=["chunks"])
 
@@ -47,3 +50,27 @@ def search_chunks(
             }
         )
     return ChunkPage(items=items, page=1, size=k, total=len(items))
+
+
+def _rebuild_task(task_id: str, project_id: str) -> None:
+    db = SessionLocal()
+    try:
+        set_task(db, task_id, "running")
+        chunks = list_all_chunks(db, project_id)
+        rebuild_index(project_id, [c.chunk_id for c in chunks], [c.text for c in chunks])
+        set_task(db, task_id, "done")
+    except Exception as exc:
+        set_task(db, task_id, "failed", str(exc))
+    finally:
+        db.close()
+
+
+@router.post("/rebuild", response_model=dict)
+def rebuild_index_endpoint(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    task_id = create_task(db)
+    background_tasks.add_task(_rebuild_task, task_id, project_id)
+    return {"task_id": task_id}

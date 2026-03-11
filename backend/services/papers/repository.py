@@ -171,6 +171,8 @@ def list_papers(db: Session, project_id: str) -> list[PaperMeta]:
             url=row.url,
             bibtex=row.bibtex,
             source=row.source,
+            source_weight=row.source_weight,
+            score=row.score,
         )
         for row in rows
     ]

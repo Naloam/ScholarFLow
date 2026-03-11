@@ -23,6 +23,14 @@ def _index_paths(project_id: str) -> tuple[Path, Path]:
     return base / f"{project_id}.faiss", base / f"{project_id}.json"
 
 
+def reset_index(project_id: str) -> None:
+    index_path, map_path = _index_paths(project_id)
+    if index_path.exists():
+        index_path.unlink()
+    if map_path.exists():
+        map_path.unlink()
+
+
 def add_vectors(project_id: str, vectors: List[list[float]], chunk_ids: List[str]) -> None:
     if not vectors:
         return
@@ -57,7 +65,6 @@ def search(project_id: str, query_vec: list[float], k: int = 5) -> list[tuple[st
             results.append((mapping[i], float(score)))
         return results
 
-    # fallback: brute force cosine over stored vectors is not available
     return []
 
 

@@ -14,7 +14,7 @@ DEFAULT_IMAGE = "python:3.11-slim"
 def run_python_in_docker(project_id: str, code: str, image: str | None = None) -> tuple[str, dict]:
     image = image or DEFAULT_IMAGE
     run_id = f"run_{uuid4().hex}"
-    workdir = project_root(project_id) / "sandbox" / run_id
+    workdir = (project_root(project_id) / "sandbox" / run_id).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
     code_path = workdir / "main.py"
     code_path.write_text(code, encoding="utf-8")

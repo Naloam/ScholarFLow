@@ -14,6 +14,7 @@ from api.tasks import router as tasks_router
 from api.chunks import router as chunks_router
 from api.tutor import router as tutor_router
 from api.editor import router as editor_router
+from api.analysis import router as analysis_router
 
 app = FastAPI(title="ScholarFlow API", version="0.1.0")
 
@@ -31,3 +32,4 @@ app.include_router(tasks_router)
 app.include_router(chunks_router)
 app.include_router(tutor_router)
 app.include_router(editor_router)
+app.include_router(analysis_router)

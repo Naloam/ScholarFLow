@@ -8,6 +8,7 @@ from config.db import SessionLocal
 from services.drafts.repository import list_drafts
 from services.export.engine import export_latex, export_markdown, export_word
 from services.export.repository import create_export, get_export, set_export_status
+from services.projects.repository import set_project_status
 
 router = APIRouter(prefix="/api/projects/{project_id}/export", tags=["export"])
 
@@ -15,6 +16,7 @@ router = APIRouter(prefix="/api/projects/{project_id}/export", tags=["export"])
 def _run_export_task(project_id: str, export_id: str, fmt: str) -> None:
     db = SessionLocal()
     try:
+        set_project_status(db, project_id, "export")
         drafts = list_drafts(db, project_id)
         if not drafts:
             set_export_status(db, export_id, "failed", None)
@@ -27,6 +29,7 @@ def _run_export_task(project_id: str, export_id: str, fmt: str) -> None:
         else:
             path = export_word(project_id, latest.content, export_id)
         set_export_status(db, export_id, "done", path)
+        set_project_status(db, project_id, "done")
     except Exception:
         set_export_status(db, export_id, "failed", None)
     finally:
@@ -47,6 +50,7 @@ def run_export(
     if fmt not in {"markdown", "latex", "word", "docx"}:
         raise HTTPException(status_code=400, detail="Unsupported format")
 
+    set_project_status(db, project_id, "export")
     export_id = create_export(db, project_id, fmt)
 
     background_tasks.add_task(_run_export_task, project_id, export_id, fmt)

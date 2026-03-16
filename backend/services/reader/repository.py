@@ -116,3 +116,37 @@ def list_all_chunks(db: Session, project_id: str) -> list[Chunk]:
         )
         for row in rows
     ]
+
+
+def get_chunks_by_ids(db: Session, project_id: str, chunk_ids: list[str]) -> list[Chunk]:
+    if not chunk_ids:
+        return []
+    rows = (
+        db.execute(
+            select(ChunkModel).where(
+                ChunkModel.project_id == project_id,
+                ChunkModel.id.in_(chunk_ids),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {row.id: row for row in rows}
+    ordered: list[Chunk] = []
+    for chunk_id in chunk_ids:
+        row = by_id.get(chunk_id)
+        if row is None:
+            continue
+        ordered.append(
+            Chunk(
+                chunk_id=row.id,
+                text=row.text,
+                section=row.section,
+                page=row.page,
+                type=row.type,
+                embedding_id=row.embedding_id,
+                paper_id=row.paper_id,
+                project_id=row.project_id,
+            )
+        )
+    return ordered

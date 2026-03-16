@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from models.draft import Draft
 from schemas.drafts import DraftCreate, DraftRead
+from services.projects.repository import touch_project
 
 
 def _extract_claims(row: Draft) -> list[str]:
@@ -66,6 +67,7 @@ def create_draft(
         claims=claims,
     )
     db.add(row)
+    touch_project(db, project_id)
     db.commit()
     return DraftRead(
         id=row.id,
@@ -157,6 +159,7 @@ def update_draft(
         return None
     row.content = payload.content
     row.section = payload.section
+    touch_project(db, project_id)
     db.commit()
     return DraftRead(
         id=row.id,
@@ -178,4 +181,5 @@ def update_draft_claims(db: Session, project_id: str, version: int, claims: list
     if row is None:
         return
     row.claims = claims
+    touch_project(db, project_id)
     db.commit()

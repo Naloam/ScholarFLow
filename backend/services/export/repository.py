@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from models.export_file import ExportFile
 from schemas.export import ExportResult
+from services.projects.repository import touch_project
 
 
 def create_export(db: Session, project_id: str, fmt: str) -> str:
@@ -17,6 +18,7 @@ def create_export(db: Session, project_id: str, fmt: str) -> str:
         status="running",
     )
     db.add(row)
+    touch_project(db, project_id)
     db.commit()
     return row.id
 
@@ -27,6 +29,7 @@ def set_export_status(db: Session, export_id: str, status: str, file_path: str |
         return
     row.status = status
     row.file_path = file_path
+    touch_project(db, row.project_id)
     db.commit()
 
 

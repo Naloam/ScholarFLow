@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 
 from models.evidence import Evidence
 from schemas.evidence import EvidenceItem
+from services.projects.repository import touch_project
 
 
 def save_evidence_items(db: Session, items: list[EvidenceItem]) -> list[EvidenceItem]:
     saved: list[EvidenceItem] = []
+    project_ids: set[str] = set()
     for item in items:
         row = Evidence(
             id=str(uuid4()),
@@ -43,6 +45,10 @@ def save_evidence_items(db: Session, items: list[EvidenceItem]) -> list[Evidence
                 created_at=row.created_at,
             )
         )
+        if row.project_id:
+            project_ids.add(row.project_id)
+    for project_id in project_ids:
+        touch_project(db, project_id)
     db.commit()
     return saved
 

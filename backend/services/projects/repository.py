@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -7,6 +8,14 @@ from sqlalchemy.orm import Session
 from models.project import Project
 from schemas.projects import ProjectCreate, ProjectRead, ProjectUpdate
 from services.projects.status import validate_status
+
+
+def touch_project(db: Session, project_id: str) -> None:
+    row = db.get(Project, project_id)
+    if row is None:
+        return
+    row.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    db.add(row)
 
 
 def create_project(db: Session, payload: ProjectCreate) -> ProjectRead:
@@ -54,14 +63,21 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
     row = db.get(Project, project_id)
     if row is None:
         return None
+    touched = False
     if payload.title is not None:
         row.title = payload.title
+        touched = True
     if payload.topic is not None:
         row.topic = payload.topic
+        touched = True
     if payload.template_id is not None:
         row.template_id = payload.template_id
+        touched = True
     if payload.status is not None:
         row.status = validate_status(payload.status)
+        touched = True
+    if touched:
+        row.updated_at = datetime.now(UTC).replace(tzinfo=None)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -75,3 +91,13 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def set_project_status(db: Session, project_id: str, status: str) -> None:
+    row = db.get(Project, project_id)
+    if row is None:
+        return
+    row.status = validate_status(status)
+    row.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    db.add(row)
+    db.commit()

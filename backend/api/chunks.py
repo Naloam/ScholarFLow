@@ -7,7 +7,7 @@ from schemas.chunks import ChunkPage
 from services.embedding.embeddings import embed_texts
 from services.embedding.index_manager import rebuild_index
 from services.embedding.vector_index import search
-from services.reader.repository import list_all_chunks, list_chunks
+from services.reader.repository import get_chunks_by_ids, list_all_chunks, list_chunks
 from services.tasks import create_task, set_task
 
 router = APIRouter(prefix="/api/projects/{project_id}/chunks", tags=["chunks"])
@@ -32,23 +32,12 @@ def search_chunks(
     project_id: str,
     q: str = Query(...),
     k: int = Query(default=5, ge=1, le=50),
+    db: Session = Depends(get_db),
 ) -> ChunkPage:
     vec = embed_texts([q])[0]
     results = search(project_id, vec, k)
-    items = []
-    for chunk_id, _score in results:
-        items.append(
-            {
-                "chunk_id": chunk_id,
-                "text": "",
-                "section": None,
-                "page": None,
-                "type": None,
-                "embedding_id": None,
-                "paper_id": None,
-                "project_id": project_id,
-            }
-        )
+    chunk_ids = [chunk_id for chunk_id, _score in results]
+    items = get_chunks_by_ids(db, project_id, chunk_ids)
     return ChunkPage(items=items, page=1, size=k, total=len(items))
 
 

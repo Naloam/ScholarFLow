@@ -18,6 +18,7 @@ from services.templates.repository import get_template_content
 from services.reader.repository import list_all_chunks
 from services.evidence.repository import save_evidence_items
 from schemas.evidence import EvidenceItem
+from services.projects.repository import set_project_status
 
 router = APIRouter(prefix="/api/projects/{project_id}/drafts", tags=["drafts"])
 
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/api/projects/{project_id}/drafts", tags=["drafts"])
 def generate_draft(
     project_id: str, payload: DraftGenerateRequest, db: Session = Depends(get_db)
 ) -> IdResponse:
+    set_project_status(db, project_id, "write")
     papers = list_papers(db, project_id)
     if payload.paper_ids:
         papers = [p for p in papers if p.id in payload.paper_ids]
@@ -46,6 +48,7 @@ def generate_draft(
         c.get("claim") for c in claims_payload if isinstance(c, dict) and c.get("claim")
     ]
     if claims:
+        set_project_status(db, project_id, "evidence")
         chunks = list_all_chunks(db, project_id)
         evidence_agent = EvidenceAgent()
         ev_result = evidence_agent.run(
@@ -76,6 +79,7 @@ def generate_draft(
             )
         update_draft_claims(db, project_id, draft.version, updated_claims)
 
+    set_project_status(db, project_id, "edit")
     return IdResponse(id=draft.id or "")
 
 
@@ -98,6 +102,7 @@ def get_draft_endpoint(
 def update_draft_endpoint(
     project_id: str, version: int, payload: DraftCreate, db: Session = Depends(get_db)
 ) -> DraftRead:
+    set_project_status(db, project_id, "edit")
     draft = update_draft(db, project_id, version, payload)
     if draft is None:
         raise HTTPException(status_code=404, detail="Draft not found")

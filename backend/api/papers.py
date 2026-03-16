@@ -18,6 +18,7 @@ from services.papers.repository import (
 )
 from services.reader.repository import save_chunks, update_embeddings
 from services.tasks import create_task, set_task
+from services.projects.repository import set_project_status
 
 router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["papers"])
 
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["papers"])
 def _run_fetch_read_task(task_id: str, project_id: str, paper_id: str) -> None:
     db = SessionLocal()
     try:
+        set_project_status(db, project_id, "fetch")
         set_task(db, task_id, "running")
         items = list_papers(db, project_id)
         target = next((p for p in items if p.id == paper_id), None)
@@ -59,6 +61,7 @@ def _run_fetch_read_task(task_id: str, project_id: str, paper_id: str) -> None:
         add_vectors(project_id, vectors, [c.chunk_id for c in saved])
         update_embeddings(db, [c.chunk_id for c in saved], [c.chunk_id for c in saved])
 
+        set_project_status(db, project_id, "read")
         set_task(db, task_id, "done")
     except Exception as exc:
         set_task(db, task_id, "failed", str(exc))
@@ -99,6 +102,7 @@ def get_paper_summary_endpoint(
 def fetch_and_read(
     project_id: str, paper_id: str, db: Session = Depends(get_db)
 ) -> ReadResult:
+    set_project_status(db, project_id, "fetch")
     items = list_papers(db, project_id)
     target = next((p for p in items if p.id == paper_id), None)
     if target is None:
@@ -126,6 +130,7 @@ def fetch_and_read(
     add_vectors(project_id, vectors, [c.chunk_id for c in saved])
     update_embeddings(db, [c.chunk_id for c in saved], [c.chunk_id for c in saved])
 
+    set_project_status(db, project_id, "read")
     return result
 
 

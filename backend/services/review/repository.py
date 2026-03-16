@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from models.review_report import ReviewReport as ReviewReportModel
 from schemas.review import ReviewReport, ReviewScore
+from services.projects.repository import touch_project
 
 
 def create_review_placeholder(db: Session, project_id: str, draft_version: int) -> str:
@@ -18,6 +19,7 @@ def create_review_placeholder(db: Session, project_id: str, draft_version: int) 
         suggestions=[],
     )
     db.add(row)
+    touch_project(db, project_id)
     db.commit()
     return row.id
 
@@ -33,6 +35,7 @@ def update_review(
         return None
     row.scores = scores.model_dump()
     row.suggestions = suggestions
+    touch_project(db, row.project_id)
     db.commit()
     return ReviewReport(
         id=row.id,

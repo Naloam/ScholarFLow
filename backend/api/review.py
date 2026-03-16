@@ -6,7 +6,7 @@ from config.deps import get_db
 from config.db import SessionLocal
 from schemas.common import IdResponse
 from schemas.review import ReviewReport, ReviewRequest, ReviewScore
-from services.drafts.repository import get_draft, get_latest_draft
+from services.drafts.repository import get_draft
 from services.review.repository import (
     create_review_placeholder,
     get_review,
@@ -14,7 +14,7 @@ from services.review.repository import (
     update_review,
 )
 from services.evidence.repository import list_evidence_items
-from services.projects.repository import get_project
+from services.projects.repository import get_project, set_project_status
 
 router = APIRouter(prefix="/api/projects/{project_id}/review", tags=["review"])
 
@@ -29,6 +29,7 @@ def run_review(
     draft = get_draft(db, project_id, payload.draft_version)
     if draft is None:
         raise HTTPException(status_code=404, detail="Draft not found")
+    set_project_status(db, project_id, "review")
     review_id = create_review_placeholder(db, project_id, payload.draft_version)
 
     def _run_review_task() -> None:
@@ -51,7 +52,6 @@ def run_review(
     return IdResponse(id=review_id or "")
 
 
-@router.get("/{review_id}", response_model=ReviewReport)
 @router.get("", response_model=list[ReviewReport])
 def list_review_reports(project_id: str, db: Session = Depends(get_db)) -> list[ReviewReport]:
     return list_reviews(db, project_id)

@@ -11,24 +11,28 @@ try:
 except Exception:  # pragma: no cover
     faiss = None
 
+from config.settings import settings
+
 
 def _normalize(vec: list[float]) -> list[float]:
     norm = math.sqrt(sum(v * v for v in vec)) or 1.0
     return [v / norm for v in vec]
 
 
-def _index_paths(project_id: str) -> tuple[Path, Path]:
-    base = Path("data/indices")
+def _index_paths(project_id: str) -> tuple[Path, Path, Path]:
+    base = settings.data_dir / "indices"
     base.mkdir(parents=True, exist_ok=True)
-    return base / f"{project_id}.faiss", base / f"{project_id}.json"
+    return (
+        base / f"{project_id}.faiss",
+        base / f"{project_id}.json",
+        base / f"{project_id}.vectors.json",
+    )
 
 
 def reset_index(project_id: str) -> None:
-    index_path, map_path = _index_paths(project_id)
-    if index_path.exists():
-        index_path.unlink()
-    if map_path.exists():
-        map_path.unlink()
+    for path in _index_paths(project_id):
+        if path.exists():
+            path.unlink()
 
 
 def add_vectors(project_id: str, vectors: List[list[float]], chunk_ids: List[str]) -> None:
@@ -36,7 +40,7 @@ def add_vectors(project_id: str, vectors: List[list[float]], chunk_ids: List[str
         return
     vecs = [_normalize(v) for v in vectors]
     dim = len(vecs[0])
-    index_path, map_path = _index_paths(project_id)
+    index_path, map_path, vector_path = _index_paths(project_id)
 
     if faiss is not None:
         if index_path.exists():
@@ -46,10 +50,11 @@ def add_vectors(project_id: str, vectors: List[list[float]], chunk_ids: List[str
         index.add(_to_faiss(vecs))
         faiss.write_index(index, str(index_path))
     _append_mapping(map_path, chunk_ids)
+    _append_vectors(vector_path, vecs)
 
 
 def search(project_id: str, query_vec: list[float], k: int = 5) -> list[tuple[str, float]]:
-    index_path, map_path = _index_paths(project_id)
+    index_path, map_path, vector_path = _index_paths(project_id)
     if not map_path.exists():
         return []
     mapping = _load_mapping(map_path)
@@ -65,7 +70,20 @@ def search(project_id: str, query_vec: list[float], k: int = 5) -> list[tuple[st
             results.append((mapping[i], float(score)))
         return results
 
-    return []
+    vectors = _load_vectors(vector_path)
+    if not vectors:
+        return []
+    offset = max(0, len(mapping) - len(vectors))
+    scored = [
+        (chunk_id, _dot(q, vec))
+        for chunk_id, vec in zip(mapping[offset:], vectors)
+    ]
+    scored.sort(key=lambda item: item[1], reverse=True)
+    return scored[:k]
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
 
 
 def _to_faiss(vecs: List[list[float]]):
@@ -79,8 +97,22 @@ def _append_mapping(map_path: Path, chunk_ids: List[str]) -> None:
     if map_path.exists():
         existing = _load_mapping(map_path)
     existing.extend(chunk_ids)
-    map_path.write_text(json.dumps(existing))
+    map_path.write_text(json.dumps(existing), encoding="utf-8")
 
 
 def _load_mapping(map_path: Path) -> list[str]:
-    return json.loads(map_path.read_text())
+    return json.loads(map_path.read_text(encoding="utf-8"))
+
+
+def _append_vectors(vector_path: Path, vectors: List[list[float]]) -> None:
+    existing: list[list[float]] = []
+    if vector_path.exists():
+        existing = _load_vectors(vector_path)
+    existing.extend(vectors)
+    vector_path.write_text(json.dumps(existing), encoding="utf-8")
+
+
+def _load_vectors(vector_path: Path) -> list[list[float]]:
+    if not vector_path.exists():
+        return []
+    return json.loads(vector_path.read_text(encoding="utf-8"))

@@ -10,6 +10,7 @@ from services.evidence.repository import (
     list_evidence_items,
     save_evidence_items,
 )
+from services.projects.repository import set_project_status
 
 router = APIRouter(prefix="/api/projects/{project_id}/evidence", tags=["evidence"])
 
@@ -45,6 +46,7 @@ def evidence_coverage(
 def extract_evidence(
     project_id: str, payload: EvidenceExtractRequest, db: Session = Depends(get_db)
 ) -> list[EvidenceItem]:
+    set_project_status(db, project_id, "evidence")
     agent = EvidenceAgent()
     result = agent.run(
         {

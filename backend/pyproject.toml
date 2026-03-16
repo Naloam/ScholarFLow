@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=82", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "scholarflow-backend"
 version = "0.1.0"
@@ -5,10 +9,13 @@ description = "ScholarFlow backend (FastAPI)"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.110",
+  "uvicorn>=0.30",
   "pydantic>=2.6",
   "httpx>=0.27",
   "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.2",
   "python-docx>=1.1",
+  "litellm>=1.63",
 ]
 
 [tool.ruff]
@@ -17,5 +24,15 @@ line-length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.setuptools]
+py-modules = ["main"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agents*", "api*", "config*", "models*", "schemas*", "services*"]
+exclude = ["data*", "migrations*", "prompts*", "templates*"]
+
 [project.optional-dependencies]
-dev = ["alembic>=1.13"]
+dev = ["alembic>=1.13", "pytest>=8.0"]
+vectors = ["faiss-cpu>=1.8; python_version < '3.13'"]

@@ -1,3 +1,4 @@
+import { SessionPanel } from "../components/Auth/SessionPanel";
 import { ProjectLauncher } from "../components/Projects/ProjectLauncher";
 import { WizardPanel } from "../components/Wizard/WizardPanel";
 import { FileManager } from "../components/FileManager/FileManager";
@@ -21,9 +22,17 @@ export function WorkspacePage() {
   const evidence = useWorkspaceStore((state) => state.evidence);
   const reviews = useWorkspaceStore((state) => state.reviews);
   const analysis = useWorkspaceStore((state) => state.analysis);
+  const authConfig = useWorkspaceStore((state) => state.authConfig);
+  const authState = useWorkspaceStore((state) => state.authState);
+  const authUser = useWorkspaceStore((state) => state.authUser);
+  const authBusy = useWorkspaceStore((state) => state.authBusy);
+  const authError = useWorkspaceStore((state) => state.authError);
+  const initializing = useWorkspaceStore((state) => state.initializing);
   const working = useWorkspaceStore((state) => state.working);
   const notice = useWorkspaceStore((state) => state.notice);
   const connectionState = useWorkspaceStore((state) => state.connectionState);
+  const signIn = useWorkspaceStore((state) => state.signIn);
+  const signOut = useWorkspaceStore((state) => state.signOut);
   const createProject = useWorkspaceStore((state) => state.createProject);
   const loadProject = useWorkspaceStore((state) => state.loadProject);
   const selectDraft = useWorkspaceStore((state) => state.selectDraft);
@@ -33,27 +42,57 @@ export function WorkspacePage() {
   const generateDraft = useWorkspaceStore((state) => state.generateDraft);
   const runReview = useWorkspaceStore((state) => state.runReview);
   const exportDraft = useWorkspaceStore((state) => state.exportDraft);
+  const authLocked = Boolean(authConfig?.auth_required) && authState === "anonymous";
+  const workspaceBusy = initializing || authBusy || working;
+  const authLabel =
+    authUser?.email
+      ? `Auth: ${authUser.email}`
+      : authState === "service"
+        ? "Auth: service token"
+        : authLocked
+          ? "Auth: sign-in required"
+          : authState === "checking"
+            ? "Auth: checking"
+            : "Auth: anonymous";
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-testid="workspace-page">
       <header className="app-header">
         <div>
           <p className="eyebrow">ScholarFlow</p>
-          <h1>Phase 5 Workspace</h1>
+          <h1>Phase 6 Workspace</h1>
         </div>
         <div className="header-meta">
-          <span className="meta-chip">{projectStatus?.phase ?? "Phase 5"}</span>
-          <span className="meta-chip">{project?.title ?? "No active project"}</span>
+          <span className="meta-chip" data-testid="header-phase-chip">
+            {projectStatus?.phase ?? "Phase 6"}
+          </span>
+          <span className="meta-chip" data-testid="header-project-chip">
+            {project?.title ?? "No active project"}
+          </span>
+          <span className="meta-chip" data-testid="header-user-chip">
+            {authUser?.email ?? (authState === "service" ? "Service token" : "Anonymous")}
+          </span>
         </div>
       </header>
 
       <main className="workspace-grid">
         <aside className="workspace-column workspace-column-left">
+          <SessionPanel
+            authConfig={authConfig}
+            authState={authState}
+            authUser={authUser}
+            authBusy={authBusy}
+            authError={authError}
+            workspaceBusy={workspaceBusy}
+            onSignIn={signIn}
+            onSignOut={signOut}
+          />
           <ProjectLauncher
             templates={templates}
             currentProjectId={currentProjectId}
             healthStatus={healthStatus}
-            working={working}
+            working={workspaceBusy}
+            authLocked={authLocked}
             onCreate={createProject}
             onOpen={loadProject}
           />
@@ -94,8 +133,9 @@ export function WorkspacePage() {
         notice={notice}
         projectId={currentProjectId}
         selectedDraftVersion={selectedDraftVersion}
-        working={working}
+        working={workspaceBusy}
         connectionState={connectionState}
+        authLabel={authLabel}
       />
     </div>
   );

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 
+import { getAuthToken } from "../api/client";
 import type { ProjectProgressSnapshot } from "../api/types";
 import { useWorkspaceStore } from "../stores/workspace";
 
@@ -9,7 +10,12 @@ const API_BASE_URL =
 function getProgressUrl(projectId: string): string {
   const base = new URL(API_BASE_URL);
   const protocol = base.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${base.host}/ws/projects/${projectId}/progress`;
+  const url = new URL(`${protocol}//${base.host}/ws/projects/${projectId}/progress`);
+  const token = getAuthToken();
+  if (token) {
+    url.searchParams.set("token", token);
+  }
+  return url.toString();
 }
 
 export function useProjectProgress() {

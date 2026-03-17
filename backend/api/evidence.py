@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from agents.evidence_agent import EvidenceAgent
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from schemas.evidence import EvidenceCoverage, EvidenceExtractRequest, EvidenceItem
 from services.drafts.repository import get_claims_by_version, get_latest_claims
 from services.evidence.repository import (
@@ -12,7 +12,11 @@ from services.evidence.repository import (
 )
 from services.projects.repository import set_project_status
 
-router = APIRouter(prefix="/api/projects/{project_id}/evidence", tags=["evidence"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/evidence",
+    tags=["evidence"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 @router.get("", response_model=list[EvidenceItem])

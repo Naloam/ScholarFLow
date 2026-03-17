@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from agents.search_agent import SearchAgent
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from schemas.search import SearchRequest, SearchResponse, SearchResult, SearchResultsPage
 from services.papers.repository import upsert_papers_from_search
 from services.search.repository import (
@@ -14,7 +14,11 @@ from services.search.repository import (
 )
 from services.projects.repository import set_project_status
 
-router = APIRouter(prefix="/api/projects/{project_id}/search", tags=["search"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/search",
+    tags=["search"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 @router.post("", response_model=SearchResponse)

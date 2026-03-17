@@ -20,7 +20,7 @@ export function ReviewPanel({ reviews, analysis }: ReviewPanelProps) {
   const latest = reviews[0];
 
   return (
-    <section className="panel">
+    <section className="panel" data-testid="review-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Virtual Advisor</p>

@@ -22,7 +22,7 @@ export function EvidencePanel({ evidence, focusedText }: EvidencePanelProps) {
   );
 
   return (
-    <section className="panel">
+    <section className="panel" data-testid="evidence-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Evidence Trace</p>

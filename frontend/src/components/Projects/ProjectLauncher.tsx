@@ -7,6 +7,7 @@ type ProjectLauncherProps = {
   currentProjectId: string;
   healthStatus: string;
   working: boolean;
+  authLocked: boolean;
   onCreate: (payload: { title: string; topic: string; templateId: string }) => Promise<void>;
   onOpen: (projectId: string) => Promise<void>;
 };
@@ -16,6 +17,7 @@ export function ProjectLauncher({
   currentProjectId,
   healthStatus,
   working,
+  authLocked,
   onCreate,
   onOpen,
 }: ProjectLauncherProps) {
@@ -38,12 +40,17 @@ export function ProjectLauncher({
 
       <label className="field">
         <span className="field-label">Project title</span>
-        <input value={title} onChange={(event) => setTitle(event.target.value)} />
+        <input
+          data-testid="project-title-input"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+        />
       </label>
 
       <label className="field">
         <span className="field-label">Topic</span>
         <textarea
+          data-testid="project-topic-input"
           rows={3}
           value={topic}
           onChange={(event) => setTopic(event.target.value)}
@@ -52,7 +59,11 @@ export function ProjectLauncher({
 
       <label className="field">
         <span className="field-label">Template</span>
-        <select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+        <select
+          data-testid="project-template-select"
+          value={templateId}
+          onChange={(event) => setTemplateId(event.target.value)}
+        >
           <option value="">No template</option>
           {templates.map((template) => (
             <option key={template.id ?? template.name} value={template.id ?? ""}>
@@ -65,24 +76,37 @@ export function ProjectLauncher({
       <div className="button-row">
         <button
           className="primary-btn"
-          disabled={working}
+          data-testid="create-project-button"
+          disabled={working || authLocked}
           onClick={() => void onCreate({ title, topic, templateId })}
         >
           Create Project
         </button>
       </div>
 
+      {authLocked ? (
+        <div className="inline-card auth-locked" data-testid="project-launcher-locked">
+          <p className="inline-title">Workspace locked</p>
+          <p className="auth-copy">
+            Sign in first. Protected mode blocks project creation and project lookup until a valid
+            session or bearer token is present.
+          </p>
+        </div>
+      ) : null}
+
       <div className="inline-card">
         <p className="inline-title">Open existing project</p>
         <div className="inline-row">
           <input
+            data-testid="open-project-input"
             placeholder="Paste project id"
             value={existingProjectId}
             onChange={(event) => setExistingProjectId(event.target.value)}
           />
           <button
             className="ghost-btn"
-            disabled={working || !existingProjectId.trim()}
+            data-testid="open-project-button"
+            disabled={working || authLocked || !existingProjectId.trim()}
             onClick={() => void onOpen(existingProjectId.trim())}
           >
             Open
@@ -92,7 +116,7 @@ export function ProjectLauncher({
 
       <div className="meta-block">
         <span className="meta-label">Current project</span>
-        <code>{currentProjectId || "Not selected"}</code>
+        <code data-testid="current-project-id">{currentProjectId || "Not selected"}</code>
       </div>
     </section>
   );

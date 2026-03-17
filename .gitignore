@@ -5,3 +5,7 @@ backend/dev.db
 .DS_Store
 *.log
 backend/data/
+.tmp/
+backend/*.egg-info/
+frontend/test-results/
+frontend/playwright-report/

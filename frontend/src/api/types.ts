@@ -2,6 +2,26 @@ export type HealthResponse = {
   status: string;
 };
 
+export type AuthConfig = {
+  auth_required: boolean;
+  session_enabled: boolean;
+};
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  name?: string | null;
+  role: string;
+  created_at?: string | null;
+};
+
+export type AuthSessionResponse = {
+  access_token: string;
+  token_type: string;
+  expires_at: string;
+  user: AuthUser;
+};
+
 export type IdResponse = {
   id: string;
 };

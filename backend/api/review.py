@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from agents.review_agent import ReviewAgent
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from config.db import SessionLocal
 from schemas.common import IdResponse
 from schemas.review import ReviewReport, ReviewRequest, ReviewScore
@@ -16,7 +16,11 @@ from services.review.repository import (
 from services.evidence.repository import list_evidence_items
 from services.projects.repository import get_project, set_project_status
 
-router = APIRouter(prefix="/api/projects/{project_id}/review", tags=["review"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/review",
+    tags=["review"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 @router.post("", response_model=IdResponse)

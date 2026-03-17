@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from agents.sandbox_agent import SandboxAgent
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from config.db import SessionLocal
 from schemas.common import IdResponse
 from schemas.experiments import ExperimentResult, ExperimentRunRequest
@@ -12,7 +12,11 @@ from services.experiments.repository import (
     update_experiment,
 )
 
-router = APIRouter(prefix="/api/projects/{project_id}/experiments", tags=["experiments"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/experiments",
+    tags=["experiments"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 @router.post("/run", response_model=IdResponse)

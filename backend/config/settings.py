@@ -27,6 +27,12 @@ def _split_csv(raw: str | None, defaults: list[str]) -> list[str]:
     return [item for item in items if item]
 
 
+def _get_bool(raw: str | None, default: bool) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 _load_env_files()
 
 
@@ -34,11 +40,21 @@ class Settings(BaseModel):
     database_url: str = os.getenv(
         "DATABASE_URL", "postgresql+psycopg://scholarflow:scholarflow@localhost:5432/scholarflow"
     )
+    api_token: str | None = os.getenv("API_TOKEN")
+    auth_secret: str | None = os.getenv("AUTH_SECRET")
+    auth_required: bool = Field(
+        default_factory=lambda: _get_bool(os.getenv("AUTH_REQUIRED"), False)
+    )
+    auth_token_ttl_seconds: int = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", str(7 * 24 * 60 * 60)))
     semantic_scholar_api_key: str | None = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
     arxiv_api_key: str | None = os.getenv("ARXIV_API_KEY")
     crossref_api_key: str | None = os.getenv("CROSSREF_API_KEY")
     llm_api_key: str | None = os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     grobid_url: str = os.getenv("GROBID_URL", "http://localhost:8070")
+    rate_limit_requests_per_minute: int = int(os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "0"))
+    audit_enabled: bool = Field(
+        default_factory=lambda: _get_bool(os.getenv("AUDIT_ENABLED"), True)
+    )
     cors_origins: list[str] = Field(
         default_factory=lambda: _split_csv(
             os.getenv("CORS_ORIGINS"),

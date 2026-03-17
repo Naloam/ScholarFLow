@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from agents.fetcher_agent import FetcherAgent
 from agents.reader_agent import ReaderAgent
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from config.db import SessionLocal
 from schemas.agents import FetchItem, FetchResult, ReadResult
 from schemas.common import IdResponse
@@ -20,7 +20,11 @@ from services.reader.repository import save_chunks, update_embeddings
 from services.tasks import create_task, set_task
 from services.projects.repository import set_project_status
 
-router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["papers"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/papers",
+    tags=["papers"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 def _run_fetch_read_task(task_id: str, project_id: str, paper_id: str) -> None:

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e": "playwright test --grep-invert @auth-required",
+    "e2e:auth": "SCHOLARFLOW_E2E_BACKEND_PORT=8001 SCHOLARFLOW_E2E_FRONTEND_PORT=4174 AUTH_REQUIRED=1 AUTH_SECRET=phase6-secret playwright test --grep @auth-required"
   },
   "dependencies": {
     "@tiptap/extension-placeholder": "^2.22.3",
@@ -17,6 +19,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",

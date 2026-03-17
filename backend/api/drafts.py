@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from agents.writing_agent import WritingAgent
 from agents.evidence_agent import EvidenceAgent
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from schemas.common import IdResponse
 from schemas.drafts import DraftCreate, DraftGenerateRequest, DraftRead
 from services.drafts.repository import (
@@ -20,7 +20,11 @@ from services.evidence.repository import save_evidence_items
 from schemas.evidence import EvidenceItem
 from services.projects.repository import set_project_status
 
-router = APIRouter(prefix="/api/projects/{project_id}/drafts", tags=["drafts"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/drafts",
+    tags=["drafts"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 @router.post("/generate", response_model=IdResponse)

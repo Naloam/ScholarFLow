@@ -1,7 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from config.db import SessionLocal
 from schemas.chunks import ChunkPage
 from services.embedding.embeddings import embed_texts
@@ -10,7 +10,11 @@ from services.embedding.vector_index import search
 from services.reader.repository import get_chunks_by_ids, list_all_chunks, list_chunks
 from services.tasks import create_task, set_task
 
-router = APIRouter(prefix="/api/projects/{project_id}/chunks", tags=["chunks"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/chunks",
+    tags=["chunks"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 @router.get("", response_model=ChunkPage)

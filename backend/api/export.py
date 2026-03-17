@@ -3,14 +3,18 @@ from sqlalchemy.orm import Session
 
 from schemas.common import IdResponse
 from schemas.export import ExportRequest, ExportResult
-from config.deps import get_db
+from config.deps import get_db, require_project_access
 from config.db import SessionLocal
 from services.drafts.repository import list_drafts
 from services.export.engine import export_latex, export_markdown, export_word
 from services.export.repository import create_export, get_export, set_export_status
 from services.projects.repository import set_project_status
 
-router = APIRouter(prefix="/api/projects/{project_id}/export", tags=["export"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/export",
+    tags=["export"],
+    dependencies=[Depends(require_project_access)],
+)
 
 
 def _run_export_task(project_id: str, export_id: str, fmt: str) -> None:

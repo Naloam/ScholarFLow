@@ -59,6 +59,13 @@ def get_project(db: Session, project_id: str) -> ProjectRead | None:
     )
 
 
+def get_project_owner_id(db: Session, project_id: str) -> str | None:
+    row = db.get(Project, project_id)
+    if row is None:
+        return None
+    return row.user_id
+
+
 def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> ProjectRead | None:
     row = db.get(Project, project_id)
     if row is None:

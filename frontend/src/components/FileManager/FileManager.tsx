@@ -9,7 +9,7 @@ type FileManagerProps = {
 
 export function FileManager({ drafts, selectedDraftVersion, onSelect }: FileManagerProps) {
   return (
-    <section className="panel">
+    <section className="panel" data-testid="file-manager">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Draft Inventory</p>
@@ -28,6 +28,7 @@ export function FileManager({ drafts, selectedDraftVersion, onSelect }: FileMana
           {drafts.map((draft) => (
             <button
               key={draft.version}
+              data-testid={`draft-item-v${draft.version}`}
               className={
                 draft.version === selectedDraftVersion ? "list-item selected" : "list-item"
               }

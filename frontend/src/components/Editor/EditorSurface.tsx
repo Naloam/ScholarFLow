@@ -89,7 +89,7 @@ export function EditorSurface({
   }, [content, editor]);
 
   return (
-    <section className="panel panel-editor">
+    <section className="panel panel-editor" data-testid="editor-surface">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Workspace Core</p>
@@ -99,16 +99,36 @@ export function EditorSurface({
       </div>
 
       <div className="button-row">
-        <button className="primary-btn" disabled={working} onClick={() => void onGenerate()}>
+        <button
+          className="primary-btn"
+          data-testid="generate-draft-button"
+          disabled={working || !canEdit}
+          onClick={() => void onGenerate()}
+        >
           Generate Draft
         </button>
-        <button className="ghost-btn" disabled={working || !canEdit} onClick={() => void onSave()}>
+        <button
+          className="ghost-btn"
+          data-testid="save-draft-button"
+          disabled={working || !canEdit}
+          onClick={() => void onSave()}
+        >
           Save Draft
         </button>
-        <button className="ghost-btn" disabled={working || !canEdit} onClick={() => void onReview()}>
+        <button
+          className="ghost-btn"
+          data-testid="run-review-button"
+          disabled={working || !canEdit}
+          onClick={() => void onReview()}
+        >
           Run Review
         </button>
-        <button className="ghost-btn" disabled={working || !canEdit} onClick={() => void onExport("markdown")}>
+        <button
+          className="ghost-btn"
+          data-testid="export-markdown-button"
+          disabled={working || !canEdit}
+          onClick={() => void onExport("markdown")}
+        >
           Export MD
         </button>
         <button className="ghost-btn" disabled={working || !canEdit} onClick={() => void onExport("latex")}>
@@ -162,7 +182,10 @@ export function EditorSurface({
         a custom TipTap plugin. The right sidebar stays aligned to the paragraph you are editing.
       </div>
 
-      <div className={canEdit ? "editor-prose" : "editor-prose editor-readonly"}>
+      <div
+        className={canEdit ? "editor-prose" : "editor-prose editor-readonly"}
+        data-testid="editor-prose"
+      >
         <EditorContent editor={editor} />
       </div>
     </section>

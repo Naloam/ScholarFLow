@@ -24,7 +24,7 @@ def create_session(payload: AuthSessionRequest, db: Session = Depends(get_db)) -
         raise HTTPException(status_code=503, detail="AUTH_SECRET is not configured")
     if "@" not in payload.email:
         raise HTTPException(status_code=400, detail="Invalid email")
-    user = get_or_create_user_by_email(db, payload.email, payload.name)
+    user = get_or_create_user_by_email(db, payload.email, payload.name, payload.role)
     token, expires_at = create_user_token(user.id, user.email)
     return AuthSessionResponse(access_token=token, expires_at=expires_at, user=user)
 

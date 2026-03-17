@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: scholarflow
+      POSTGRES_PASSWORD: scholarflow
+      POSTGRES_DB: scholarflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grobid:
+    image: lfoppiano/grobid:0.8.0
+    ports:
+      - "8070:8070"
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      grobid:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://scholarflow:scholarflow@postgres:5432/scholarflow
+      GROBID_URL: http://grobid:8070
+      DATA_DIR: /app/backend/data
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      AUTH_SECRET: ${AUTH_SECRET:-change-me}
+      API_TOKEN: ${API_TOKEN:-}
+      AUTH_TOKEN_TTL_SECONDS: ${AUTH_TOKEN_TTL_SECONDS:-604800}
+      RATE_LIMIT_REQUESTS_PER_MINUTE: ${RATE_LIMIT_REQUESTS_PER_MINUTE:-60}
+      AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      ARXIV_API_KEY: ${ARXIV_API_KEY:-}
+      CROSSREF_API_KEY: ${CROSSREF_API_KEY:-}
+    command:
+      - /bin/sh
+      - -lc
+      - alembic -c alembic.ini upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - backend_data:/app/backend/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+
+volumes:
+  postgres_data:
+  backend_data:

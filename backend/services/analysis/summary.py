@@ -5,6 +5,7 @@ from statistics import mean
 from sqlalchemy.orm import Session
 
 from schemas.analysis import AnalysisSummary, ScoreSummary
+from services.analysis.similarity import build_similarity_summary
 from services.drafts.analysis import needs_evidence_count
 from services.drafts.repository import get_latest_draft
 from services.evidence.repository import list_evidence_claims
@@ -70,4 +71,5 @@ def build_summary(db: Session, project_id: str) -> AnalysisSummary:
         needs_evidence_count=needs_evidence_count(content),
         review_scores=score_summary,
         chart=chart,
+        similarity=build_similarity_summary(db, project_id, content),
     )

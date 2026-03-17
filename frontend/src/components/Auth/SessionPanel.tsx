@@ -11,7 +11,7 @@ type SessionPanelProps = {
   authBusy: boolean;
   authError: string;
   workspaceBusy: boolean;
-  onSignIn: (payload: { email: string; name: string }) => Promise<void>;
+  onSignIn: (payload: { email: string; name: string; role: "student" | "tutor" }) => Promise<void>;
   onSignOut: () => Promise<void>;
 };
 
@@ -43,6 +43,7 @@ export function SessionPanel({
 }: SessionPanelProps) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [role, setRole] = useState<"student" | "tutor">("student");
   const locked = Boolean(authConfig?.auth_required) && authState === "anonymous";
   const canSubmit =
     !authBusy && !workspaceBusy && Boolean(email.trim()) && Boolean(authConfig?.session_enabled);
@@ -132,12 +133,25 @@ export function SessionPanel({
               />
             </label>
 
+            <label className="field">
+              <span className="field-label">Role</span>
+              <select
+                data-testid="auth-role-select"
+                disabled={authBusy || workspaceBusy || !authConfig?.session_enabled}
+                value={role}
+                onChange={(event) => setRole(event.target.value as "student" | "tutor")}
+              >
+                <option value="student">Student</option>
+                <option value="tutor">Tutor</option>
+              </select>
+            </label>
+
             <div className="button-row">
               <button
                 className="primary-btn"
                 data-testid="auth-submit-button"
                 disabled={!canSubmit}
-                onClick={() => void onSignIn({ email, name })}
+                onClick={() => void onSignIn({ email, name, role })}
               >
                 Sign in
               </button>

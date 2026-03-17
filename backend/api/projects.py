@@ -1,15 +1,16 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from config.deps import get_db, get_identity, require_project_access
+from config.deps import get_db, get_identity, require_identity, require_project_access
 from fastapi import HTTPException
 
 from schemas.common import IdResponse
-from schemas.projects import ProjectCreate, ProjectRead, ProjectStatus, ProjectUpdate
+from schemas.projects import ProjectCreate, ProjectListItem, ProjectRead, ProjectStatus, ProjectUpdate
 from services.security.auth import AuthIdentity
 from services.projects.repository import (
     create_project as create_project_db,
     get_project as get_project_db,
+    list_projects_for_user,
     update_project as update_project_db,
 )
 from services.projects.status import get_status_info, validate_status
@@ -33,6 +34,18 @@ def create_project(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return IdResponse(id=project.id)
+
+
+@router.get("", response_model=list[ProjectListItem])
+def list_projects(
+    db: Session = Depends(get_db),
+    identity: AuthIdentity = Depends(require_identity),
+) -> list[ProjectListItem]:
+    return list_projects_for_user(
+        db,
+        user_id=identity.user_id or "",
+        email=identity.email,
+    )
 
 
 @router.get("/{project_id}", response_model=ProjectRead)

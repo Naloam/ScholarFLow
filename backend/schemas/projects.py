@@ -1,4 +1,6 @@
 from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -25,6 +27,10 @@ class ProjectRead(ProjectBase):
     id: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class ProjectListItem(ProjectRead):
+    access_mode: Literal["owner", "mentor"]
 
 
 class ProjectStatus(BaseModel):

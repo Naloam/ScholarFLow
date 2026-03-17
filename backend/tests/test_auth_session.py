@@ -232,3 +232,133 @@ def test_project_scoped_review_and_export_resources_do_not_leak(monkeypatch, tmp
     finally:
         client.close()
         engine.dispose()
+
+
+def test_invited_tutor_gets_read_only_project_access_and_can_submit_mentor_feedback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "api_token", None)
+    monkeypatch.setattr(settings, "auth_secret", "phase6-secret")
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "audit_enabled", False)
+    monkeypatch.setattr(settings, "rate_limit_requests_per_minute", 0)
+    client, _session_local, engine = make_client(monkeypatch, tmp_path)
+
+    try:
+        student_session = client.post(
+            "/api/auth/session",
+            json={"email": "alice@example.com", "name": "Alice", "role": "student"},
+        )
+        assert student_session.status_code == 200
+        assert student_session.json()["user"]["role"] == "student"
+        student_token = student_session.json()["access_token"]
+        student_headers = {"Authorization": f"Bearer {student_token}"}
+
+        tutor_session = client.post(
+            "/api/auth/session",
+            json={"email": "mentor@example.com", "name": "Mentor", "role": "tutor"},
+        )
+        assert tutor_session.status_code == 200
+        assert tutor_session.json()["user"]["role"] == "tutor"
+        tutor_token = tutor_session.json()["access_token"]
+        tutor_headers = {"Authorization": f"Bearer {tutor_token}"}
+
+        create_project = client.post(
+            "/api/projects",
+            json={"title": "Mentor Project", "topic": "Phase 7", "status": "init"},
+            headers=student_headers,
+        )
+        assert create_project.status_code == 200
+        project_id = create_project.json()["id"]
+
+        invite = client.post(
+            f"/api/projects/{project_id}/mentor/access",
+            json={"email": "mentor@example.com", "name": "Mentor"},
+            headers=student_headers,
+        )
+        assert invite.status_code == 200
+        assert invite.json()["mentor_email"] == "mentor@example.com"
+
+        student_projects = client.get("/api/projects", headers=student_headers)
+        assert student_projects.status_code == 200
+        assert student_projects.json() == [
+            {
+                "access_mode": "owner",
+                "created_at": student_projects.json()[0]["created_at"],
+                "id": project_id,
+                "status": "init",
+                "template_id": None,
+                "title": "Mentor Project",
+                "topic": "Phase 7",
+                "updated_at": student_projects.json()[0]["updated_at"],
+                "user_id": student_session.json()["user"]["id"],
+            }
+        ]
+
+        tutor_projects = client.get("/api/projects", headers=tutor_headers)
+        assert tutor_projects.status_code == 200
+        assert tutor_projects.json() == [
+            {
+                "access_mode": "mentor",
+                "created_at": tutor_projects.json()[0]["created_at"],
+                "id": project_id,
+                "status": "init",
+                "template_id": None,
+                "title": "Mentor Project",
+                "topic": "Phase 7",
+                "updated_at": tutor_projects.json()[0]["updated_at"],
+                "user_id": student_session.json()["user"]["id"],
+            }
+        ]
+
+        generate = client.post(
+            f"/api/projects/{project_id}/drafts/generate",
+            json={"topic": "Phase 7", "language": "zh"},
+            headers=student_headers,
+        )
+        assert generate.status_code == 200
+
+        tutor_project = client.get(f"/api/projects/{project_id}", headers=tutor_headers)
+        assert tutor_project.status_code == 200
+
+        tutor_drafts = client.get(f"/api/projects/{project_id}/drafts", headers=tutor_headers)
+        assert tutor_drafts.status_code == 200
+        assert len(tutor_drafts.json()) == 1
+
+        tutor_mentor_access = client.get(f"/api/projects/{project_id}/mentor/access", headers=tutor_headers)
+        assert tutor_mentor_access.status_code == 200
+        assert tutor_mentor_access.json()[0]["mentor_email"] == "mentor@example.com"
+
+        with client.websocket_connect(f"/ws/projects/{project_id}/progress?token={tutor_token}") as websocket:
+            snapshot = websocket.receive_json()
+        assert snapshot["project_id"] == project_id
+
+        forbidden_generate = client.post(
+            f"/api/projects/{project_id}/drafts/generate",
+            json={"topic": "Tutor should be read only", "language": "zh"},
+            headers=tutor_headers,
+        )
+        assert forbidden_generate.status_code == 403
+
+        mentor_feedback = client.post(
+            f"/api/projects/{project_id}/mentor/feedback",
+            json={
+                "draft_version": 1,
+                "summary": "The draft is on track but still needs stronger grounding.",
+                "strengths": "The structure is clear and the topic framing is solid.",
+                "concerns": "The main claims still need more direct evidence.",
+                "next_steps": "Attach stronger citations and tighten the method explanation.",
+            },
+            headers=tutor_headers,
+        )
+        assert mentor_feedback.status_code == 200
+        assert mentor_feedback.json()["mentor_email"] == "mentor@example.com"
+
+        student_feedback = client.get(f"/api/projects/{project_id}/mentor/feedback", headers=student_headers)
+        assert student_feedback.status_code == 200
+        assert len(student_feedback.json()) == 1
+        assert student_feedback.json()[0]["summary"].startswith("The draft is on track")
+    finally:
+        client.close()
+        engine.dispose()

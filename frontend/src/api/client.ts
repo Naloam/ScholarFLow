@@ -1,17 +1,23 @@
 import type {
   AnalysisSummary,
   AuthConfig,
+  AuthSessionPayload,
   AuthSessionResponse,
   AuthUser,
   BetaSummary,
   CreateFeedbackPayload,
+  CreateMentorAccessPayload,
+  CreateMentorFeedbackPayload,
   CreateProjectPayload,
   Draft,
   ExportResult,
   GenerateDraftPayload,
   HealthResponse,
   IdResponse,
+  MentorAccessEntry,
+  MentorFeedbackEntry,
   Project,
+  ProjectListItem,
   ProjectStatus,
   ReviewReport,
   TemplateListResponse,
@@ -19,8 +25,22 @@ import type {
   EvidenceItem,
 } from "./types";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
+function inferApiBaseUrl(): string {
+  const configured = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+  if (typeof window === "undefined") {
+    return "http://127.0.0.1:8000";
+  }
+  const { origin, protocol, hostname, port } = window.location;
+  if (port === "5173" || port === "4173" || port === "4174") {
+    return `${protocol}//${hostname}:8000`;
+  }
+  return origin.replace(/\/$/, "");
+}
+
+export const API_BASE_URL = inferApiBaseUrl();
 const API_TOKEN = import.meta.env.VITE_API_TOKEN?.trim();
 const ACCESS_TOKEN_STORAGE_KEY = "scholarflow.access_token";
 
@@ -148,7 +168,7 @@ export const api = {
     return request("/api/auth/config");
   },
 
-  createSession(payload: { email: string; name?: string }): Promise<AuthSessionResponse> {
+  createSession(payload: AuthSessionPayload): Promise<AuthSessionResponse> {
     return request("/api/auth/session", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -168,6 +188,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  listProjects(): Promise<ProjectListItem[]> {
+    return request("/api/projects");
   },
 
   getProject(projectId: string): Promise<Project> {
@@ -221,6 +245,28 @@ export const api = {
 
   createFeedback(projectId: string, payload: CreateFeedbackPayload) {
     return request(`/api/projects/${projectId}/beta/feedback`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listMentorAccess(projectId: string): Promise<MentorAccessEntry[]> {
+    return request(`/api/projects/${projectId}/mentor/access`);
+  },
+
+  createMentorAccess(projectId: string, payload: CreateMentorAccessPayload): Promise<MentorAccessEntry> {
+    return request(`/api/projects/${projectId}/mentor/access`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listMentorFeedback(projectId: string): Promise<MentorFeedbackEntry[]> {
+    return request(`/api/projects/${projectId}/mentor/feedback`);
+  },
+
+  createMentorFeedback(projectId: string, payload: CreateMentorFeedbackPayload): Promise<MentorFeedbackEntry> {
+    return request(`/api/projects/${projectId}/mentor/feedback`, {
       method: "POST",
       body: JSON.stringify(payload),
     });

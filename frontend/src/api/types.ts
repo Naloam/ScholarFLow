@@ -22,6 +22,12 @@ export type AuthSessionResponse = {
   user: AuthUser;
 };
 
+export type AuthSessionPayload = {
+  email: string;
+  name?: string;
+  role?: "student" | "tutor";
+};
+
 export type UsageEvent = {
   source: string;
   operation?: string | null;
@@ -68,6 +74,31 @@ export type BetaSummary = {
   average_rating?: number | null;
 };
 
+export type MentorAccessEntry = {
+  id: string;
+  project_id: string;
+  mentor_user_id?: string | null;
+  mentor_email: string;
+  mentor_name?: string | null;
+  invited_by_user_id: string;
+  status: string;
+  created_at?: string | null;
+};
+
+export type MentorFeedbackEntry = {
+  id: string;
+  project_id: string;
+  mentor_user_id: string;
+  mentor_email: string;
+  mentor_name?: string | null;
+  draft_version?: number | null;
+  summary: string;
+  strengths: string;
+  concerns: string;
+  next_steps: string;
+  created_at?: string | null;
+};
+
 export type IdResponse = {
   id: string;
 };
@@ -91,6 +122,10 @@ export type Project = {
   status?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type ProjectListItem = Project & {
+  access_mode: "owner" | "mentor";
 };
 
 export type ProjectStatus = {
@@ -190,6 +225,23 @@ export type AnalysisSummary = {
     labels: string[];
     values: number[];
   } | null;
+  similarity?: {
+    checked_paragraphs: number;
+    flagged_paragraphs: number;
+    max_similarity: number;
+    average_similarity: number;
+    status: "clear" | "warning" | "high";
+    matches: Array<{
+      source_type: "evidence_snippet" | "paper_abstract";
+      source_label: string;
+      paper_id?: string | null;
+      paper_title?: string | null;
+      similarity: number;
+      overlap_units: number;
+      draft_excerpt: string;
+      source_excerpt: string;
+    }>;
+  } | null;
 };
 
 export type ExportResult = {
@@ -224,4 +276,17 @@ export type CreateFeedbackPayload = {
   rating: number;
   category: string;
   comment: string;
+};
+
+export type CreateMentorAccessPayload = {
+  email: string;
+  name?: string;
+};
+
+export type CreateMentorFeedbackPayload = {
+  draft_version?: number | null;
+  summary: string;
+  strengths: string;
+  concerns: string;
+  next_steps: string;
 };

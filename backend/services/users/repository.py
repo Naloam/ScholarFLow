@@ -40,12 +40,23 @@ def get_user_by_id(db: Session, user_id: str) -> UserRead | None:
     )
 
 
-def get_or_create_user_by_email(db: Session, email: str, name: str | None = None) -> UserRead:
+def get_or_create_user_by_email(
+    db: Session,
+    email: str,
+    name: str | None = None,
+    role: str | None = None,
+) -> UserRead:
     normalized = _normalize_email(email)
     existing = db.execute(select(User).where(User.email == normalized)).scalar_one_or_none()
     if existing is not None:
+        touched = False
         if name and not existing.name:
             existing.name = name
+            touched = True
+        if role in {"student", "tutor"} and existing.role != role:
+            existing.role = role
+            touched = True
+        if touched:
             db.add(existing)
             db.commit()
             db.refresh(existing)
@@ -61,7 +72,7 @@ def get_or_create_user_by_email(db: Session, email: str, name: str | None = None
         id=f"user_{uuid4().hex}",
         email=normalized,
         name=name,
-        role="student",
+        role=role if role in {"student", "tutor"} else "student",
     )
     db.add(row)
     db.commit()

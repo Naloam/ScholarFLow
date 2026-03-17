@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from api.health import router as health_router
 from api.auth import router as auth_router
 from api.beta import router as beta_router
+from api.mentor import router as mentor_router
 from api.projects import router as projects_router
 from api.search import router as search_router
 from api.papers import router as papers_router
@@ -98,6 +99,7 @@ async def security_middleware(request: Request, call_next):
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(beta_router)
+app.include_router(mentor_router)
 app.include_router(projects_router)
 app.include_router(search_router)
 app.include_router(papers_router)

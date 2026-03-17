@@ -1,4 +1,5 @@
 import { BetaPanel } from "../components/Beta/BetaPanel";
+import { MentorPanel } from "../components/Mentor/MentorPanel";
 import { SessionPanel } from "../components/Auth/SessionPanel";
 import { ProjectLauncher } from "../components/Projects/ProjectLauncher";
 import { WizardPanel } from "../components/Wizard/WizardPanel";
@@ -13,6 +14,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 export function WorkspacePage() {
   const templates = useWorkspaceStore((state) => state.templates);
   const currentProjectId = useWorkspaceStore((state) => state.currentProjectId);
+  const availableProjects = useWorkspaceStore((state) => state.availableProjects);
   const healthStatus = useWorkspaceStore((state) => state.healthStatus);
   const project = useWorkspaceStore((state) => state.project);
   const projectStatus = useWorkspaceStore((state) => state.projectStatus);
@@ -24,6 +26,8 @@ export function WorkspacePage() {
   const reviews = useWorkspaceStore((state) => state.reviews);
   const analysis = useWorkspaceStore((state) => state.analysis);
   const betaSummary = useWorkspaceStore((state) => state.betaSummary);
+  const mentorAccess = useWorkspaceStore((state) => state.mentorAccess);
+  const mentorFeedback = useWorkspaceStore((state) => state.mentorFeedback);
   const authConfig = useWorkspaceStore((state) => state.authConfig);
   const authState = useWorkspaceStore((state) => state.authState);
   const authUser = useWorkspaceStore((state) => state.authUser);
@@ -46,10 +50,13 @@ export function WorkspacePage() {
   const runReview = useWorkspaceStore((state) => state.runReview);
   const exportDraft = useWorkspaceStore((state) => state.exportDraft);
   const downloadLatestExport = useWorkspaceStore((state) => state.downloadLatestExport);
+  const inviteMentor = useWorkspaceStore((state) => state.inviteMentor);
+  const submitMentorFeedback = useWorkspaceStore((state) => state.submitMentorFeedback);
   const submitFeedback = useWorkspaceStore((state) => state.submitFeedback);
   const authLocked = Boolean(authConfig?.auth_required) && authState === "anonymous";
+  const projectReadOnly = Boolean(project?.user_id && authUser?.id && project.user_id !== authUser.id);
   const workspaceBusy = initializing || authBusy || working;
-  const betaBusy = workspaceBusy || !currentProjectId || authLocked;
+  const betaBusy = workspaceBusy || !currentProjectId || authLocked || projectReadOnly;
   const authLabel =
     authUser?.email
       ? `Auth: ${authUser.email}`
@@ -66,7 +73,7 @@ export function WorkspacePage() {
       <header className="app-header">
         <div>
           <p className="eyebrow">ScholarFlow</p>
-          <h1>Phase 6 Workspace</h1>
+          <h1>Phase 7 Workspace</h1>
         </div>
         <div className="header-meta">
           <span className="meta-chip" data-testid="header-phase-chip">
@@ -93,9 +100,21 @@ export function WorkspacePage() {
             onSignIn={signIn}
             onSignOut={signOut}
           />
+          <MentorPanel
+            projectId={currentProjectId}
+            projectOwnerId={project?.user_id}
+            selectedDraftVersion={selectedDraftVersion}
+            authUser={authUser}
+            mentorAccess={mentorAccess}
+            mentorFeedback={mentorFeedback}
+            disabled={workspaceBusy}
+            onInvite={inviteMentor}
+            onSubmitFeedback={submitMentorFeedback}
+          />
           <ProjectLauncher
             templates={templates}
             currentProjectId={currentProjectId}
+            availableProjects={availableProjects}
             healthStatus={healthStatus}
             working={workspaceBusy}
             authLocked={authLocked}
@@ -117,7 +136,7 @@ export function WorkspacePage() {
         <section className="workspace-column workspace-column-center">
           <EditorSurface
             content={editorContent}
-            canEdit={Boolean(currentProjectId)}
+            canEdit={Boolean(currentProjectId) && !projectReadOnly}
             working={working}
             onChange={setEditorContent}
             onFocusText={setFocusedText}

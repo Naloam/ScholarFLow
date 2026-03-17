@@ -14,7 +14,7 @@ type WizardPanelProps = {
 };
 
 export function WizardPanel({ status }: WizardPanelProps) {
-  const currentPhase = status?.phase ?? "Phase 5";
+  const currentPhase = status?.phase ?? "Phase 6";
 
   return (
     <section className="panel">

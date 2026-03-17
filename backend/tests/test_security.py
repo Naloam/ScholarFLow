@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 import models  # noqa: F401
 import main as main_module
+from config import db as db_module
 from config import deps as deps_module
 from config.settings import settings
 from main import app
@@ -23,6 +24,7 @@ def make_client(monkeypatch, tmp_path):
     )
     session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     Base.metadata.create_all(engine)
+    monkeypatch.setattr(db_module, "SessionLocal", session_local)
     monkeypatch.setattr(main_module, "SessionLocal", session_local)
     monkeypatch.setattr(deps_module, "SessionLocal", session_local)
     clear_rate_limit_state()
@@ -82,6 +84,8 @@ def test_audit_log_records_request_metadata(monkeypatch, tmp_path) -> None:
 
         assert row.path == "/api/templates"
         assert row.method == "GET"
+        assert row.event_type == "http"
+        assert row.action == "request"
         assert row.status_code == 200
         assert row.duration_ms >= 0
     finally:

@@ -12,6 +12,8 @@ import api.progress as progress_api
 import api.review as review_api
 import main as main_module
 import models  # noqa: F401
+import services.llm.client as llm_client
+from config import db as db_module
 from config import deps as deps_module
 from config.settings import settings
 from main import app
@@ -28,11 +30,13 @@ def make_client(monkeypatch, tmp_path: Path) -> tuple[TestClient, sessionmaker, 
     )
     session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     Base.metadata.create_all(engine)
+    monkeypatch.setattr(db_module, "SessionLocal", session_local)
     monkeypatch.setattr(main_module, "SessionLocal", session_local)
     monkeypatch.setattr(deps_module, "SessionLocal", session_local)
     monkeypatch.setattr(progress_api, "SessionLocal", session_local)
     monkeypatch.setattr(review_api, "SessionLocal", session_local)
     monkeypatch.setattr(export_api, "SessionLocal", session_local)
+    monkeypatch.setattr(llm_client, "litellm_completion", None)
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     clear_rate_limit_state()
     return TestClient(app), session_local, engine
@@ -141,6 +145,90 @@ def test_owned_project_requires_matching_session_even_when_auth_is_optional(monk
             headers={"Authorization": f"Bearer {alice_token}"},
         )
         assert owned.status_code == 200
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_project_scoped_review_and_export_resources_do_not_leak(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings, "api_token", None)
+    monkeypatch.setattr(settings, "auth_secret", "phase6-secret")
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "audit_enabled", False)
+    monkeypatch.setattr(settings, "rate_limit_requests_per_minute", 0)
+    client, _session_local, engine = make_client(monkeypatch, tmp_path)
+
+    try:
+        alice_session = client.post(
+            "/api/auth/session",
+            json={"email": "alice@example.com", "name": "Alice"},
+        )
+        assert alice_session.status_code == 200
+        alice_token = alice_session.json()["access_token"]
+        headers = {"Authorization": f"Bearer {alice_token}"}
+
+        first_project = client.post(
+            "/api/projects",
+            json={"title": "Scoped A", "topic": "Auth", "status": "init"},
+            headers=headers,
+        )
+        assert first_project.status_code == 200
+        first_project_id = first_project.json()["id"]
+
+        second_project = client.post(
+            "/api/projects",
+            json={"title": "Scoped B", "topic": "Auth", "status": "init"},
+            headers=headers,
+        )
+        assert second_project.status_code == 200
+        second_project_id = second_project.json()["id"]
+
+        generate = client.post(
+            f"/api/projects/{first_project_id}/drafts/generate",
+            json={"topic": "Scoped Auth", "language": "zh"},
+            headers=headers,
+        )
+        assert generate.status_code == 200
+
+        review = client.post(
+            f"/api/projects/{first_project_id}/review",
+            json={"draft_version": 1},
+            headers=headers,
+        )
+        assert review.status_code == 200
+        review_id = review.json()["id"]
+
+        export = client.post(
+            f"/api/projects/{first_project_id}/export",
+            json={"format": "markdown"},
+            headers=headers,
+        )
+        assert export.status_code == 200
+        export_id = export.json()["id"]
+
+        wrong_review = client.get(
+            f"/api/projects/{second_project_id}/review/{review_id}",
+            headers=headers,
+        )
+        assert wrong_review.status_code == 404
+
+        wrong_followups = client.get(
+            f"/api/projects/{second_project_id}/review/{review_id}/followups",
+            headers=headers,
+        )
+        assert wrong_followups.status_code == 404
+
+        wrong_export = client.get(
+            f"/api/projects/{second_project_id}/export/{export_id}",
+            headers=headers,
+        )
+        assert wrong_export.status_code == 404
+
+        wrong_download = client.get(
+            f"/api/projects/{second_project_id}/export/{export_id}/download",
+            headers=headers,
+        )
+        assert wrong_download.status_code == 404
     finally:
         client.close()
         engine.dispose()

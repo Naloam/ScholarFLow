@@ -1,3 +1,4 @@
+import { BetaPanel } from "../components/Beta/BetaPanel";
 import { SessionPanel } from "../components/Auth/SessionPanel";
 import { ProjectLauncher } from "../components/Projects/ProjectLauncher";
 import { WizardPanel } from "../components/Wizard/WizardPanel";
@@ -22,6 +23,7 @@ export function WorkspacePage() {
   const evidence = useWorkspaceStore((state) => state.evidence);
   const reviews = useWorkspaceStore((state) => state.reviews);
   const analysis = useWorkspaceStore((state) => state.analysis);
+  const betaSummary = useWorkspaceStore((state) => state.betaSummary);
   const authConfig = useWorkspaceStore((state) => state.authConfig);
   const authState = useWorkspaceStore((state) => state.authState);
   const authUser = useWorkspaceStore((state) => state.authUser);
@@ -31,6 +33,7 @@ export function WorkspacePage() {
   const working = useWorkspaceStore((state) => state.working);
   const notice = useWorkspaceStore((state) => state.notice);
   const connectionState = useWorkspaceStore((state) => state.connectionState);
+  const liveProgress = useWorkspaceStore((state) => state.liveProgress);
   const signIn = useWorkspaceStore((state) => state.signIn);
   const signOut = useWorkspaceStore((state) => state.signOut);
   const createProject = useWorkspaceStore((state) => state.createProject);
@@ -42,8 +45,11 @@ export function WorkspacePage() {
   const generateDraft = useWorkspaceStore((state) => state.generateDraft);
   const runReview = useWorkspaceStore((state) => state.runReview);
   const exportDraft = useWorkspaceStore((state) => state.exportDraft);
+  const downloadLatestExport = useWorkspaceStore((state) => state.downloadLatestExport);
+  const submitFeedback = useWorkspaceStore((state) => state.submitFeedback);
   const authLocked = Boolean(authConfig?.auth_required) && authState === "anonymous";
   const workspaceBusy = initializing || authBusy || working;
+  const betaBusy = workspaceBusy || !currentProjectId || authLocked;
   const authLabel =
     authUser?.email
       ? `Auth: ${authUser.email}`
@@ -100,7 +106,11 @@ export function WorkspacePage() {
           <FileManager
             drafts={drafts}
             selectedDraftVersion={selectedDraftVersion}
+            latestExportId={liveProgress?.latest_export_id}
+            latestExportStatus={liveProgress?.latest_export_status}
+            downloading={workspaceBusy}
             onSelect={selectDraft}
+            onDownloadLatestExport={downloadLatestExport}
           />
         </aside>
 
@@ -126,6 +136,7 @@ export function WorkspacePage() {
         <aside className="workspace-column workspace-column-right">
           <EvidencePanel evidence={evidence} focusedText={focusedText} />
           <ReviewPanel reviews={reviews} analysis={analysis} />
+          <BetaPanel summary={betaSummary} disabled={betaBusy} onSubmit={submitFeedback} />
         </aside>
       </main>
 

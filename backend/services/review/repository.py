@@ -47,8 +47,13 @@ def update_review(
     )
 
 
-def get_review(db: Session, review_id: str) -> ReviewReport | None:
-    row = db.execute(select(ReviewReportModel).where(ReviewReportModel.id == review_id)).scalar_one_or_none()
+def get_review(db: Session, project_id: str, review_id: str) -> ReviewReport | None:
+    row = db.execute(
+        select(ReviewReportModel).where(
+            ReviewReportModel.project_id == project_id,
+            ReviewReportModel.id == review_id,
+        )
+    ).scalar_one_or_none()
     if row is None:
         return None
     scores = row.scores or {}

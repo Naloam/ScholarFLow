@@ -4,10 +4,24 @@ import { formatDate } from "../../utils/format";
 type FileManagerProps = {
   drafts: Draft[];
   selectedDraftVersion: number | null;
+  latestExportId?: string | null;
+  latestExportStatus?: string | null;
+  downloading: boolean;
   onSelect: (version: number) => void;
+  onDownloadLatestExport: () => Promise<void>;
 };
 
-export function FileManager({ drafts, selectedDraftVersion, onSelect }: FileManagerProps) {
+export function FileManager({
+  drafts,
+  selectedDraftVersion,
+  latestExportId,
+  latestExportStatus,
+  downloading,
+  onSelect,
+  onDownloadLatestExport,
+}: FileManagerProps) {
+  const latestExportReady = Boolean(latestExportId) && latestExportStatus === "done";
+
   return (
     <section className="panel" data-testid="file-manager">
       <div className="panel-header">
@@ -40,6 +54,27 @@ export function FileManager({ drafts, selectedDraftVersion, onSelect }: FileMana
           ))}
         </div>
       )}
+
+      <div className="inline-card" data-testid="export-center">
+        <p className="inline-title">Export Center</p>
+        <p className="auth-copy" data-testid="latest-export-status">
+          {latestExportReady
+            ? `Latest export ${latestExportId} is ready`
+            : latestExportStatus
+              ? `Latest export status: ${latestExportStatus}`
+              : "No completed export yet."}
+        </p>
+        <div className="button-row">
+          <button
+            className="ghost-btn"
+            data-testid="download-latest-export-button"
+            disabled={!latestExportReady || downloading}
+            onClick={() => void onDownloadLatestExport()}
+          >
+            Download Latest Export
+          </button>
+        </div>
+      </div>
     </section>
   );
 }

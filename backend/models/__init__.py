@@ -15,3 +15,5 @@ from models.chunk import Chunk  # noqa: F401
 from models.template import Template  # noqa: F401
 from models.export_file import ExportFile  # noqa: F401
 from models.audit_log import AuditLog  # noqa: F401
+from models.usage_event import UsageEvent  # noqa: F401
+from models.feedback_entry import FeedbackEntry  # noqa: F401

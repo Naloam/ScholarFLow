@@ -28,4 +28,10 @@ test("@auth-required workspace supports session sign-in when auth is required", 
 
   await expect(page.getByTestId("draft-item-v1")).toBeVisible();
   await expect(page.getByTestId("header-phase-chip")).toHaveText("Phase 3");
+  await expect(page.getByTestId("beta-total-tokens")).not.toHaveText("0");
+
+  await page.getByTestId("beta-comment-input").fill("Authenticated beta feedback survives the protected workspace flow.");
+  await page.getByTestId("beta-submit-button").click();
+  await expect(page.getByTestId("beta-feedback-count")).toHaveText("1 feedback");
+  await expect(page.getByTestId("beta-feedback-card")).toContainText("Authenticated beta feedback survives");
 });

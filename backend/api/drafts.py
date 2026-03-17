@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from agents.writing_agent import WritingAgent
 from agents.evidence_agent import EvidenceAgent
-from config.deps import get_db, require_project_access
+from agents.writing_agent import WritingAgent
+from config.deps import get_db, get_identity, require_project_access
 from schemas.common import IdResponse
 from schemas.drafts import DraftCreate, DraftGenerateRequest, DraftRead
+from schemas.evidence import EvidenceItem
 from services.drafts.repository import (
     create_draft,
     get_draft,
@@ -13,12 +14,13 @@ from services.drafts.repository import (
     update_draft,
     update_draft_claims,
 )
-from services.papers.repository import list_papers
-from services.templates.repository import get_template_content
-from services.reader.repository import list_all_chunks
 from services.evidence.repository import save_evidence_items
-from schemas.evidence import EvidenceItem
+from services.papers.repository import list_papers
 from services.projects.repository import set_project_status
+from services.reader.repository import list_all_chunks
+from services.security.auth import AuthIdentity
+from services.telemetry.context import telemetry_context
+from services.templates.repository import get_template_content
 
 router = APIRouter(
     prefix="/api/projects/{project_id}/drafts",
@@ -29,7 +31,10 @@ router = APIRouter(
 
 @router.post("/generate", response_model=IdResponse)
 def generate_draft(
-    project_id: str, payload: DraftGenerateRequest, db: Session = Depends(get_db)
+    project_id: str,
+    payload: DraftGenerateRequest,
+    db: Session = Depends(get_db),
+    identity: AuthIdentity | None = Depends(get_identity),
 ) -> IdResponse:
     set_project_status(db, project_id, "write")
     papers = list_papers(db, project_id)
@@ -37,14 +42,19 @@ def generate_draft(
         papers = [p for p in papers if p.id in payload.paper_ids]
     template = get_template_content(db, payload.template_id)
     agent = WritingAgent()
-    result = agent.run(
-        {
-            "topic": payload.topic or "Untitled Topic",
-            "scope": payload.scope or "",
-            "papers": [p.model_dump() for p in papers],
-            "template": template or "",
-        }
-    )
+    with telemetry_context(
+        project_id=project_id,
+        user_id=identity.user_id if identity else None,
+        operation="draft.generate",
+    ):
+        result = agent.run(
+            {
+                "topic": payload.topic or "Untitled Topic",
+                "scope": payload.scope or "",
+                "papers": [p.model_dump() for p in papers],
+                "template": template or "",
+            }
+        )
     draft = create_draft(db, project_id, result.get("content", ""), result.get("claims"))
 
     claims_payload = result.get("claims") or []

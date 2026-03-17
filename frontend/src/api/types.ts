@@ -22,6 +22,52 @@ export type AuthSessionResponse = {
   user: AuthUser;
 };
 
+export type UsageEvent = {
+  source: string;
+  operation?: string | null;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+  duration_ms: number;
+  created_at?: string | null;
+};
+
+export type PerformanceSummary = {
+  total_events: number;
+  llm_calls: number;
+  embedding_calls: number;
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+  average_latency_ms: number;
+  latest_model?: string | null;
+  latest_operation?: string | null;
+  recent_events: UsageEvent[];
+};
+
+export type FeedbackEntry = {
+  id: string;
+  project_id: string;
+  user_id?: string | null;
+  rating: number;
+  category: string;
+  comment: string;
+  status: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type BetaSummary = {
+  project_id: string;
+  performance: PerformanceSummary;
+  feedback: FeedbackEntry[];
+  feedback_count: number;
+  average_rating?: number | null;
+};
+
 export type IdResponse = {
   id: string;
 };
@@ -148,7 +194,10 @@ export type AnalysisSummary = {
 
 export type ExportResult = {
   file_id: string;
+  format: string;
   status: string;
+  file_name?: string | null;
+  download_ready: boolean;
   created_at?: string | null;
 };
 
@@ -169,4 +218,10 @@ export type GenerateDraftPayload = {
 export type UpdateDraftPayload = {
   content: string;
   section?: string | null;
+};
+
+export type CreateFeedbackPayload = {
+  rating: number;
+  category: string;
+  comment: string;
 };

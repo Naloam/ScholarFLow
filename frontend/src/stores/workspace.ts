@@ -12,6 +12,7 @@ import type {
   AnalysisSummary,
   AuthConfig,
   AuthUser,
+  BetaSummary,
   Draft,
   EvidenceItem,
   Project,
@@ -55,6 +56,7 @@ const emptyWorkspaceSlice = {
   evidence: [] as EvidenceItem[],
   reviews: [] as ReviewReport[],
   analysis: null as AnalysisSummary | null,
+  betaSummary: null as BetaSummary | null,
   working: false,
   notice: "Workspace idle",
 };
@@ -76,6 +78,7 @@ type WorkspaceState = {
   evidence: EvidenceItem[];
   reviews: ReviewReport[];
   analysis: AnalysisSummary | null;
+  betaSummary: BetaSummary | null;
   authConfig: AuthConfig | null;
   authState: AuthState;
   authUser: AuthUser | null;
@@ -103,6 +106,8 @@ type WorkspaceState = {
   generateDraft: () => Promise<void>;
   runReview: () => Promise<void>;
   exportDraft: (format: "markdown" | "latex" | "word" | "docx") => Promise<void>;
+  downloadLatestExport: () => Promise<void>;
+  submitFeedback: (payload: { rating: number; category: string; comment: string }) => Promise<void>;
 };
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
@@ -311,15 +316,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     async loadProject(projectId) {
       set({ working: true, notice: "Loading project..." });
       try {
-        const [projectResult, statusResult, draftsResult, evidenceResult, reviewsResult, analysisResult] =
-          await Promise.allSettled([
-            api.getProject(projectId),
-            api.getProjectStatus(projectId),
-            api.listDrafts(projectId),
-            api.listEvidence(projectId),
-            api.listReviews(projectId),
-            api.getAnalysisSummary(projectId),
-          ]);
+      const [projectResult, statusResult, draftsResult, evidenceResult, reviewsResult, analysisResult, betaResult] =
+        await Promise.allSettled([
+          api.getProject(projectId),
+          api.getProjectStatus(projectId),
+          api.listDrafts(projectId),
+          api.listEvidence(projectId),
+          api.listReviews(projectId),
+          api.getAnalysisSummary(projectId),
+          api.getBetaSummary(projectId),
+        ]);
 
         if (projectResult.status !== "fulfilled") {
           throw projectResult.reason;
@@ -344,6 +350,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           evidence: evidenceResult.status === "fulfilled" ? evidenceResult.value : [],
           reviews: reviewsResult.status === "fulfilled" ? reviewsResult.value : [],
           analysis: analysisResult.status === "fulfilled" ? analysisResult.value : null,
+          betaSummary: betaResult.status === "fulfilled" ? betaResult.value : null,
           notice: `Project ${projectId} loaded`,
         });
       } catch (error) {
@@ -360,12 +367,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        const [status, drafts, evidence, reviews, analysis] = await Promise.all([
+        const [status, drafts, evidence, reviews, analysis, betaSummary] = await Promise.all([
           api.getProjectStatus(projectId),
           api.listDrafts(projectId),
           api.listEvidence(projectId),
           api.listReviews(projectId),
           api.getAnalysisSummary(projectId),
+          api.getBetaSummary(projectId),
         ]);
 
         const selectedDraftVersion = get().selectedDraftVersion;
@@ -390,6 +398,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           evidence,
           reviews,
           analysis,
+          betaSummary,
           notice: `Project ${projectId} refreshed`,
         });
       } catch (error) {
@@ -547,6 +556,47 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `${format} export queued` });
       } catch (error) {
         handleActionError(error, "Export failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async downloadLatestExport() {
+      const { currentProjectId, liveProgress } = get();
+      const exportId = liveProgress?.latest_export_id;
+      if (!currentProjectId || !exportId || liveProgress?.latest_export_status !== "done") {
+        set({ notice: "No completed export is available yet" });
+        return;
+      }
+
+      set({ working: true, notice: "Preparing export download..." });
+      try {
+        const fileName = await api.downloadExport(currentProjectId, exportId);
+        set({ notice: `Downloaded ${fileName}` });
+      } catch (error) {
+        handleActionError(error, "Download failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async submitFeedback(payload) {
+      const { currentProjectId } = get();
+      if (!currentProjectId) {
+        set({ notice: "Open a project before sending feedback" });
+        return;
+      }
+
+      set({ working: true, notice: "Submitting beta feedback..." });
+      try {
+        await api.createFeedback(currentProjectId, payload);
+        const betaSummary = await api.getBetaSummary(currentProjectId);
+        set({
+          betaSummary,
+          notice: "Beta feedback submitted",
+        });
+      } catch (error) {
+        handleActionError(error, "Feedback failed");
       } finally {
         set({ working: false });
       }

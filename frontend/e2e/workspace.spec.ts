@@ -22,14 +22,23 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("status-draft")).toHaveText("Draft v1");
   await expect(page.getByTestId("header-phase-chip")).toHaveText("Phase 3");
   await expect(page.getByTestId("editor-prose")).toContainText("Abstract");
+  await expect(page.getByTestId("beta-total-tokens")).not.toHaveText("0");
+  await expect(page.getByTestId("beta-event-card")).toContainText("draft.generate");
 
   await page.getByTestId("run-review-button").click();
 
   await expect(page.getByTestId("review-panel")).toContainText("补充关键断言的证据来源");
   await expect(page.getByTestId("header-phase-chip")).toHaveText("Phase 4");
 
+  await page.getByTestId("beta-comment-input").fill("Browser beta feedback captured from the open workspace flow.");
+  await page.getByTestId("beta-submit-button").click();
+  await expect(page.getByTestId("beta-feedback-count")).toHaveText("1 feedback");
+  await expect(page.getByTestId("beta-feedback-card")).toContainText("Browser beta feedback captured");
+
   await page.getByTestId("export-markdown-button").click();
 
   await expect(page.getByTestId("status-notice")).toHaveText("Latest export finished");
   await expect(page.getByTestId("header-phase-chip")).toHaveText("Phase 6");
+  await expect(page.getByTestId("latest-export-status")).toContainText("is ready");
+  await expect(page.getByTestId("download-latest-export-button")).toBeEnabled();
 });

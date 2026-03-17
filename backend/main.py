@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from api.health import router as health_router
 from api.auth import router as auth_router
+from api.beta import router as beta_router
 from api.projects import router as projects_router
 from api.search import router as search_router
 from api.papers import router as papers_router
@@ -25,7 +26,7 @@ from api.analysis import router as analysis_router
 from api.progress import router as progress_router
 from config.db import SessionLocal
 from config.settings import settings
-from services.security.audit import create_audit_log
+from services.security.audit import write_audit_log
 from services.security.auth import authenticate_token, extract_api_token
 from services.security.rate_limit import consume_rate_limit
 
@@ -79,26 +80,24 @@ async def security_middleware(request: Request, call_next):
         if response is not None:
             response.headers["X-Request-ID"] = request_id
         if settings.audit_enabled and request.url.path.startswith("/api"):
-            db = SessionLocal()
-            try:
-                try:
-                    create_audit_log(
-                        db,
-                        request_id=request_id,
-                        method=request.method,
-                        path=request.url.path,
-                        status_code=response.status_code if response is not None else 500,
-                        client_ip=request.client.host if request.client else None,
-                        user_id=identity.user_id if identity else None,
-                        duration_ms=duration_ms,
-                    )
-                except Exception:
-                    pass
-            finally:
-                db.close()
+            write_audit_log(
+                SessionLocal,
+                request_id=request_id,
+                event_type="http",
+                action="request",
+                method=request.method,
+                path=request.url.path,
+                resource_id=None,
+                detail=None,
+                status_code=response.status_code if response is not None else 500,
+                client_ip=request.client.host if request.client else None,
+                user_id=identity.user_id if identity else None,
+                duration_ms=duration_ms,
+            )
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(beta_router)
 app.include_router(projects_router)
 app.include_router(search_router)
 app.include_router(papers_router)

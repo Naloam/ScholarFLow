@@ -500,6 +500,41 @@ button {
   margin-bottom: 16px;
 }
 
+.beta-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(214, 238, 227, 0.64);
+  border: 1px solid rgba(34, 65, 56, 0.08);
+}
+
+.metric-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.35rem;
+}
+
+.feedback-card {
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(34, 65, 56, 0.08);
+}
+
+.feedback-card p {
+  margin: 8px 0;
+}
+
+.feedback-card small {
+  color: #60766f;
+}
+
 .summary-banner strong {
   display: block;
   margin-top: 4px;
@@ -619,7 +654,8 @@ button {
 
   .summary-banner,
   .score-grid,
-  .auth-meta-grid {
+  .auth-meta-grid,
+  .beta-metric-grid {
     grid-template-columns: 1fr;
   }
 }

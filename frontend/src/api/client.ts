@@ -3,6 +3,8 @@ import type {
   AuthConfig,
   AuthSessionResponse,
   AuthUser,
+  BetaSummary,
+  CreateFeedbackPayload,
   CreateProjectPayload,
   Draft,
   ExportResult,
@@ -82,6 +84,61 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+function parseDownloadFilename(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) {
+    return fallback;
+  }
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+  const plainMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  if (plainMatch?.[1]) {
+    return plainMatch[1];
+  }
+  return fallback;
+}
+
+async function download(path: string, fallbackName: string): Promise<string> {
+  const authToken = getAuthToken();
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    let detail = response.statusText || "Download failed";
+    const raw = await response.text();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (typeof parsed.detail === "string" && parsed.detail) {
+          detail = parsed.detail;
+        }
+      } catch {
+        detail = raw;
+      }
+    }
+    throw new ApiError(response.status, detail);
+  }
+
+  const blob = await response.blob();
+  const fileName = parseDownloadFilename(
+    response.headers.get("content-disposition"),
+    fallbackName,
+  );
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
+  return fileName;
+}
+
 export const api = {
   getHealth(): Promise<HealthResponse> {
     return request("/health");
@@ -158,6 +215,17 @@ export const api = {
     return request(`/api/projects/${projectId}/analysis/summary`);
   },
 
+  getBetaSummary(projectId: string): Promise<BetaSummary> {
+    return request(`/api/projects/${projectId}/beta/summary`);
+  },
+
+  createFeedback(projectId: string, payload: CreateFeedbackPayload) {
+    return request(`/api/projects/${projectId}/beta/feedback`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   exportDraft(projectId: string, format: "markdown" | "latex" | "word" | "docx"): Promise<IdResponse> {
     return request(`/api/projects/${projectId}/export`, {
       method: "POST",
@@ -167,5 +235,12 @@ export const api = {
 
   getExport(projectId: string, fileId: string): Promise<ExportResult> {
     return request(`/api/projects/${projectId}/export/${fileId}`);
+  },
+
+  downloadExport(projectId: string, fileId: string): Promise<string> {
+    return download(
+      `/api/projects/${projectId}/export/${fileId}/download`,
+      `${fileId}.bin`,
+    );
   },
 };

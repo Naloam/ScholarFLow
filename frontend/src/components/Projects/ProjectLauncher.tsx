@@ -30,7 +30,7 @@ export function ProjectLauncher({
     <section className="panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Phase 5 Bootstrap</p>
+          <p className="eyebrow">Phase 6 Launch</p>
           <h2 className="panel-title">Project Launcher</h2>
         </div>
         <span className={`badge ${healthStatus === "ok" ? "badge-ok" : "badge-warn"}`}>

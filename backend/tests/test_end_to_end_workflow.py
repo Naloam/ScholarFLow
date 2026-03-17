@@ -12,6 +12,7 @@ import api.review as review_api
 import main as main_module
 import models  # noqa: F401
 import services.llm.client as llm_client
+from config import db as db_module
 from config import deps as deps_module
 from config.settings import settings
 from main import app
@@ -31,6 +32,7 @@ def test_topic_to_export_workflow(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(settings, "data_dir", data_dir)
     monkeypatch.setattr(llm_client, "litellm_completion", None)
+    monkeypatch.setattr(db_module, "SessionLocal", testing_session_local)
     monkeypatch.setattr(main_module, "SessionLocal", testing_session_local)
     monkeypatch.setattr(deps_module, "SessionLocal", testing_session_local)
     monkeypatch.setattr(progress_api, "SessionLocal", testing_session_local)
@@ -126,6 +128,12 @@ def test_topic_to_export_workflow(monkeypatch, tmp_path: Path) -> None:
         export_status = client.get(f"/api/projects/{project_id}/export/{export_id}")
         assert export_status.status_code == 200
         assert export_status.json()["status"] == "done"
+        assert export_status.json()["download_ready"] is True
+
+        export_download = client.get(f"/api/projects/{project_id}/export/{export_id}/download")
+        assert export_download.status_code == 200
+        assert export_download.headers["content-disposition"].endswith(f'{export_id}.md"')
+        assert "Abstract" in export_download.text
 
         status_after_export = client.get(f"/api/projects/{project_id}/status")
         assert status_after_export.status_code == 200

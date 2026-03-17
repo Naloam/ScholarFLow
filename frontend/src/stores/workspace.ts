@@ -13,9 +13,14 @@ import type {
   AuthConfig,
   AuthUser,
   BetaSummary,
+  CreateMentorAccessPayload,
+  CreateMentorFeedbackPayload,
   Draft,
   EvidenceItem,
+  MentorAccessEntry,
+  MentorFeedbackEntry,
   Project,
+  ProjectListItem,
   ProjectProgressSnapshot,
   ProjectStatus,
   ReviewReport,
@@ -43,6 +48,7 @@ type AuthState = "checking" | "anonymous" | "user" | "service";
 
 const emptyWorkspaceSlice = {
   currentProjectId: "",
+  availableProjects: [] as ProjectListItem[],
   project: null as Project | null,
   projectStatus: null as ProjectStatus | null,
   liveProgress: null as ProjectProgressSnapshot | null,
@@ -57,6 +63,8 @@ const emptyWorkspaceSlice = {
   reviews: [] as ReviewReport[],
   analysis: null as AnalysisSummary | null,
   betaSummary: null as BetaSummary | null,
+  mentorAccess: [] as MentorAccessEntry[],
+  mentorFeedback: [] as MentorFeedbackEntry[],
   working: false,
   notice: "Workspace idle",
 };
@@ -65,6 +73,7 @@ type WorkspaceState = {
   healthStatus: string;
   templates: TemplateMeta[];
   currentProjectId: string;
+  availableProjects: ProjectListItem[];
   project: Project | null;
   projectStatus: ProjectStatus | null;
   liveProgress: ProjectProgressSnapshot | null;
@@ -79,6 +88,8 @@ type WorkspaceState = {
   reviews: ReviewReport[];
   analysis: AnalysisSummary | null;
   betaSummary: BetaSummary | null;
+  mentorAccess: MentorAccessEntry[];
+  mentorFeedback: MentorFeedbackEntry[];
   authConfig: AuthConfig | null;
   authState: AuthState;
   authUser: AuthUser | null;
@@ -88,7 +99,7 @@ type WorkspaceState = {
   working: boolean;
   notice: string;
   bootstrap: () => Promise<void>;
-  signIn: (payload: { email: string; name: string }) => Promise<void>;
+  signIn: (payload: { email: string; name: string; role: "student" | "tutor" }) => Promise<void>;
   signOut: () => Promise<void>;
   createProject: (payload: {
     title: string;
@@ -107,6 +118,8 @@ type WorkspaceState = {
   runReview: () => Promise<void>;
   exportDraft: (format: "markdown" | "latex" | "word" | "docx") => Promise<void>;
   downloadLatestExport: () => Promise<void>;
+  inviteMentor: (payload: CreateMentorAccessPayload) => Promise<void>;
+  submitMentorFeedback: (payload: CreateMentorFeedbackPayload) => Promise<void>;
   submitFeedback: (payload: { rating: number; category: string; comment: string }) => Promise<void>;
 };
 
@@ -183,6 +196,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       let templates: TemplateMeta[] = [];
+      let availableProjects: ProjectListItem[] = [];
       let notice =
         healthResult.status === "fulfilled"
           ? "Backend reachable"
@@ -190,10 +204,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const requiresAuth = authConfig?.auth_required ?? false;
 
       if (healthResult.status === "fulfilled" && (!requiresAuth || Boolean(getAuthToken()))) {
-        const templatesResult = await Promise.allSettled([api.listTemplates()]);
-        const templateResult = templatesResult[0];
+        const [templateResult, projectListResult] = await Promise.allSettled([
+          api.listTemplates(),
+          authState === "user" ? api.listProjects() : Promise.resolve([] as ProjectListItem[]),
+        ]);
         if (templateResult.status === "fulfilled") {
           templates = templateResult.value.items;
+          availableProjects =
+            projectListResult.status === "fulfilled" ? projectListResult.value : [];
           if (authState === "user" && authUser) {
             notice = `Signed in as ${authUser.email}`;
           } else if (authState === "service") {
@@ -221,6 +239,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         authConfig,
         authState,
         authUser,
+        availableProjects,
         authError,
         notice,
       });
@@ -243,12 +262,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const session = await api.createSession({
           email,
           name: name || undefined,
+          role: payload.role,
         });
         setAuthToken(session.access_token);
-        const templatesResult = await Promise.allSettled([api.listTemplates()]);
-        const templateResult = templatesResult[0];
+        const [templateResult, projectListResult] = await Promise.allSettled([
+          api.listTemplates(),
+          api.listProjects(),
+        ]);
         set({
           templates: templateResult.status === "fulfilled" ? templateResult.value.items : [],
+          availableProjects:
+            projectListResult.status === "fulfilled" ? projectListResult.value : [],
           authState: "user",
           authUser: session.user,
           authBusy: false,
@@ -316,16 +340,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     async loadProject(projectId) {
       set({ working: true, notice: "Loading project..." });
       try {
-      const [projectResult, statusResult, draftsResult, evidenceResult, reviewsResult, analysisResult, betaResult] =
-        await Promise.allSettled([
-          api.getProject(projectId),
-          api.getProjectStatus(projectId),
-          api.listDrafts(projectId),
-          api.listEvidence(projectId),
-          api.listReviews(projectId),
-          api.getAnalysisSummary(projectId),
-          api.getBetaSummary(projectId),
-        ]);
+        const [projectResult, statusResult, draftsResult, evidenceResult, reviewsResult, analysisResult, betaResult, mentorAccessResult, mentorFeedbackResult, projectListResult] =
+          await Promise.allSettled([
+            api.getProject(projectId),
+            api.getProjectStatus(projectId),
+            api.listDrafts(projectId),
+            api.listEvidence(projectId),
+            api.listReviews(projectId),
+            api.getAnalysisSummary(projectId),
+            api.getBetaSummary(projectId),
+            api.listMentorAccess(projectId),
+            api.listMentorFeedback(projectId),
+            get().authState === "user" ? api.listProjects() : Promise.resolve([] as ProjectListItem[]),
+          ]);
 
         if (projectResult.status !== "fulfilled") {
           throw projectResult.reason;
@@ -340,6 +367,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
         set({
           currentProjectId: projectId,
+          availableProjects:
+            projectListResult.status === "fulfilled"
+              ? projectListResult.value
+              : get().availableProjects,
           project: projectResult.value,
           projectStatus: statusResult.status === "fulfilled" ? statusResult.value : null,
           drafts,
@@ -351,6 +382,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           reviews: reviewsResult.status === "fulfilled" ? reviewsResult.value : [],
           analysis: analysisResult.status === "fulfilled" ? analysisResult.value : null,
           betaSummary: betaResult.status === "fulfilled" ? betaResult.value : null,
+          mentorAccess: mentorAccessResult.status === "fulfilled" ? mentorAccessResult.value : [],
+          mentorFeedback: mentorFeedbackResult.status === "fulfilled" ? mentorFeedbackResult.value : [],
           notice: `Project ${projectId} loaded`,
         });
       } catch (error) {
@@ -367,13 +400,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        const [status, drafts, evidence, reviews, analysis, betaSummary] = await Promise.all([
+        const [status, drafts, evidence, reviews, analysis, betaSummary, mentorAccess, mentorFeedback] = await Promise.all([
           api.getProjectStatus(projectId),
           api.listDrafts(projectId),
           api.listEvidence(projectId),
           api.listReviews(projectId),
           api.getAnalysisSummary(projectId),
           api.getBetaSummary(projectId),
+          api.listMentorAccess(projectId),
+          api.listMentorFeedback(projectId),
         ]);
 
         const selectedDraftVersion = get().selectedDraftVersion;
@@ -399,6 +434,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           reviews,
           analysis,
           betaSummary,
+          mentorAccess,
+          mentorFeedback,
           notice: `Project ${projectId} refreshed`,
         });
       } catch (error) {
@@ -575,6 +612,50 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `Downloaded ${fileName}` });
       } catch (error) {
         handleActionError(error, "Download failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async inviteMentor(payload) {
+      const { currentProjectId } = get();
+      if (!currentProjectId) {
+        set({ notice: "Open a project before inviting a mentor" });
+        return;
+      }
+
+      set({ working: true, notice: "Granting mentor access..." });
+      try {
+        await api.createMentorAccess(currentProjectId, payload);
+        const mentorAccess = await api.listMentorAccess(currentProjectId);
+        set({
+          mentorAccess,
+          notice: "Mentor access granted",
+        });
+      } catch (error) {
+        handleActionError(error, "Invite mentor failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async submitMentorFeedback(payload) {
+      const { currentProjectId } = get();
+      if (!currentProjectId) {
+        set({ notice: "Open a project before submitting mentor feedback" });
+        return;
+      }
+
+      set({ working: true, notice: "Submitting mentor feedback..." });
+      try {
+        await api.createMentorFeedback(currentProjectId, payload);
+        const mentorFeedback = await api.listMentorFeedback(currentProjectId);
+        set({
+          mentorFeedback,
+          notice: "Mentor feedback submitted",
+        });
+      } catch (error) {
+        handleActionError(error, "Mentor feedback failed");
       } finally {
         set({ working: false });
       }

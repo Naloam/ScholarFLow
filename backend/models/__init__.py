@@ -17,3 +17,5 @@ from models.export_file import ExportFile  # noqa: F401
 from models.audit_log import AuditLog  # noqa: F401
 from models.usage_event import UsageEvent  # noqa: F401
 from models.feedback_entry import FeedbackEntry  # noqa: F401
+from models.project_mentor_access import ProjectMentorAccess  # noqa: F401
+from models.mentor_feedback import MentorFeedback  # noqa: F401

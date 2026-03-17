@@ -1,10 +1,11 @@
 import { useState } from "react";
 
-import type { TemplateMeta } from "../../api/types";
+import type { ProjectListItem, TemplateMeta } from "../../api/types";
 
 type ProjectLauncherProps = {
   templates: TemplateMeta[];
   currentProjectId: string;
+  availableProjects: ProjectListItem[];
   healthStatus: string;
   working: boolean;
   authLocked: boolean;
@@ -15,6 +16,7 @@ type ProjectLauncherProps = {
 export function ProjectLauncher({
   templates,
   currentProjectId,
+  availableProjects,
   healthStatus,
   working,
   authLocked,
@@ -30,7 +32,7 @@ export function ProjectLauncher({
     <section className="panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Phase 6 Launch</p>
+          <p className="eyebrow">Phase 7 Collaboration</p>
           <h2 className="panel-title">Project Launcher</h2>
         </div>
         <span className={`badge ${healthStatus === "ok" ? "badge-ok" : "badge-warn"}`}>
@@ -112,6 +114,47 @@ export function ProjectLauncher({
             Open
           </button>
         </div>
+      </div>
+
+      <div className="inline-card">
+        <p className="inline-title">Accessible projects</p>
+        {availableProjects.length === 0 ? (
+          <p className="auth-copy">
+            No owned or mentor-linked projects yet. Projects you create or review invitations you
+            receive will appear here.
+          </p>
+        ) : (
+          <div className="stack">
+            {availableProjects.map((project, index) => {
+              const isCurrent = project.id === currentProjectId;
+              const accessLabel =
+                project.access_mode === "mentor" ? "Mentor read-only" : "Project owner";
+              return (
+                <article
+                  key={project.id}
+                  className="feedback-card"
+                  data-testid={index === 0 ? "accessible-project-card" : undefined}
+                >
+                  <div className="inline-row">
+                    <strong>{project.title}</strong>
+                    <span className="badge badge-soft">{accessLabel}</span>
+                  </div>
+                  <p>{project.topic || "No topic set"}</p>
+                  <small>{project.id}</small>
+                  <div className="button-row">
+                    <button
+                      className={isCurrent ? "primary-btn" : "ghost-btn"}
+                      disabled={working}
+                      onClick={() => void onOpen(project.id)}
+                    >
+                      {isCurrent ? "Opened" : "Open"}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="meta-block">

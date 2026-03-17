@@ -8,6 +8,7 @@ from starlette.websockets import WebSocketState
 
 from config.db import SessionLocal
 from config.settings import settings
+from services.mentor.repository import has_mentor_access
 from services.projects.repository import get_project_owner_id
 from services.projects.progress import build_progress_snapshot
 from services.security.audit import write_websocket_audit_log
@@ -60,20 +61,33 @@ async def project_progress(websocket: WebSocket, project_id: str) -> None:
             await websocket.close(code=4401)
         return
     if identity is not None and identity.user_id is not None and owner_id and owner_id != identity.user_id:
-        write_websocket_audit_log(
-            SessionLocal,
-            connection_id=connection_id,
-            path=path,
-            project_id=project_id,
-            action="rejected",
-            status_code=4403,
-            client_ip=client_ip,
-            user_id=identity.user_id,
-            detail="forbidden_project_access",
-        )
-        if websocket.client_state == WebSocketState.CONNECTING:
-            await websocket.close(code=4403)
-        return
+        db = SessionLocal()
+        try:
+            mentor_allowed = has_mentor_access(
+                db,
+                project_id=project_id,
+                user_id=identity.user_id,
+                email=identity.email,
+            )
+        finally:
+            db.close()
+        if mentor_allowed:
+            mentor_allowed = True
+        else:
+            write_websocket_audit_log(
+                SessionLocal,
+                connection_id=connection_id,
+                path=path,
+                project_id=project_id,
+                action="rejected",
+                status_code=4403,
+                client_ip=client_ip,
+                user_id=identity.user_id,
+                detail="forbidden_project_access",
+            )
+            if websocket.client_state == WebSocketState.CONNECTING:
+                await websocket.close(code=4403)
+            return
     await websocket.accept()
     write_websocket_audit_log(
         SessionLocal,

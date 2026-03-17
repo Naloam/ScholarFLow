@@ -1,11 +1,8 @@
 import { useEffect } from "react";
 
-import { getAuthToken } from "../api/client";
+import { API_BASE_URL, getAuthToken } from "../api/client";
 import type { ProjectProgressSnapshot } from "../api/types";
 import { useWorkspaceStore } from "../stores/workspace";
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
 
 function getProgressUrl(projectId: string): string {
   const base = new URL(API_BASE_URL);

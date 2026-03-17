@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -14,6 +15,7 @@ class UserRead(BaseModel):
 class AuthSessionRequest(BaseModel):
     email: str
     name: str | None = None
+    role: Literal["student", "tutor"] | None = None
 
 
 class AuthSessionResponse(BaseModel):

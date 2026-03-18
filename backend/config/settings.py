@@ -57,6 +57,10 @@ class Settings(BaseModel):
     llm_model: str | None = os.getenv("LLM_MODEL") or os.getenv("SCHOLARFLOW_LLM_MODEL")
     llm_api_base: str | None = os.getenv("LLM_API_BASE") or os.getenv("OPENAI_API_BASE")
     grobid_url: str = os.getenv("GROBID_URL", "http://localhost:8070")
+    sandbox_backend: str = os.getenv("SANDBOX_BACKEND", "auto")
+    sandbox_command_prefix: list[str] = Field(
+        default_factory=lambda: _split_csv(os.getenv("SANDBOX_COMMAND_PREFIX"), [])
+    )
     rate_limit_requests_per_minute: int = int(os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "0"))
     audit_enabled: bool = Field(
         default_factory=lambda: _get_bool(os.getenv("AUDIT_ENABLED"), True)

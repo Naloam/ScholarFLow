@@ -111,6 +111,20 @@ class PaperWriter:
             if majority_metric is not None
             else "A majority baseline was included as a lower bound."
         )
+        if spec.task_family == "ir_reranking":
+            dataset_sentence = (
+                f"The dataset used in the experiment is `{spec.dataset.name}` with "
+                f"{spec.dataset.train_size} training queries and {spec.dataset.test_size} test queries. "
+                f"Queries are represented through the fields {', '.join(spec.dataset.query_fields or ['query'])}, "
+                f"and each query is associated with up to {spec.dataset.candidate_count or 'unknown'} candidates."
+            )
+        else:
+            dataset_sentence = (
+                f"The dataset used in the experiment is `{spec.dataset.name}` with "
+                f"{spec.dataset.train_size} training examples and {spec.dataset.test_size} test examples. "
+                f"Inputs are represented through the fields {', '.join(spec.dataset.input_fields)}, "
+                f"and labels belong to {{{', '.join(spec.dataset.label_space)}}}."
+            )
 
         return f"""# {plan.title}
 
@@ -143,7 +157,7 @@ Operationally, the run followed this outline:
 ## 3. Method
 The proposed method in the plan is summarized as {plan.proposed_method.lower()} The executable experiment specification narrows that idea into a benchmark with fixed train and test partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is `{benchmark_display}`, described as: {spec.benchmark_description}
 
-The dataset used in the experiment is `{spec.dataset.name}` with {spec.dataset.train_size} training examples and {spec.dataset.test_size} test examples. Inputs are represented through the fields {", ".join(spec.dataset.input_fields)}, and labels belong to {{{", ".join(spec.dataset.label_space)}}}. The compared baselines are {", ".join(item.name for item in spec.baselines)}. The ablation suite contains {", ".join(item.name for item in spec.ablations) if spec.ablations else "no ablations"}.
+{dataset_sentence} The compared baselines are {", ".join(item.name for item in spec.baselines)}. The ablation suite contains {", ".join(item.name for item in spec.ablations) if spec.ablations else "no ablations"}.
 
 Implementation constraints were also explicit:
 {chr(10).join(f"- {item}" for item in spec.implementation_notes)}

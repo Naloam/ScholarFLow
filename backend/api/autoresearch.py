@@ -10,6 +10,7 @@ from schemas.autoresearch import (
     AutoResearchRunRead,
     AutoResearchRunRequest,
     BenchmarkSource,
+    ExecutionBackendSpec,
     TaskFamily,
 )
 from schemas.common import IdResponse
@@ -33,6 +34,9 @@ def _run_autoresearch(
     paper_ids: list[str] | None,
     max_rounds: int,
     benchmark: dict | None,
+    execution_backend: dict | None,
+    auto_search_literature: bool,
+    auto_fetch_literature: bool,
     docker_image: str | None,
     user_id: str | None,
 ) -> None:
@@ -57,6 +61,13 @@ def _run_autoresearch(
             paper_ids=paper_ids,
             max_rounds=max_rounds,
             benchmark_source=BenchmarkSource.model_validate(benchmark) if benchmark else None,
+            execution_backend=(
+                ExecutionBackendSpec.model_validate(execution_backend)
+                if execution_backend
+                else None
+            ),
+            auto_search_literature=auto_search_literature,
+            auto_fetch_literature=auto_fetch_literature,
             docker_image=docker_image,
         )
         status_code = 200 if result.status == "done" else 500
@@ -83,7 +94,13 @@ def run_auto_research(
     background_tasks: BackgroundTasks,
     identity: AuthIdentity | None = Depends(get_identity),
 ) -> IdResponse:
-    run = create_run(project_id, payload.topic, payload.docker_image)
+    run = create_run(
+        project_id,
+        payload.topic,
+        payload.docker_image,
+        payload.benchmark,
+        payload.execution_backend,
+    )
     write_task_audit_log(
         SessionLocal,
         correlation_id=run.id,
@@ -103,6 +120,9 @@ def run_auto_research(
         payload.paper_ids,
         payload.max_rounds,
         payload.benchmark.model_dump(mode="json") if payload.benchmark else None,
+        payload.execution_backend.model_dump(mode="json") if payload.execution_backend else None,
+        payload.auto_search_literature,
+        payload.auto_fetch_literature,
         payload.docker_image,
         identity.user_id if identity else None,
     )

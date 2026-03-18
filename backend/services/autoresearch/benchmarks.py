@@ -219,6 +219,80 @@ TABULAR_BENCHMARK = {
 }
 
 
+IR_BENCHMARK = {
+    "benchmark_name": "toy_cs_reranking",
+    "benchmark_description": (
+        "A compact reranking benchmark with computer science queries, candidate passages, and a "
+        "single relevant document for each query."
+    ),
+    "dataset": {
+        "name": "Toy CS Reranking",
+        "description": (
+            "Three training queries and three held out queries spanning retrieval, systems, and "
+            "program analysis topics."
+        ),
+        "train": [
+            {
+                "query": "dense retrieval with hard negatives",
+                "candidates": [
+                    {"id": "d1", "text": "Dense retrieval encoders use hard negatives to improve passage ranking."},
+                    {"id": "d2", "text": "Pipeline parallelism schedules micro batches across GPUs."},
+                    {"id": "d3", "text": "Static taint analysis reasons about untrusted data."},
+                ],
+                "relevant_ids": ["d1"],
+            },
+            {
+                "query": "gpu serving memory cache compression",
+                "candidates": [
+                    {"id": "d4", "text": "KV cache quantization reduces serving memory footprint and latency."},
+                    {"id": "d5", "text": "Approximate nearest neighbor indices accelerate vector search."},
+                    {"id": "d6", "text": "Symbolic execution enumerates control-flow paths."},
+                ],
+                "relevant_ids": ["d4"],
+            },
+            {
+                "query": "symbolic execution branch coverage",
+                "candidates": [
+                    {"id": "d7", "text": "Symbolic execution generates path constraints for branch coverage."},
+                    {"id": "d8", "text": "Scheduler-aware input pipelines improve accelerator utilization."},
+                    {"id": "d9", "text": "Query expansion improves lexical retrieval recall."},
+                ],
+                "relevant_ids": ["d7"],
+            },
+        ],
+        "test": [
+            {
+                "query": "lexical and vector retrieval ranking",
+                "candidates": [
+                    {"id": "t1", "text": "Cross-encoder rerankers refine top-k search results with token interaction."},
+                    {"id": "t2", "text": "Control-flow graph normalization simplifies compiler passes."},
+                    {"id": "t3", "text": "GPU cache compression reduces serving overhead."},
+                ],
+                "relevant_ids": ["t1"],
+            },
+            {
+                "query": "training throughput in multi-tenant gpu clusters",
+                "candidates": [
+                    {"id": "t4", "text": "Scheduler-aware data loading improves accelerator utilization in clusters."},
+                    {"id": "t5", "text": "Abstract interpretation proves absence of overflow."},
+                    {"id": "t6", "text": "Pseudo relevance feedback improves document recall."},
+                ],
+                "relevant_ids": ["t4"],
+            },
+            {
+                "query": "program analysis for taint propagation",
+                "candidates": [
+                    {"id": "t7", "text": "Static taint analysis tracks untrusted data through dependence graphs."},
+                    {"id": "t8", "text": "CUDA kernel fusion lowers transformer inference latency."},
+                    {"id": "t9", "text": "Approximate nearest neighbor indexing accelerates search."},
+                ],
+                "relevant_ids": ["t7"],
+            },
+        ],
+    },
+}
+
+
 @dataclass(frozen=True)
 class ResolvedBenchmark:
     source: BenchmarkSource
@@ -232,6 +306,9 @@ def infer_task_family(topic: str, task_family_hint: TaskFamily | None = None) ->
     if task_family_hint:
         return task_family_hint
     normalized = topic.strip().lower()
+    ir_hints = ["rerank", "retrieval benchmark", "ranking", "ir", "beir", "搜索排序", "信息检索"]
+    if any(token in normalized for token in ir_hints):
+        return "ir_reranking"
     tabular_hints = ["tabular", "table", "表格", "配置", "超参数", "stability", "feature"]
     if any(token in normalized for token in tabular_hints):
         return "tabular_classification"
@@ -239,12 +316,20 @@ def infer_task_family(topic: str, task_family_hint: TaskFamily | None = None) ->
 
 
 def benchmark_payload_for(task_family: TaskFamily) -> dict[str, Any]:
+    if task_family == "ir_reranking":
+        return IR_BENCHMARK
     if task_family == "tabular_classification":
         return TABULAR_BENCHMARK
     return TEXT_BENCHMARK
 
 
 def default_search_strategies(task_family: TaskFamily) -> list[str]:
+    if task_family == "ir_reranking":
+        return [
+            "overlap_baseline_search",
+            "idf_reranker_search",
+            "bigram_reranker_search",
+        ]
     if task_family == "tabular_classification":
         return [
             "threshold_rule_search",
@@ -279,7 +364,37 @@ def build_experiment_spec(
 ) -> ExperimentSpec:
     resolved = benchmark or builtin_benchmark(task_family)
     dataset_payload = resolved.payload
-    if task_family == "tabular_classification":
+    if task_family == "ir_reranking":
+        baselines = [
+            BaselineSpec(name="random_ranker", description="Return the candidates in their original order."),
+            BaselineSpec(name="overlap_ranker", description="Rank by lexical overlap between query and document."),
+            BaselineSpec(name="idf_ranker", description="Weight rare query terms higher during lexical scoring."),
+        ]
+        metrics = [
+            MetricSpec(name="mrr", goal="maximize", description="Mean reciprocal rank."),
+            MetricSpec(name="recall_at_1", goal="maximize", description="Whether the relevant document is ranked first."),
+        ]
+        ablations = [
+            AblationSpec(
+                name="bigram_ranker",
+                description="Add query-document bigram overlap as a higher-order lexical reranking signal.",
+            )
+        ]
+        notes = [
+            "Use only Python standard library utilities.",
+            "Treat each example as a query with a short candidate list.",
+            "Report MRR and Recall@1 on the held-out split.",
+            "Support BEIR-style normalized JSON as an external adapter target.",
+        ]
+        hypothesis = (
+            "A lexical reranker with rarity-aware term weighting should outperform the random order "
+            "and simple overlap baselines on a small computer science retrieval benchmark."
+        )
+        input_fields = []
+        label_space = []
+        query_fields = ["query"]
+        candidate_count = max((len(item.get("candidates", [])) for item in dataset_payload["test"]), default=0)
+    elif task_family == "tabular_classification":
         baselines = [
             BaselineSpec(name="majority", description="Predict the most frequent stability label."),
             BaselineSpec(
@@ -313,6 +428,8 @@ def build_experiment_spec(
         )
         input_fields = dataset_payload["feature_names"]
         label_space = ["stable", "unstable"]
+        query_fields = []
+        candidate_count = None
     else:
         baselines = [
             BaselineSpec(name="majority", description="Predict the most frequent topic label."),
@@ -347,6 +464,8 @@ def build_experiment_spec(
         )
         input_fields = ["text"]
         label_space = ["retrieval", "ml_systems", "program_analysis"]
+        query_fields = []
+        candidate_count = None
 
     return ExperimentSpec(
         task_family=task_family,
@@ -359,6 +478,8 @@ def build_experiment_spec(
             test_size=len(dataset_payload["test"]),
             input_fields=input_fields,
             label_space=label_space,
+            query_fields=query_fields,
+            candidate_count=candidate_count,
         ),
         baselines=baselines,
         metrics=metrics,

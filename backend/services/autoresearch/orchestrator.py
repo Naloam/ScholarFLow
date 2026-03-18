@@ -5,14 +5,16 @@ from sqlalchemy.orm import Session
 from schemas.autoresearch import (
     AutoResearchRunRead,
     BenchmarkSource,
+    ExecutionBackendSpec,
     ExperimentAttempt,
     ResultArtifact,
     TaskFamily,
 )
 from services.autoresearch.benchmarks import build_experiment_spec
 from services.autoresearch.ingestion import resolve_benchmark
-from services.autoresearch.literature import derive_literature_insights
+from services.autoresearch.literature_pipeline import gather_literature_context
 from services.autoresearch.planner import ResearchPlanner
+from services.autoresearch.repair import ExperimentRepairEngine
 from services.autoresearch.repository import (
     load_run,
     paper_file_path,
@@ -22,36 +24,15 @@ from services.autoresearch.repository import (
 from services.autoresearch.runner import AutoExperimentRunner
 from services.autoresearch.writer import PaperWriter
 from services.drafts.repository import create_draft
-from services.papers.repository import list_papers
 from services.projects.repository import set_project_status
-from services.search.repository import get_latest_search_result
 
 
 class AutoResearchOrchestrator:
     def __init__(self) -> None:
         self.planner = ResearchPlanner()
+        self.repair = ExperimentRepairEngine()
         self.runner = AutoExperimentRunner()
         self.writer = PaperWriter()
-
-    def _select_literature(
-        self,
-        *,
-        db: Session,
-        project_id: str,
-        paper_ids: list[str] | None,
-    ):
-        papers = list_papers(db, project_id)
-        if paper_ids:
-            paper_id_set = set(paper_ids)
-            papers = [paper for paper in papers if paper.id in paper_id_set]
-        if papers:
-            return papers, derive_literature_insights(papers)
-
-        latest = get_latest_search_result(db, project_id)
-        if latest is None:
-            return [], []
-        papers = latest.items
-        return papers, derive_literature_insights(papers)
 
     def _attempt_goal(self, attempts: list[ExperimentAttempt], round_index: int) -> str:
         if round_index == 1:
@@ -106,6 +87,9 @@ class AutoResearchOrchestrator:
         paper_ids: list[str] | None = None,
         max_rounds: int = 3,
         benchmark_source: BenchmarkSource | None = None,
+        execution_backend: ExecutionBackendSpec | None = None,
+        auto_search_literature: bool = True,
+        auto_fetch_literature: bool = False,
         docker_image: str | None = None,
     ) -> AutoResearchRunRead:
         run = load_run(project_id, run_id)
@@ -115,10 +99,16 @@ class AutoResearchOrchestrator:
         set_project_status(db, project_id, "write")
         run = save_run(run.model_copy(update={"status": "running"}))
         try:
-            papers, literature = self._select_literature(
+            effective_backend = execution_backend or run.execution_backend
+            if effective_backend is None and docker_image:
+                effective_backend = ExecutionBackendSpec(docker_image=docker_image)
+            papers, literature, chunk_context = gather_literature_context(
                 db=db,
                 project_id=project_id,
+                topic=topic,
                 paper_ids=paper_ids,
+                auto_search=auto_search_literature,
+                auto_fetch=auto_fetch_literature,
             )
             benchmark = resolve_benchmark(
                 topic=topic,
@@ -155,6 +145,7 @@ class AutoResearchOrchestrator:
                     update={
                         "task_family": plan.task_family,
                         "benchmark": benchmark.source,
+                        "execution_backend": effective_backend,
                         "plan": plan,
                         "spec": spec,
                         "literature": literature,
@@ -168,18 +159,54 @@ class AutoResearchOrchestrator:
 
             for round_index in range(1, total_rounds + 1):
                 goal = self._attempt_goal(attempts, round_index)
-                strategy, code_path, artifact = self.runner.run(
-                    project_id=project_id,
-                    run_id=run_id,
-                    plan=plan,
-                    spec=spec,
-                    benchmark_payload=benchmark.payload,
-                    round_index=round_index,
-                    goal=goal,
-                    prior_attempts=attempts,
-                    docker_image=docker_image,
-                )
+                if goal == "repair_previous_failure" and attempts:
+                    repair_strategy, repaired_code = self.repair.repair(
+                        previous_attempt=attempts[-1],
+                        plan=plan,
+                        spec=spec,
+                        benchmark_payload=benchmark.payload,
+                    )
+                    if repair_strategy != "repair_regenerate":
+                        strategy, code_path, artifact = self.runner.run(
+                            project_id=project_id,
+                            run_id=run_id,
+                            plan=plan,
+                            spec=spec,
+                            benchmark_payload=benchmark.payload,
+                            round_index=round_index,
+                            goal=goal,
+                            prior_attempts=attempts,
+                            execution_backend=effective_backend,
+                            code_override=repaired_code,
+                            strategy_override=repair_strategy,
+                        )
+                    else:
+                        strategy, code_path, artifact = self.runner.run(
+                            project_id=project_id,
+                            run_id=run_id,
+                            plan=plan,
+                            spec=spec,
+                            benchmark_payload=benchmark.payload,
+                            round_index=round_index,
+                            goal=goal,
+                            prior_attempts=attempts,
+                            execution_backend=effective_backend,
+                        )
+                else:
+                    strategy, code_path, artifact = self.runner.run(
+                        project_id=project_id,
+                        run_id=run_id,
+                        plan=plan,
+                        spec=spec,
+                        benchmark_payload=benchmark.payload,
+                        round_index=round_index,
+                        goal=goal,
+                        prior_attempts=attempts,
+                        execution_backend=effective_backend,
+                    )
                 artifact.environment.setdefault("benchmark_snapshot_path", benchmark_snapshot_path)
+                if chunk_context:
+                    artifact.environment.setdefault("literature_chunk_context", chunk_context)
                 critique = self._attempt_critique(artifact, attempts)
                 attempt = ExperimentAttempt(
                     round_index=round_index,

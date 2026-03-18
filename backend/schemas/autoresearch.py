@@ -6,14 +6,35 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-TaskFamily = Literal["text_classification", "tabular_classification"]
-BenchmarkKind = Literal["builtin", "remote_csv", "remote_jsonl", "remote_json"]
+TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking"]
+BenchmarkKind = Literal[
+    "builtin",
+    "remote_csv",
+    "remote_jsonl",
+    "remote_json",
+    "huggingface_file",
+    "openml_file",
+    "beir_json",
+]
+ExecutionBackendKind = Literal["auto", "local", "docker", "docker_gpu", "command"]
+
+
+class ExecutionBackendSpec(BaseModel):
+    kind: ExecutionBackendKind = "auto"
+    docker_image: str | None = None
+    timeout_seconds: int = 300
+    gpu_required: bool = False
+    command_prefix: list[str] = Field(default_factory=list)
 
 
 class BenchmarkSource(BaseModel):
     kind: BenchmarkKind = "builtin"
     name: str | None = None
     url: str | None = None
+    dataset_id: str | None = None
+    revision: str | None = None
+    file_path: str | None = None
+    subset: str | None = None
     task_family_hint: TaskFamily | None = None
     text_field: str | None = None
     label_field: str | None = None
@@ -23,6 +44,11 @@ class BenchmarkSource(BaseModel):
     test_split_values: list[str] = Field(default_factory=lambda: ["test", "validation", "dev"])
     test_ratio: float = 0.3
     limit_rows: int | None = None
+    query_field: str | None = None
+    candidates_field: str | None = None
+    candidate_text_field: str | None = None
+    candidate_id_field: str | None = None
+    relevant_ids_field: str | None = None
 
 
 class AutoResearchRunRequest(BaseModel):
@@ -33,6 +59,9 @@ class AutoResearchRunRequest(BaseModel):
     paper_ids: list[str] | None = None
     max_rounds: int = 3
     benchmark: BenchmarkSource | None = None
+    execution_backend: ExecutionBackendSpec | None = None
+    auto_search_literature: bool = False
+    auto_fetch_literature: bool = False
 
 
 class DatasetSpec(BaseModel):
@@ -42,6 +71,8 @@ class DatasetSpec(BaseModel):
     test_size: int
     input_fields: list[str] = Field(default_factory=list)
     label_space: list[str] = Field(default_factory=list)
+    query_fields: list[str] = Field(default_factory=list)
+    candidate_count: int | None = None
 
 
 class BaselineSpec(BaseModel):
@@ -142,6 +173,7 @@ class AutoResearchRunRead(BaseModel):
     status: Literal["queued", "running", "done", "failed"]
     task_family: TaskFamily | None = None
     benchmark: BenchmarkSource | None = None
+    execution_backend: ExecutionBackendSpec | None = None
     plan: ResearchPlan | None = None
     spec: ExperimentSpec | None = None
     literature: list[LiteratureInsight] = Field(default_factory=list)

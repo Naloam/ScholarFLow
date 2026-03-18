@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agents.sandbox_agent import SandboxAgent
-from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, ResearchPlan, ResultArtifact
+from schemas.autoresearch import (
+    ExecutionBackendSpec,
+    ExperimentAttempt,
+    ExperimentSpec,
+    ResearchPlan,
+    ResultArtifact,
+)
 from services.autoresearch.codegen import ExperimentCodeGenerator
 from services.autoresearch.repository import save_generated_code
 
@@ -79,22 +86,35 @@ class AutoExperimentRunner:
         round_index: int,
         goal: str,
         prior_attempts: list[ExperimentAttempt],
-        docker_image: str | None = None,
+        execution_backend: ExecutionBackendSpec | None = None,
+        code_override: str | None = None,
+        strategy_override: str | None = None,
     ) -> tuple[str, str, ResultArtifact]:
-        strategy, code = self.codegen.generate(
-            plan=plan,
-            spec=spec,
-            benchmark_payload=benchmark_payload,
-            round_index=round_index,
-            goal=goal,
-            prior_attempts=prior_attempts,
+        if code_override is not None and strategy_override is not None:
+            strategy, code = strategy_override, code_override
+        else:
+            strategy, code = self.codegen.generate(
+                plan=plan,
+                spec=spec,
+                benchmark_payload=benchmark_payload,
+                round_index=round_index,
+                goal=goal,
+                prior_attempts=prior_attempts,
+            )
+        safe_strategy = re.sub(r"[^a-zA-Z0-9_]+", "_", strategy).strip("_") or "attempt"
+        code_path = save_generated_code(
+            project_id,
+            run_id,
+            code,
+            filename=f"experiment_round_{round_index}_{safe_strategy}.py",
         )
-        code_path = save_generated_code(project_id, run_id, code)
         result = self.sandbox.run(
             {
                 "project_id": project_id,
                 "code": code,
-                "docker_image": docker_image,
+                "execution_backend": (
+                    execution_backend.model_dump(mode="json") if execution_backend else None
+                ),
             }
         )
         logs = str(result.get("logs") or "")

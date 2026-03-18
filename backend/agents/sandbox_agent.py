@@ -13,6 +13,7 @@ class SandboxAgent(BaseAgent):
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
         project_id = payload.get("project_id") or ""
         code = payload.get("code") or ""
+        env = payload.get("env") if isinstance(payload.get("env"), dict) else None
         backend_payload = payload.get("execution_backend")
         backend = (
             ExecutionBackendSpec.model_validate(backend_payload)
@@ -21,5 +22,5 @@ class SandboxAgent(BaseAgent):
         )
         if backend is None and payload.get("docker_image"):
             backend = ExecutionBackendSpec(docker_image=payload.get("docker_image"))
-        logs, outputs = run_python_in_sandbox(project_id, code, backend)
+        logs, outputs = run_python_in_sandbox(project_id, code, backend, env)
         return {"logs": logs, "outputs": outputs}

@@ -10,6 +10,7 @@ from schemas.autoresearch import (
     DatasetSpec,
     ExperimentSpec,
     MetricSpec,
+    SweepConfig,
     TaskFamily,
 )
 
@@ -343,6 +344,68 @@ def default_search_strategies(task_family: TaskFamily) -> list[str]:
     ]
 
 
+def default_seeds() -> list[int]:
+    return [7, 13]
+
+
+def default_sweeps(task_family: TaskFamily) -> list[SweepConfig]:
+    if task_family == "ir_reranking":
+        return [
+            SweepConfig(
+                label="default",
+                params={"idf_smoothing": 1.0, "bigram_bonus": 0.5},
+                description="Default rarity weighting with a modest bigram bonus.",
+            ),
+            SweepConfig(
+                label="rarity_boosted",
+                params={"idf_smoothing": 1.4, "bigram_bonus": 0.9},
+                description="Increase IDF smoothing and emphasize bigram overlap.",
+            ),
+        ]
+    if task_family == "tabular_classification":
+        return [
+            SweepConfig(
+                label="default",
+                params={
+                    "perceptron_epochs": 15,
+                    "perceptron_scaled_epochs": 20,
+                    "perceptron_learning_rate": 1.0,
+                },
+                description="Baseline perceptron training budget.",
+            ),
+            SweepConfig(
+                label="longer_training",
+                params={
+                    "perceptron_epochs": 24,
+                    "perceptron_scaled_epochs": 32,
+                    "perceptron_learning_rate": 0.8,
+                },
+                description="Longer training with a slightly smaller step size.",
+            ),
+        ]
+    return [
+        SweepConfig(
+            label="default",
+            params={"keyword_top_k": 8, "naive_bayes_order": 1, "limited_vocab_limit": 12},
+            description="Unigram lexical baseline with compact limited vocabulary.",
+        ),
+        SweepConfig(
+            label="higher_order_lexical",
+            params={"keyword_top_k": 10, "naive_bayes_order": 2, "limited_vocab_limit": 16},
+            description="Broader keyword coverage and bigram naive Bayes features.",
+        ),
+    ]
+
+
+def default_acceptance_criteria(task_family: TaskFamily) -> list[str]:
+    baseline = "random baseline" if task_family == "ir_reranking" else "majority baseline"
+    return [
+        f"Objective system should outperform the {baseline} on mean primary metric.",
+        "Selected sweep should execute successfully for every requested seed.",
+        "Aggregate reporting should include mean and standard deviation for the primary metric.",
+    ]
+
+
 def builtin_benchmark(
     task_family: TaskFamily,
     source: BenchmarkSource | None = None,
@@ -487,4 +550,7 @@ def build_experiment_spec(
         ablations=ablations,
         implementation_notes=notes,
         search_strategies=default_search_strategies(task_family),
+        seeds=default_seeds(),
+        sweeps=default_sweeps(task_family),
+        acceptance_criteria=default_acceptance_criteria(task_family),
     )

@@ -20,6 +20,7 @@ def run_python_in_sandbox(
     project_id: str,
     code: str,
     execution_backend: ExecutionBackendSpec | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[str, dict]:
     spec = execution_backend or ExecutionBackendSpec()
     image = spec.docker_image or DEFAULT_IMAGE
@@ -28,6 +29,7 @@ def run_python_in_sandbox(
         workdir=workdir,
         timeout_seconds=spec.timeout_seconds,
         docker_image=image,
+        env=env or {},
     )
     backend = resolve_backend(spec)
     try:

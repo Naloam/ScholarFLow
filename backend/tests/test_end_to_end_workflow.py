@@ -220,7 +220,11 @@ def test_analysis_summary_flags_high_overlap_against_project_sources(
         update_draft = client.put(
             f"/api/projects/{project_id}/drafts/1",
             json={
-                "content": f"{overlapping_paragraph}\n\nThis paragraph adds enough surrounding context to stay realistic.",
+                "content": (
+                    "## Related Work\n"
+                    f"{overlapping_paragraph}\n\n"
+                    "This paragraph adds enough surrounding context to stay realistic."
+                ),
                 "section": "introduction",
             },
         )

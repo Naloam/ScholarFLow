@@ -9,6 +9,7 @@ try:
 except Exception:  # pragma: no cover
     litellm_embedding = None
 
+from services.llm.response_utils import get_field, get_usage_fields
 from services.telemetry.usage import estimate_text_tokens, record_usage_event
 
 
@@ -39,8 +40,8 @@ def embed_texts(texts: List[str], model: str | None = None) -> list[list[float]]
         return vectors
 
     resp = litellm_embedding(model=model, input=texts)
-    data = resp.get("data", [])
-    usage = resp.get("usage", {}) if isinstance(resp, dict) else {}
+    data = get_field(resp, "data", []) or []
+    usage = get_usage_fields(resp)
     record_usage_event(
         source="embedding",
         model=model,
@@ -48,4 +49,4 @@ def embed_texts(texts: List[str], model: str | None = None) -> list[list[float]]
         completion_tokens=0,
         duration_ms=int((perf_counter() - started) * 1000),
     )
-    return [d.get("embedding", []) for d in data]
+    return [get_field(d, "embedding", []) or [] for d in data]

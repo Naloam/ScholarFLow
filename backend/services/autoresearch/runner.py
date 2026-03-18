@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from typing import Any
+
+from agents.sandbox_agent import SandboxAgent
+from schemas.autoresearch import ExperimentSpec, ResearchPlan, ResultArtifact
+from services.autoresearch.codegen import ExperimentCodeGenerator
+from services.autoresearch.repository import save_generated_code
+
+
+class AutoExperimentRunner:
+    def __init__(self) -> None:
+        self.codegen = ExperimentCodeGenerator()
+        self.sandbox = SandboxAgent()
+
+    def _build_failed_artifact(self, logs: str, outputs: dict[str, Any]) -> ResultArtifact:
+        return ResultArtifact(
+            status="failed",
+            summary="The experiment failed before producing a structured result artifact.",
+            primary_metric="macro_f1",
+            logs=logs,
+            environment={
+                "executor_mode": outputs.get("executor_mode"),
+                "docker_image": outputs.get("docker_image"),
+                "workdir": outputs.get("workdir"),
+                "duration_ms": outputs.get("duration_ms"),
+                "host_platform": outputs.get("host_platform"),
+                "host_python": outputs.get("host_python"),
+            },
+            outputs=outputs,
+        )
+
+    def _build_artifact(self, logs: str, outputs: dict[str, Any]) -> ResultArtifact:
+        payload = outputs.get("result")
+        if not isinstance(payload, dict):
+            return self._build_failed_artifact(logs, outputs)
+
+        payload_environment = payload.get("environment")
+        environment = payload_environment if isinstance(payload_environment, dict) else {}
+        environment.update(
+            {
+                "executor_mode": outputs.get("executor_mode"),
+                "docker_image": outputs.get("docker_image"),
+                "workdir": outputs.get("workdir"),
+                "duration_ms": outputs.get("duration_ms"),
+                "host_platform": outputs.get("host_platform"),
+                "host_python": outputs.get("host_python"),
+            }
+        )
+        return ResultArtifact(
+            status="done" if outputs.get("returncode", 1) == 0 else "failed",
+            summary=str(payload.get("summary") or "Experiment completed."),
+            key_findings=[
+                str(item)
+                for item in (payload.get("key_findings") or [])
+                if isinstance(item, str) and item.strip()
+            ],
+            primary_metric=str(payload.get("primary_metric") or "macro_f1"),
+            best_system=(
+                str(payload.get("best_system"))
+                if payload.get("best_system") is not None
+                else None
+            ),
+            system_results=payload.get("system_results") or [],
+            tables=payload.get("tables") or [],
+            logs=logs,
+            environment=environment,
+            outputs=outputs,
+        )
+
+    def run(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        docker_image: str | None = None,
+    ) -> tuple[str, ResultArtifact]:
+        code = self.codegen.generate(plan, spec)
+        code_path = save_generated_code(project_id, run_id, code)
+        result = self.sandbox.run(
+            {
+                "project_id": project_id,
+                "code": code,
+                "docker_image": docker_image,
+            }
+        )
+        logs = str(result.get("logs") or "")
+        outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
+        artifact = self._build_artifact(logs, outputs)
+        artifact.environment.setdefault("generated_code_path", code_path)
+        return code_path, artifact

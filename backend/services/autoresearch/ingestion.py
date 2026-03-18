@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import PurePosixPath
 from typing import Any, Protocol
+from urllib.parse import urlencode
 
 import httpx
 
@@ -21,6 +22,13 @@ def _fetch_remote_text(url: str) -> str:
         response = client.get(url)
         response.raise_for_status()
         return response.text
+
+
+def _fetch_remote_bytes(url: str) -> bytes:
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        return response.content
 
 
 def _fetch_remote_json(url: str) -> dict[str, Any]:
@@ -114,6 +122,31 @@ def _parser_for_path(path: str):
     if lower.endswith(".jsonl"):
         return _rows_from_jsonl
     return _rows_from_json
+
+
+def _rows_from_parquet_bytes(payload: bytes) -> list[dict[str, Any]]:
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:  # pragma: no cover - depends on optional runtime extra
+        raise BenchmarkIngestionError(
+            "Direct parquet reads require pyarrow; use datasets-server-backed discovery or install pyarrow"
+        ) from exc
+
+    try:
+        table = pq.read_table(io.BytesIO(payload))
+    except Exception as exc:  # pragma: no cover - exercised via adapter-level errors
+        raise BenchmarkIngestionError(f"Unable to decode parquet benchmark payload: {exc}") from exc
+
+    rows = table.to_pylist()
+    if not isinstance(rows, list):
+        raise BenchmarkIngestionError("Parquet benchmark did not decode into a row list")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _load_remote_payload(path: str, url: str) -> Any:
+    if path.lower().endswith(".parquet"):
+        return _rows_from_parquet_bytes(_fetch_remote_bytes(url))
+    return _parser_for_path(path)(_fetch_remote_text(url))
 
 
 def _normalize_text_rows(
@@ -364,6 +397,23 @@ def _normalize_pre_split_json(source: BenchmarkSource, payload: dict[str, Any], 
     )
 
 
+def _normalize_dataset_payload(
+    source: BenchmarkSource,
+    task_family: TaskFamily,
+    parsed: Any,
+    name: str,
+) -> dict[str, Any]:
+    if isinstance(parsed, dict) and "train" in parsed and "test" in parsed:
+        return _normalize_pre_split_json(source, parsed, task_family, name)
+    if isinstance(parsed, list):
+        if task_family == "tabular_classification":
+            return _normalize_tabular_dataset(source, parsed, name)
+        if task_family == "ir_reranking":
+            return _normalize_ir_dataset(source, parsed, name)
+        return _normalize_text_dataset(source, parsed, name)
+    raise BenchmarkIngestionError("Unsupported remote benchmark payload format")
+
+
 def _normalize_beir_payload(source: BenchmarkSource, payload: dict[str, Any], name: str) -> dict[str, Any]:
     if "train" in payload and "test" in payload:
         return _normalize_pre_split_json(source, payload, "ir_reranking", name)
@@ -432,17 +482,8 @@ class RemoteFileAdapter:
         parsed = self.parser(raw)
         if self.kind == "beir_json":
             payload = _normalize_beir_payload(source, parsed, name)
-        elif isinstance(parsed, dict) and "train" in parsed and "test" in parsed:
-            payload = _normalize_pre_split_json(source, parsed, task_family, name)
-        elif isinstance(parsed, list):
-            if task_family == "tabular_classification":
-                payload = _normalize_tabular_dataset(source, parsed, name)
-            elif task_family == "ir_reranking":
-                payload = _normalize_ir_dataset(source, parsed, name)
-            else:
-                payload = _normalize_text_dataset(source, parsed, name)
         else:
-            raise BenchmarkIngestionError("Unsupported remote benchmark payload format")
+            payload = _normalize_dataset_payload(source, task_family, parsed, name)
 
         return ResolvedBenchmark(
             source=source,
@@ -470,6 +511,9 @@ class RemoteJSONAdapter(RemoteFileAdapter):
 
 class HuggingFaceFileAdapter(RemoteFileAdapter):
     kind = "huggingface_file"
+    datasets_server_base = "https://datasets-server.huggingface.co"
+    datasets_server_page_size = 100
+    datasets_server_max_rows = 200
 
     def _metadata_url(self, source: BenchmarkSource) -> str:
         if not source.dataset_id:
@@ -481,6 +525,192 @@ class HuggingFaceFileAdapter(RemoteFileAdapter):
             raise BenchmarkIngestionError("huggingface_file requires dataset_id")
         revision = source.revision or "main"
         return f"https://huggingface.co/datasets/{source.dataset_id}/resolve/{revision}/{path}"
+
+    def _datasets_server_url(self, endpoint: str, source: BenchmarkSource, **params: Any) -> str:
+        if not source.dataset_id:
+            raise BenchmarkIngestionError("huggingface_file requires dataset_id")
+        query: dict[str, Any] = {"dataset": source.dataset_id}
+        query.update({key: value for key, value in params.items() if value is not None})
+        return f"{self.datasets_server_base}/{endpoint}?{urlencode(query)}"
+
+    def _choose_config(self, source: BenchmarkSource, splits: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for entry in splits:
+            config = str(entry.get("config", "")).strip() or "default"
+            grouped.setdefault(config, []).append(entry)
+
+        if source.subset:
+            entries = grouped.get(source.subset)
+            if entries:
+                return source.subset, entries
+            raise BenchmarkIngestionError(
+                f"datasets-server does not expose config '{source.subset}' for dataset {source.dataset_id}"
+            )
+
+        if "default" in grouped:
+            return "default", grouped["default"]
+
+        train_markers = tuple(value.lower() for value in source.train_split_values)
+        test_markers = tuple(value.lower() for value in source.test_split_values)
+        for config, entries in grouped.items():
+            names = [str(entry.get("split", "")).lower() for entry in entries]
+            has_train = any(any(marker in name for marker in train_markers) for name in names)
+            has_test = any(any(marker in name for marker in test_markers) for name in names)
+            if has_train and has_test:
+                return config, entries
+
+        first_config = next(iter(grouped), None)
+        if first_config is None:
+            raise BenchmarkIngestionError(f"datasets-server returned no split configs for {source.dataset_id}")
+        return first_config, grouped[first_config]
+
+    def _match_split(
+        self,
+        entries: list[dict[str, Any]],
+        markers: tuple[str, ...],
+        *,
+        exclude: str | None = None,
+    ) -> str | None:
+        for entry in entries:
+            split = str(entry.get("split", "")).strip()
+            if not split or split == exclude:
+                continue
+            split_lower = split.lower()
+            if any(marker in split_lower for marker in markers):
+                return split
+        return None
+
+    def _datasets_server_rows(
+        self,
+        source: BenchmarkSource,
+        *,
+        config: str,
+        split: str,
+        max_rows: int,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        target = max(1, max_rows)
+        while len(rows) < target:
+            page_size = min(self.datasets_server_page_size, target - len(rows))
+            payload = _fetch_remote_json(
+                self._datasets_server_url(
+                    "rows",
+                    source,
+                    config=config,
+                    split=split,
+                    offset=offset,
+                    length=page_size,
+                )
+            )
+            page_rows_raw = payload.get("rows")
+            if not isinstance(page_rows_raw, list):
+                raise BenchmarkIngestionError(
+                    f"datasets-server rows response for split '{split}' is missing row data"
+                )
+            page_rows = [
+                item["row"]
+                for item in page_rows_raw
+                if isinstance(item, dict) and isinstance(item.get("row"), dict)
+            ]
+            if not page_rows:
+                break
+            rows.extend(page_rows)
+            offset += len(page_rows)
+            if len(page_rows) < page_size:
+                break
+            total = payload.get("num_rows_total")
+            if isinstance(total, int) and offset >= total:
+                break
+        return rows
+
+    def _load_via_datasets_server(
+        self,
+        source: BenchmarkSource,
+        task_family: TaskFamily,
+    ) -> ResolvedBenchmark:
+        splits_payload = _fetch_remote_json(self._datasets_server_url("splits", source))
+        split_entries_raw = splits_payload.get("splits")
+        if not isinstance(split_entries_raw, list) or not split_entries_raw:
+            raise BenchmarkIngestionError(
+                f"datasets-server returned no splits for dataset {source.dataset_id}"
+            )
+
+        split_entries = [entry for entry in split_entries_raw if isinstance(entry, dict)]
+        config, config_entries = self._choose_config(source, split_entries)
+        train_split = self._match_split(
+            config_entries,
+            tuple(value.lower() for value in source.train_split_values),
+        )
+        test_split = self._match_split(
+            config_entries,
+            tuple(value.lower() for value in source.test_split_values),
+            exclude=train_split,
+        )
+        if train_split is None:
+            available = ", ".join(
+                sorted({str(entry.get("split", "")).strip() for entry in config_entries if entry.get("split")})
+            )
+            raise BenchmarkIngestionError(
+                f"datasets-server did not expose a train split for dataset {source.dataset_id} "
+                f"(config={config}, available={available or 'none'})"
+            )
+
+        row_budget = source.limit_rows or self.datasets_server_max_rows
+        dataset_url = f"https://huggingface.co/datasets/{source.dataset_id}"
+        source = source.model_copy(update={"url": dataset_url})
+        name = source.name or source.dataset_id or _default_name(source)
+
+        if test_split:
+            train_rows = self._datasets_server_rows(
+                source,
+                config=config,
+                split=train_split,
+                max_rows=row_budget,
+            )
+            test_rows = self._datasets_server_rows(
+                source,
+                config=config,
+                split=test_split,
+                max_rows=row_budget,
+            )
+            if not train_rows or not test_rows:
+                raise BenchmarkIngestionError(
+                    f"datasets-server returned empty rows for dataset {source.dataset_id} "
+                    f"(config={config}, train={train_split}, test={test_split})"
+                )
+            payload = _normalize_pre_split_rows(
+                source,
+                train_rows,
+                test_rows,
+                task_family,
+                name,
+                f"Hugging Face dataset {source.dataset_id} loaded via datasets-server ({config}: {train_split}/{test_split}).",
+            )
+            payload["source_config"] = config
+            payload["source_splits"] = [train_split, test_split]
+        else:
+            rows = self._datasets_server_rows(
+                source,
+                config=config,
+                split=train_split,
+                max_rows=max(row_budget, 8),
+            )
+            if not rows:
+                raise BenchmarkIngestionError(
+                    f"datasets-server returned no rows for dataset {source.dataset_id} "
+                    f"(config={config}, split={train_split})"
+                )
+            payload = _normalize_dataset_payload(source, task_family, rows, name)
+            payload["source_config"] = config
+            payload["source_splits"] = [train_split]
+        return ResolvedBenchmark(
+            source=source,
+            task_family=task_family,
+            payload=payload,
+            benchmark_name=payload.get("name") or name,
+            benchmark_description=payload.get("description") or f"Remote benchmark pulled from {source.url}",
+        )
 
     def _discover_paths(self, source: BenchmarkSource) -> tuple[str | None, str | None]:
         metadata = _fetch_remote_json(self._metadata_url(source))
@@ -502,11 +732,11 @@ class HuggingFaceFileAdapter(RemoteFileAdapter):
         supported = [
             path
             for path in candidates
-            if path.lower().endswith((".csv", ".jsonl", ".json"))
+            if path.lower().endswith((".csv", ".jsonl", ".json", ".parquet"))
         ]
         if not supported:
             raise BenchmarkIngestionError(
-                f"No supported CSV/JSON/JSONL files were found for dataset {source.dataset_id}"
+                f"No supported CSV/JSON/JSONL/Parquet files were found for dataset {source.dataset_id}"
             )
         train_markers = tuple(value.lower() for value in source.train_split_values)
         test_markers = tuple(value.lower() for value in source.test_split_values)
@@ -538,26 +768,29 @@ class HuggingFaceFileAdapter(RemoteFileAdapter):
         if source.file_path:
             path = source.file_path
             source = source.model_copy(update={"url": self._resolve_path(source, path)})
-            parsed = _parser_for_path(path)(_fetch_remote_text(source.url or ""))
+            parsed = _load_remote_payload(path, source.url or "")
             name = source.name or PurePosixPath(path).name or _default_name(source)
-            if isinstance(parsed, dict) and "train" in parsed and "test" in parsed:
-                payload = _normalize_pre_split_json(source, parsed, task_family, name)
-            elif isinstance(parsed, list):
-                if task_family == "tabular_classification":
-                    payload = _normalize_tabular_dataset(source, parsed, name)
-                elif task_family == "ir_reranking":
-                    payload = _normalize_ir_dataset(source, parsed, name)
-                else:
-                    payload = _normalize_text_dataset(source, parsed, name)
-            else:
-                raise BenchmarkIngestionError("Unsupported huggingface benchmark payload format")
+            payload = _normalize_dataset_payload(source, task_family, parsed, name)
         else:
-            train_path, test_path = self._discover_paths(source)
+            datasets_server_error: str | None = None
+            try:
+                return self._load_via_datasets_server(source, task_family)
+            except BenchmarkIngestionError as exc:
+                datasets_server_error = str(exc)
+
+            try:
+                train_path, test_path = self._discover_paths(source)
+            except BenchmarkIngestionError as exc:
+                raise BenchmarkIngestionError(
+                    f"Unable to ingest Hugging Face dataset {source.dataset_id}: "
+                    f"datasets-server failed ({datasets_server_error}); file discovery failed ({exc})"
+                ) from exc
+
             if not train_path:
                 raise BenchmarkIngestionError("Unable to discover supported files for the Hugging Face dataset")
             if test_path:
-                train_rows = _parser_for_path(train_path)(_fetch_remote_text(self._resolve_path(source, train_path)))
-                test_rows = _parser_for_path(test_path)(_fetch_remote_text(self._resolve_path(source, test_path)))
+                train_rows = _load_remote_payload(train_path, self._resolve_path(source, train_path))
+                test_rows = _load_remote_payload(test_path, self._resolve_path(source, test_path))
                 if not isinstance(train_rows, list) or not isinstance(test_rows, list):
                     raise BenchmarkIngestionError("Discovered Hugging Face split files must decode into row lists")
                 source = source.model_copy(update={"url": f"https://huggingface.co/datasets/{source.dataset_id}"})
@@ -573,19 +806,9 @@ class HuggingFaceFileAdapter(RemoteFileAdapter):
                 payload["source_files"] = [train_path, test_path]
             else:
                 source = source.model_copy(update={"url": self._resolve_path(source, train_path)})
-                parsed = _parser_for_path(train_path)(_fetch_remote_text(source.url or ""))
+                parsed = _load_remote_payload(train_path, source.url or "")
                 name = source.name or source.dataset_id or PurePosixPath(train_path).name or _default_name(source)
-                if isinstance(parsed, dict) and "train" in parsed and "test" in parsed:
-                    payload = _normalize_pre_split_json(source, parsed, task_family, name)
-                elif isinstance(parsed, list):
-                    if task_family == "tabular_classification":
-                        payload = _normalize_tabular_dataset(source, parsed, name)
-                    elif task_family == "ir_reranking":
-                        payload = _normalize_ir_dataset(source, parsed, name)
-                    else:
-                        payload = _normalize_text_dataset(source, parsed, name)
-                else:
-                    raise BenchmarkIngestionError("Unsupported huggingface benchmark payload format")
+                payload = _normalize_dataset_payload(source, task_family, parsed, name)
         return ResolvedBenchmark(
             source=source,
             task_family=task_family,

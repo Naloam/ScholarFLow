@@ -24,6 +24,7 @@ from api.chunks import router as chunks_router
 from api.tutor import router as tutor_router
 from api.editor import router as editor_router
 from api.analysis import router as analysis_router
+from api.autoresearch import router as autoresearch_router
 from api.progress import router as progress_router
 from config.db import SessionLocal
 from config.settings import settings
@@ -114,4 +115,5 @@ app.include_router(chunks_router)
 app.include_router(tutor_router)
 app.include_router(editor_router)
 app.include_router(analysis_router)
+app.include_router(autoresearch_router)
 app.include_router(progress_router)

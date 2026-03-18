@@ -493,6 +493,8 @@ symbolic execution explores program paths,analysis
 """
 
     def fetch_text(url: str) -> str:
+        if url == "https://datasets-server.huggingface.co/splits?dataset=demo%2Fcs-mini":
+            return json.dumps({"splits": []})
         if url == "https://huggingface.co/api/datasets/demo/cs-mini":
             return json.dumps(
                 {
@@ -534,6 +536,204 @@ symbolic execution explores program paths,analysis
         assert run["spec"]["dataset"]["train_size"] == 6
         assert run["spec"]["dataset"]["test_size"] == 3
         assert run["artifact"]["environment"]["source_url"] == "https://huggingface.co/datasets/demo/cs-mini"
+    finally:
+        client.close()
+
+
+def test_autoresearch_prefers_huggingface_datasets_server_rows(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    train_rows = [
+        {"text": "dense retrieval learns passage ranking", "label": "retrieval"},
+        {"text": "bm25 remains strong for lexical first stage", "label": "retrieval"},
+        {"text": "gpu kernel fusion lowers serving latency", "label": "systems"},
+        {"text": "cache quantization improves memory efficiency", "label": "systems"},
+        {"text": "static taint analysis tracks data flow", "label": "analysis"},
+        {"text": "abstract interpretation proves safety", "label": "analysis"},
+    ]
+    test_rows = [
+        {"text": "query expansion boosts retrieval recall", "label": "retrieval"},
+        {"text": "cluster schedulers stabilize training", "label": "systems"},
+        {"text": "symbolic execution explores program paths", "label": "analysis"},
+    ]
+
+    def fetch_text(url: str) -> str:
+        if url == "https://datasets-server.huggingface.co/splits?dataset=demo%2Fcs-dsv":
+            return json.dumps(
+                {
+                    "splits": [
+                        {"config": "default", "split": "train", "num_rows": len(train_rows)},
+                        {"config": "default", "split": "test", "num_rows": len(test_rows)},
+                    ]
+                }
+            )
+        if (
+            url
+            == "https://datasets-server.huggingface.co/rows?"
+            "dataset=demo%2Fcs-dsv&config=default&split=train&offset=0&length=100"
+        ):
+            return json.dumps(
+                {"rows": [{"row": row} for row in train_rows], "num_rows_total": len(train_rows)}
+            )
+        if (
+            url
+            == "https://datasets-server.huggingface.co/rows?"
+            "dataset=demo%2Fcs-dsv&config=default&split=test&offset=0&length=100"
+        ):
+            return json.dumps(
+                {"rows": [{"row": row} for row in test_rows], "num_rows_total": len(test_rows)}
+            )
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(autoresearch_ingestion, "_fetch_remote_text", fetch_text)
+    try:
+        project_id = _create_project(
+            client,
+            "HuggingFace Datasets Server Project",
+            "Compact CS abstract classification via datasets-server",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact CS abstract classification via datasets-server",
+                "benchmark": {
+                    "kind": "huggingface_file",
+                    "dataset_id": "demo/cs-dsv",
+                    "text_field": "text",
+                    "label_field": "label",
+                },
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["benchmark"]["kind"] == "huggingface_file"
+        assert run["spec"]["dataset"]["train_size"] == 6
+        assert run["spec"]["dataset"]["test_size"] == 3
+        assert run["artifact"]["environment"]["source_url"] == "https://huggingface.co/datasets/demo/cs-dsv"
+    finally:
+        client.close()
+
+
+def test_autoresearch_can_ingest_huggingface_parquet_split_files(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    train_rows = [
+        {"text": "dense retrieval learns passage ranking", "label": "retrieval"},
+        {"text": "bm25 remains strong for lexical first stage", "label": "retrieval"},
+        {"text": "gpu kernel fusion lowers serving latency", "label": "systems"},
+        {"text": "cache quantization improves memory efficiency", "label": "systems"},
+        {"text": "static taint analysis tracks data flow", "label": "analysis"},
+        {"text": "abstract interpretation proves safety", "label": "analysis"},
+    ]
+    test_rows = [
+        {"text": "query expansion boosts retrieval recall", "label": "retrieval"},
+        {"text": "cluster schedulers stabilize training", "label": "systems"},
+        {"text": "symbolic execution explores program paths", "label": "analysis"},
+    ]
+
+    def fetch_text(url: str) -> str:
+        if url == "https://datasets-server.huggingface.co/splits?dataset=demo%2Fcs-parquet":
+            return json.dumps({"splits": []})
+        if url == "https://huggingface.co/api/datasets/demo/cs-parquet":
+            return json.dumps(
+                {
+                    "siblings": [
+                        {"rfilename": "data/train-00000-of-00001.parquet"},
+                        {"rfilename": "data/test-00000-of-00001.parquet"},
+                    ]
+                }
+            )
+        raise AssertionError(f"unexpected text url: {url}")
+
+    def fetch_bytes(url: str) -> bytes:
+        if url.endswith("/data/train-00000-of-00001.parquet"):
+            return b"train"
+        if url.endswith("/data/test-00000-of-00001.parquet"):
+            return b"test"
+        raise AssertionError(f"unexpected bytes url: {url}")
+
+    def rows_from_parquet(payload: bytes) -> list[dict[str, str]]:
+        if payload == b"train":
+            return train_rows
+        if payload == b"test":
+            return test_rows
+        raise AssertionError(f"unexpected parquet payload: {payload!r}")
+
+    monkeypatch.setattr(autoresearch_ingestion, "_fetch_remote_text", fetch_text)
+    monkeypatch.setattr(autoresearch_ingestion, "_fetch_remote_bytes", fetch_bytes)
+    monkeypatch.setattr(autoresearch_ingestion, "_rows_from_parquet_bytes", rows_from_parquet)
+    try:
+        project_id = _create_project(
+            client,
+            "HuggingFace Parquet Project",
+            "Compact CS abstract classification from parquet-only metadata",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact CS abstract classification from parquet-only metadata",
+                "benchmark": {
+                    "kind": "huggingface_file",
+                    "dataset_id": "demo/cs-parquet",
+                    "text_field": "text",
+                    "label_field": "label",
+                },
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["benchmark"]["kind"] == "huggingface_file"
+        assert run["spec"]["dataset"]["train_size"] == 6
+        assert run["spec"]["dataset"]["test_size"] == 3
+        assert run["artifact"]["environment"]["source_url"] == "https://huggingface.co/datasets/demo/cs-parquet"
+    finally:
+        client.close()
+
+
+def test_autoresearch_surfaces_huggingface_fallback_errors(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+
+    def fetch_text(url: str) -> str:
+        if url == "https://datasets-server.huggingface.co/splits?dataset=demo%2Fbroken":
+            return json.dumps({"splits": []})
+        if url == "https://huggingface.co/api/datasets/demo/broken":
+            return json.dumps({"siblings": [{"rfilename": "README.md"}]})
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(autoresearch_ingestion, "_fetch_remote_text", fetch_text)
+    try:
+        project_id = _create_project(
+            client,
+            "HuggingFace Error Project",
+            "Broken Hugging Face benchmark ingestion",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Broken Hugging Face benchmark ingestion",
+                "benchmark": {
+                    "kind": "huggingface_file",
+                    "dataset_id": "demo/broken",
+                    "text_field": "text",
+                    "label_field": "label",
+                },
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "failed"
+        assert "datasets-server failed" in run["error"]
+        assert "file discovery failed" in run["error"]
+        assert "No supported CSV/JSON/JSONL/Parquet files were found" in run["error"]
     finally:
         client.close()
 

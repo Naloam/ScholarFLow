@@ -46,18 +46,27 @@ def _keywords(text: str, limit: int = 4) -> list[str]:
     return [token for token, _ in items[:limit]]
 
 
-def derive_literature_insights(papers: list[PaperMeta], max_items: int = 5) -> list[LiteratureInsight]:
+def derive_literature_insights(
+    papers: list[PaperMeta],
+    *,
+    chunk_context: dict[str, list[str]] | None = None,
+    max_items: int = 5,
+) -> list[LiteratureInsight]:
     insights: list[LiteratureInsight] = []
+    chunk_context = chunk_context or {}
     for paper in papers[:max_items]:
         title = paper.title or "Untitled paper"
         abstract = paper.abstract or ""
-        key_terms = _keywords(f"{title} {abstract}")
+        chunk_text = " ".join(chunk_context.get(paper.id or "", [])[:2])
+        key_terms = _keywords(f"{title} {abstract} {chunk_text}")
         term_phrase = ", ".join(key_terms) if key_terms else "the reported method setting"
         insight = (
             f"{title} emphasizes {term_phrase}."
             if abstract
             else f"{title} provides domain context relevant to the current topic."
         )
+        if chunk_text:
+            insight += f" Parsed full text also highlights {', '.join(_keywords(chunk_text, limit=3)) or term_phrase}."
         method_hint = (
             f"Borrow lightweight cues around {', '.join(key_terms[:2])}."
             if key_terms

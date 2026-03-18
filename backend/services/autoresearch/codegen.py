@@ -95,9 +95,186 @@ class ExperimentCodeGenerator:
         benchmark_payload: dict[str, Any],
         strategy: str,
     ) -> str:
+        if plan.task_family == "ir_reranking":
+            return self._ir_template(plan, spec, benchmark_payload, strategy)
         if plan.task_family == "tabular_classification":
             return self._tabular_template(plan, spec, benchmark_payload, strategy)
         return self._text_template(plan, spec, benchmark_payload, strategy)
+
+    def _ir_template(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark_payload: dict[str, Any],
+        strategy: str,
+    ) -> str:
+        dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
+        return f'''import json
+import math
+import platform
+import re
+import sys
+import time
+from collections import Counter
+
+DATASET = {dataset_json}
+PRIMARY_METRIC = "mrr"
+TITLE = {plan.title!r}
+HYPOTHESIS = {spec.hypothesis!r}
+STRATEGY = {strategy!r}
+
+
+def tokenize(text):
+    return re.findall(r"[a-z][a-z0-9_]+", text.lower())
+
+
+def reciprocal_rank(relevant_ids, ranked_ids):
+    for idx, doc_id in enumerate(ranked_ids, start=1):
+        if doc_id in relevant_ids:
+            return 1.0 / idx
+    return 0.0
+
+
+def recall_at_1(relevant_ids, ranked_ids):
+    if not ranked_ids:
+        return 0.0
+    return 1.0 if ranked_ids[0] in relevant_ids else 0.0
+
+
+def evaluate(system_name, examples, ranking_fn):
+    reciprocal_ranks = []
+    recalls = []
+    for example in examples:
+        ranked = ranking_fn(example)
+        reciprocal_ranks.append(reciprocal_rank(example["relevant_ids"], ranked))
+        recalls.append(recall_at_1(example["relevant_ids"], ranked))
+    return {{
+        "system": system_name,
+        "metrics": {{
+            "mrr": round(sum(reciprocal_ranks) / len(reciprocal_ranks), 4),
+            "recall_at_1": round(sum(recalls) / len(recalls), 4),
+        }},
+    }}
+
+
+def random_ranker(example):
+    return [candidate["id"] for candidate in example["candidates"]]
+
+
+def overlap_score(query, text):
+    q = tokenize(query)
+    d = tokenize(text)
+    return sum(1 for token in q if token in d)
+
+
+def overlap_ranker(example):
+    scored = [
+        (overlap_score(example["query"], candidate["text"]), candidate["id"])
+        for candidate in example["candidates"]
+    ]
+    return [doc_id for _, doc_id in sorted(scored, reverse=True)]
+
+
+def build_idf(train):
+    doc_freq = Counter()
+    total_docs = 0
+    for example in train:
+        for candidate in example["candidates"]:
+            total_docs += 1
+            for token in set(tokenize(candidate["text"])):
+                doc_freq[token] += 1
+    return {{
+        token: math.log((total_docs + 1) / (freq + 1)) + 1.0
+        for token, freq in doc_freq.items()
+    }}
+
+
+def idf_ranker_factory(train, use_bigrams):
+    idf = build_idf(train)
+    def score(query, text):
+        query_tokens = tokenize(query)
+        doc_tokens = tokenize(text)
+        total = sum(idf.get(token, 1.0) for token in query_tokens if token in doc_tokens)
+        if use_bigrams:
+            query_bigrams = set(zip(query_tokens, query_tokens[1:]))
+            doc_bigrams = set(zip(doc_tokens, doc_tokens[1:]))
+            total += 0.5 * len(query_bigrams & doc_bigrams)
+        return total
+    def rank(example):
+        scored = [(score(example["query"], candidate["text"]), candidate["id"]) for candidate in example["candidates"]]
+        return [doc_id for _, doc_id in sorted(scored, reverse=True)]
+    return rank
+
+
+def run():
+    started = time.perf_counter()
+    train = DATASET["train"]
+    test = DATASET["test"]
+    results = []
+
+    results.append(evaluate("random_ranker", test, random_ranker))
+    results.append(evaluate("overlap_ranker", test, overlap_ranker))
+    candidate_system = "overlap_ranker"
+    critique = "Search starts from simple lexical overlap between query and candidate text."
+
+    if STRATEGY in {{"idf_reranker_search", "bigram_reranker_search"}}:
+        idf_ranker = idf_ranker_factory(train, use_bigrams=False)
+        results.append(evaluate("idf_ranker", test, idf_ranker))
+        candidate_system = "idf_ranker"
+        critique = "The second round adds rarity-aware lexical weighting over training candidates."
+
+    if STRATEGY == "bigram_reranker_search":
+        bigram_ranker = idf_ranker_factory(train, use_bigrams=True)
+        results.append(evaluate("bigram_ranker", test, bigram_ranker))
+        candidate_system = "bigram_ranker"
+        critique = "The final round augments IDF scoring with bigram overlap for more precise reranking."
+
+    objective = next(item for item in results if item["system"] == candidate_system)
+    best = max(results, key=lambda item: item["metrics"][PRIMARY_METRIC])
+    rows = [
+        [item["system"], f'{{item["metrics"]["mrr"]:.4f}}', f'{{item["metrics"]["recall_at_1"]:.4f}}']
+        for item in results
+    ]
+
+    artifact = {{
+        "summary": (
+            f'{{TITLE}} executed strategy {{STRATEGY}} on benchmark {{DATASET.get("name", "dataset")}}. '
+            f'Best system: {{best["system"]}} with mrr={{best["metrics"]["mrr"]:.4f}}.'
+        ),
+        "primary_metric": PRIMARY_METRIC,
+        "best_system": best["system"],
+        "objective_system": objective["system"],
+        "objective_score": objective["metrics"][PRIMARY_METRIC],
+        "key_findings": [
+            f'Best system: {{best["system"]}}',
+            f'Search objective system: {{objective["system"]}}',
+            critique,
+            f'Hypothesis under test: {{HYPOTHESIS}}',
+        ],
+        "system_results": results,
+        "tables": [
+            {{
+                "title": "Main Results",
+                "columns": ["System", "MRR", "Recall@1"],
+                "rows": rows,
+            }}
+        ],
+        "environment": {{
+            "python_version": sys.version.split()[0],
+            "platform": platform.platform(),
+            "runtime_seconds": round(time.perf_counter() - started, 4),
+            "task_family": "ir_reranking",
+            "strategy": STRATEGY,
+            "benchmark_name": DATASET.get("name"),
+            "source_url": DATASET.get("source_url"),
+        }},
+    }}
+    print("__RESULT__" + json.dumps(artifact))
+
+
+if __name__ == "__main__":
+    run()
+'''
 
     def _text_template(
         self,

@@ -38,7 +38,23 @@ class ResearchPlanner:
         literature: list[LiteratureInsight],
     ) -> ResearchPlan:
         literature_phrase = self._literature_method_phrase(literature)
-        if task_family == "tabular_classification":
+        if task_family == "ir_reranking":
+            title = f"AutoResearch v0: Lightweight Reranking for {topic}"
+            method = "a lexical rarity-aware reranker backed by overlap baselines"
+            questions = [
+                "Can a lightweight lexical reranker recover the relevant document in short candidate lists?",
+                "Do rarity-aware query terms improve reciprocal rank over plain overlap scoring?",
+            ]
+            hypothesis = [
+                "IDF-weighted overlap will outperform both random order and plain lexical overlap.",
+                "Adding bigram agreement will further improve ranking precision on focused CS queries.",
+            ]
+            contributions = [
+                "A reproducible toy reranking benchmark for CS information retrieval.",
+                "A multi-round reranking search trace with overlap, IDF, and bigram lexical variants.",
+                "A grounded paper generated only from executed ranking artifacts.",
+            ]
+        elif task_family == "tabular_classification":
             title = f"AutoResearch v0: Lightweight Stability Prediction for {topic}"
             method = "a scaled linear classifier backed by simple rule based baselines"
             questions = [

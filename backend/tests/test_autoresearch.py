@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -14,12 +16,15 @@ import main as main_module
 import models  # noqa: F401
 import services.autoresearch.codegen as autoresearch_codegen
 import services.autoresearch.ingestion as autoresearch_ingestion
+import services.autoresearch.literature_pipeline as literature_pipeline
 import services.llm.client as llm_client
 from config import db as db_module
 from config import deps as deps_module
 from config.settings import settings
 from main import app
 from models.base import Base
+from schemas.papers import PaperMeta
+from schemas.search import SearchResult
 
 
 def _configure_test_client(monkeypatch, tmp_path: Path) -> TestClient:
@@ -242,5 +247,315 @@ def test_autoresearch_repairs_after_failed_first_attempt(monkeypatch, tmp_path: 
         assert run["attempts"][0]["status"] == "failed"
         assert run["attempts"][1]["goal"] == "repair_previous_failure"
         assert run["selected_round_index"] >= 2
+    finally:
+        client.close()
+
+
+def test_autoresearch_traceback_patch_repairs_inline_failure(monkeypatch, tmp_path: Path) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    original_generate = autoresearch_codegen.ExperimentCodeGenerator.generate
+    calls = {"count": 0}
+
+    def flaky_generate(self, **kwargs):
+        strategy, code = original_generate(self, **kwargs)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            broken = code.replace(
+                '    started = time.perf_counter()\n',
+                '    started = time.perf_counter()\n    raise RuntimeError("traceback patch trigger")\n',
+                1,
+            )
+            return "inline_runtime_failure", broken
+        return strategy, code
+
+    monkeypatch.setattr(autoresearch_codegen.ExperimentCodeGenerator, "generate", flaky_generate)
+    try:
+        project_id = _create_project(
+            client,
+            "Traceback Patch Project",
+            "Automatic topic classification with traceback patch repair",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification with traceback patch repair"},
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["attempts"][0]["status"] == "failed"
+        assert run["attempts"][1]["strategy"] == "repair_traceback_patch"
+        assert run["attempts"][1]["status"] == "done"
+    finally:
+        client.close()
+
+
+def test_autoresearch_auto_searches_literature_when_project_has_no_papers(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-auto-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                )
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Auto Literature Project",
+            "Compact reranking for cs retrieval",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert len(run["literature"]) >= 1
+        assert "Lightweight Reranking Signals" in run["literature"][0]["title"]
+        papers = client.get(f"/api/projects/{project_id}/papers")
+        assert papers.status_code == 200
+        assert len(papers.json()) >= 1
+    finally:
+        client.close()
+
+
+def test_autoresearch_supports_command_execution_backend(monkeypatch, tmp_path: Path) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Command Backend Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Automatic topic classification for compact CS abstracts",
+                "execution_backend": {
+                    "kind": "command",
+                    "command_prefix": [sys.executable],
+                },
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["execution_backend"]["kind"] == "command"
+        assert run["artifact"]["environment"]["executor_mode"] == "command"
+    finally:
+        client.close()
+
+
+def test_autoresearch_supports_ir_reranking_with_beir_like_adapter(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    beir_payload = {
+        "name": "Toy BEIR Export",
+        "queries": {
+            "q1": "dense retrieval ranking",
+            "q2": "gpu serving cache",
+            "q3": "static taint analysis",
+        },
+        "corpus": {
+            "d1": "Dense retrieval encoders improve passage ranking with hard negatives.",
+            "d2": "KV cache quantization reduces memory overhead for model serving.",
+            "d3": "Static taint analysis tracks untrusted data across dependence graphs.",
+            "d4": "Query expansion improves lexical recall.",
+        },
+        "qrels": {
+            "q1": {"d1": 1, "d4": 0},
+            "q2": {"d2": 1, "d4": 0},
+            "q3": {"d3": 1, "d1": 0},
+        },
+    }
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: __import__("json").dumps(beir_payload),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "IR Reranking Project",
+            "Compact information retrieval reranking benchmark",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact information retrieval reranking benchmark",
+                "task_family_hint": "ir_reranking",
+                "benchmark": {
+                    "kind": "beir_json",
+                    "url": "https://example.com/beir.json",
+                },
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["task_family"] == "ir_reranking"
+        assert run["spec"]["dataset"]["candidate_count"] is not None
+        all_systems = {
+            item["system"]
+            for attempt in run["attempts"]
+            for item in (attempt.get("artifact") or {}).get("system_results", [])
+        }
+        assert "idf_ranker" in all_systems
+        assert "bigram_ranker" in all_systems
+        assert "| System | MRR | Recall@1 |" in run["paper_markdown"]
+    finally:
+        client.close()
+
+
+def test_autoresearch_can_discover_huggingface_split_files(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    train_csv = """text,label
+dense retrieval learns passage ranking,retrieval
+bm25 remains strong for lexical first stage,retrieval
+gpu kernel fusion lowers serving latency,systems
+cache quantization improves memory efficiency,systems
+static taint analysis tracks data flow,analysis
+abstract interpretation proves safety,analysis
+"""
+    test_csv = """text,label
+query expansion boosts retrieval recall,retrieval
+cluster schedulers stabilize training,systems
+symbolic execution explores program paths,analysis
+"""
+
+    def fetch_text(url: str) -> str:
+        if url == "https://huggingface.co/api/datasets/demo/cs-mini":
+            return json.dumps(
+                {
+                    "siblings": [
+                        {"rfilename": "data/train.csv"},
+                        {"rfilename": "data/test.csv"},
+                    ]
+                }
+            )
+        if url.endswith("/data/train.csv"):
+            return train_csv
+        if url.endswith("/data/test.csv"):
+            return test_csv
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(autoresearch_ingestion, "_fetch_remote_text", fetch_text)
+    try:
+        project_id = _create_project(
+            client,
+            "HuggingFace Adapter Project",
+            "Compact CS abstract classification from Hugging Face",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact CS abstract classification from Hugging Face",
+                "benchmark": {
+                    "kind": "huggingface_file",
+                    "dataset_id": "demo/cs-mini",
+                    "text_field": "text",
+                    "label_field": "label",
+                },
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["benchmark"]["kind"] == "huggingface_file"
+        assert run["spec"]["dataset"]["train_size"] == 6
+        assert run["spec"]["dataset"]["test_size"] == 3
+        assert run["artifact"]["environment"]["source_url"] == "https://huggingface.co/datasets/demo/cs-mini"
+    finally:
+        client.close()
+
+
+def test_autoresearch_can_ingest_openml_arff_benchmark(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    arff_payload = """@relation training_run_stability
+@attribute learning_rate numeric
+@attribute batch_size numeric
+@attribute dropout numeric
+@attribute depth numeric
+@attribute residual numeric
+@attribute split {train,test}
+@attribute label {stable,unstable}
+@data
+0.001,64,0.10,8,1,train,stable
+0.002,128,0.20,12,1,train,stable
+0.020,16,0.00,18,0,train,unstable
+0.030,16,0.05,20,0,train,unstable
+0.004,32,0.25,6,1,train,stable
+0.018,16,0.35,14,0,train,unstable
+0.0015,64,0.10,8,1,test,stable
+0.022,24,0.35,19,0,test,unstable
+0.0035,128,0.05,7,1,test,stable
+"""
+
+    def fetch_text(url: str) -> str:
+        if url == "https://www.openml.org/api/v1/json/data/61":
+            return json.dumps(
+                {
+                    "data_set_description": {
+                        "name": "ToyOpenMLStability",
+                        "file_id": "99991",
+                        "default_target_attribute": "label",
+                        "version": "1",
+                    }
+                }
+            )
+        if url == "https://www.openml.org/data/v1/download/99991":
+            return arff_payload
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(autoresearch_ingestion, "_fetch_remote_text", fetch_text)
+    try:
+        project_id = _create_project(
+            client,
+            "OpenML Adapter Project",
+            "Training run stability prediction from OpenML",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Training run stability prediction from OpenML",
+                "task_family_hint": "tabular_classification",
+                "benchmark": {
+                    "kind": "openml_file",
+                    "dataset_id": "61",
+                    "split_field": "split",
+                },
+            },
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["benchmark"]["kind"] == "openml_file"
+        assert run["spec"]["dataset"]["train_size"] == 6
+        assert run["spec"]["dataset"]["test_size"] == 3
+        assert run["spec"]["dataset"]["name"] == "ToyOpenMLStability"
     finally:
         client.close()

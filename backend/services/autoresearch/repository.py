@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from schemas.autoresearch import AutoResearchRunRead
+from schemas.autoresearch import AutoResearchRunRead, BenchmarkSource, ExecutionBackendSpec
 from services.workspace import autoresearch_dir
 
 
@@ -45,13 +45,21 @@ def _write_json(path: Path, payload: dict) -> None:
     )
 
 
-def create_run(project_id: str, topic: str, docker_image: str | None = None) -> AutoResearchRunRead:
+def create_run(
+    project_id: str,
+    topic: str,
+    docker_image: str | None = None,
+    benchmark: BenchmarkSource | None = None,
+    execution_backend: ExecutionBackendSpec | None = None,
+) -> AutoResearchRunRead:
     now = _utcnow()
     run = AutoResearchRunRead(
         id=f"arun_{uuid4().hex}",
         project_id=project_id,
         topic=topic,
         status="queued",
+        benchmark=benchmark,
+        execution_backend=execution_backend,
         docker_image=docker_image,
         created_at=now,
         updated_at=now,
@@ -94,8 +102,13 @@ def list_runs(project_id: str) -> list[AutoResearchRunRead]:
     return items
 
 
-def save_generated_code(project_id: str, run_id: str, code: str) -> str:
-    path = run_dir(project_id, run_id) / CODE_FILENAME
+def save_generated_code(
+    project_id: str,
+    run_id: str,
+    code: str,
+    filename: str | None = None,
+) -> str:
+    path = run_dir(project_id, run_id) / (filename or CODE_FILENAME)
     path.write_text(code, encoding="utf-8")
     return str(path)
 

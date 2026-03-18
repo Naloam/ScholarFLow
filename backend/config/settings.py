@@ -49,7 +49,13 @@ class Settings(BaseModel):
     semantic_scholar_api_key: str | None = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
     arxiv_api_key: str | None = os.getenv("ARXIV_API_KEY")
     crossref_api_key: str | None = os.getenv("CROSSREF_API_KEY")
-    llm_api_key: str | None = os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    llm_api_key: str | None = (
+        os.getenv("LITELLM_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("DEEPSEEK_API_KEY")
+    )
+    llm_model: str | None = os.getenv("LLM_MODEL") or os.getenv("SCHOLARFLOW_LLM_MODEL")
+    llm_api_base: str | None = os.getenv("LLM_API_BASE") or os.getenv("OPENAI_API_BASE")
     grobid_url: str = os.getenv("GROBID_URL", "http://localhost:8070")
     rate_limit_requests_per_minute: int = int(os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "0"))
     audit_enabled: bool = Field(

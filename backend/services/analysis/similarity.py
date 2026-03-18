@@ -65,10 +65,10 @@ def _shingles(tokens: list[str], size: int) -> set[str]:
 def _split_paragraphs(content: str) -> list[str]:
     paragraphs: list[str] = []
     for block in PARAGRAPH_SPLIT_PATTERN.split(content):
-        paragraph = _normalize_whitespace(block)
+        lines = [line.strip() for line in block.splitlines()]
+        lines = [line for line in lines if line and not line.startswith("#")]
+        paragraph = _normalize_whitespace(" ".join(lines))
         if not paragraph:
-            continue
-        if paragraph.startswith("#"):
             continue
         if len(_tokenize(paragraph)) < MIN_PARAGRAPH_TOKENS:
             continue

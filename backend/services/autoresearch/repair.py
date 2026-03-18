@@ -22,6 +22,21 @@ class TracebackContext:
     failing_line: str | None
 
 
+@dataclass(frozen=True)
+class PatchOp:
+    op: str
+    line_number: int
+    content: str | None = None
+
+
+@dataclass(frozen=True)
+class RepairCandidate:
+    strategy: str
+    code: str
+    sanity_checks: list[str]
+    patch_ops: list[PatchOp]
+
+
 class ExperimentRepairEngine:
     def _extract_code(self, text: str) -> str | None:
         if not text:
@@ -86,55 +101,164 @@ class ExperimentRepairEngine:
             break
         return index
 
-    def _traceback_patch(self, code: str, logs: str) -> str | None:
+    def _apply_patch_ops(self, code: str, patch_ops: list[PatchOp]) -> str:
+        lines = code.splitlines()
+        for patch in sorted(patch_ops, key=lambda item: item.line_number, reverse=True):
+            index = max(0, min(patch.line_number - 1, len(lines)))
+            if patch.op == "replace":
+                if index >= len(lines):
+                    raise ValueError("Cannot replace a line outside the file")
+                lines[index] = patch.content or ""
+            elif patch.op == "insert":
+                lines.insert(index, patch.content or "")
+            elif patch.op == "delete":
+                if index >= len(lines):
+                    raise ValueError("Cannot delete a line outside the file")
+                del lines[index]
+            else:
+                raise ValueError(f"Unsupported patch op: {patch.op}")
+        return "\n".join(lines)
+
+    def _sanity_checks(
+        self,
+        previous_code: str,
+        candidate_code: str | None,
+        patch_ops: list[PatchOp],
+        *,
+        local_patch: bool,
+    ) -> list[str] | None:
+        if not candidate_code or not candidate_code.strip():
+            return None
+
+        checks: list[str] = []
+        try:
+            compile(candidate_code, "<repair_sanity>", "exec")
+        except Exception:
+            return None
+        checks.append("compiles")
+
+        if "__RESULT__" not in candidate_code:
+            return None
+        checks.append("contains_result_marker")
+
+        if 'if __name__ == "__main__":' in previous_code:
+            if 'if __name__ == "__main__":' not in candidate_code:
+                return None
+            checks.append("preserves_entrypoint")
+
+        if "def run(" in previous_code:
+            if "def run(" not in candidate_code:
+                return None
+            checks.append("preserves_run_function")
+
+        if local_patch:
+            changed_lines = len({patch.line_number for patch in patch_ops})
+            if changed_lines == 0 or changed_lines > 8:
+                return None
+            checks.append("patch_is_local")
+            previous_lines = max(len(previous_code.splitlines()), 1)
+            current_lines = len(candidate_code.splitlines())
+            if current_lines < max(5, int(previous_lines * 0.5)):
+                return None
+            checks.append("preserves_file_shape")
+
+        return checks
+
+    def _build_candidate(
+        self,
+        previous_code: str,
+        candidate_code: str | None,
+        *,
+        strategy: str,
+        patch_ops: list[PatchOp] | None = None,
+        local_patch: bool = False,
+    ) -> RepairCandidate | None:
+        ops = patch_ops or []
+        checks = self._sanity_checks(
+            previous_code,
+            candidate_code,
+            ops,
+            local_patch=local_patch,
+        )
+        if checks is None or candidate_code is None:
+            return None
+        return RepairCandidate(
+            strategy=strategy,
+            code=candidate_code,
+            sanity_checks=checks,
+            patch_ops=ops,
+        )
+
+    def _local_patch_candidate(self, code: str, logs: str) -> RepairCandidate | None:
         context = self._traceback_context(code, logs)
         if context.line_number is None or context.failing_line is None:
             return None
 
-        lines = code.splitlines()
-        idx = context.line_number - 1
-        target = lines[idx]
+        idx = context.line_number
+        target = context.failing_line
         indent = re.match(r"\s*", target).group(0)
         exception_type = context.exception_type or ""
         message = context.message or ""
+        patch_ops: list[PatchOp] = []
 
         if exception_type in {"RuntimeError", "AssertionError", "NotImplementedError"}:
             stripped = target.strip()
             if stripped.startswith("raise ") or stripped.startswith("assert "):
-                lines[idx] = f"{indent}pass  # ScholarFlow traceback repair"
-                return "\n".join(lines)
+                patch_ops.append(
+                    PatchOp("replace", idx, f"{indent}pass  # ScholarFlow local patch")
+                )
 
-        if exception_type == "NameError":
+        elif exception_type == "NameError":
             match = re.search(r"name '([^']+)' is not defined", message)
             if match:
                 missing_name = match.group(1)
-                insert_at = idx if idx > 0 else self._first_body_index(lines)
-                lines.insert(
-                    insert_at,
-                    f"{indent}{missing_name} = None  # ScholarFlow traceback repair",
+                insert_at = idx if idx > 1 else self._first_body_index(code.splitlines()) + 1
+                patch_ops.append(
+                    PatchOp(
+                        "insert",
+                        insert_at,
+                        f"{indent}{missing_name} = None  # ScholarFlow local patch",
+                    )
                 )
-                return "\n".join(lines)
 
-        if exception_type == "ModuleNotFoundError":
+        elif exception_type == "ModuleNotFoundError":
             match = re.search(r"No module named '([^']+)'", message)
             fallback_map = {"ujson": "json", "orjson": "json"}
             missing_module = match.group(1) if match else None
             fallback_module = fallback_map.get(missing_module or "")
             if fallback_module and target.strip().startswith(("import ", "from ")):
-                lines[idx] = f"{indent}import {fallback_module} as {missing_module}"
-                return "\n".join(lines)
+                patch_ops.append(
+                    PatchOp("replace", idx, f"{indent}import {fallback_module} as {missing_module}")
+                )
 
-        if exception_type == "KeyError":
+        elif exception_type == "KeyError":
             match = re.search(r"['\"]([^'\"]+)['\"]", message)
             missing_key = match.group(1) if match else None
             if missing_key and f'["{missing_key}"]' in target:
-                lines[idx] = target.replace(
-                    f'["{missing_key}"]',
-                    f'.get("{missing_key}")',
+                patch_ops.append(
+                    PatchOp(
+                        "replace",
+                        idx,
+                        target.replace(
+                            f'["{missing_key}"]',
+                            f'.get("{missing_key}")',
+                        ),
+                    )
                 )
-                return "\n".join(lines)
 
-        return None
+        if not patch_ops:
+            return None
+        try:
+            candidate_code = self._apply_patch_ops(code, patch_ops)
+        except Exception:
+            return None
+        return self._build_candidate(
+            code,
+            candidate_code,
+            strategy="repair_local_patch",
+            patch_ops=patch_ops,
+            local_patch=True,
+        )
 
     def _heuristic_repair(self, code: str, logs: str) -> str:
         repaired = code
@@ -159,9 +283,9 @@ class ExperimentRepairEngine:
             raise RuntimeError("Repair requested without a previous code path")
         code = Path(previous_attempt.code_path).read_text(encoding="utf-8")
         logs = previous_attempt.artifact.logs if previous_attempt.artifact and previous_attempt.artifact.logs else previous_attempt.summary
-        traceback_patch = self._traceback_patch(code, logs)
-        if self._is_valid_code(traceback_patch):
-            return "repair_traceback_patch", traceback_patch or ""
+        local_candidate = self._local_patch_candidate(code, logs)
+        if local_candidate is not None:
+            return local_candidate
         try:
             prompt = load_prompt(PROMPT_PATH)
             response = chat(
@@ -185,12 +309,27 @@ class ExperimentRepairEngine:
                 ]
             )
             candidate = self._extract_code(response.get("choices", [{}])[0].get("message", {}).get("content", ""))
-            if self._is_valid_code(candidate):
-                return "repair_llm_patch", candidate or ""
+            llm_candidate = self._build_candidate(
+                code,
+                candidate,
+                strategy="repair_llm_patch",
+            )
+            if llm_candidate is not None:
+                return llm_candidate
         except Exception:
             pass
 
         heuristic = self._heuristic_repair(code, logs)
-        if self._is_valid_code(heuristic):
-            return "repair_heuristic_patch", heuristic
-        return "repair_regenerate", code
+        heuristic_candidate = self._build_candidate(
+            code,
+            heuristic,
+            strategy="repair_heuristic_patch",
+        )
+        if heuristic_candidate is not None:
+            return heuristic_candidate
+        return RepairCandidate(
+            strategy="repair_regenerate",
+            code=code,
+            sanity_checks=["fallback_to_regenerate"],
+            patch_ops=[],
+        )

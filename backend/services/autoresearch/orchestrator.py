@@ -159,14 +159,22 @@ class AutoResearchOrchestrator:
 
             for round_index in range(1, total_rounds + 1):
                 goal = self._attempt_goal(attempts, round_index)
+                repair_summary = None
                 if goal == "repair_previous_failure" and attempts:
-                    repair_strategy, repaired_code = self.repair.repair(
+                    repair_candidate = self.repair.repair(
                         previous_attempt=attempts[-1],
                         plan=plan,
                         spec=spec,
                         benchmark_payload=benchmark.payload,
                     )
-                    if repair_strategy != "repair_regenerate":
+                    repair_summary = {
+                        "strategy": repair_candidate.strategy,
+                        "sanity_checks": repair_candidate.sanity_checks,
+                        "patch_line_count": len(
+                            {patch.line_number for patch in repair_candidate.patch_ops}
+                        ),
+                    }
+                    if repair_candidate.strategy != "repair_regenerate":
                         strategy, code_path, artifact = self.runner.run(
                             project_id=project_id,
                             run_id=run_id,
@@ -177,8 +185,8 @@ class AutoResearchOrchestrator:
                             goal=goal,
                             prior_attempts=attempts,
                             execution_backend=effective_backend,
-                            code_override=repaired_code,
-                            strategy_override=repair_strategy,
+                            code_override=repair_candidate.code,
+                            strategy_override=repair_candidate.strategy,
                         )
                     else:
                         strategy, code_path, artifact = self.runner.run(
@@ -216,6 +224,7 @@ class AutoResearchOrchestrator:
                     summary=artifact.summary,
                     critique=critique,
                     code_path=code_path,
+                    repair_summary=repair_summary,
                     artifact=artifact,
                 )
                 attempts.append(attempt)

@@ -18,13 +18,15 @@ import services.autoresearch.codegen as autoresearch_codegen
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_pipeline as literature_pipeline
 import services.autoresearch.repair as autoresearch_repair
+from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark
+from services.autoresearch.runner import AutoExperimentRunner
 import services.llm.client as llm_client
 from config import db as db_module
 from config import deps as deps_module
 from config.settings import settings
 from main import app
 from models.base import Base
-from schemas.autoresearch import ExperimentAttempt, ResultArtifact
+from schemas.autoresearch import ExperimentAttempt, ResearchPlan, ResultArtifact, SweepConfig
 from schemas.papers import PaperMeta
 from schemas.search import SearchResult
 
@@ -97,13 +99,21 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["selected_round_index"] is not None
         assert run["artifact"]["best_system"]
         assert len(run["artifact"]["tables"]) >= 1
+        assert len(run["artifact"]["aggregate_system_results"]) >= 1
+        assert len(run["artifact"]["per_seed_results"]) == len(run["spec"]["seeds"])
+        assert len(run["artifact"]["sweep_results"]) == len(run["spec"]["sweeps"])
+        assert run["artifact"]["environment"]["selected_sweep"]
         assert Path(run["generated_code_path"]).is_file()
+        assert run["spec"]["seeds"] == [7, 13]
+        assert len(run["spec"]["sweeps"]) == 2
 
         paper = run["paper_markdown"]
         assert "## 2. Related Work and Research Plan" in paper
         assert "## 4. Experimental Setup" in paper
         assert "## 5. Results" in paper
         assert "| System | Accuracy | Macro F1 |" in paper
+        assert "Aggregate Stability" in paper
+        assert "Acceptance checks for the selected configuration" in paper
         assert "## 7. Limitations" in paper
         assert "recorded experiment outputs" in paper
 
@@ -293,6 +303,107 @@ def test_autoresearch_traceback_patch_repairs_inline_failure(monkeypatch, tmp_pa
         assert "patch_is_local" in run["attempts"][1]["repair_summary"]["sanity_checks"]
     finally:
         client.close()
+
+
+def test_runner_aggregates_across_seeds_and_sweeps(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    runner = AutoExperimentRunner()
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Seeded Sweep Runner Test",
+        task_family="text_classification",
+        problem_statement="Test aggregate selection.",
+        motivation="Verify runner aggregation.",
+        proposed_method="Evaluate a compact lexical model across seeds and sweeps.",
+        research_questions=["Does the runner pick the strongest sweep?"],
+        hypotheses=["The stronger sweep should win on mean macro F1."],
+        planned_contributions=["Aggregate metrics across seeds and sweeps."],
+        experiment_outline=["Run the generated code over every seed/sweep pair."],
+        scope_limits=["This is a unit-level runner test."],
+    )
+    spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification")).model_copy(
+        update={
+            "seeds": [7, 13],
+            "sweeps": [
+                SweepConfig(label="base", params={"variant": "base"}),
+                SweepConfig(label="better", params={"variant": "better"}),
+            ],
+        }
+    )
+    observed_envs: list[dict[str, str]] = []
+
+    def fake_generate(self, **kwargs):
+        del kwargs
+        return "naive_bayes_search", 'print("__RESULT__" + "{}")'
+
+    def fake_run(payload: dict[str, object]) -> dict[str, object]:
+        env = payload.get("env")
+        assert isinstance(env, dict)
+        observed_envs.append({str(key): str(value) for key, value in env.items()})
+        seed = int(env["SCHOLARFLOW_SEED"])
+        sweep = json.loads(env["SCHOLARFLOW_SWEEP_JSON"])
+        variant = sweep.get("variant")
+        bonus = 0.20 if variant == "better" else 0.05
+        score = round(0.55 + bonus + (0.01 if seed == 13 else 0.0), 4)
+        return {
+            "logs": f"seed={seed} sweep={variant}",
+            "outputs": {
+                "returncode": 0,
+                "executor_mode": "local",
+                "docker_image": None,
+                "workdir": str(tmp_path),
+                "duration_ms": 12,
+                "host_platform": "test-platform",
+                "host_python": "3.11.0",
+                "result": {
+                    "summary": f"sweep={variant} seed={seed}",
+                    "primary_metric": "macro_f1",
+                    "best_system": "naive_bayes",
+                    "objective_system": "naive_bayes",
+                    "objective_score": score,
+                    "key_findings": [f"variant={variant}", f"seed={seed}"],
+                    "system_results": [
+                        {"system": "majority", "metrics": {"accuracy": 0.40, "macro_f1": 0.40}},
+                        {"system": "naive_bayes", "metrics": {"accuracy": score, "macro_f1": score}},
+                    ],
+                    "tables": [],
+                    "environment": {
+                        "python_version": "3.11.0",
+                        "platform": "test-platform",
+                        "runtime_seconds": 0.012,
+                    },
+                },
+            },
+        }
+
+    monkeypatch.setattr(autoresearch_codegen.ExperimentCodeGenerator, "generate", fake_generate)
+    monkeypatch.setattr(runner.sandbox, "run", fake_run)
+
+    strategy, code_path, artifact = runner.run(
+        project_id="project-test",
+        run_id="run-test",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+        round_index=3,
+        goal="search_for_better_candidate",
+        prior_attempts=[],
+    )
+
+    assert strategy == "naive_bayes_search"
+    assert Path(code_path).is_file()
+    assert len(observed_envs) == 4
+    assert {env["SCHOLARFLOW_SEED"] for env in observed_envs} == {"7", "13"}
+    assert {json.loads(env["SCHOLARFLOW_SWEEP_JSON"])["variant"] for env in observed_envs} == {"base", "better"}
+    assert artifact.status == "done"
+    assert artifact.environment["selected_sweep"] == "better"
+    assert len(artifact.per_seed_results) == 2
+    assert len(artifact.sweep_results) == 2
+    assert artifact.objective_score is not None and artifact.objective_score > 0.75
+    assert artifact.best_system == "naive_bayes"
+    assert any(check.passed for check in artifact.acceptance_checks)
+    assert any(table.title == "Sweep Summary" for table in artifact.tables)
+    assert any(item.system == "naive_bayes" for item in artifact.aggregate_system_results)
 
 
 def test_repair_sanity_rejects_patch_without_result_marker(tmp_path: Path) -> None:

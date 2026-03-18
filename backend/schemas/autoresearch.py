@@ -75,6 +75,12 @@ class DatasetSpec(BaseModel):
     candidate_count: int | None = None
 
 
+class SweepConfig(BaseModel):
+    label: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    description: str | None = None
+
+
 class BaselineSpec(BaseModel):
     name: str
     description: str
@@ -116,12 +122,54 @@ class ExperimentSpec(BaseModel):
     ablations: list[AblationSpec] = Field(default_factory=list)
     implementation_notes: list[str] = Field(default_factory=list)
     search_strategies: list[str] = Field(default_factory=list)
+    seeds: list[int] = Field(default_factory=list)
+    sweeps: list[SweepConfig] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
 
 
 class SystemMetricResult(BaseModel):
     system: str
     metrics: dict[str, float] = Field(default_factory=dict)
     notes: str | None = None
+
+
+class AggregateSystemMetricResult(BaseModel):
+    system: str
+    mean_metrics: dict[str, float] = Field(default_factory=dict)
+    std_metrics: dict[str, float] = Field(default_factory=dict)
+    min_metrics: dict[str, float] = Field(default_factory=dict)
+    max_metrics: dict[str, float] = Field(default_factory=dict)
+    sample_count: int = 1
+
+
+class SeedArtifactResult(BaseModel):
+    seed: int
+    sweep_label: str
+    best_system: str | None = None
+    objective_system: str | None = None
+    objective_score: float | None = None
+    primary_metric: str | None = None
+    system_results: list[SystemMetricResult] = Field(default_factory=list)
+
+
+class SweepEvaluationResult(BaseModel):
+    label: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    description: str | None = None
+    status: Literal["done", "failed"] = "done"
+    best_system: str | None = None
+    objective_system: str | None = None
+    objective_score_mean: float | None = None
+    objective_score_std: float | None = None
+    aggregate_system_results: list[AggregateSystemMetricResult] = Field(default_factory=list)
+    failed_seeds: list[int] = Field(default_factory=list)
+    seed_count: int = 0
+
+
+class AcceptanceCheck(BaseModel):
+    criterion: str
+    passed: bool
+    detail: str
 
 
 class ResultTable(BaseModel):
@@ -137,6 +185,10 @@ class ResultArtifact(BaseModel):
     primary_metric: str
     best_system: str | None = None
     system_results: list[SystemMetricResult] = Field(default_factory=list)
+    aggregate_system_results: list[AggregateSystemMetricResult] = Field(default_factory=list)
+    per_seed_results: list[SeedArtifactResult] = Field(default_factory=list)
+    sweep_results: list[SweepEvaluationResult] = Field(default_factory=list)
+    acceptance_checks: list[AcceptanceCheck] = Field(default_factory=list)
     tables: list[ResultTable] = Field(default_factory=list)
     logs: str | None = None
     environment: dict[str, Any] = Field(default_factory=dict)

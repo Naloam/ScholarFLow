@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
@@ -34,6 +35,7 @@ class ExecutionContext:
     workdir: Path
     timeout_seconds: int
     docker_image: str
+    env: dict[str, str] = field(default_factory=dict)
 
 
 class SandboxBackend(Protocol):
@@ -70,12 +72,15 @@ class LocalSandboxBackend:
 
     def run(self, context: ExecutionContext) -> tuple[str, dict]:
         started = perf_counter()
+        env = os.environ.copy()
+        env.update(context.env)
         proc = subprocess.run(
             [sys.executable, "main.py"],
             cwd=str(context.workdir),
             capture_output=True,
             text=True,
             timeout=context.timeout_seconds,
+            env=env,
         )
         return _finalize_outputs(
             backend_name=self.name,
@@ -96,12 +101,15 @@ class CommandSandboxBackend:
     def run(self, context: ExecutionContext) -> tuple[str, dict]:
         started = perf_counter()
         command = self.prefix + [str(context.workdir / "main.py")]
+        env = os.environ.copy()
+        env.update(context.env)
         proc = subprocess.run(
             command,
             cwd=str(context.workdir),
             capture_output=True,
             text=True,
             timeout=context.timeout_seconds,
+            env=env,
         )
         return _finalize_outputs(
             backend_name=self.name,
@@ -133,6 +141,8 @@ class DockerSandboxBackend:
             "-w",
             "/work",
         ]
+        for key, value in context.env.items():
+            command.extend(["-e", f"{key}={value}"])
         if self.use_gpu:
             command.extend(["--gpus", "all"])
         command.extend([context.docker_image, "python", "main.py"])

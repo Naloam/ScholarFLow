@@ -20,6 +20,24 @@ def _markdown_table(table: ResultTable) -> str:
 
 
 class PaperWriter:
+    def _aggregate_metric(self, artifact: ResultArtifact, system_name: str | None, metric: str) -> float | None:
+        if not system_name:
+            return None
+        for item in artifact.aggregate_system_results:
+            if item.system == system_name:
+                value = item.mean_metrics.get(metric)
+                return float(value) if value is not None else None
+        return self._metric(artifact, system_name, metric)
+
+    def _aggregate_std(self, artifact: ResultArtifact, system_name: str | None, metric: str) -> float | None:
+        if not system_name:
+            return None
+        for item in artifact.aggregate_system_results:
+            if item.system == system_name:
+                value = item.std_metrics.get(metric)
+                return float(value) if value is not None else None
+        return None
+
     def _metric(self, artifact: ResultArtifact, system_name: str | None, metric: str) -> float | None:
         if not system_name:
             return None
@@ -55,6 +73,14 @@ class PaperWriter:
             for item in attempts
         )
 
+    def _acceptance_block(self, artifact: ResultArtifact) -> str:
+        if not artifact.acceptance_checks:
+            return "- No explicit acceptance checks were recorded."
+        return "\n".join(
+            f"- {'PASS' if item.passed else 'FAIL'}: {item.criterion} ({item.detail})"
+            for item in artifact.acceptance_checks
+        )
+
     def write(
         self,
         plan: ResearchPlan,
@@ -70,43 +96,48 @@ class PaperWriter:
 
         literature = literature or []
         attempts = attempts or []
-        best_metric = self._metric(artifact, artifact.best_system, artifact.primary_metric)
+        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        best_std = self._aggregate_std(artifact, artifact.best_system, artifact.primary_metric)
         learned_system = spec.baselines[-1].name if spec.baselines else artifact.best_system
         ablation_name = spec.ablations[0].name if spec.ablations else None
-        learned_metric = self._metric(artifact, learned_system, artifact.primary_metric)
-        ablation_metric = self._metric(artifact, ablation_name, artifact.primary_metric)
-        majority_metric = self._metric(artifact, "majority", artifact.primary_metric)
+        learned_metric = self._aggregate_metric(artifact, learned_system, artifact.primary_metric)
+        ablation_metric = self._aggregate_metric(artifact, ablation_name, artifact.primary_metric)
+        majority_metric = self._aggregate_metric(artifact, "majority", artifact.primary_metric)
         environment = artifact.environment
         runtime = environment.get("runtime_seconds")
         executor_mode = environment.get("executor_mode", "unknown")
+        selected_sweep = environment.get("selected_sweep") or "default"
+        seed_count = environment.get("seed_count") or len(artifact.per_seed_results) or len(spec.seeds) or 1
 
         findings = "\n".join(f"- {item}" for item in artifact.key_findings) or "- No additional findings recorded."
         metrics = ", ".join(metric.name for metric in spec.metrics)
         results_table = self._results_table(artifact)
         literature_block = self._literature_block(literature)
         attempt_block = self._attempt_block(attempts)
+        acceptance_block = self._acceptance_block(artifact)
         benchmark_display = benchmark_name or spec.benchmark_name
 
         comparison_sentence = (
             f"The executed run identified `{artifact.best_system}` as the strongest system with "
-            f"{artifact.primary_metric}={best_metric:.4f}."
+            f"mean {artifact.primary_metric}={best_metric:.4f}"
+            f"{f' (std={best_std:.4f})' if best_std is not None else ''}."
             if best_metric is not None and artifact.best_system
             else "The executed run completed successfully and produced a ranked set of systems."
         )
         learned_sentence = (
             f"The main learned system `{learned_system}` reached "
-            f"{artifact.primary_metric}={learned_metric:.4f}."
+            f"mean {artifact.primary_metric}={learned_metric:.4f}."
             if learned_metric is not None and learned_system
             else "The main learned system was evaluated in the same benchmark."
         )
         ablation_sentence = (
-            f"The ablation `{ablation_name}` scored {artifact.primary_metric}={ablation_metric:.4f}, "
+            f"The ablation `{ablation_name}` scored mean {artifact.primary_metric}={ablation_metric:.4f}, "
             f"which quantifies the cost of removing one key modeling choice."
             if ablation_name and ablation_metric is not None
             else "An explicit ablation was included to test the importance of the proposed design."
         )
         majority_sentence = (
-            f"The majority baseline achieved {artifact.primary_metric}={majority_metric:.4f}, "
+            f"The majority baseline achieved mean {artifact.primary_metric}={majority_metric:.4f}, "
             "providing a minimal lower bound."
             if majority_metric is not None
             else "A majority baseline was included as a lower bound."
@@ -165,6 +196,8 @@ Implementation constraints were also explicit:
 ## 4. Experimental Setup
 All experiments were executed from generated Python code inside the existing ScholarFlow sandbox runner. The observed execution mode for this run was `{executor_mode}`. The recorded environment reports Python `{environment.get("python_version") or environment.get("host_python") or "unknown"}` on `{environment.get("platform") or environment.get("host_platform") or "unknown"}`. The experiment runtime reported by the artifact was `{runtime if runtime is not None else "unknown"}` seconds.
 
+The selected configuration for the final artifact was sweep `{selected_sweep}` evaluated over `{seed_count}` seeds. This run therefore reports aggregated metrics instead of a single execution trace, and retains the full seed-level evidence inside the result artifact.
+
 Evaluation uses {metrics}. The purpose of the benchmark is not to claim state of the art performance, but to verify that the system can carry out a complete research loop with a real result table and a grounded discussion.
 
 The search and repair trace for this run was:
@@ -177,6 +210,9 @@ The search and repair trace for this run was:
 
 Key findings recorded directly in the artifact are:
 {findings}
+
+Acceptance checks for the selected configuration were:
+{acceptance_block}
 
 ## 6. Discussion
 The results show that the pipeline can now produce a paper-shaped artifact with concrete experimental content instead of a generic short essay. The differences among the compared systems matter because they provide evidence that the method choice changes measurable outcomes. That is the minimum standard for a computational research run.

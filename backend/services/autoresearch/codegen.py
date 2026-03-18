@@ -111,7 +111,9 @@ class ExperimentCodeGenerator:
         dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
         return f'''import json
 import math
+import os
 import platform
+import random
 import re
 import sys
 import time
@@ -122,6 +124,8 @@ PRIMARY_METRIC = "mrr"
 TITLE = {plan.title!r}
 HYPOTHESIS = {spec.hypothesis!r}
 STRATEGY = {strategy!r}
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{{}}")
 
 
 def tokenize(text):
@@ -158,7 +162,10 @@ def evaluate(system_name, examples, ranking_fn):
 
 
 def random_ranker(example):
-    return [candidate["id"] for candidate in example["candidates"]]
+    ids = [candidate["id"] for candidate in example["candidates"]]
+    rng = random.Random(SEED + len(example["query"]))
+    rng.shuffle(ids)
+    return ids
 
 
 def overlap_score(query, text):
@@ -175,7 +182,7 @@ def overlap_ranker(example):
     return [doc_id for _, doc_id in sorted(scored, reverse=True)]
 
 
-def build_idf(train):
+def build_idf(train, additive_smoothing):
     doc_freq = Counter()
     total_docs = 0
     for example in train:
@@ -184,13 +191,13 @@ def build_idf(train):
             for token in set(tokenize(candidate["text"])):
                 doc_freq[token] += 1
     return {{
-        token: math.log((total_docs + 1) / (freq + 1)) + 1.0
+        token: math.log((total_docs + additive_smoothing) / (freq + additive_smoothing)) + 1.0
         for token, freq in doc_freq.items()
     }}
 
 
-def idf_ranker_factory(train, use_bigrams):
-    idf = build_idf(train)
+def idf_ranker_factory(train, use_bigrams, additive_smoothing, bigram_bonus):
+    idf = build_idf(train, additive_smoothing)
     def score(query, text):
         query_tokens = tokenize(query)
         doc_tokens = tokenize(text)
@@ -198,7 +205,7 @@ def idf_ranker_factory(train, use_bigrams):
         if use_bigrams:
             query_bigrams = set(zip(query_tokens, query_tokens[1:]))
             doc_bigrams = set(zip(doc_tokens, doc_tokens[1:]))
-            total += 0.5 * len(query_bigrams & doc_bigrams)
+            total += bigram_bonus * len(query_bigrams & doc_bigrams)
         return total
     def rank(example):
         scored = [(score(example["query"], candidate["text"]), candidate["id"]) for candidate in example["candidates"]]
@@ -210,6 +217,8 @@ def run():
     started = time.perf_counter()
     train = DATASET["train"]
     test = DATASET["test"]
+    idf_smoothing = float(SWEEP.get("idf_smoothing", 1.0))
+    bigram_bonus = float(SWEEP.get("bigram_bonus", 0.5))
     results = []
 
     results.append(evaluate("random_ranker", test, random_ranker))
@@ -218,13 +227,23 @@ def run():
     critique = "Search starts from simple lexical overlap between query and candidate text."
 
     if STRATEGY in {{"idf_reranker_search", "bigram_reranker_search"}}:
-        idf_ranker = idf_ranker_factory(train, use_bigrams=False)
+        idf_ranker = idf_ranker_factory(
+            train,
+            use_bigrams=False,
+            additive_smoothing=idf_smoothing,
+            bigram_bonus=bigram_bonus,
+        )
         results.append(evaluate("idf_ranker", test, idf_ranker))
         candidate_system = "idf_ranker"
         critique = "The second round adds rarity-aware lexical weighting over training candidates."
 
     if STRATEGY == "bigram_reranker_search":
-        bigram_ranker = idf_ranker_factory(train, use_bigrams=True)
+        bigram_ranker = idf_ranker_factory(
+            train,
+            use_bigrams=True,
+            additive_smoothing=idf_smoothing,
+            bigram_bonus=bigram_bonus,
+        )
         results.append(evaluate("bigram_ranker", test, bigram_ranker))
         candidate_system = "bigram_ranker"
         critique = "The final round augments IDF scoring with bigram overlap for more precise reranking."
@@ -265,6 +284,8 @@ def run():
             "runtime_seconds": round(time.perf_counter() - started, 4),
             "task_family": "ir_reranking",
             "strategy": STRATEGY,
+            "seed": SEED,
+            "sweep": SWEEP,
             "benchmark_name": DATASET.get("name"),
             "source_url": DATASET.get("source_url"),
         }},
@@ -286,6 +307,7 @@ if __name__ == "__main__":
         dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
         return f'''import json
 import math
+import os
 import platform
 import re
 import sys
@@ -297,6 +319,8 @@ PRIMARY_METRIC = "macro_f1"
 TITLE = {plan.title!r}
 HYPOTHESIS = {spec.hypothesis!r}
 STRATEGY = {strategy!r}
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{{}}")
 
 
 def tokenize(text):
@@ -428,13 +452,19 @@ def run():
     started = time.perf_counter()
     train = DATASET["train"]
     test = DATASET["test"]
+    keyword_top_k = int(SWEEP.get("keyword_top_k", 8))
+    naive_bayes_order = int(SWEEP.get("naive_bayes_order", 1))
+    limited_vocab_limit = int(SWEEP.get("limited_vocab_limit", max(12, len(train) // 2 + 4)))
+    full_vocab_limit = SWEEP.get("full_vocab_limit")
+    if full_vocab_limit is not None:
+        full_vocab_limit = int(full_vocab_limit)
     y_true = [item["label"] for item in test]
     results = []
 
     majority = majority_predict(train, test)
     results.append(evaluate("majority", y_true, majority))
 
-    keyword_map = build_keyword_map(train)
+    keyword_map = build_keyword_map(train, top_k=keyword_top_k)
     keyword = keyword_predict(keyword_map, test)
     results.append(evaluate("keyword_rule", y_true, keyword))
 
@@ -442,14 +472,14 @@ def run():
     critique = "Search starts from a lexical heuristic baseline."
 
     if STRATEGY in {{"naive_bayes_limited_vocab_search", "naive_bayes_search"}}:
-        limited_model = train_naive_bayes(train, order=1, vocab_limit=max(12, len(keyword_map) * 4))
+        limited_model = train_naive_bayes(train, order=naive_bayes_order, vocab_limit=limited_vocab_limit)
         limited_pred = [predict_naive_bayes(limited_model, item["text"]) for item in test]
         results.append(evaluate("naive_bayes_limited_vocab", y_true, limited_pred))
         candidate_system = "naive_bayes_limited_vocab"
         critique = "The second round adds a learned lexical model but restricts vocabulary for fast repairable training."
 
     if STRATEGY == "naive_bayes_search":
-        full_model = train_naive_bayes(train, order=1, vocab_limit=None)
+        full_model = train_naive_bayes(train, order=naive_bayes_order, vocab_limit=full_vocab_limit)
         full_pred = [predict_naive_bayes(full_model, item["text"]) for item in test]
         results.append(evaluate("naive_bayes", y_true, full_pred))
         candidate_system = "naive_bayes"
@@ -491,6 +521,8 @@ def run():
             "runtime_seconds": round(time.perf_counter() - started, 4),
             "task_family": "text_classification",
             "strategy": STRATEGY,
+            "seed": SEED,
+            "sweep": SWEEP,
             "benchmark_name": DATASET.get("name"),
             "source_url": DATASET.get("source_url"),
         }},
@@ -511,6 +543,7 @@ if __name__ == "__main__":
     ) -> str:
         dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
         return f'''import json
+import os
 import platform
 import sys
 import time
@@ -521,6 +554,8 @@ PRIMARY_METRIC = "macro_f1"
 TITLE = {plan.title!r}
 HYPOTHESIS = {spec.hypothesis!r}
 STRATEGY = {strategy!r}
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{{}}")
 
 
 def accuracy(y_true, y_pred):
@@ -598,24 +633,28 @@ def standardize(train_rows, rows):
     return transformed
 
 
-def train_perceptron(train_rows, scaled, epochs):
+def train_perceptron(train_rows, scaled, epochs, learning_rate):
     rows = standardize(train_rows, train_rows) if scaled else train_rows
     weights = [0.0 for _ in rows[0]["features"]]
     bias = 0.0
+    ordered_rows = list(rows)
+    if ordered_rows:
+        rotation = SEED % len(ordered_rows)
+        ordered_rows = ordered_rows[rotation:] + ordered_rows[:rotation]
     for _ in range(epochs):
-        for row in rows:
+        for row in ordered_rows:
             target = 1 if row["label"] == sorted({{r["label"] for r in train_rows}})[-1] else -1
             margin = sum(weight * value for weight, value in zip(weights, row["features"])) + bias
             pred = 1 if margin >= 0 else -1
             if pred != target:
                 for idx, value in enumerate(row["features"]):
-                    weights[idx] += target * value
-                bias += target
+                    weights[idx] += learning_rate * target * value
+                bias += learning_rate * target
     return weights, bias
 
 
-def predict_perceptron(train_rows, test_rows, scaled, epochs):
-    weights, bias = train_perceptron(train_rows, scaled, epochs)
+def predict_perceptron(train_rows, test_rows, scaled, epochs, learning_rate):
+    weights, bias = train_perceptron(train_rows, scaled, epochs, learning_rate)
     rows = standardize(train_rows, test_rows) if scaled else test_rows
     positive = sorted({{row["label"] for row in train_rows}})[-1]
     negative = sorted({{row["label"] for row in train_rows}})[0]
@@ -630,6 +669,9 @@ def run():
     started = time.perf_counter()
     train = DATASET["train"]
     test = DATASET["test"]
+    unscaled_epochs = int(SWEEP.get("perceptron_epochs", 15))
+    scaled_epochs = int(SWEEP.get("perceptron_scaled_epochs", 20))
+    learning_rate = float(SWEEP.get("perceptron_learning_rate", 1.0))
     y_true = [item["label"] for item in test]
     results = []
 
@@ -642,13 +684,13 @@ def run():
     critique = "Search starts from a tuned one-feature threshold baseline."
 
     if STRATEGY in {{"perceptron_unscaled_search", "perceptron_scaled_search"}}:
-        unscaled = predict_perceptron(train, test, False, epochs=15)
+        unscaled = predict_perceptron(train, test, False, epochs=unscaled_epochs, learning_rate=learning_rate)
         results.append(evaluate("perceptron_unscaled", y_true, unscaled))
         candidate_system = "perceptron_unscaled"
         critique = "The second round adds a learned linear model without feature scaling."
 
     if STRATEGY == "perceptron_scaled_search":
-        scaled = predict_perceptron(train, test, True, epochs=20)
+        scaled = predict_perceptron(train, test, True, epochs=scaled_epochs, learning_rate=learning_rate)
         results.append(evaluate("perceptron_scaled", y_true, scaled))
         candidate_system = "perceptron_scaled"
         critique = "The final search round repairs the linear model with feature scaling and longer training."
@@ -689,6 +731,8 @@ def run():
             "runtime_seconds": round(time.perf_counter() - started, 4),
             "task_family": "tabular_classification",
             "strategy": STRATEGY,
+            "seed": SEED,
+            "sweep": SWEEP,
             "benchmark_name": DATASET.get("name"),
             "source_url": DATASET.get("source_url"),
             "feature_names": DATASET.get("feature_names"),

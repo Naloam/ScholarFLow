@@ -9,6 +9,7 @@ from schemas.autoresearch import (
     AutoResearchRunList,
     AutoResearchRunRead,
     AutoResearchRunRequest,
+    BenchmarkSource,
     TaskFamily,
 )
 from schemas.common import IdResponse
@@ -29,6 +30,9 @@ def _run_autoresearch(
     run_id: str,
     topic: str,
     task_family_hint: TaskFamily | None,
+    paper_ids: list[str] | None,
+    max_rounds: int,
+    benchmark: dict | None,
     docker_image: str | None,
     user_id: str | None,
 ) -> None:
@@ -50,6 +54,9 @@ def _run_autoresearch(
             run_id=run_id,
             topic=topic,
             task_family_hint=task_family_hint,
+            paper_ids=paper_ids,
+            max_rounds=max_rounds,
+            benchmark_source=BenchmarkSource.model_validate(benchmark) if benchmark else None,
             docker_image=docker_image,
         )
         status_code = 200 if result.status == "done" else 500
@@ -93,6 +100,9 @@ def run_auto_research(
         run.id,
         payload.topic,
         payload.task_family_hint,
+        payload.paper_ids,
+        payload.max_rounds,
+        payload.benchmark.model_dump(mode="json") if payload.benchmark else None,
         payload.docker_image,
         identity.user_id if identity else None,
     )

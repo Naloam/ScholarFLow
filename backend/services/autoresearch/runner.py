@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from agents.sandbox_agent import SandboxAgent
-from schemas.autoresearch import ExperimentSpec, ResearchPlan, ResultArtifact
+from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, ResearchPlan, ResultArtifact
 from services.autoresearch.codegen import ExperimentCodeGenerator
 from services.autoresearch.repository import save_generated_code
 
@@ -75,9 +75,20 @@ class AutoExperimentRunner:
         run_id: str,
         plan: ResearchPlan,
         spec: ExperimentSpec,
+        benchmark_payload: dict[str, Any],
+        round_index: int,
+        goal: str,
+        prior_attempts: list[ExperimentAttempt],
         docker_image: str | None = None,
-    ) -> tuple[str, ResultArtifact]:
-        code = self.codegen.generate(plan, spec)
+    ) -> tuple[str, str, ResultArtifact]:
+        strategy, code = self.codegen.generate(
+            plan=plan,
+            spec=spec,
+            benchmark_payload=benchmark_payload,
+            round_index=round_index,
+            goal=goal,
+            prior_attempts=prior_attempts,
+        )
         code_path = save_generated_code(project_id, run_id, code)
         result = self.sandbox.run(
             {
@@ -90,4 +101,5 @@ class AutoExperimentRunner:
         outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
         artifact = self._build_artifact(logs, outputs)
         artifact.environment.setdefault("generated_code_path", code_path)
-        return code_path, artifact
+        artifact.environment.setdefault("strategy", strategy)
+        return strategy, code_path, artifact

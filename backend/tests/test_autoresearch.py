@@ -12,6 +12,8 @@ import api.progress as progress_api
 import api.review as review_api
 import main as main_module
 import models  # noqa: F401
+import services.autoresearch.codegen as autoresearch_codegen
+import services.autoresearch.ingestion as autoresearch_ingestion
 import services.llm.client as llm_client
 from config import db as db_module
 from config import deps as deps_module
@@ -82,11 +84,16 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["task_family"] == "text_classification"
         assert run["spec"]["benchmark_name"] == "toy_cs_abstract_topic"
         assert run["artifact"]["status"] == "done"
+        assert len(run["attempts"]) == 3
+        assert run["attempts"][0]["goal"] == "initial_run"
+        assert run["attempts"][-1]["strategy"] == "naive_bayes_search"
+        assert run["selected_round_index"] is not None
         assert run["artifact"]["best_system"]
         assert len(run["artifact"]["tables"]) >= 1
         assert Path(run["generated_code_path"]).is_file()
 
         paper = run["paper_markdown"]
+        assert "## 2. Related Work and Research Plan" in paper
         assert "## 4. Experimental Setup" in paper
         assert "## 5. Results" in paper
         assert "| System | Accuracy | Macro F1 |" in paper
@@ -142,11 +149,98 @@ def test_autoresearch_tabular_run_supports_second_task_family(
         assert run["status"] == "done"
         assert run["task_family"] == "tabular_classification"
         assert run["spec"]["benchmark_name"] == "toy_training_run_stability"
+        assert len(run["attempts"]) == 3
 
+        all_systems = {
+            item["system"]
+            for attempt in run["attempts"]
+            for item in (attempt.get("artifact") or {}).get("system_results", [])
+        }
         systems = {item["system"] for item in run["artifact"]["system_results"]}
-        assert "perceptron_scaled" in systems
-        assert "perceptron_unscaled" in systems
+        assert "threshold_rule" in systems
+        assert "perceptron_scaled" in all_systems
+        assert "perceptron_unscaled" in all_systems
         assert "## 3. Method" in run["paper_markdown"]
         assert "Toy Training Run Stability" in run["paper_markdown"]
+    finally:
+        client.close()
+
+
+def test_autoresearch_can_pull_remote_csv_benchmark(monkeypatch, tmp_path: Path) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    csv_payload = """text,label,split
+retrieval models rank documents,retrieval,train
+query expansion improves recall,retrieval,train
+gpu cache compression helps serving,systems,train
+kernel fusion lowers latency,systems,train
+static analysis tracks taint,analysis,train
+symbolic execution explores paths,analysis,train
+reranking helps search quality,retrieval,test
+cluster scheduling improves throughput,systems,test
+abstract interpretation proves safety,analysis,test
+"""
+    monkeypatch.setattr(autoresearch_ingestion, "_fetch_remote_text", lambda url: csv_payload)
+    try:
+        project_id = _create_project(
+            client,
+            "Remote Benchmark Project",
+            "External benchmark ingestion for text classification",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "External benchmark ingestion for text classification",
+                "benchmark": {
+                    "kind": "remote_csv",
+                    "url": "https://example.com/benchmark.csv",
+                    "text_field": "text",
+                    "label_field": "label",
+                    "split_field": "split",
+                },
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert run["benchmark"]["kind"] == "remote_csv"
+        assert run["spec"]["dataset"]["train_size"] == 6
+        assert run["spec"]["dataset"]["test_size"] == 3
+        assert run["artifact"]["environment"]["source_url"] == "https://example.com/benchmark.csv"
+    finally:
+        client.close()
+
+
+def test_autoresearch_repairs_after_failed_first_attempt(monkeypatch, tmp_path: Path) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    original_generate = autoresearch_codegen.ExperimentCodeGenerator.generate
+    calls = {"count": 0}
+
+    def flaky_generate(self, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return "forced_failure", 'raise RuntimeError("synthetic failure")'
+        return original_generate(self, **kwargs)
+
+    monkeypatch.setattr(autoresearch_codegen.ExperimentCodeGenerator, "generate", flaky_generate)
+    try:
+        project_id = _create_project(
+            client,
+            "Repair Loop Project",
+            "Automatic topic classification with repair loop",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification with repair loop"},
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert run["attempts"][0]["status"] == "failed"
+        assert run["attempts"][1]["goal"] == "repair_previous_failure"
+        assert run["selected_round_index"] >= 2
     finally:
         client.close()

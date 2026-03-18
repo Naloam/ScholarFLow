@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from schemas.autoresearch import ResearchPlan, TaskFamily
+from schemas.autoresearch import LiteratureInsight, ResearchPlan, TaskFamily
 from services.autoresearch.benchmarks import infer_task_family
 from services.llm.client import chat
 from services.llm.prompting import load_prompt
@@ -14,6 +14,12 @@ PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.1.0.md"
 
 
 class ResearchPlanner:
+    def _literature_method_phrase(self, literature: list[LiteratureInsight]) -> str:
+        method_hints = [item.method_hint for item in literature if item.method_hint]
+        if not method_hints:
+            return ""
+        return " ".join(method_hints[:2])
+
     def _parse_json(self, text: str) -> dict[str, Any] | None:
         if not text:
             return None
@@ -25,7 +31,13 @@ class ResearchPlanner:
         except Exception:
             return None
 
-    def _fallback_plan(self, topic: str, task_family: TaskFamily) -> ResearchPlan:
+    def _fallback_plan(
+        self,
+        topic: str,
+        task_family: TaskFamily,
+        literature: list[LiteratureInsight],
+    ) -> ResearchPlan:
+        literature_phrase = self._literature_method_phrase(literature)
         if task_family == "tabular_classification":
             title = f"AutoResearch v0: Lightweight Stability Prediction for {topic}"
             method = "a scaled linear classifier backed by simple rule based baselines"
@@ -72,15 +84,22 @@ class ResearchPlanner:
                 "The system needs a benchmark that is cheap enough to execute in a sandbox yet "
                 "structured enough to support hypotheses, baselines, ablations, and a result table."
             ),
-            proposed_method=f"We evaluate {method}.",
+            proposed_method=(
+                f"We evaluate {method}."
+                + (f" The proposal is conditioned on literature cues: {literature_phrase}" if literature_phrase else "")
+            ),
             research_questions=questions,
-            hypotheses=hypothesis,
+            hypotheses=(
+                hypothesis
+                + [item.gap_hint for item in literature[:2] if item.gap_hint]
+            ),
             planned_contributions=contributions,
             experiment_outline=[
                 "Instantiate a built in benchmark and split it into train and test partitions.",
                 "Run majority and task specific heuristic baselines.",
                 "Run the lightweight learned method and one ablation.",
                 "Summarize metrics, logs, and environment metadata into a structured artifact.",
+                "Use project literature to justify the chosen benchmark and method family.",
             ],
             scope_limits=[
                 "v0 only supports built in text and tabular classification benchmarks.",
@@ -89,9 +108,15 @@ class ResearchPlanner:
             ],
         )
 
-    def plan(self, topic: str, task_family_hint: TaskFamily | None = None) -> ResearchPlan:
+    def plan(
+        self,
+        topic: str,
+        task_family_hint: TaskFamily | None = None,
+        literature: list[LiteratureInsight] | None = None,
+    ) -> ResearchPlan:
+        literature = literature or []
         task_family = infer_task_family(topic, task_family_hint)
-        fallback = self._fallback_plan(topic, task_family)
+        fallback = self._fallback_plan(topic, task_family, literature)
         try:
             prompt = load_prompt(PROMPT_PATH)
             response = chat(
@@ -102,6 +127,7 @@ class ResearchPlanner:
                         "content": (
                             f"Topic: {topic}\n"
                             f"Task family: {task_family}\n"
+                            f"Literature context: {[item.model_dump(mode='json') for item in literature]}\n"
                             "Return a JSON object for a minimal but realistic computer science "
                             "research plan."
                         ),

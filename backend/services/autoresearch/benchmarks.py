@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from schemas.autoresearch import (
     AblationSpec,
+    BenchmarkSource,
     BaselineSpec,
     DatasetSpec,
     ExperimentSpec,
@@ -217,6 +219,15 @@ TABULAR_BENCHMARK = {
 }
 
 
+@dataclass(frozen=True)
+class ResolvedBenchmark:
+    source: BenchmarkSource
+    task_family: TaskFamily
+    payload: dict[str, Any]
+    benchmark_name: str
+    benchmark_description: str
+
+
 def infer_task_family(topic: str, task_family_hint: TaskFamily | None = None) -> TaskFamily:
     if task_family_hint:
         return task_family_hint
@@ -233,9 +244,41 @@ def benchmark_payload_for(task_family: TaskFamily) -> dict[str, Any]:
     return TEXT_BENCHMARK
 
 
-def build_experiment_spec(task_family: TaskFamily) -> ExperimentSpec:
+def default_search_strategies(task_family: TaskFamily) -> list[str]:
+    if task_family == "tabular_classification":
+        return [
+            "threshold_rule_search",
+            "perceptron_unscaled_search",
+            "perceptron_scaled_search",
+        ]
+    return [
+        "keyword_rule_search",
+        "naive_bayes_limited_vocab_search",
+        "naive_bayes_search",
+    ]
+
+
+def builtin_benchmark(
+    task_family: TaskFamily,
+    source: BenchmarkSource | None = None,
+) -> ResolvedBenchmark:
     payload = benchmark_payload_for(task_family)
-    dataset_payload = payload["dataset"]
+    effective_source = source or BenchmarkSource(kind="builtin", task_family_hint=task_family)
+    return ResolvedBenchmark(
+        source=effective_source,
+        task_family=task_family,
+        payload=payload["dataset"],
+        benchmark_name=payload["benchmark_name"],
+        benchmark_description=payload["benchmark_description"],
+    )
+
+
+def build_experiment_spec(
+    task_family: TaskFamily,
+    benchmark: ResolvedBenchmark | None = None,
+) -> ExperimentSpec:
+    resolved = benchmark or builtin_benchmark(task_family)
+    dataset_payload = resolved.payload
     if task_family == "tabular_classification":
         baselines = [
             BaselineSpec(name="majority", description="Predict the most frequent stability label."),
@@ -262,6 +305,7 @@ def build_experiment_spec(task_family: TaskFamily) -> ExperimentSpec:
             "Use only Python standard library utilities.",
             "Report accuracy and macro F1 on the held out split.",
             "Show whether scaling improves the learned linear model.",
+            "If the benchmark is remote, snapshot the pulled dataset before execution.",
         ]
         hypothesis = (
             "A simple linear model with feature scaling should outperform majority voting and "
@@ -295,6 +339,7 @@ def build_experiment_spec(task_family: TaskFamily) -> ExperimentSpec:
             "Use only Python standard library tokenization and counting.",
             "Treat each abstract as a short single document example.",
             "Compare probabilistic lexical modeling against rule based retrieval signals.",
+            "If the benchmark is remote, snapshot the pulled dataset before execution.",
         ]
         hypothesis = (
             "A lightweight lexical probabilistic model should outperform majority and keyword "
@@ -305,11 +350,11 @@ def build_experiment_spec(task_family: TaskFamily) -> ExperimentSpec:
 
     return ExperimentSpec(
         task_family=task_family,
-        benchmark_name=payload["benchmark_name"],
-        benchmark_description=payload["benchmark_description"],
+        benchmark_name=resolved.benchmark_name,
+        benchmark_description=resolved.benchmark_description,
         dataset=DatasetSpec(
-            name=dataset_payload["name"],
-            description=dataset_payload["description"],
+            name=dataset_payload.get("name") or resolved.benchmark_name,
+            description=dataset_payload.get("description") or resolved.benchmark_description,
             train_size=len(dataset_payload["train"]),
             test_size=len(dataset_payload["test"]),
             input_fields=input_fields,
@@ -320,4 +365,5 @@ def build_experiment_spec(task_family: TaskFamily) -> ExperimentSpec:
         hypothesis=hypothesis,
         ablations=ablations,
         implementation_notes=notes,
+        search_strategies=default_search_strategies(task_family),
     )

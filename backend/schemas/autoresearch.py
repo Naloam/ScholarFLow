@@ -163,6 +163,7 @@ class ExperimentAttempt(BaseModel):
     summary: str
     critique: str | None = None
     code_path: str | None = None
+    repair_summary: dict[str, Any] | None = None
     artifact: ResultArtifact | None = None
 
 

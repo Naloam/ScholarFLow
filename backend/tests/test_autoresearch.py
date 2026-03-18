@@ -17,12 +17,14 @@ import models  # noqa: F401
 import services.autoresearch.codegen as autoresearch_codegen
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_pipeline as literature_pipeline
+import services.autoresearch.repair as autoresearch_repair
 import services.llm.client as llm_client
 from config import db as db_module
 from config import deps as deps_module
 from config.settings import settings
 from main import app
 from models.base import Base
+from schemas.autoresearch import ExperimentAttempt, ResultArtifact
 from schemas.papers import PaperMeta
 from schemas.search import SearchResult
 
@@ -247,6 +249,8 @@ def test_autoresearch_repairs_after_failed_first_attempt(monkeypatch, tmp_path: 
         assert run["attempts"][0]["status"] == "failed"
         assert run["attempts"][1]["goal"] == "repair_previous_failure"
         assert run["selected_round_index"] >= 2
+        assert run["attempts"][1]["repair_summary"]["strategy"] == "repair_regenerate"
+        assert "fallback_to_regenerate" in run["attempts"][1]["repair_summary"]["sanity_checks"]
     finally:
         client.close()
 
@@ -283,10 +287,54 @@ def test_autoresearch_traceback_patch_repairs_inline_failure(monkeypatch, tmp_pa
         run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
         assert run["status"] == "done"
         assert run["attempts"][0]["status"] == "failed"
-        assert run["attempts"][1]["strategy"] == "repair_traceback_patch"
+        assert run["attempts"][1]["strategy"] == "repair_local_patch"
         assert run["attempts"][1]["status"] == "done"
+        assert run["attempts"][1]["repair_summary"]["patch_line_count"] >= 1
+        assert "patch_is_local" in run["attempts"][1]["repair_summary"]["sanity_checks"]
     finally:
         client.close()
+
+
+def test_repair_sanity_rejects_patch_without_result_marker(tmp_path: Path) -> None:
+    engine = autoresearch_repair.ExperimentRepairEngine()
+    previous_code = """import json
+
+def run():
+    artifact = {"summary": "ok", "primary_metric": "macro_f1", "system_results": [], "tables": [], "environment": {}}
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+"""
+    broken_candidate = """def run():
+    return None
+
+if __name__ == "__main__":
+    run()
+"""
+    path = tmp_path / "broken_repair.py"
+    path.write_text(previous_code, encoding="utf-8")
+    attempt = ExperimentAttempt(
+        round_index=1,
+        strategy="forced_failure",
+        goal="initial_run",
+        status="failed",
+        summary="failed",
+        code_path=str(path),
+        artifact=ResultArtifact(
+            status="failed",
+            summary="failed",
+            primary_metric="macro_f1",
+            logs='Traceback (most recent call last):\n  File "main.py", line 4, in <module>\nRuntimeError: boom',
+        ),
+    )
+    candidate = engine._build_candidate(
+        previous_code,
+        broken_candidate,
+        strategy="repair_local_patch",
+        local_patch=True,
+    )
+    assert candidate is None
 
 
 def test_autoresearch_auto_searches_literature_when_project_has_no_papers(

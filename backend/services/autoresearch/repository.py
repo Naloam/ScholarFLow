@@ -15,6 +15,7 @@ SPEC_FILENAME = "spec.json"
 ARTIFACT_FILENAME = "artifact.json"
 CODE_FILENAME = "experiment.py"
 PAPER_FILENAME = "paper.md"
+BENCHMARK_FILENAME = "benchmark.json"
 
 
 def _utcnow() -> datetime:
@@ -101,3 +102,9 @@ def save_generated_code(project_id: str, run_id: str, code: str) -> str:
 
 def paper_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_FILENAME)
+
+
+def save_benchmark_snapshot(project_id: str, run_id: str, payload: dict) -> str:
+    path = run_dir(project_id, run_id) / BENCHMARK_FILENAME
+    _write_json(path, payload)
+    return str(path)

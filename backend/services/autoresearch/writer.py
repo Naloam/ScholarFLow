@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from schemas.autoresearch import ExperimentSpec, ResearchPlan, ResultArtifact, ResultTable
+from schemas.autoresearch import (
+    ExperimentAttempt,
+    ExperimentSpec,
+    LiteratureInsight,
+    ResearchPlan,
+    ResultArtifact,
+    ResultTable,
+)
 
 
 def _markdown_table(table: ResultTable) -> str:
@@ -32,10 +39,37 @@ class PaperWriter:
             rendered.append("")
         return "\n".join(rendered).strip()
 
-    def write(self, plan: ResearchPlan, spec: ExperimentSpec, artifact: ResultArtifact) -> str:
+    def _literature_block(self, literature: list[LiteratureInsight]) -> str:
+        if not literature:
+            return "No project-specific literature was attached, so related-work grounding is limited."
+        return "\n".join(
+            f"- {item.title} ({item.year or 'n.d.'}): {item.insight}"
+            for item in literature
+        )
+
+    def _attempt_block(self, attempts: list[ExperimentAttempt]) -> str:
+        if not attempts:
+            return "- No iterative attempts were recorded."
+        return "\n".join(
+            f"- Round {item.round_index} using `{item.strategy}` ({item.goal}): {item.summary}"
+            for item in attempts
+        )
+
+    def write(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        artifact: ResultArtifact,
+        *,
+        literature: list[LiteratureInsight] | None = None,
+        attempts: list[ExperimentAttempt] | None = None,
+        benchmark_name: str | None = None,
+    ) -> str:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")
 
+        literature = literature or []
+        attempts = attempts or []
         best_metric = self._metric(artifact, artifact.best_system, artifact.primary_metric)
         learned_system = spec.baselines[-1].name if spec.baselines else artifact.best_system
         ablation_name = spec.ablations[0].name if spec.ablations else None
@@ -47,9 +81,11 @@ class PaperWriter:
         executor_mode = environment.get("executor_mode", "unknown")
 
         findings = "\n".join(f"- {item}" for item in artifact.key_findings) or "- No additional findings recorded."
-        baselines = ", ".join(item.name for item in spec.baselines[:2]) or "simple baselines"
         metrics = ", ".join(metric.name for metric in spec.metrics)
         results_table = self._results_table(artifact)
+        literature_block = self._literature_block(literature)
+        attempt_block = self._attempt_block(attempts)
+        benchmark_display = benchmark_name or spec.benchmark_name
 
         comparison_sentence = (
             f"The executed run identified `{artifact.best_system}` as the strongest system with "
@@ -79,7 +115,7 @@ class PaperWriter:
         return f"""# {plan.title}
 
 ## Abstract
-This paper presents `CS AutoResearch v0`, a minimal computer science research loop that maps a topic into a research plan, generates executable experiment code, runs the experiment in a sandbox-oriented environment, and writes a paper only from the resulting evidence. The concrete topic for this run is **{plan.topic}**, instantiated as a `{spec.task_family}` benchmark named `{spec.benchmark_name}`.
+This paper presents `CS AutoResearch v0`, a minimal computer science research loop that maps a topic into a research plan, generates executable experiment code, runs the experiment in a sandbox-oriented environment, and writes a paper only from the resulting evidence. The concrete topic for this run is **{plan.topic}**, instantiated as a `{spec.task_family}` benchmark named `{benchmark_display}`.
 
 The experimental study follows the hypothesis that {spec.hypothesis.lower()} {comparison_sentence} The run reports {metrics}, preserves logs and environment metadata, and exports a structured artifact that can be inspected independently from the paper text.
 
@@ -91,7 +127,10 @@ The motivation for this run is practical rather than purely stylistic. ScholarFl
 The central research questions are:
 {chr(10).join(f"- {item}" for item in plan.research_questions)}
 
-## 2. Research Plan
+## 2. Related Work and Research Plan
+The planning stage was conditioned on the following literature cues:
+{literature_block}
+
 The planning stage produced the following working hypothesis set:
 {chr(10).join(f"- {item}" for item in plan.hypotheses)}
 
@@ -102,7 +141,7 @@ Operationally, the run followed this outline:
 {chr(10).join(f"1. {item}" for item in plan.experiment_outline)}
 
 ## 3. Method
-The proposed method in the plan is summarized as {plan.proposed_method.lower()} The executable experiment specification narrows that idea into a benchmark with fixed train and test partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is `{spec.benchmark_name}`, described as: {spec.benchmark_description}
+The proposed method in the plan is summarized as {plan.proposed_method.lower()} The executable experiment specification narrows that idea into a benchmark with fixed train and test partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is `{benchmark_display}`, described as: {spec.benchmark_description}
 
 The dataset used in the experiment is `{spec.dataset.name}` with {spec.dataset.train_size} training examples and {spec.dataset.test_size} test examples. Inputs are represented through the fields {", ".join(spec.dataset.input_fields)}, and labels belong to {{{", ".join(spec.dataset.label_space)}}}. The compared baselines are {", ".join(item.name for item in spec.baselines)}. The ablation suite contains {", ".join(item.name for item in spec.ablations) if spec.ablations else "no ablations"}.
 
@@ -113,6 +152,9 @@ Implementation constraints were also explicit:
 All experiments were executed from generated Python code inside the existing ScholarFlow sandbox runner. The observed execution mode for this run was `{executor_mode}`. The recorded environment reports Python `{environment.get("python_version") or environment.get("host_python") or "unknown"}` on `{environment.get("platform") or environment.get("host_platform") or "unknown"}`. The experiment runtime reported by the artifact was `{runtime if runtime is not None else "unknown"}` seconds.
 
 Evaluation uses {metrics}. The purpose of the benchmark is not to claim state of the art performance, but to verify that the system can carry out a complete research loop with a real result table and a grounded discussion.
+
+The search and repair trace for this run was:
+{attempt_block}
 
 ## 5. Results
 {comparison_sentence} {learned_sentence} {majority_sentence} {ablation_sentence}

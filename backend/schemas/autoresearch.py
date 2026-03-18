@@ -7,6 +7,22 @@ from pydantic import BaseModel, Field
 
 
 TaskFamily = Literal["text_classification", "tabular_classification"]
+BenchmarkKind = Literal["builtin", "remote_csv", "remote_jsonl", "remote_json"]
+
+
+class BenchmarkSource(BaseModel):
+    kind: BenchmarkKind = "builtin"
+    name: str | None = None
+    url: str | None = None
+    task_family_hint: TaskFamily | None = None
+    text_field: str | None = None
+    label_field: str | None = None
+    feature_fields: list[str] = Field(default_factory=list)
+    split_field: str | None = None
+    train_split_values: list[str] = Field(default_factory=lambda: ["train"])
+    test_split_values: list[str] = Field(default_factory=lambda: ["test", "validation", "dev"])
+    test_ratio: float = 0.3
+    limit_rows: int | None = None
 
 
 class AutoResearchRunRequest(BaseModel):
@@ -14,6 +30,9 @@ class AutoResearchRunRequest(BaseModel):
     task_family_hint: TaskFamily | None = None
     docker_image: str | None = None
     language: str = "en"
+    paper_ids: list[str] | None = None
+    max_rounds: int = 3
+    benchmark: BenchmarkSource | None = None
 
 
 class DatasetSpec(BaseModel):
@@ -65,6 +84,7 @@ class ExperimentSpec(BaseModel):
     hypothesis: str
     ablations: list[AblationSpec] = Field(default_factory=list)
     implementation_notes: list[str] = Field(default_factory=list)
+    search_strategies: list[str] = Field(default_factory=list)
 
 
 class SystemMetricResult(BaseModel):
@@ -90,6 +110,29 @@ class ResultArtifact(BaseModel):
     logs: str | None = None
     environment: dict[str, Any] = Field(default_factory=dict)
     outputs: dict[str, Any] = Field(default_factory=dict)
+    objective_system: str | None = None
+    objective_score: float | None = None
+
+
+class LiteratureInsight(BaseModel):
+    paper_id: str | None = None
+    title: str
+    year: int | None = None
+    source: str | None = None
+    insight: str
+    method_hint: str | None = None
+    gap_hint: str | None = None
+
+
+class ExperimentAttempt(BaseModel):
+    round_index: int
+    strategy: str
+    goal: str
+    status: Literal["done", "failed"]
+    summary: str
+    critique: str | None = None
+    code_path: str | None = None
+    artifact: ResultArtifact | None = None
 
 
 class AutoResearchRunRead(BaseModel):
@@ -98,8 +141,11 @@ class AutoResearchRunRead(BaseModel):
     topic: str
     status: Literal["queued", "running", "done", "failed"]
     task_family: TaskFamily | None = None
+    benchmark: BenchmarkSource | None = None
     plan: ResearchPlan | None = None
     spec: ExperimentSpec | None = None
+    literature: list[LiteratureInsight] = Field(default_factory=list)
+    attempts: list[ExperimentAttempt] = Field(default_factory=list)
     artifact: ResultArtifact | None = None
     generated_code_path: str | None = None
     paper_path: str | None = None
@@ -107,6 +153,7 @@ class AutoResearchRunRead(BaseModel):
     paper_draft_version: int | None = None
     docker_image: str | None = None
     error: str | None = None
+    selected_round_index: int | None = None
     created_at: datetime
     updated_at: datetime
 

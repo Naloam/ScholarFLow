@@ -4,8 +4,7 @@ import json
 import re
 from typing import Any
 
-from schemas.autoresearch import ExperimentSpec, ResearchPlan
-from services.autoresearch.benchmarks import benchmark_payload_for
+from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, ResearchPlan
 from services.llm.client import chat
 from services.llm.prompting import load_prompt
 
@@ -31,7 +30,21 @@ class ExperimentCodeGenerator:
             return False
         return True
 
-    def _llm_code(self, plan: ResearchPlan, spec: ExperimentSpec, benchmark_payload: dict[str, Any]) -> str | None:
+    def _strategy_for(self, spec: ExperimentSpec, round_index: int) -> str:
+        if not spec.search_strategies:
+            return "default_search"
+        idx = min(max(round_index - 1, 0), len(spec.search_strategies) - 1)
+        return spec.search_strategies[idx]
+
+    def _llm_code(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark_payload: dict[str, Any],
+        strategy: str,
+        goal: str,
+        prior_attempts: list[ExperimentAttempt],
+    ) -> str | None:
         try:
             prompt = load_prompt(PROMPT_PATH)
             response = chat(
@@ -44,6 +57,9 @@ class ExperimentCodeGenerator:
                                 "plan": plan.model_dump(mode="json"),
                                 "spec": spec.model_dump(mode="json"),
                                 "benchmark_payload": benchmark_payload,
+                                "strategy": strategy,
+                                "goal": goal,
+                                "prior_attempts": [item.model_dump(mode="json") for item in prior_attempts],
                             },
                             ensure_ascii=False,
                             indent=2,
@@ -56,30 +72,41 @@ class ExperimentCodeGenerator:
         except Exception:
             return None
 
-    def generate(self, plan: ResearchPlan, spec: ExperimentSpec) -> str:
-        benchmark_payload = benchmark_payload_for(plan.task_family)
-        llm_code = self._llm_code(plan, spec, benchmark_payload)
+    def generate(
+        self,
+        *,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark_payload: dict[str, Any],
+        round_index: int,
+        goal: str,
+        prior_attempts: list[ExperimentAttempt],
+    ) -> tuple[str, str]:
+        strategy = self._strategy_for(spec, round_index)
+        llm_code = self._llm_code(plan, spec, benchmark_payload, strategy, goal, prior_attempts)
         if self._is_valid_code(llm_code):
-            return llm_code or ""
-        return self._fallback_code(plan, spec, benchmark_payload)
+            return strategy, llm_code or ""
+        return strategy, self._fallback_code(plan, spec, benchmark_payload, strategy)
 
     def _fallback_code(
         self,
         plan: ResearchPlan,
         spec: ExperimentSpec,
         benchmark_payload: dict[str, Any],
+        strategy: str,
     ) -> str:
         if plan.task_family == "tabular_classification":
-            return self._tabular_template(plan, spec, benchmark_payload)
-        return self._text_template(plan, spec, benchmark_payload)
+            return self._tabular_template(plan, spec, benchmark_payload, strategy)
+        return self._text_template(plan, spec, benchmark_payload, strategy)
 
     def _text_template(
         self,
         plan: ResearchPlan,
         spec: ExperimentSpec,
         benchmark_payload: dict[str, Any],
+        strategy: str,
     ) -> str:
-        dataset_json = json.dumps(benchmark_payload["dataset"], ensure_ascii=False, indent=2)
+        dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
         return f'''import json
 import math
 import platform
@@ -92,10 +119,21 @@ DATASET = {dataset_json}
 PRIMARY_METRIC = "macro_f1"
 TITLE = {plan.title!r}
 HYPOTHESIS = {spec.hypothesis!r}
+STRATEGY = {strategy!r}
 
 
 def tokenize(text):
-    return re.findall(r"[a-z_]+", text.lower())
+    return re.findall(r"[a-z][a-z0-9_]+", text.lower())
+
+
+def to_features(text, order):
+    tokens = tokenize(text)
+    if order <= 1:
+        return tokens
+    features = list(tokens)
+    for idx in range(len(tokens) - 1):
+        features.append(tokens[idx] + "__" + tokens[idx + 1])
+    return features
 
 
 def accuracy(y_true, y_pred):
@@ -134,6 +172,28 @@ def majority_predict(train, test):
     return [label for _ in test]
 
 
+def build_keyword_map(train, top_k=8):
+    manual = DATASET.get("keyword_map")
+    if isinstance(manual, dict) and manual:
+        return manual
+    by_label = defaultdict(Counter)
+    global_counter = Counter()
+    for item in train:
+        label = item["label"]
+        tokens = tokenize(item["text"])
+        global_counter.update(tokens)
+        by_label[label].update(tokens)
+    keyword_map = {{}}
+    for label, counter in by_label.items():
+        scored = []
+        for token, count in counter.items():
+            score = count - global_counter[token] / max(len(by_label), 1)
+            scored.append((score, token))
+        ranked = [token for _, token in sorted(scored, reverse=True)[:top_k]]
+        keyword_map[label] = ranked
+    return keyword_map
+
+
 def keyword_predict(keyword_map, test):
     labels = sorted(keyword_map)
     outputs = []
@@ -143,22 +203,21 @@ def keyword_predict(keyword_map, test):
         for label in labels:
             score = sum(1 for token in tokens if token in keyword_map[label])
             counts.append((score, label))
-        best = sorted(counts, key=lambda pair: (pair[0], pair[1]), reverse=True)[0]
-        outputs.append(best[1])
+        outputs.append(sorted(counts, key=lambda pair: (pair[0], pair[1]), reverse=True)[0][1])
     return outputs
 
 
-def train_naive_bayes(train, vocab_limit=None):
+def train_naive_bayes(train, order=1, vocab_limit=None):
     label_docs = Counter()
     label_tokens = Counter()
     token_counts = defaultdict(Counter)
     token_frequency = Counter()
     for item in train:
         label = item["label"]
+        features = to_features(item["text"], order)
         label_docs[label] += 1
-        tokens = tokenize(item["text"])
-        label_tokens[label] += len(tokens)
-        for token in tokens:
+        label_tokens[label] += len(features)
+        for token in features:
             token_counts[label][token] += 1
             token_frequency[token] += 1
     vocab = set(token_frequency)
@@ -169,11 +228,12 @@ def train_naive_bayes(train, vocab_limit=None):
         "label_tokens": label_tokens,
         "token_counts": token_counts,
         "vocab": sorted(vocab),
+        "order": order,
     }}
 
 
 def predict_naive_bayes(model, text):
-    tokens = [token for token in tokenize(text) if token in model["vocab"]]
+    tokens = [token for token in to_features(text, model["order"]) if token in model["vocab"]]
     vocab_size = max(len(model["vocab"]), 1)
     total_docs = sum(model["label_docs"].values())
     scores = {{}}
@@ -197,38 +257,48 @@ def run():
     majority = majority_predict(train, test)
     results.append(evaluate("majority", y_true, majority))
 
-    keyword = keyword_predict(DATASET["keyword_map"], test)
+    keyword_map = build_keyword_map(train)
+    keyword = keyword_predict(keyword_map, test)
     results.append(evaluate("keyword_rule", y_true, keyword))
 
-    model = train_naive_bayes(train)
-    naive_bayes = [predict_naive_bayes(model, item["text"]) for item in test]
-    results.append(evaluate("naive_bayes", y_true, naive_bayes))
+    candidate_system = "keyword_rule"
+    critique = "Search starts from a lexical heuristic baseline."
 
-    small_model = train_naive_bayes(train, vocab_limit=18)
-    small_vocab = [predict_naive_bayes(small_model, item["text"]) for item in test]
-    results.append(evaluate("naive_bayes_limited_vocab", y_true, small_vocab))
+    if STRATEGY in {{"naive_bayes_limited_vocab_search", "naive_bayes_search"}}:
+        limited_model = train_naive_bayes(train, order=1, vocab_limit=max(12, len(keyword_map) * 4))
+        limited_pred = [predict_naive_bayes(limited_model, item["text"]) for item in test]
+        results.append(evaluate("naive_bayes_limited_vocab", y_true, limited_pred))
+        candidate_system = "naive_bayes_limited_vocab"
+        critique = "The second round adds a learned lexical model but restricts vocabulary for fast repairable training."
 
+    if STRATEGY == "naive_bayes_search":
+        full_model = train_naive_bayes(train, order=1, vocab_limit=None)
+        full_pred = [predict_naive_bayes(full_model, item["text"]) for item in test]
+        results.append(evaluate("naive_bayes", y_true, full_pred))
+        candidate_system = "naive_bayes"
+        critique = "The final search round removes the vocabulary cap to recover full lexical coverage."
+
+    objective = next(item for item in results if item["system"] == candidate_system)
     best = max(results, key=lambda item: item["metrics"][PRIMARY_METRIC])
-    rows = []
-    for item in results:
-        rows.append([
-            item["system"],
-            f'{{item["metrics"]["accuracy"]:.4f}}',
-            f'{{item["metrics"]["macro_f1"]:.4f}}',
-        ])
+    rows = [
+        [item["system"], f'{{item["metrics"]["accuracy"]:.4f}}', f'{{item["metrics"]["macro_f1"]:.4f}}']
+        for item in results
+    ]
 
     artifact = {{
         "summary": (
-            f'{{TITLE}} executed on a built in text classification benchmark. '
-            f'The best system was {{best["system"]}} with macro_f1='
-            f'{{best["metrics"]["macro_f1"]:.4f}}.'
+            f'{{TITLE}} executed strategy {{STRATEGY}} on benchmark {{DATASET.get("name", "dataset")}}. '
+            f'Best system: {{best["system"]}} with macro_f1={{best["metrics"]["macro_f1"]:.4f}}.'
         ),
         "primary_metric": PRIMARY_METRIC,
         "best_system": best["system"],
+        "objective_system": objective["system"],
+        "objective_score": objective["metrics"][PRIMARY_METRIC],
         "key_findings": [
             f'Best system: {{best["system"]}}',
+            f'Search objective system: {{objective["system"]}}',
+            critique,
             f'Hypothesis under test: {{HYPOTHESIS}}',
-            "The limited vocabulary ablation measures whether lexical coverage matters.",
         ],
         "system_results": results,
         "tables": [
@@ -243,6 +313,9 @@ def run():
             "platform": platform.platform(),
             "runtime_seconds": round(time.perf_counter() - started, 4),
             "task_family": "text_classification",
+            "strategy": STRATEGY,
+            "benchmark_name": DATASET.get("name"),
+            "source_url": DATASET.get("source_url"),
         }},
     }}
     print("__RESULT__" + json.dumps(artifact))
@@ -257,8 +330,9 @@ if __name__ == "__main__":
         plan: ResearchPlan,
         spec: ExperimentSpec,
         benchmark_payload: dict[str, Any],
+        strategy: str,
     ) -> str:
-        dataset_json = json.dumps(benchmark_payload["dataset"], ensure_ascii=False, indent=2)
+        dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
         return f'''import json
 import platform
 import sys
@@ -269,6 +343,7 @@ DATASET = {dataset_json}
 PRIMARY_METRIC = "macro_f1"
 TITLE = {plan.title!r}
 HYPOTHESIS = {spec.hypothesis!r}
+STRATEGY = {strategy!r}
 
 
 def accuracy(y_true, y_pred):
@@ -307,13 +382,29 @@ def majority_predict(train, test):
     return [label for _ in test]
 
 
-def threshold_rule(test):
-    outputs = []
-    for item in test:
-        learning_rate, batch_size, dropout, depth, residual = item["features"]
-        stable = learning_rate <= 0.008 and batch_size >= 32 and residual == 1 and depth <= 12
-        outputs.append("stable" if stable else "unstable")
-    return outputs
+def threshold_rule_search(train, test):
+    best = (0.0, 0, 0.0, 1)
+    labels = sorted({{item["label"] for item in train}})
+    positive = labels[-1]
+    for feature_index in range(len(train[0]["features"])):
+        values = sorted({{row["features"][feature_index] for row in train}})
+        for threshold in values:
+            for direction in (-1, 1):
+                preds = []
+                for row in train:
+                    score = row["features"][feature_index] * direction
+                    thresh = threshold * direction
+                    preds.append(positive if score >= thresh else labels[0])
+                score = accuracy([row["label"] for row in train], preds)
+                if score >= best[0]:
+                    best = (score, feature_index, threshold, direction)
+    _, feature_index, threshold, direction = best
+    preds = []
+    for row in test:
+        score = row["features"][feature_index] * direction
+        thresh = threshold * direction
+        preds.append(positive if score >= thresh else labels[0])
+    return preds
 
 
 def standardize(train_rows, rows):
@@ -325,38 +416,36 @@ def standardize(train_rows, rows):
         stds.append(variance ** 0.5 or 1.0)
     transformed = []
     for row in rows:
-        features = [
-            (value - means[idx]) / stds[idx]
-            for idx, value in enumerate(row["features"])
-        ]
+        features = [(value - means[idx]) / stds[idx] for idx, value in enumerate(row["features"])]
         transformed.append({{"features": features, "label": row["label"]}})
     return transformed
 
 
-def train_perceptron(train_rows, scaled):
+def train_perceptron(train_rows, scaled, epochs):
     rows = standardize(train_rows, train_rows) if scaled else train_rows
     weights = [0.0 for _ in rows[0]["features"]]
     bias = 0.0
-    for _ in range(20):
+    for _ in range(epochs):
         for row in rows:
-            features = row["features"]
-            target = 1 if row["label"] == "stable" else -1
-            margin = sum(weight * value for weight, value in zip(weights, features)) + bias
+            target = 1 if row["label"] == sorted({{r["label"] for r in train_rows}})[-1] else -1
+            margin = sum(weight * value for weight, value in zip(weights, row["features"])) + bias
             pred = 1 if margin >= 0 else -1
             if pred != target:
-                for idx, value in enumerate(features):
+                for idx, value in enumerate(row["features"]):
                     weights[idx] += target * value
                 bias += target
     return weights, bias
 
 
-def predict_perceptron(train_rows, test_rows, scaled):
-    weights, bias = train_perceptron(train_rows, scaled)
+def predict_perceptron(train_rows, test_rows, scaled, epochs):
+    weights, bias = train_perceptron(train_rows, scaled, epochs)
     rows = standardize(train_rows, test_rows) if scaled else test_rows
+    positive = sorted({{row["label"] for row in train_rows}})[-1]
+    negative = sorted({{row["label"] for row in train_rows}})[0]
     outputs = []
     for row in rows:
         margin = sum(weight * value for weight, value in zip(weights, row["features"])) + bias
-        outputs.append("stable" if margin >= 0 else "unstable")
+        outputs.append(positive if margin >= 0 else negative)
     return outputs
 
 
@@ -370,36 +459,44 @@ def run():
     majority = majority_predict(train, test)
     results.append(evaluate("majority", y_true, majority))
 
-    threshold = threshold_rule(test)
+    threshold = threshold_rule_search(train, test)
     results.append(evaluate("threshold_rule", y_true, threshold))
+    candidate_system = "threshold_rule"
+    critique = "Search starts from a tuned one-feature threshold baseline."
 
-    perceptron_scaled = predict_perceptron(train, test, True)
-    results.append(evaluate("perceptron_scaled", y_true, perceptron_scaled))
+    if STRATEGY in {{"perceptron_unscaled_search", "perceptron_scaled_search"}}:
+        unscaled = predict_perceptron(train, test, False, epochs=15)
+        results.append(evaluate("perceptron_unscaled", y_true, unscaled))
+        candidate_system = "perceptron_unscaled"
+        critique = "The second round adds a learned linear model without feature scaling."
 
-    perceptron_unscaled = predict_perceptron(train, test, False)
-    results.append(evaluate("perceptron_unscaled", y_true, perceptron_unscaled))
+    if STRATEGY == "perceptron_scaled_search":
+        scaled = predict_perceptron(train, test, True, epochs=20)
+        results.append(evaluate("perceptron_scaled", y_true, scaled))
+        candidate_system = "perceptron_scaled"
+        critique = "The final search round repairs the linear model with feature scaling and longer training."
 
+    objective = next(item for item in results if item["system"] == candidate_system)
     best = max(results, key=lambda item: item["metrics"][PRIMARY_METRIC])
-    rows = []
-    for item in results:
-        rows.append([
-            item["system"],
-            f'{{item["metrics"]["accuracy"]:.4f}}',
-            f'{{item["metrics"]["macro_f1"]:.4f}}',
-        ])
+    rows = [
+        [item["system"], f'{{item["metrics"]["accuracy"]:.4f}}', f'{{item["metrics"]["macro_f1"]:.4f}}']
+        for item in results
+    ]
 
     artifact = {{
         "summary": (
-            f'{{TITLE}} executed on a built in tabular classification benchmark. '
-            f'The best system was {{best["system"]}} with macro_f1='
-            f'{{best["metrics"]["macro_f1"]:.4f}}.'
+            f'{{TITLE}} executed strategy {{STRATEGY}} on benchmark {{DATASET.get("name", "dataset")}}. '
+            f'Best system: {{best["system"]}} with macro_f1={{best["metrics"]["macro_f1"]:.4f}}.'
         ),
         "primary_metric": PRIMARY_METRIC,
         "best_system": best["system"],
+        "objective_system": objective["system"],
+        "objective_score": objective["metrics"][PRIMARY_METRIC],
         "key_findings": [
             f'Best system: {{best["system"]}}',
+            f'Search objective system: {{objective["system"]}}',
+            critique,
             f'Hypothesis under test: {{HYPOTHESIS}}',
-            "The unscaled perceptron serves as the normalization ablation.",
         ],
         "system_results": results,
         "tables": [
@@ -414,6 +511,10 @@ def run():
             "platform": platform.platform(),
             "runtime_seconds": round(time.perf_counter() - started, 4),
             "task_family": "tabular_classification",
+            "strategy": STRATEGY,
+            "benchmark_name": DATASET.get("name"),
+            "source_url": DATASET.get("source_url"),
+            "feature_names": DATASET.get("feature_names"),
         }},
     }}
     print("__RESULT__" + json.dumps(artifact))

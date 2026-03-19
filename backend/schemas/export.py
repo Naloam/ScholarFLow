@@ -17,5 +17,8 @@ class ExportRequest(BaseModel):
 
 class ExportResult(BaseModel):
     file_id: str
+    format: str
     status: str
+    file_name: str | None = None
+    download_ready: bool = False
     created_at: datetime | None = None

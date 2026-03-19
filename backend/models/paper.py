@@ -13,6 +13,7 @@ class Paper(Base):
     authors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
+    url: Mapped[str | None] = mapped_column(String, nullable=True)
     pdf_url: Mapped[str | None] = mapped_column(String, nullable=True)
     parsed_content_id: Mapped[str | None] = mapped_column(String, nullable=True)
     bibtex: Mapped[str | None] = mapped_column(Text, nullable=True)

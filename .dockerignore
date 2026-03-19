@@ -1,0 +1,15 @@
+.git
+.github
+.tmp
+.venv
+backend/.venv
+backend/.pytest_cache
+backend/__pycache__
+backend/dev.db
+backend/data
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/*.tsbuildinfo
+**/__pycache__
+**/.DS_Store

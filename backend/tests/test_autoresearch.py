@@ -26,7 +26,7 @@ from config import deps as deps_module
 from config.settings import settings
 from main import app
 from models.base import Base
-from schemas.autoresearch import ExperimentAttempt, ResearchPlan, ResultArtifact, SweepConfig
+from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, ResearchPlan, ResultArtifact, SweepConfig
 from schemas.papers import PaperMeta
 from schemas.search import SearchResult
 
@@ -108,9 +108,19 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["artifact"]["best_system"]
         assert len(run["artifact"]["tables"]) >= 1
         assert len(run["artifact"]["aggregate_system_results"]) >= 1
+        assert any(
+            "macro_f1" in item["confidence_intervals"]
+            for item in run["artifact"]["aggregate_system_results"]
+        )
+        assert len(run["artifact"]["significance_tests"]) >= 1
+        assert len(run["artifact"]["negative_results"]) >= 1
         assert len(run["artifact"]["per_seed_results"]) == len(run["spec"]["seeds"])
         assert len(run["artifact"]["sweep_results"]) == len(run["spec"]["sweeps"])
+        assert run["artifact"]["sweep_results"][0]["objective_score_confidence_interval"] is not None
         assert run["artifact"]["environment"]["selected_sweep"]
+        assert any(table["title"] == "Confidence Intervals" for table in run["artifact"]["tables"])
+        assert any(table["title"] == "Significance Tests" for table in run["artifact"]["tables"])
+        assert any(table["title"] == "Negative Results" for table in run["artifact"]["tables"])
         assert Path(run["generated_code_path"]).is_file()
         run_dir = Path(run["paper_path"]).parent
         assert (run_dir / "program.json").is_file()
@@ -118,6 +128,13 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert len(list((run_dir / "candidates").glob("*.json"))) == 3
         assert run["spec"]["seeds"] == [7, 13]
         assert len(run["spec"]["sweeps"]) == 2
+        assert all(isinstance(item, dict) for item in run["spec"]["acceptance_criteria"])
+        assert any(item["kind"] == "aggregate_metric_reporting" for item in run["spec"]["acceptance_criteria"])
+        aggregate_rule = next(
+            item for item in run["spec"]["acceptance_criteria"] if item["kind"] == "aggregate_metric_reporting"
+        )
+        assert "confidence_interval" in aggregate_rule["required_statistics"]
+        assert any(item["kind"] == "significance_test_reporting" for item in run["spec"]["acceptance_criteria"])
         selected_candidate = next(
             item for item in run["candidates"] if item["id"] == run["portfolio"]["selected_candidate_id"]
         )
@@ -166,6 +183,10 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "## 5. Results" in paper
         assert "| System | Accuracy | Macro F1 |" in paper
         assert "Aggregate Stability" in paper
+        assert "Confidence Intervals" in paper
+        assert "Significance Tests" in paper
+        assert "Negative results retained in the artifact" in paper
+        assert "95% CI" in paper
         assert "Acceptance checks for the selected configuration" in paper
         assert "## 7. Limitations" in paper
         assert "recorded experiment outputs" in paper
@@ -575,7 +596,233 @@ def test_runner_aggregates_across_seeds_and_sweeps(monkeypatch, tmp_path: Path) 
     assert artifact.best_system == "naive_bayes"
     assert any(check.passed for check in artifact.acceptance_checks)
     assert any(table.title == "Sweep Summary" for table in artifact.tables)
+    assert any(table.title == "Confidence Intervals" for table in artifact.tables)
+    assert any(table.title == "Significance Tests" for table in artifact.tables)
+    assert any(table.title == "Negative Results" for table in artifact.tables)
     assert any(item.system == "naive_bayes" for item in artifact.aggregate_system_results)
+    naive_bayes_result = next(item for item in artifact.aggregate_system_results if item.system == "naive_bayes")
+    assert "macro_f1" in naive_bayes_result.confidence_intervals
+    assert naive_bayes_result.confidence_intervals["macro_f1"].lower < naive_bayes_result.mean_metrics["macro_f1"]
+    assert naive_bayes_result.confidence_intervals["macro_f1"].upper > naive_bayes_result.mean_metrics["macro_f1"]
+    assert artifact.sweep_results[1].objective_score_confidence_interval is not None
+    assert any(item.scope == "system" for item in artifact.significance_tests)
+    assert any(item.scope == "sweep" for item in artifact.significance_tests)
+    assert artifact.negative_results
+    aggregate_rule_check = next(
+        check for check in artifact.acceptance_checks if check.rule_kind == "aggregate_metric_reporting"
+    )
+    assert aggregate_rule_check.passed
+    assert "confidence_interval" in aggregate_rule_check.detail
+    significance_rule_check = next(
+        check for check in artifact.acceptance_checks if check.rule_kind == "significance_test_reporting"
+    )
+    assert significance_rule_check.passed
+
+
+def test_experiment_spec_acceptance_criteria_upgrades_legacy_strings() -> None:
+    base_spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification"))
+    spec = ExperimentSpec.model_validate(
+        {
+            **base_spec.model_dump(mode="json"),
+            "acceptance_criteria": [
+                "Objective system should outperform the majority baseline on mean primary metric.",
+                "Selected sweep should execute successfully for every requested seed.",
+                "Aggregate reporting should include mean and standard deviation for the primary metric.",
+            ],
+        }
+    )
+
+    assert [rule.kind for rule in spec.acceptance_criteria] == [
+        "objective_metric_comparison",
+        "seed_coverage",
+        "aggregate_metric_reporting",
+    ]
+    assert spec.acceptance_criteria[0].baseline_system == "majority"
+    assert spec.acceptance_criteria[2].required_statistics == ["mean", "std"]
+
+
+def test_runner_records_partial_sweeps_negative_results_and_anomalies(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    runner = AutoExperimentRunner()
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Phase 2 Evidence Test",
+        task_family="text_classification",
+        problem_statement="Test partial sweeps and negative-result preservation.",
+        motivation="Phase 2 should preserve richer evidence.",
+        proposed_method="Compare stable and risky sweep configurations.",
+        research_questions=["Are failed configs, negative results, and anomalies preserved?"],
+        hypotheses=["The stable sweep should win while preserving risk evidence."],
+        planned_contributions=["Failure analysis and significance reporting."],
+        experiment_outline=["Run four seeds across a stable and a risky sweep."],
+        scope_limits=["Unit-level runner validation only."],
+    )
+    spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification")).model_copy(
+        update={
+            "seeds": [1, 2, 3, 4],
+            "sweeps": [
+                SweepConfig(label="stable", params={"variant": "stable"}),
+                SweepConfig(label="risky", params={"variant": "risky"}),
+            ],
+        }
+    )
+
+    def fake_generate(self, **kwargs):
+        del kwargs
+        return "naive_bayes_search", 'print("__RESULT__" + "{}")'
+
+    def fake_run(payload: dict[str, object]) -> dict[str, object]:
+        env = payload.get("env")
+        assert isinstance(env, dict)
+        seed = int(env["SCHOLARFLOW_SEED"])
+        sweep = json.loads(env["SCHOLARFLOW_SWEEP_JSON"])
+        variant = str(sweep["variant"])
+        if variant == "risky" and seed == 4:
+            return {
+                "logs": 'Traceback (most recent call last): RuntimeError: risky sweep blew up',
+                "outputs": {
+                    "returncode": 1,
+                    "executor_mode": "local",
+                    "docker_image": None,
+                    "workdir": str(tmp_path),
+                    "duration_ms": 13,
+                    "host_platform": "test-platform",
+                    "host_python": "3.11.0",
+                },
+            }
+
+        stable_scores = {1: 0.9, 2: 0.9, 3: 0.9, 4: 0.2}
+        risky_scores = {1: 0.61, 2: 0.62, 3: 0.63}
+        score = stable_scores[seed] if variant == "stable" else risky_scores[seed]
+        return {
+            "logs": f"seed={seed} sweep={variant}",
+            "outputs": {
+                "returncode": 0,
+                "executor_mode": "local",
+                "docker_image": None,
+                "workdir": str(tmp_path),
+                "duration_ms": 12,
+                "host_platform": "test-platform",
+                "host_python": "3.11.0",
+                "result": {
+                    "summary": f"{variant} seed={seed}",
+                    "primary_metric": "macro_f1",
+                    "best_system": "naive_bayes",
+                    "objective_system": "naive_bayes",
+                    "objective_score": score,
+                    "key_findings": [variant, str(seed)],
+                    "system_results": [
+                        {"system": "majority", "metrics": {"accuracy": 0.4, "macro_f1": 0.4}},
+                        {"system": "naive_bayes", "metrics": {"accuracy": score, "macro_f1": score}},
+                    ],
+                    "tables": [],
+                    "environment": {
+                        "python_version": "3.11.0",
+                        "platform": "test-platform",
+                        "runtime_seconds": 0.012,
+                        "seed": seed,
+                        "sweep": sweep,
+                    },
+                },
+            },
+        }
+
+    monkeypatch.setattr(autoresearch_codegen.ExperimentCodeGenerator, "generate", fake_generate)
+    monkeypatch.setattr(runner.sandbox, "run", fake_run)
+
+    _, _, artifact = runner.run(
+        project_id="project-test",
+        run_id="run-phase2",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+        round_index=2,
+        goal="search_for_better_candidate",
+        prior_attempts=[],
+    )
+
+    assert artifact.status == "done"
+    assert any(item.status == "partial" for item in artifact.sweep_results)
+    assert len(artifact.failed_trials) == 1
+    assert artifact.failed_trials[0].category == "code_failure"
+    assert artifact.failed_trials[0].sweep_label == "risky"
+    assert any(item.scope == "sweep" for item in artifact.negative_results)
+    assert artifact.anomalous_trials
+    assert any(table.title == "Failed Configs" for table in artifact.tables)
+    assert any(table.title == "Anomalous Trials" for table in artifact.tables)
+    assert any(table.title == "Negative Results" for table in artifact.tables)
+    assert any(table.title == "Significance Tests" for table in artifact.tables)
+
+
+def test_runner_preserves_failure_analysis_when_no_sweep_completes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    runner = AutoExperimentRunner()
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Failure Preservation Test",
+        task_family="text_classification",
+        problem_statement="Test failed-sweep preservation.",
+        motivation="Even fully failed runs should keep failure analysis.",
+        proposed_method="Force every seed to fail.",
+        research_questions=["Does the runner keep failed configs when no sweep completes?"],
+        hypotheses=["A failed artifact should still contain sweep and failure tables."],
+        planned_contributions=["Failure-preserving artifact behavior."],
+        experiment_outline=["Run one failing sweep across two seeds."],
+        scope_limits=["Unit-level runner validation only."],
+    )
+    spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification")).model_copy(
+        update={
+            "seeds": [7, 13],
+            "sweeps": [SweepConfig(label="broken", params={"variant": "broken"})],
+        }
+    )
+
+    def fake_generate(self, **kwargs):
+        del kwargs
+        return "keyword_rule_search", 'print("__RESULT__" + "{}")'
+
+    def fake_run(payload: dict[str, object]) -> dict[str, object]:
+        del payload
+        return {
+            "logs": 'Traceback (most recent call last): RuntimeError: broken config',
+            "outputs": {
+                "returncode": 1,
+                "executor_mode": "local",
+                "docker_image": None,
+                "workdir": str(tmp_path),
+                "duration_ms": 9,
+                "host_platform": "test-platform",
+                "host_python": "3.11.0",
+            },
+        }
+
+    monkeypatch.setattr(autoresearch_codegen.ExperimentCodeGenerator, "generate", fake_generate)
+    monkeypatch.setattr(runner.sandbox, "run", fake_run)
+
+    _, _, artifact = runner.run(
+        project_id="project-test",
+        run_id="run-all-fail",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+        round_index=1,
+        goal="initial_run",
+        prior_attempts=[],
+    )
+
+    assert artifact.status == "failed"
+    assert len(artifact.failed_trials) == 2
+    assert artifact.sweep_results[0].status == "failed"
+    assert any(table.title == "Sweep Summary" for table in artifact.tables)
+    assert any(table.title == "Failed Configs" for table in artifact.tables)
+    assert artifact.environment["failed_trial_count"] == 2
+    assert "failure analysis" in artifact.summary.lower()
 
 
 def test_runner_rejects_artifact_with_runtime_environment_mismatch(monkeypatch, tmp_path: Path) -> None:

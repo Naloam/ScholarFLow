@@ -67,6 +67,13 @@ class AutoResearchOrchestrator:
     ) -> str:
         if artifact.status != "done":
             return "Attempt failed, so the next round should repair execution and preserve a result artifact."
+        failed_acceptance = [item.criterion for item in artifact.acceptance_checks if not item.passed]
+        if failed_acceptance:
+            return (
+                "Attempt executed successfully but missed acceptance checks: "
+                + "; ".join(failed_acceptance[:2])
+                + (", among others." if len(failed_acceptance) > 2 else ".")
+            )
         if not attempts:
             return "First successful attempt establishes the initial objective score."
         previous = attempts[-1].artifact
@@ -159,6 +166,12 @@ class AutoResearchOrchestrator:
         passed = sum(1 for item in artifact.acceptance_checks if item.passed)
         ratio = (passed / total) if total else 1.0
         return total == 0 or passed == total, passed, total, ratio
+
+    def _attempt_preference_key(self, artifact: ResultArtifact | None) -> tuple[int, float, float]:
+        if artifact is None or artifact.status != "done":
+            return 0, 0.0, float("-inf")
+        all_passed, _, _, ratio = self._acceptance_summary(artifact)
+        return int(all_passed), ratio, self._artifact_score(artifact)
 
     def _candidate_sort_key(self, candidate: HypothesisCandidate) -> tuple[int, int, float, float]:
         artifact = candidate.artifact
@@ -707,7 +720,8 @@ class AutoResearchOrchestrator:
 
                     if artifact.status == "done" and (
                         best_attempt is None
-                        or self._artifact_score(artifact) > self._artifact_score(best_attempt.artifact)  # type: ignore[arg-type]
+                        or self._attempt_preference_key(artifact)
+                        > self._attempt_preference_key(best_attempt.artifact)
                     ):
                         best_attempt = attempt
 

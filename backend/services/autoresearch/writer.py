@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from schemas.autoresearch import (
+    ConfidenceIntervalSummary,
     ExperimentAttempt,
     ExperimentSpec,
     HypothesisCandidate,
@@ -40,6 +41,25 @@ class PaperWriter:
                 value = item.std_metrics.get(metric)
                 return float(value) if value is not None else None
         return None
+
+    def _aggregate_confidence_interval(
+        self,
+        artifact: ResultArtifact,
+        system_name: str | None,
+        metric: str,
+    ) -> ConfidenceIntervalSummary | None:
+        if not system_name:
+            return None
+        for item in artifact.aggregate_system_results:
+            if item.system == system_name:
+                return item.confidence_intervals.get(metric)
+        return None
+
+    def _format_confidence_interval(self, interval: ConfidenceIntervalSummary | None) -> str | None:
+        if interval is None:
+            return None
+        level_percent = int(round(interval.level * 100))
+        return f"{level_percent}% CI [{interval.lower:.4f}, {interval.upper:.4f}]"
 
     def _metric(self, artifact: ResultArtifact, system_name: str | None, metric: str) -> float | None:
         if not system_name:
@@ -83,6 +103,39 @@ class PaperWriter:
             f"- {'PASS' if item.passed else 'FAIL'}: {item.criterion} ({item.detail})"
             for item in artifact.acceptance_checks
         )
+
+    def _significance_block(self, artifact: ResultArtifact) -> str:
+        if not artifact.significance_tests:
+            return "- No paired significance comparisons were recorded."
+        return "\n".join(
+            (
+                f"- {item.scope}: `{item.candidate}` vs `{item.comparator}` on `{item.metric}` "
+                f"(effect={item.effect_size:.4f}, adjusted p="
+                f"{(item.adjusted_p_value if item.adjusted_p_value is not None else item.p_value):.4f}, "
+                f"{'significant' if item.significant else 'not significant'})."
+            )
+            for item in artifact.significance_tests
+        )
+
+    def _negative_results_block(self, artifact: ResultArtifact) -> str:
+        if not artifact.negative_results:
+            return "- No explicit negative results were recorded."
+        return "\n".join(f"- {item.detail}" for item in artifact.negative_results)
+
+    def _failure_block(self, artifact: ResultArtifact) -> str:
+        if not artifact.failed_trials:
+            return "- No failed seed or sweep configurations were recorded."
+        return "\n".join(
+            f"- {item.scope} failure in sweep `{item.sweep_label}`"
+            f"{f' seed {item.seed}' if item.seed is not None else ''}: "
+            f"{item.category} ({item.summary})"
+            for item in artifact.failed_trials
+        )
+
+    def _anomaly_block(self, artifact: ResultArtifact) -> str:
+        if not artifact.anomalous_trials:
+            return "- No anomalous trials were flagged."
+        return "\n".join(f"- {item.detail}" for item in artifact.anomalous_trials)
 
     def _portfolio_block(
         self,
@@ -140,6 +193,7 @@ class PaperWriter:
         candidates = candidates or []
         best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
         best_std = self._aggregate_std(artifact, artifact.best_system, artifact.primary_metric)
+        best_ci = self._aggregate_confidence_interval(artifact, artifact.best_system, artifact.primary_metric)
         learned_system = spec.baselines[-1].name if spec.baselines else artifact.best_system
         ablation_name = spec.ablations[0].name if spec.ablations else None
         learned_metric = self._aggregate_metric(artifact, learned_system, artifact.primary_metric)
@@ -157,13 +211,24 @@ class PaperWriter:
         literature_block = self._literature_block(literature)
         attempt_block = self._attempt_block(attempts)
         acceptance_block = self._acceptance_block(artifact)
+        significance_block = self._significance_block(artifact)
+        negative_results_block = self._negative_results_block(artifact)
+        failure_block = self._failure_block(artifact)
+        anomaly_block = self._anomaly_block(artifact)
         portfolio_block = self._portfolio_block(program, portfolio, candidates)
         benchmark_display = benchmark_name or spec.benchmark_name
+        best_ci_text = self._format_confidence_interval(best_ci)
+        best_detail_parts = []
+        if best_std is not None:
+            best_detail_parts.append(f"std={best_std:.4f}")
+        if best_ci_text is not None:
+            best_detail_parts.append(best_ci_text)
+        best_detail = f" ({'; '.join(best_detail_parts)})" if best_detail_parts else ""
 
         comparison_sentence = (
             f"The executed run identified `{artifact.best_system}` as the strongest system with "
             f"mean {artifact.primary_metric}={best_metric:.4f}"
-            f"{f' (std={best_std:.4f})' if best_std is not None else ''}."
+            f"{best_detail}."
             if best_metric is not None and artifact.best_system
             else "The executed run completed successfully and produced a ranked set of systems."
         )
@@ -244,6 +309,10 @@ All experiments were executed from generated Python code inside the existing Sch
 
 The selected configuration for the final artifact was sweep `{selected_sweep}` evaluated over `{seed_count}` seeds. This run therefore reports aggregated metrics instead of a single execution trace, and retains the full seed-level evidence inside the result artifact.
 
+Aggregate reporting includes mean, standard deviation, and two-sided 95% confidence intervals over the selected sweep's seed-level scores.
+
+The statistical analysis also records paired sign-flip significance comparisons with Holm correction, preserves failed seed/sweep configurations, and keeps explicit negative-result summaries rather than only the winning configuration.
+
 Evaluation uses {metrics}. The purpose of the benchmark is not to claim state of the art performance, but to verify that the system can carry out a complete research loop with a real result table and a grounded discussion.
 
 The search and repair trace for this run was:
@@ -257,11 +326,23 @@ The search and repair trace for this run was:
 Key findings recorded directly in the artifact are:
 {findings}
 
+Paired significance comparisons for the selected configuration were:
+{significance_block}
+
+Negative results retained in the artifact were:
+{negative_results_block}
+
+Failure analysis for seeds and sweeps was:
+{failure_block}
+
+Anomalous trials flagged for manual inspection were:
+{anomaly_block}
+
 Acceptance checks for the selected configuration were:
 {acceptance_block}
 
 ## 6. Discussion
-The results show that the pipeline can now produce a paper-shaped artifact with concrete experimental content instead of a generic short essay. The differences among the compared systems matter because they provide evidence that the method choice changes measurable outcomes. That is the minimum standard for a computational research run.
+The results show that the pipeline can now produce a paper-shaped artifact with concrete experimental content instead of a generic short essay. The differences among the compared systems matter because they provide evidence that the method choice changes measurable outcomes. Recording significance comparisons, failed configurations, and negative outcomes raises the artifact above a single best-number report and closer to a real experimental logbook.
 
 At the same time, the benchmark remains intentionally small. The value of this v0 system is not that it solves an open scientific problem, but that it demonstrates the operational scaffolding required for future automated research runs: a planner, a structured experiment specification, executable code generation, artifact preservation, and grounded writing.
 

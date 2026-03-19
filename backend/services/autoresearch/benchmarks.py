@@ -5,6 +5,7 @@ from typing import Any
 
 from schemas.autoresearch import (
     AblationSpec,
+    AcceptanceRule,
     BenchmarkSource,
     BaselineSpec,
     DatasetSpec,
@@ -397,12 +398,45 @@ def default_sweeps(task_family: TaskFamily) -> list[SweepConfig]:
     ]
 
 
-def default_acceptance_criteria(task_family: TaskFamily) -> list[str]:
-    baseline = "random baseline" if task_family == "ir_reranking" else "majority baseline"
+def default_acceptance_criteria(task_family: TaskFamily) -> list[AcceptanceRule]:
+    baseline_name = "random_ranker" if task_family == "ir_reranking" else "majority"
+    baseline_label = "random baseline" if task_family == "ir_reranking" else "majority baseline"
     return [
-        f"Objective system should outperform the {baseline} on mean primary metric.",
-        "Selected sweep should execute successfully for every requested seed.",
-        "Aggregate reporting should include mean and standard deviation for the primary metric.",
+        AcceptanceRule(
+            id="objective_primary_metric_beats_baseline",
+            description=f"Objective system should outperform the {baseline_label} on mean primary metric.",
+            kind="objective_metric_comparison",
+            metric="primary_metric",
+            target="objective_system",
+            baseline_system=baseline_name,
+            comparison="gt",
+            required_statistics=["mean"],
+        ),
+        AcceptanceRule(
+            id="selected_sweep_completes_all_requested_seeds",
+            description="Selected sweep should execute successfully for every requested seed.",
+            kind="seed_coverage",
+        ),
+        AcceptanceRule(
+            id="primary_metric_reports_mean_std_and_ci",
+            description=(
+                "Aggregate reporting should include mean, standard deviation, and confidence interval "
+                "for the primary metric."
+            ),
+            kind="aggregate_metric_reporting",
+            metric="primary_metric",
+            target="objective_system",
+            required_statistics=["mean", "std", "confidence_interval"],
+        ),
+        AcceptanceRule(
+            id="objective_vs_baseline_significance_reported",
+            description="Selected configuration should record a significance comparison between the objective system and the baseline on the primary metric.",
+            kind="significance_test_reporting",
+            metric="primary_metric",
+            target="objective_system",
+            baseline_system=baseline_name,
+            comparison_scope="system",
+        ),
     ]
 
 

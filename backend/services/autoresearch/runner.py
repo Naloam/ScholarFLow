@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import itertools
 import json
 import math
+import random
 import re
 from typing import Any
 
@@ -9,13 +11,19 @@ from agents.sandbox_agent import SandboxAgent
 from schemas.autoresearch import (
     AcceptanceCheck,
     AggregateSystemMetricResult,
+    AnomalousTrialRecord,
+    ConfidenceIntervalSummary,
     ExecutionBackendSpec,
     ExperimentAttempt,
     ExperimentSpec,
+    FailureCategory,
+    FailureRecord,
+    NegativeResultRecord,
     ResearchPlan,
     ResultArtifact,
     ResultTable,
     SeedArtifactResult,
+    SignificanceTestResult,
     SweepConfig,
     SweepEvaluationResult,
     SystemMetricResult,
@@ -41,6 +49,66 @@ def _std(values: list[float]) -> float:
     return math.sqrt(variance)
 
 
+def _sample_std(values: list[float]) -> float:
+    if len(values) <= 1:
+        return 0.0
+    center = _mean(values)
+    variance = sum((value - center) ** 2 for value in values) / (len(values) - 1)
+    return math.sqrt(variance)
+
+
+_T_CRITICAL_95 = {
+    1: 12.706,
+    2: 4.303,
+    3: 3.182,
+    4: 2.776,
+    5: 2.571,
+    6: 2.447,
+    7: 2.365,
+    8: 2.306,
+    9: 2.262,
+    10: 2.228,
+    11: 2.201,
+    12: 2.179,
+    13: 2.16,
+    14: 2.145,
+    15: 2.131,
+    16: 2.12,
+    17: 2.11,
+    18: 2.101,
+    19: 2.093,
+    20: 2.086,
+    21: 2.08,
+    22: 2.074,
+    23: 2.069,
+    24: 2.064,
+    25: 2.06,
+    26: 2.056,
+    27: 2.052,
+    28: 2.048,
+    29: 2.045,
+    30: 2.042,
+}
+
+
+def _confidence_interval(values: list[float]) -> ConfidenceIntervalSummary | None:
+    if not values:
+        return None
+    center = _mean(values)
+    if len(values) == 1:
+        return ConfidenceIntervalSummary(
+            lower=_round_metric(center),
+            upper=_round_metric(center),
+        )
+    degrees_of_freedom = len(values) - 1
+    critical_value = _T_CRITICAL_95.get(degrees_of_freedom, 1.96)
+    margin = critical_value * _sample_std(values) / math.sqrt(len(values))
+    return ConfidenceIntervalSummary(
+        lower=_round_metric(center - margin),
+        upper=_round_metric(center + margin),
+    )
+
+
 def _metric_label(name: str) -> str:
     labels = {
         "accuracy": "Accuracy",
@@ -49,6 +117,105 @@ def _metric_label(name: str) -> str:
         "recall_at_1": "Recall@1",
     }
     return labels.get(name, name.replace("_", " ").title())
+
+
+def _format_confidence_interval(interval: ConfidenceIntervalSummary | None) -> str:
+    if interval is None:
+        return "n/a"
+    level_percent = int(round(interval.level * 100))
+    return f"{level_percent}% CI [{interval.lower:.4f}, {interval.upper:.4f}]"
+
+
+def _compare_values(left: float, right: float, comparison: str | None) -> bool:
+    if comparison == "gte":
+        return left >= right
+    if comparison == "lt":
+        return left < right
+    if comparison == "lte":
+        return left <= right
+    if comparison == "eq":
+        return left == right
+    if comparison == "ne":
+        return left != right
+    return left > right
+
+
+def _resolve_metric_name(metric: str | None, primary_metric: str) -> str:
+    if not metric or metric == "primary_metric":
+        return primary_metric
+    return metric
+
+
+def _detail_excerpt(text: str, *, limit: int = 220) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 3]}..."
+
+
+def _paired_sign_flip_test(
+    values_a: list[float],
+    values_b: list[float],
+) -> tuple[float, str, float, int, str]:
+    pairs = list(zip(values_a, values_b, strict=False))
+    if not pairs:
+        return 1.0, "two_sided", 0.0, 0, "paired_sign_flip_exact"
+    differences = [left - right for left, right in pairs]
+    effect_size = _round_metric(_mean(differences))
+    non_zero = [value for value in differences if abs(value) > 1e-12]
+    if not non_zero:
+        return 1.0, "two_sided", effect_size, len(differences), "paired_sign_flip_exact"
+
+    alternative = "greater" if effect_size >= 0 else "less"
+    observed = _mean(non_zero)
+    max_exact = 12
+    if len(non_zero) <= max_exact:
+        flipped_means = [
+            _mean([sign * value for sign, value in zip(signs, non_zero, strict=False)])
+            for signs in itertools.product((-1.0, 1.0), repeat=len(non_zero))
+        ]
+        if alternative == "greater":
+            extreme = sum(1 for value in flipped_means if value >= observed - 1e-12)
+        else:
+            extreme = sum(1 for value in flipped_means if value <= observed + 1e-12)
+        p_value = extreme / len(flipped_means)
+        method = "paired_sign_flip_exact"
+    else:
+        rng = random.Random(0)
+        draws = 4096
+        extreme = 0
+        for _ in range(draws):
+            sampled = _mean([rng.choice((-1.0, 1.0)) * value for value in non_zero])
+            if alternative == "greater" and sampled >= observed - 1e-12:
+                extreme += 1
+            elif alternative == "less" and sampled <= observed + 1e-12:
+                extreme += 1
+        p_value = extreme / draws
+        method = "paired_sign_flip_monte_carlo"
+    return _round_metric(p_value), alternative, effect_size, len(differences), method
+
+
+def _holm_bonferroni_adjustment(results: list[SignificanceTestResult]) -> list[SignificanceTestResult]:
+    if not results:
+        return results
+    indexed = sorted(enumerate(results), key=lambda item: item[1].p_value)
+    running_max = 0.0
+    adjusted: dict[int, float] = {}
+    total = len(indexed)
+    for position, (original_index, item) in enumerate(indexed, start=1):
+        candidate = min(1.0, item.p_value * (total - position + 1))
+        running_max = max(running_max, candidate)
+        adjusted[original_index] = _round_metric(running_max)
+    return [
+        item.model_copy(
+            update={
+                "adjusted_p_value": adjusted[index],
+                "correction": "holm_bonferroni",
+                "significant": adjusted[index] < 0.05,
+            }
+        )
+        for index, item in enumerate(results)
+    ]
 
 
 class AutoExperimentRunner:
@@ -114,6 +281,10 @@ class AutoExperimentRunner:
             aggregate_system_results=payload.get("aggregate_system_results") or [],
             per_seed_results=payload.get("per_seed_results") or [],
             sweep_results=payload.get("sweep_results") or [],
+            significance_tests=payload.get("significance_tests") or [],
+            negative_results=payload.get("negative_results") or [],
+            failed_trials=payload.get("failed_trials") or [],
+            anomalous_trials=payload.get("anomalous_trials") or [],
             acceptance_checks=payload.get("acceptance_checks") or [],
             tables=payload.get("tables") or [],
             logs=logs,
@@ -193,20 +364,21 @@ class AutoExperimentRunner:
         logs = str(result.get("logs") or "")
         outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
         artifact = self._build_artifact(logs, outputs)
-        violations = runtime_environment_violations(
-            artifact.environment,
-            expected_seed=seed,
-            expected_sweep=sweep.params,
-        )
-        if violations:
-            return self._runtime_contract_failure(
-                artifact,
-                seed=seed,
-                sweep=sweep,
-                code_path=code_path,
-                strategy=strategy,
-                violations=violations,
+        if artifact.status == "done":
+            violations = runtime_environment_violations(
+                artifact.environment,
+                expected_seed=seed,
+                expected_sweep=sweep.params,
             )
+            if violations:
+                return self._runtime_contract_failure(
+                    artifact,
+                    seed=seed,
+                    sweep=sweep,
+                    code_path=code_path,
+                    strategy=strategy,
+                    violations=violations,
+                )
         artifact.environment.setdefault("generated_code_path", code_path)
         artifact.environment.setdefault("strategy", strategy)
         artifact.environment.setdefault("seed", seed)
@@ -239,6 +411,11 @@ class AutoExperimentRunner:
                 for metric_name, values in metric_map.items()
                 if values
             }
+            confidence_intervals = {
+                metric_name: interval
+                for metric_name, values in metric_map.items()
+                if values and (interval := _confidence_interval(values)) is not None
+            }
             min_metrics = {
                 metric_name: _round_metric(min(values))
                 for metric_name, values in metric_map.items()
@@ -255,6 +432,7 @@ class AutoExperimentRunner:
                     system=system,
                     mean_metrics=mean_metrics,
                     std_metrics=std_metrics,
+                    confidence_intervals=confidence_intervals,
                     min_metrics=min_metrics,
                     max_metrics=max_metrics,
                     sample_count=sample_count,
@@ -263,6 +441,306 @@ class AutoExperimentRunner:
             mean_results.append(SystemMetricResult(system=system, metrics=mean_metrics))
         return mean_results, aggregate_results
 
+    def _failure_category(self, artifact: ResultArtifact) -> FailureCategory:
+        if artifact.environment.get("runtime_contract_violations"):
+            return "runtime_contract_failure"
+        text = " ".join(
+            str(item)
+            for item in [
+                artifact.summary,
+                artifact.logs or "",
+                json.dumps(artifact.outputs, ensure_ascii=False, sort_keys=True),
+            ]
+        ).lower()
+        if any(
+            marker in text
+            for marker in [
+                "traceback",
+                "syntaxerror",
+                "nameerror",
+                "typeerror",
+                "valueerror",
+                "runtimeerror",
+                "assertionerror",
+                "importerror",
+                "modulenotfounderror",
+            ]
+        ):
+            return "code_failure"
+        if any(
+            marker in text
+            for marker in [
+                "dataset",
+                "split",
+                "column",
+                "field",
+                "filenotfounderror",
+                "no such file",
+                "jsondecodeerror",
+                "csv",
+            ]
+        ):
+            return "data_failure"
+        if any(
+            marker in text
+            for marker in [
+                "timeout",
+                "timed out",
+                "docker",
+                "permission denied",
+                "sandbox",
+                "connection",
+                "network",
+                "image",
+            ]
+        ):
+            return "environment_failure"
+        if any(
+            marker in text
+            for marker in [
+                "metric",
+                "objective_score",
+                "primary metric",
+                "system_results",
+                "structured result artifact",
+            ]
+        ):
+            return "metric_failure"
+        return "unknown_failure"
+
+    def _failure_record(
+        self,
+        *,
+        artifact: ResultArtifact,
+        seed: int | None,
+        sweep: SweepConfig,
+    ) -> FailureRecord:
+        category = self._failure_category(artifact)
+        detail_parts = [artifact.summary]
+        if artifact.logs:
+            detail_parts.append(_detail_excerpt(artifact.logs))
+        violations = artifact.environment.get("runtime_contract_violations")
+        if isinstance(violations, list) and violations:
+            detail_parts.append(f"runtime_contract={', '.join(str(item) for item in violations)}")
+        returncode = artifact.outputs.get("returncode") if isinstance(artifact.outputs, dict) else None
+        return FailureRecord(
+            scope="seed" if seed is not None else "sweep",
+            sweep_label=sweep.label,
+            seed=seed,
+            category=category,
+            summary=artifact.summary,
+            detail=" | ".join(part for part in detail_parts if part),
+            returncode=int(returncode) if isinstance(returncode, int) else None,
+        )
+
+    def _significance_tests(
+        self,
+        *,
+        primary_metric: str,
+        aggregate_results: list[AggregateSystemMetricResult],
+        selected_sweep: SweepEvaluationResult,
+        per_seed_results: list[SeedArtifactResult],
+        seed_results_by_sweep: dict[str, list[SeedArtifactResult]],
+    ) -> list[SignificanceTestResult]:
+        selected_system = selected_sweep.objective_system
+        if not selected_system:
+            return []
+
+        by_system_and_seed: dict[str, dict[int, float]] = {}
+        for seed_result in per_seed_results:
+            for system_result in seed_result.system_results:
+                value = system_result.metrics.get(primary_metric)
+                if value is None:
+                    continue
+                by_system_and_seed.setdefault(system_result.system, {})[seed_result.seed] = float(value)
+
+        tests: list[SignificanceTestResult] = []
+        for item in aggregate_results:
+            if item.system == selected_system:
+                continue
+            selected_scores = by_system_and_seed.get(selected_system, {})
+            comparator_scores = by_system_and_seed.get(item.system, {})
+            common_seeds = sorted(set(selected_scores) & set(comparator_scores))
+            if not common_seeds:
+                continue
+            values_a = [selected_scores[seed] for seed in common_seeds]
+            values_b = [comparator_scores[seed] for seed in common_seeds]
+            p_value, alternative, effect_size, sample_count, method = _paired_sign_flip_test(values_a, values_b)
+            tests.append(
+                SignificanceTestResult(
+                    scope="system",
+                    metric=primary_metric,
+                    candidate=selected_system,
+                    comparator=item.system,
+                    alternative=alternative,
+                    method=method,
+                    p_value=p_value,
+                    effect_size=effect_size,
+                    sample_count=sample_count,
+                    detail=(
+                        f"`{selected_system}` vs `{item.system}` on `{primary_metric}` over {sample_count} paired seeds "
+                        f"with mean delta {effect_size:.4f}."
+                    ),
+                )
+            )
+
+        selected_scores = {
+            item.seed: float(item.objective_score)
+            for item in per_seed_results
+            if item.objective_score is not None
+        }
+        for sweep_label, sweep_seed_results in seed_results_by_sweep.items():
+            if sweep_label == selected_sweep.label:
+                continue
+            comparator_scores = {
+                item.seed: float(item.objective_score)
+                for item in sweep_seed_results
+                if item.objective_score is not None
+            }
+            common_seeds = sorted(set(selected_scores) & set(comparator_scores))
+            if not common_seeds:
+                continue
+            values_a = [selected_scores[seed] for seed in common_seeds]
+            values_b = [comparator_scores[seed] for seed in common_seeds]
+            p_value, alternative, effect_size, sample_count, method = _paired_sign_flip_test(values_a, values_b)
+            tests.append(
+                SignificanceTestResult(
+                    scope="sweep",
+                    metric=primary_metric,
+                    candidate=selected_sweep.label,
+                    comparator=sweep_label,
+                    alternative=alternative,
+                    method=method,
+                    p_value=p_value,
+                    effect_size=effect_size,
+                    sample_count=sample_count,
+                    detail=(
+                        f"Sweep `{selected_sweep.label}` vs `{sweep_label}` on `{primary_metric}` over "
+                        f"{sample_count} paired seeds with mean delta {effect_size:.4f}."
+                    ),
+                )
+            )
+        return _holm_bonferroni_adjustment(tests)
+
+    def _negative_results(
+        self,
+        *,
+        primary_metric: str,
+        aggregate_results: list[AggregateSystemMetricResult],
+        selected_sweep: SweepEvaluationResult,
+        significance_tests: list[SignificanceTestResult],
+        sweep_results: list[SweepEvaluationResult],
+    ) -> list[NegativeResultRecord]:
+        negative_results: list[NegativeResultRecord] = []
+        reference_system = selected_sweep.objective_system
+        reference_score = selected_sweep.objective_score_mean
+        if reference_system and reference_score is not None:
+            for item in aggregate_results:
+                observed_score = item.mean_metrics.get(primary_metric)
+                if item.system == reference_system or observed_score is None:
+                    continue
+                delta = _round_metric(observed_score - reference_score)
+                if delta <= 0:
+                    negative_results.append(
+                        NegativeResultRecord(
+                            scope="system",
+                            subject=item.system,
+                            reference=reference_system,
+                            metric=primary_metric,
+                            observed_score=observed_score,
+                            reference_score=reference_score,
+                            delta=delta,
+                            detail=(
+                                f"`{item.system}` trailed `{reference_system}` by {abs(delta):.4f} "
+                                f"on mean `{primary_metric}`."
+                            ),
+                        )
+                    )
+
+        for item in sweep_results:
+            if item.label == selected_sweep.label or item.objective_score_mean is None:
+                continue
+            if reference_score is None:
+                continue
+            delta = _round_metric(item.objective_score_mean - reference_score)
+            if delta <= 0:
+                negative_results.append(
+                    NegativeResultRecord(
+                        scope="sweep",
+                        subject=item.label,
+                        reference=selected_sweep.label,
+                        metric=primary_metric,
+                        observed_score=item.objective_score_mean,
+                        reference_score=reference_score,
+                        delta=delta,
+                        detail=(
+                            f"Sweep `{item.label}` underperformed the selected sweep `{selected_sweep.label}` "
+                            f"by {abs(delta):.4f} on `{primary_metric}`."
+                        ),
+                    )
+                )
+
+        for item in significance_tests:
+            adjusted = item.adjusted_p_value if item.adjusted_p_value is not None else item.p_value
+            if item.scope != "system" or adjusted < 0.05:
+                continue
+            negative_results.append(
+                NegativeResultRecord(
+                    scope="comparison",
+                    subject=item.candidate,
+                    reference=item.comparator,
+                    metric=item.metric,
+                    observed_score=None,
+                    reference_score=None,
+                    delta=item.effect_size,
+                    detail=(
+                        f"No statistically reliable separation was detected between `{item.candidate}` and "
+                        f"`{item.comparator}` on `{item.metric}` (adjusted p={adjusted:.4f})."
+                    ),
+                )
+            )
+        return negative_results
+
+    def _anomalous_trials(
+        self,
+        *,
+        per_seed_results: list[SeedArtifactResult],
+        primary_metric: str,
+    ) -> list[AnomalousTrialRecord]:
+        scores = [
+            float(item.objective_score)
+            for item in per_seed_results
+            if item.objective_score is not None
+        ]
+        if len(scores) < 3:
+            return []
+        center = _mean(scores)
+        deviation = _sample_std(scores)
+        if deviation <= 0:
+            return []
+        records: list[AnomalousTrialRecord] = []
+        for item in per_seed_results:
+            if item.objective_score is None:
+                continue
+            z_score = (float(item.objective_score) - center) / deviation
+            if abs(z_score) < 1.4:
+                continue
+            records.append(
+                AnomalousTrialRecord(
+                    sweep_label=item.sweep_label,
+                    seed=item.seed,
+                    metric=primary_metric,
+                    observed_score=float(item.objective_score),
+                    mean_score=_round_metric(center),
+                    z_score=_round_metric(z_score),
+                    detail=(
+                        f"Seed {item.seed} in sweep `{item.sweep_label}` deviated from the selected-sweep mean "
+                        f"by {z_score:.2f} standard deviations."
+                    ),
+                )
+            )
+        return records
+
     def _aggregate_tables(
         self,
         *,
@@ -270,82 +748,195 @@ class AutoExperimentRunner:
         aggregate_results: list[AggregateSystemMetricResult],
         sweep_results: list[SweepEvaluationResult],
         per_seed_results: list[SeedArtifactResult],
+        significance_tests: list[SignificanceTestResult],
+        negative_results: list[NegativeResultRecord],
+        failed_trials: list[FailureRecord],
+        anomalous_trials: list[AnomalousTrialRecord],
     ) -> list[ResultTable]:
-        if not aggregate_results:
-            return []
+        tables: list[ResultTable] = []
 
-        metric_order: list[str] = []
-        for item in aggregate_results:
-            for metric_name in item.mean_metrics:
-                if metric_name not in metric_order:
-                    metric_order.append(metric_name)
-        if primary_metric and primary_metric not in metric_order:
-            metric_order.append(primary_metric)
+        if aggregate_results:
+            metric_order: list[str] = []
+            for item in aggregate_results:
+                for metric_name in item.mean_metrics:
+                    if metric_name not in metric_order:
+                        metric_order.append(metric_name)
+            if primary_metric and primary_metric not in metric_order:
+                metric_order.append(primary_metric)
 
-        ranked = sorted(
-            aggregate_results,
-            key=lambda item: item.mean_metrics.get(primary_metric, float("-inf")),
-            reverse=True,
-        )
-        tables = [
-            ResultTable(
-                title="Main Results",
-                columns=["System", *[_metric_label(metric) for metric in metric_order]],
-                rows=[
-                    [item.system, *[f"{item.mean_metrics.get(metric, 0.0):.4f}" for metric in metric_order]]
-                    for item in ranked
-                ],
-            ),
-            ResultTable(
-                title="Aggregate Stability",
-                columns=["System", *[f"{_metric_label(metric)} Std" for metric in metric_order]],
-                rows=[
-                    [item.system, *[f"{item.std_metrics.get(metric, 0.0):.4f}" for metric in metric_order]]
-                    for item in ranked
-                ],
-            ),
-        ]
-        if len(sweep_results) > 1:
+            ranked = sorted(
+                aggregate_results,
+                key=lambda item: item.mean_metrics.get(primary_metric, float("-inf")),
+                reverse=True,
+            )
+            tables.extend(
+                [
+                    ResultTable(
+                        title="Main Results",
+                        columns=["System", *[_metric_label(metric) for metric in metric_order]],
+                        rows=[
+                            [item.system, *[f"{item.mean_metrics.get(metric, 0.0):.4f}" for metric in metric_order]]
+                            for item in ranked
+                        ],
+                    ),
+                    ResultTable(
+                        title="Aggregate Stability",
+                        columns=["System", *[f"{_metric_label(metric)} Std" for metric in metric_order]],
+                        rows=[
+                            [item.system, *[f"{item.std_metrics.get(metric, 0.0):.4f}" for metric in metric_order]]
+                            for item in ranked
+                        ],
+                    ),
+                    ResultTable(
+                        title="Confidence Intervals",
+                        columns=["System", *[f"{_metric_label(metric)} 95% CI" for metric in metric_order]],
+                        rows=[
+                            [
+                                item.system,
+                                *[
+                                    _format_confidence_interval(item.confidence_intervals.get(metric))
+                                    for metric in metric_order
+                                ],
+                            ]
+                            for item in ranked
+                        ],
+                    ),
+                ]
+            )
+
+        if significance_tests:
+            tables.append(
+                ResultTable(
+                    title="Significance Tests",
+                    columns=[
+                        "Scope",
+                        "Candidate",
+                        "Comparator",
+                        "Metric",
+                        "Effect",
+                        "Adj P",
+                        "Significant",
+                    ],
+                    rows=[
+                        [
+                            item.scope,
+                            item.candidate,
+                            item.comparator,
+                            _metric_label(item.metric),
+                            f"{item.effect_size:.4f}",
+                            f"{(item.adjusted_p_value if item.adjusted_p_value is not None else item.p_value):.4f}",
+                            "yes" if item.significant else "no",
+                        ]
+                        for item in significance_tests
+                    ],
+                )
+            )
+
+        if negative_results:
+            tables.append(
+                ResultTable(
+                    title="Negative Results",
+                    columns=["Scope", "Subject", "Reference", "Metric", "Delta", "Detail"],
+                    rows=[
+                        [
+                            item.scope,
+                            item.subject,
+                            item.reference,
+                            _metric_label(item.metric),
+                            f"{item.delta:.4f}" if item.delta is not None else "n/a",
+                            item.detail,
+                        ]
+                        for item in negative_results
+                    ],
+                )
+            )
+
+        if sweep_results:
             tables.append(
                 ResultTable(
                     title="Sweep Summary",
                     columns=[
                         "Sweep",
+                        "Status",
                         "Objective System",
                         f"{_metric_label(primary_metric)} Mean",
                         f"{_metric_label(primary_metric)} Std",
+                        f"{_metric_label(primary_metric)} 95% CI",
                         "Best System",
-                        "Seeds",
+                        "Successful Seeds",
+                        "Failed Seeds",
                     ],
                     rows=[
                         [
                             item.label,
+                            item.status,
                             item.objective_system or "unknown",
                             f"{item.objective_score_mean:.4f}" if item.objective_score_mean is not None else "n/a",
                             f"{item.objective_score_std:.4f}" if item.objective_score_std is not None else "n/a",
+                            _format_confidence_interval(item.objective_score_confidence_interval),
                             item.best_system or "unknown",
-                            str(item.seed_count),
+                            str(item.successful_seed_count or item.seed_count),
+                            str(len(item.failed_seeds)),
                         ]
                         for item in sweep_results
                     ],
                 )
             )
-        tables.append(
-            ResultTable(
-                title="Seed Runs",
-                columns=["Seed", "Sweep", "Objective System", _metric_label(primary_metric), "Best System"],
-                rows=[
-                    [
-                        str(item.seed),
-                        item.sweep_label,
-                        item.objective_system or "unknown",
-                        f"{item.objective_score:.4f}" if item.objective_score is not None else "n/a",
-                        item.best_system or "unknown",
-                    ]
-                    for item in per_seed_results
-                ],
+
+        if per_seed_results:
+            tables.append(
+                ResultTable(
+                    title="Seed Runs",
+                    columns=["Seed", "Sweep", "Objective System", _metric_label(primary_metric), "Best System"],
+                    rows=[
+                        [
+                            str(item.seed),
+                            item.sweep_label,
+                            item.objective_system or "unknown",
+                            f"{item.objective_score:.4f}" if item.objective_score is not None else "n/a",
+                            item.best_system or "unknown",
+                        ]
+                        for item in per_seed_results
+                    ],
+                )
             )
-        )
+
+        if failed_trials:
+            tables.append(
+                ResultTable(
+                    title="Failed Configs",
+                    columns=["Scope", "Sweep", "Seed", "Category", "Summary"],
+                    rows=[
+                        [
+                            item.scope,
+                            item.sweep_label,
+                            str(item.seed) if item.seed is not None else "n/a",
+                            item.category,
+                            item.summary,
+                        ]
+                        for item in failed_trials
+                    ],
+                )
+            )
+
+        if anomalous_trials:
+            tables.append(
+                ResultTable(
+                    title="Anomalous Trials",
+                    columns=["Sweep", "Seed", "Metric", "Observed", "Mean", "Z"],
+                    rows=[
+                        [
+                            item.sweep_label,
+                            str(item.seed),
+                            _metric_label(item.metric),
+                            f"{item.observed_score:.4f}",
+                            f"{item.mean_score:.4f}",
+                            f"{item.z_score:.4f}" if item.z_score is not None else "n/a",
+                        ]
+                        for item in anomalous_trials
+                    ],
+                )
+            )
         return tables
 
     def _acceptance_checks(
@@ -353,56 +944,115 @@ class AutoExperimentRunner:
         spec: ExperimentSpec,
         artifact: ResultArtifact,
     ) -> list[AcceptanceCheck]:
-        mean_by_system = {
-            item.system: item.mean_metrics for item in artifact.aggregate_system_results
+        aggregate_by_system = {
+            item.system: item for item in artifact.aggregate_system_results
         }
         selected_sweep = str(artifact.environment.get("selected_sweep") or "unknown")
         checks: list[AcceptanceCheck] = []
-        for criterion in spec.acceptance_criteria:
-            lowered = criterion.lower()
-            if "every requested seed" in lowered:
+        for rule in spec.acceptance_criteria:
+            metric_name = _resolve_metric_name(rule.metric, artifact.primary_metric)
+            target_system = (
+                artifact.best_system
+                if rule.target == "best_system"
+                else artifact.objective_system
+            )
+            if rule.kind == "seed_coverage":
                 passed = len(artifact.per_seed_results) == max(1, len(spec.seeds))
                 detail = (
                     f"Selected sweep `{selected_sweep}` completed {len(artifact.per_seed_results)}/"
                     f"{max(1, len(spec.seeds))} requested seeds."
                 )
-            elif "mean and standard deviation" in lowered:
-                objective_metrics = mean_by_system.get(artifact.objective_system or "")
-                objective_stats = next(
+            elif rule.kind == "aggregate_metric_reporting":
+                aggregate_item = aggregate_by_system.get(target_system or "")
+                missing: list[str] = []
+                if aggregate_item is None:
+                    missing = list(rule.required_statistics or ["mean"])
+                else:
+                    for stat_name in rule.required_statistics or ["mean"]:
+                        if stat_name == "mean" and metric_name not in aggregate_item.mean_metrics:
+                            missing.append(stat_name)
+                        elif stat_name == "std" and metric_name not in aggregate_item.std_metrics:
+                            missing.append(stat_name)
+                        elif (
+                            stat_name == "confidence_interval"
+                            and metric_name not in aggregate_item.confidence_intervals
+                        ):
+                            missing.append(stat_name)
+                passed = not missing
+                recorded_stats = []
+                if aggregate_item is not None:
+                    if metric_name in aggregate_item.mean_metrics:
+                        recorded_stats.append("mean")
+                    if metric_name in aggregate_item.std_metrics:
+                        recorded_stats.append("std")
+                    if metric_name in aggregate_item.confidence_intervals:
+                        recorded_stats.append("confidence_interval")
+                detail = (
+                    f"Primary metric `{metric_name}` for `{target_system or 'unknown'}` recorded "
+                    f"{', '.join(recorded_stats) or 'no aggregate statistics'}."
+                    + (
+                        f" Missing: {', '.join(missing)}."
+                        if missing
+                        else ""
+                    )
+                )
+            elif rule.kind == "objective_metric_comparison":
+                baseline_name = rule.baseline_system or "majority"
+                target_score = None
+                target_aggregate = aggregate_by_system.get(target_system or "")
+                if target_aggregate is not None:
+                    target_score = target_aggregate.mean_metrics.get(metric_name)
+                elif target_system == artifact.objective_system:
+                    target_score = artifact.objective_score
+                baseline_score = None
+                baseline_aggregate = aggregate_by_system.get(baseline_name)
+                if baseline_aggregate is not None:
+                    baseline_score = baseline_aggregate.mean_metrics.get(metric_name)
+                passed = (
+                    target_score is not None
+                    and (baseline_score is None or _compare_values(target_score, baseline_score, rule.comparison))
+                )
+                detail = (
+                    f"`{target_system or 'unknown'}` mean {metric_name}="
+                    f"{target_score if target_score is not None else float('nan'):.4f} "
+                    f"vs `{baseline_name}`="
+                    f"{baseline_score if baseline_score is not None else float('nan'):.4f}"
+                )
+            elif rule.kind == "significance_test_reporting":
+                comparison_scope = rule.comparison_scope or "system"
+                baseline_name = rule.baseline_system or "majority"
+                matched = next(
                     (
-                        item.std_metrics.get(artifact.primary_metric)
-                        for item in artifact.aggregate_system_results
-                        if item.system == artifact.objective_system
+                        item
+                        for item in artifact.significance_tests
+                        if item.scope == comparison_scope
+                        and item.metric == metric_name
+                        and item.candidate == (target_system or "")
+                        and item.comparator == baseline_name
                     ),
                     None,
                 )
-                passed = (
-                    objective_metrics is not None
-                    and artifact.primary_metric in objective_metrics
-                    and objective_stats is not None
-                )
+                passed = matched is not None
                 detail = (
-                    f"Primary metric `{artifact.primary_metric}` mean/std were recorded for "
-                    f"`{artifact.objective_system or artifact.best_system or 'unknown'}`."
-                )
-            elif "majority baseline" in lowered or "random baseline" in lowered:
-                baseline = "random_ranker" if "random baseline" in lowered else "majority"
-                baseline_score = mean_by_system.get(baseline, {}).get(artifact.primary_metric)
-                objective_score = artifact.objective_score
-                passed = (
-                    objective_score is not None
-                    and (baseline_score is None or objective_score > baseline_score)
-                )
-                detail = (
-                    f"Objective mean {artifact.primary_metric}="
-                    f"{artifact.objective_score if artifact.objective_score is not None else float('nan'):.4f} "
-                    f"vs {baseline}="
-                    f"{baseline_score if baseline_score is not None else float('nan'):.4f}"
+                    matched.detail
+                    if matched is not None
+                    else (
+                        f"No `{comparison_scope}` significance record for `{target_system or 'unknown'}` vs "
+                        f"`{baseline_name}` on `{metric_name}`."
+                    )
                 )
             else:
                 passed = bool(artifact.aggregate_system_results)
                 detail = "Aggregate experiment outputs were recorded."
-            checks.append(AcceptanceCheck(criterion=criterion, passed=passed, detail=detail))
+            checks.append(
+                AcceptanceCheck(
+                    criterion=rule.description,
+                    passed=passed,
+                    detail=detail,
+                    rule_id=rule.id,
+                    rule_kind=rule.kind,
+                )
+            )
         return checks
 
     def _sweep_candidates(self, spec: ExperimentSpec) -> list[SweepConfig]:
@@ -466,15 +1116,22 @@ class AutoExperimentRunner:
         )
 
         sweep_results: list[SweepEvaluationResult] = []
+        artifacts_by_sweep: dict[str, list[ResultArtifact]] = {}
+        seed_results_by_sweep: dict[str, list[SeedArtifactResult]] = {}
         selected_artifacts_by_sweep: dict[str, list[ResultArtifact]] = {}
         selected_seed_results_by_sweep: dict[str, list[SeedArtifactResult]] = {}
+        failed_trials: list[FailureRecord] = []
         failed_artifacts: list[ResultArtifact] = []
+        all_successful_seed_results: list[SeedArtifactResult] = []
+        requested_seeds = self._seed_candidates(spec)
+        sweep_candidates = self._sweep_candidates(spec)
 
-        for sweep in self._sweep_candidates(spec):
+        for sweep in sweep_candidates:
             artifacts: list[ResultArtifact] = []
             per_seed_results: list[SeedArtifactResult] = []
             failed_seeds: list[int] = []
-            for seed in self._seed_candidates(spec):
+            sweep_failure_categories: list[FailureCategory] = []
+            for seed in requested_seeds:
                 artifact = self._run_once(
                     project_id=project_id,
                     code=code,
@@ -487,21 +1144,30 @@ class AutoExperimentRunner:
                 if artifact.status != "done":
                     failed_artifacts.append(artifact)
                     failed_seeds.append(seed)
-                    break
-                artifacts.append(artifact)
-                per_seed_results.append(
-                    SeedArtifactResult(
+                    failure_record = self._failure_record(
+                        artifact=artifact,
                         seed=seed,
-                        sweep_label=sweep.label,
-                        best_system=artifact.best_system,
-                        objective_system=artifact.objective_system,
-                        objective_score=artifact.objective_score,
-                        primary_metric=artifact.primary_metric,
-                        system_results=artifact.system_results,
+                        sweep=sweep,
                     )
+                    failed_trials.append(failure_record)
+                    sweep_failure_categories.append(failure_record.category)
+                    continue
+                artifacts.append(artifact)
+                seed_result = SeedArtifactResult(
+                    seed=seed,
+                    sweep_label=sweep.label,
+                    best_system=artifact.best_system,
+                    objective_system=artifact.objective_system,
+                    objective_score=artifact.objective_score,
+                    primary_metric=artifact.primary_metric,
+                    system_results=artifact.system_results,
                 )
+                per_seed_results.append(seed_result)
+                all_successful_seed_results.append(seed_result)
 
             if artifacts:
+                artifacts_by_sweep[sweep.label] = artifacts
+                seed_results_by_sweep[sweep.label] = per_seed_results
                 mean_results, aggregate_results = self._aggregate_system_results(artifacts)
                 primary_metric = artifacts[0].primary_metric
                 objective_system = artifacts[0].objective_system
@@ -519,7 +1185,7 @@ class AutoExperimentRunner:
                         label=sweep.label,
                         params=sweep.params,
                         description=sweep.description,
-                        status="done" if not failed_seeds else "failed",
+                        status="done" if not failed_seeds else "partial",
                         best_system=best_system,
                         objective_system=objective_system,
                         objective_score_mean=(
@@ -532,9 +1198,12 @@ class AutoExperimentRunner:
                             if objective_scores
                             else None
                         ),
+                        objective_score_confidence_interval=_confidence_interval(objective_scores),
                         aggregate_system_results=aggregate_results,
                         failed_seeds=failed_seeds,
                         seed_count=len(artifacts),
+                        successful_seed_count=len(artifacts),
+                        failure_categories=sorted(set(sweep_failure_categories)),
                     )
                 )
                 if not failed_seeds:
@@ -549,17 +1218,117 @@ class AutoExperimentRunner:
                         status="failed",
                         failed_seeds=failed_seeds,
                         seed_count=0,
+                        successful_seed_count=0,
+                        failure_categories=sorted(set(sweep_failure_categories)),
                     )
                 )
 
         selected_sweep = self._select_best_sweep(sweep_results)
         if selected_sweep is None:
-            failed = failed_artifacts[-1] if failed_artifacts else self._build_failed_artifact("", {})
-            failed.environment.setdefault("generated_code_path", code_path)
-            failed.environment.setdefault("strategy", strategy)
-            failed.environment["seed_count"] = len(self._seed_candidates(spec))
-            failed.environment["sweep_count"] = len(self._sweep_candidates(spec))
-            failed.sweep_results = sweep_results
+            dominant_failure = max(
+                (
+                    (category, count)
+                    for category, count in {
+                        item.category: sum(1 for record in failed_trials if record.category == item.category)
+                        for item in failed_trials
+                    }.items()
+                ),
+                key=lambda item: item[1],
+                default=(None, 0),
+            )[0]
+            reference_sweep = max(
+                (item for item in sweep_results if item.objective_score_mean is not None),
+                key=lambda item: item.objective_score_mean if item.objective_score_mean is not None else float("-inf"),
+                default=None,
+            )
+            reference_seed_results = (
+                list(seed_results_by_sweep.get(reference_sweep.label, []))
+                if reference_sweep is not None
+                else list(all_successful_seed_results)
+            )
+            primary_metric = (
+                reference_seed_results[0].primary_metric
+                if reference_seed_results and reference_seed_results[0].primary_metric
+                else "macro_f1"
+            )
+            failure_summary: dict[str, int] = {}
+            for item in failed_trials:
+                failure_summary[item.category] = failure_summary.get(item.category, 0) + 1
+            runtime_contract_violations = sorted(
+                {
+                    str(violation)
+                    for artifact in failed_artifacts
+                    for violation in (artifact.environment.get("runtime_contract_violations") or [])
+                }
+            )
+            failure_reason = {
+                "runtime_contract_failure": "runtime contract failures prevented aggregation",
+                "code_failure": "code failures prevented aggregation",
+                "environment_failure": "environment failures prevented aggregation",
+                "data_failure": "data failures prevented aggregation",
+                "metric_failure": "metric recording failures prevented aggregation",
+            }.get(dominant_failure, "failures prevented aggregation")
+            tables = self._aggregate_tables(
+                primary_metric=primary_metric,
+                aggregate_results=reference_sweep.aggregate_system_results if reference_sweep is not None else [],
+                sweep_results=sweep_results,
+                per_seed_results=reference_seed_results,
+                significance_tests=[],
+                negative_results=[],
+                failed_trials=failed_trials,
+                anomalous_trials=[],
+            )
+            failed = ResultArtifact(
+                status="failed",
+                summary=(
+                    f"{plan.title} did not complete a sweep that covered all {len(requested_seeds)} requested seeds. "
+                    f"{failure_reason.capitalize()}. Partial results and failure analysis were preserved for inspection."
+                ),
+                key_findings=[
+                    f"Recorded {len(failed_trials)} failed seed configurations across {len(sweep_candidates)} sweep configs.",
+                    (
+                        f"Best partial sweep was `{reference_sweep.label}` with mean {primary_metric}="
+                        f"{reference_sweep.objective_score_mean:.4f} over {reference_sweep.successful_seed_count} successful seeds."
+                    )
+                    if reference_sweep is not None and reference_sweep.objective_score_mean is not None
+                    else "No sweep produced enough successful seeds to select a final configuration."
+                ],
+                primary_metric=primary_metric,
+                best_system=reference_sweep.best_system if reference_sweep is not None else None,
+                objective_system=reference_sweep.objective_system if reference_sweep is not None else None,
+                objective_score=reference_sweep.objective_score_mean if reference_sweep is not None else None,
+                system_results=[
+                    SystemMetricResult(system=item.system, metrics=item.mean_metrics)
+                    for item in (reference_sweep.aggregate_system_results if reference_sweep is not None else [])
+                ],
+                aggregate_system_results=(
+                    reference_sweep.aggregate_system_results if reference_sweep is not None else []
+                ),
+                per_seed_results=reference_seed_results,
+                sweep_results=sweep_results,
+                failed_trials=failed_trials,
+                tables=tables,
+                logs="\n\n".join(
+                    (
+                        f"=== sweep={record.sweep_label} seed={record.seed if record.seed is not None else 'n/a'} ===\n"
+                        f"{artifact.logs or artifact.summary}"
+                    ).strip()
+                    for record, artifact in zip(failed_trials[-5:], failed_artifacts[-5:], strict=False)
+                ),
+                environment={
+                    "generated_code_path": code_path,
+                    "strategy": strategy,
+                    "seed_count": len(requested_seeds),
+                    "sweep_count": len(sweep_candidates),
+                    "failure_summary": failure_summary,
+                    "failed_trial_count": len(failed_trials),
+                    "runtime_contract_violations": runtime_contract_violations,
+                },
+                outputs={
+                    "sweep_results": [item.model_dump(mode="json") for item in sweep_results],
+                    "failed_trials": [item.model_dump(mode="json") for item in failed_trials],
+                },
+            )
             return strategy, code_path, failed
 
         artifacts = selected_artifacts_by_sweep[selected_sweep.label]
@@ -571,6 +1340,24 @@ class AutoExperimentRunner:
             key=lambda item: item.metrics.get(primary_metric, float("-inf")),
         ).system if mean_results else None
         objective_system = selected_sweep.objective_system
+        significance_tests = self._significance_tests(
+            primary_metric=primary_metric,
+            aggregate_results=aggregate_results,
+            selected_sweep=selected_sweep,
+            per_seed_results=per_seed_results,
+            seed_results_by_sweep=seed_results_by_sweep,
+        )
+        negative_results = self._negative_results(
+            primary_metric=primary_metric,
+            aggregate_results=aggregate_results,
+            selected_sweep=selected_sweep,
+            significance_tests=significance_tests,
+            sweep_results=sweep_results,
+        )
+        anomalous_trials = self._anomalous_trials(
+            per_seed_results=per_seed_results,
+            primary_metric=primary_metric,
+        )
         acceptance_checks = self._acceptance_checks(
             spec,
             ResultArtifact(
@@ -582,6 +1369,7 @@ class AutoExperimentRunner:
                 objective_score=selected_sweep.objective_score_mean,
                 aggregate_system_results=aggregate_results,
                 per_seed_results=per_seed_results,
+                significance_tests=significance_tests,
                 environment={"selected_sweep": selected_sweep.label},
             ),
         )
@@ -592,6 +1380,9 @@ class AutoExperimentRunner:
             ).strip()
             for seed_result, artifact in zip(per_seed_results, artifacts, strict=False)
         )
+        failure_summary: dict[str, int] = {}
+        for item in failed_trials:
+            failure_summary[item.category] = failure_summary.get(item.category, 0) + 1
         base_environment = dict(artifacts[0].environment)
         base_environment.update(
             {
@@ -600,6 +1391,13 @@ class AutoExperimentRunner:
                 "seed_count": len(per_seed_results),
                 "sweep_count": len(sweep_results),
                 "sweeps_evaluated": [item.label for item in sweep_results],
+                "confidence_interval_level": 0.95,
+                "confidence_interval_method": "student_t_95",
+                "significance_test_count": len(significance_tests),
+                "negative_result_count": len(negative_results),
+                "anomalous_trial_count": len(anomalous_trials),
+                "failed_trial_count": len(failed_trials),
+                "failure_summary": failure_summary,
                 "aggregate_runtime_seconds": _round_metric(
                     sum(
                         float(item.environment.get("runtime_seconds") or 0.0)
@@ -613,20 +1411,39 @@ class AutoExperimentRunner:
             aggregate_results=aggregate_results,
             sweep_results=sweep_results,
             per_seed_results=per_seed_results,
+            significance_tests=significance_tests,
+            negative_results=negative_results,
+            failed_trials=failed_trials,
+            anomalous_trials=anomalous_trials,
         )
         key_findings = list(artifacts[0].key_findings)
         if selected_sweep.objective_score_mean is not None:
+            ci_text = _format_confidence_interval(selected_sweep.objective_score_confidence_interval)
             key_findings.append(
                 f"Selected sweep `{selected_sweep.label}` reached mean {primary_metric}="
                 f"{selected_sweep.objective_score_mean:.4f} with std="
-                f"{selected_sweep.objective_score_std or 0.0:.4f} across {len(per_seed_results)} seeds."
+                f"{selected_sweep.objective_score_std or 0.0:.4f} and {ci_text} "
+                f"across {len(per_seed_results)} seeds."
             )
         key_findings.append(
             f"Selected sweep config: {selected_sweep.label} with params {json.dumps(selected_sweep.params, ensure_ascii=False, sort_keys=True)}."
         )
+        key_findings.append(
+            f"Recorded {len(significance_tests)} paired significance comparisons with Holm correction."
+        )
+        if negative_results:
+            key_findings.append(
+                f"Preserved {len(negative_results)} negative-result records for weaker systems, sweeps, or unsupported comparisons."
+            )
+        if anomalous_trials:
+            key_findings.append(
+                f"Flagged {len(anomalous_trials)} anomalous seed-level trials for manual inspection."
+            )
         failed_sweep_count = sum(1 for item in sweep_results if item.status != "done")
         if failed_sweep_count:
-            key_findings.append(f"{failed_sweep_count} sweep configurations failed before full aggregation.")
+            key_findings.append(
+                f"Preserved {len(failed_trials)} failed seed configurations across {failed_sweep_count} non-complete sweeps."
+            )
 
         artifact = ResultArtifact(
             status="done",
@@ -634,7 +1451,9 @@ class AutoExperimentRunner:
                 f"{plan.title} executed strategy {strategy} across {len(per_seed_results)} seeds and "
                 f"{len(sweep_results)} sweep configs. Selected sweep: {selected_sweep.label}. "
                 f"Best system: {best_system or 'unknown'} with mean {primary_metric}="
-                f"{selected_sweep.objective_score_mean or 0.0:.4f}."
+                f"{selected_sweep.objective_score_mean or 0.0:.4f}"
+                f" ({_format_confidence_interval(selected_sweep.objective_score_confidence_interval)}). "
+                f"Recorded {len(significance_tests)} significance comparisons and {len(failed_trials)} failed configs."
             ),
             key_findings=key_findings,
             primary_metric=primary_metric,
@@ -645,6 +1464,10 @@ class AutoExperimentRunner:
             aggregate_system_results=aggregate_results,
             per_seed_results=per_seed_results,
             sweep_results=sweep_results,
+            significance_tests=significance_tests,
+            negative_results=negative_results,
+            failed_trials=failed_trials,
+            anomalous_trials=anomalous_trials,
             acceptance_checks=acceptance_checks,
             tables=tables,
             logs=logs,
@@ -654,6 +1477,10 @@ class AutoExperimentRunner:
                 "selected_sweep_params": selected_sweep.params,
                 "seed_results": [item.model_dump(mode="json") for item in per_seed_results],
                 "sweep_results": [item.model_dump(mode="json") for item in sweep_results],
+                "significance_tests": [item.model_dump(mode="json") for item in significance_tests],
+                "negative_results": [item.model_dump(mode="json") for item in negative_results],
+                "failed_trials": [item.model_dump(mode="json") for item in failed_trials],
+                "anomalous_trials": [item.model_dump(mode="json") for item in anomalous_trials],
             },
         )
         artifact.environment.setdefault("generated_code_path", code_path)

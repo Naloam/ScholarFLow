@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking"]
@@ -27,6 +27,39 @@ PortfolioDecisionOutcome = Literal[
     "eliminated",
     "failed",
 ]
+AcceptanceRuleKind = Literal[
+    "objective_metric_comparison",
+    "seed_coverage",
+    "aggregate_metric_reporting",
+    "significance_test_reporting",
+    "custom",
+]
+AcceptanceRuleTarget = Literal["objective_system", "best_system"]
+AcceptanceComparison = Literal["gt", "gte", "lt", "lte", "eq", "ne"]
+AcceptanceStatistic = Literal["mean", "std", "confidence_interval"]
+ConfidenceIntervalMethod = Literal["student_t_95"]
+SweepStatus = Literal["done", "partial", "failed"]
+FailureCategory = Literal[
+    "code_failure",
+    "environment_failure",
+    "data_failure",
+    "metric_failure",
+    "runtime_contract_failure",
+    "unknown_failure",
+]
+FailureScope = Literal["seed", "sweep"]
+NegativeResultScope = Literal["system", "sweep", "comparison"]
+SignificanceComparisonScope = Literal["system", "sweep"]
+SignificanceAlternative = Literal["greater", "less", "two_sided"]
+SignificanceTestMethod = Literal["paired_sign_flip_exact", "paired_sign_flip_monte_carlo"]
+MultipleComparisonCorrection = Literal["holm_bonferroni"]
+
+
+def _rule_slug(text: str, *, fallback: str) -> str:
+    slug = "".join(character.lower() if character.isalnum() else "_" for character in text).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or fallback
 
 
 class ExecutionBackendSpec(BaseModel):
@@ -121,6 +154,127 @@ class ResearchPlan(BaseModel):
     scope_limits: list[str] = Field(default_factory=list)
 
 
+class AcceptanceRule(BaseModel):
+    id: str
+    description: str
+    kind: AcceptanceRuleKind = "custom"
+    metric: str | None = None
+    target: AcceptanceRuleTarget | None = None
+    baseline_system: str | None = None
+    comparison: AcceptanceComparison | None = None
+    required_statistics: list[AcceptanceStatistic] = Field(default_factory=list)
+    scope: Literal["selected_sweep"] = "selected_sweep"
+    comparison_scope: SignificanceComparisonScope | None = None
+
+    @classmethod
+    def from_legacy_string(cls, criterion: str, index: int = 0) -> AcceptanceRule:
+        text = criterion.strip()
+        lowered = text.lower()
+        fallback_id = f"acceptance_rule_{index + 1}"
+        if (
+            "objective system" in lowered
+            and "outperform" in lowered
+            and ("majority baseline" in lowered or "random baseline" in lowered)
+        ):
+            baseline = "random_ranker" if "random baseline" in lowered else "majority"
+            return cls(
+                id=_rule_slug(text, fallback=fallback_id),
+                description=text,
+                kind="objective_metric_comparison",
+                metric="primary_metric",
+                target="objective_system",
+                baseline_system=baseline,
+                comparison="gt",
+                required_statistics=["mean"],
+            )
+        if "every requested seed" in lowered:
+            return cls(
+                id=_rule_slug(text, fallback=fallback_id),
+                description=text,
+                kind="seed_coverage",
+            )
+        if (
+            "mean and standard deviation" in lowered
+            or "standard deviation" in lowered
+            or "confidence interval" in lowered
+        ):
+            required_statistics: list[AcceptanceStatistic] = []
+            if "mean" in lowered:
+                required_statistics.append("mean")
+            if "standard deviation" in lowered or "std" in lowered:
+                required_statistics.append("std")
+            if "confidence interval" in lowered:
+                required_statistics.append("confidence_interval")
+            return cls(
+                id=_rule_slug(text, fallback=fallback_id),
+                description=text,
+                kind="aggregate_metric_reporting",
+                metric="primary_metric",
+                target="objective_system",
+                required_statistics=required_statistics or ["mean"],
+            )
+        return cls(
+            id=_rule_slug(text, fallback=fallback_id),
+            description=text,
+            kind="custom",
+        )
+
+
+class ConfidenceIntervalSummary(BaseModel):
+    lower: float
+    upper: float
+    level: float = 0.95
+    method: ConfidenceIntervalMethod = "student_t_95"
+
+
+class SignificanceTestResult(BaseModel):
+    scope: SignificanceComparisonScope
+    metric: str
+    candidate: str
+    comparator: str
+    alternative: SignificanceAlternative = "two_sided"
+    method: SignificanceTestMethod = "paired_sign_flip_exact"
+    p_value: float
+    adjusted_p_value: float | None = None
+    correction: MultipleComparisonCorrection | None = None
+    effect_size: float
+    significant: bool = False
+    sample_count: int = 0
+    detail: str
+
+
+class FailureRecord(BaseModel):
+    scope: FailureScope = "seed"
+    sweep_label: str
+    seed: int | None = None
+    category: FailureCategory = "unknown_failure"
+    summary: str
+    detail: str
+    returncode: int | None = None
+    status: Literal["failed"] = "failed"
+
+
+class NegativeResultRecord(BaseModel):
+    scope: NegativeResultScope
+    subject: str
+    reference: str
+    metric: str
+    observed_score: float | None = None
+    reference_score: float | None = None
+    delta: float | None = None
+    detail: str
+
+
+class AnomalousTrialRecord(BaseModel):
+    sweep_label: str
+    seed: int
+    metric: str
+    observed_score: float
+    mean_score: float
+    z_score: float | None = None
+    detail: str
+
+
 class ExperimentSpec(BaseModel):
     task_family: TaskFamily
     benchmark_name: str
@@ -134,7 +288,25 @@ class ExperimentSpec(BaseModel):
     search_strategies: list[str] = Field(default_factory=list)
     seeds: list[int] = Field(default_factory=list)
     sweeps: list[SweepConfig] = Field(default_factory=list)
-    acceptance_criteria: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[AcceptanceRule] = Field(default_factory=list)
+
+    @field_validator("acceptance_criteria", mode="before")
+    @classmethod
+    def _normalize_acceptance_criteria(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return value
+        normalized: list[Any] = []
+        for index, item in enumerate(value):
+            if isinstance(item, str):
+                normalized.append(AcceptanceRule.from_legacy_string(item, index=index))
+                continue
+            if isinstance(item, dict) and "description" not in item and "criterion" in item:
+                normalized.append({**item, "description": item["criterion"]})
+                continue
+            normalized.append(item)
+        return normalized
 
 
 class SystemMetricResult(BaseModel):
@@ -147,6 +319,7 @@ class AggregateSystemMetricResult(BaseModel):
     system: str
     mean_metrics: dict[str, float] = Field(default_factory=dict)
     std_metrics: dict[str, float] = Field(default_factory=dict)
+    confidence_intervals: dict[str, ConfidenceIntervalSummary] = Field(default_factory=dict)
     min_metrics: dict[str, float] = Field(default_factory=dict)
     max_metrics: dict[str, float] = Field(default_factory=dict)
     sample_count: int = 1
@@ -166,20 +339,25 @@ class SweepEvaluationResult(BaseModel):
     label: str
     params: dict[str, Any] = Field(default_factory=dict)
     description: str | None = None
-    status: Literal["done", "failed"] = "done"
+    status: SweepStatus = "done"
     best_system: str | None = None
     objective_system: str | None = None
     objective_score_mean: float | None = None
     objective_score_std: float | None = None
+    objective_score_confidence_interval: ConfidenceIntervalSummary | None = None
     aggregate_system_results: list[AggregateSystemMetricResult] = Field(default_factory=list)
     failed_seeds: list[int] = Field(default_factory=list)
     seed_count: int = 0
+    successful_seed_count: int = 0
+    failure_categories: list[FailureCategory] = Field(default_factory=list)
 
 
 class AcceptanceCheck(BaseModel):
     criterion: str
     passed: bool
     detail: str
+    rule_id: str | None = None
+    rule_kind: AcceptanceRuleKind | None = None
 
 
 class ResultTable(BaseModel):
@@ -198,6 +376,10 @@ class ResultArtifact(BaseModel):
     aggregate_system_results: list[AggregateSystemMetricResult] = Field(default_factory=list)
     per_seed_results: list[SeedArtifactResult] = Field(default_factory=list)
     sweep_results: list[SweepEvaluationResult] = Field(default_factory=list)
+    significance_tests: list[SignificanceTestResult] = Field(default_factory=list)
+    negative_results: list[NegativeResultRecord] = Field(default_factory=list)
+    failed_trials: list[FailureRecord] = Field(default_factory=list)
+    anomalous_trials: list[AnomalousTrialRecord] = Field(default_factory=list)
     acceptance_checks: list[AcceptanceCheck] = Field(default_factory=list)
     tables: list[ResultTable] = Field(default_factory=list)
     logs: str | None = None

@@ -6,6 +6,7 @@ from typing import Any
 
 from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, ResearchPlan
 from services.llm.client import chat
+from services.autoresearch.runtime_contract import missing_runtime_controls, runtime_contract_payload
 from services.llm.prompting import load_prompt
 
 
@@ -23,6 +24,8 @@ class ExperimentCodeGenerator:
 
     def _is_valid_code(self, code: str | None) -> bool:
         if not code or "__RESULT__" not in code:
+            return False
+        if missing_runtime_controls(code):
             return False
         try:
             compile(code, "<autorresearch>", "exec")
@@ -60,6 +63,7 @@ class ExperimentCodeGenerator:
                                 "strategy": strategy,
                                 "goal": goal,
                                 "prior_attempts": [item.model_dump(mode="json") for item in prior_attempts],
+                                "runtime_contract": runtime_contract_payload(),
                             },
                             ensure_ascii=False,
                             indent=2,

@@ -21,6 +21,7 @@ from schemas.autoresearch import (
     SystemMetricResult,
 )
 from services.autoresearch.codegen import ExperimentCodeGenerator
+from services.autoresearch.runtime_contract import runtime_environment_violations
 from services.autoresearch.repository import save_generated_code
 
 
@@ -120,6 +121,48 @@ class AutoExperimentRunner:
             outputs=outputs,
         )
 
+    def _runtime_contract_failure(
+        self,
+        artifact: ResultArtifact,
+        *,
+        seed: int,
+        sweep: SweepConfig,
+        code_path: str,
+        strategy: str,
+        violations: list[str],
+    ) -> ResultArtifact:
+        environment = dict(artifact.environment)
+        environment.update(
+            {
+                "generated_code_path": code_path,
+                "strategy": strategy,
+                "expected_seed": seed,
+                "expected_sweep": sweep.params,
+                "runtime_contract_violations": violations,
+            }
+        )
+        logs = (
+            f"{artifact.logs or ''}\n"
+            f"Runtime contract violation for seed={seed} sweep={sweep.label}: {', '.join(violations)}"
+        ).strip()
+        return ResultArtifact(
+            status="failed",
+            summary=(
+                "The experiment completed but did not record the active seed/sweep configuration "
+                "required by the runtime contract."
+            ),
+            key_findings=artifact.key_findings,
+            primary_metric=artifact.primary_metric,
+            best_system=artifact.best_system,
+            objective_system=artifact.objective_system,
+            objective_score=artifact.objective_score,
+            system_results=artifact.system_results,
+            tables=artifact.tables,
+            logs=logs,
+            environment=environment,
+            outputs=artifact.outputs,
+        )
+
     def _execution_env(self, seed: int, sweep: SweepConfig) -> dict[str, str]:
         return {
             "SCHOLARFLOW_SEED": str(seed),
@@ -150,9 +193,24 @@ class AutoExperimentRunner:
         logs = str(result.get("logs") or "")
         outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
         artifact = self._build_artifact(logs, outputs)
+        violations = runtime_environment_violations(
+            artifact.environment,
+            expected_seed=seed,
+            expected_sweep=sweep.params,
+        )
+        if violations:
+            return self._runtime_contract_failure(
+                artifact,
+                seed=seed,
+                sweep=sweep,
+                code_path=code_path,
+                strategy=strategy,
+                violations=violations,
+            )
         artifact.environment.setdefault("generated_code_path", code_path)
         artifact.environment.setdefault("strategy", strategy)
-        artifact.environment["seed"] = seed
+        artifact.environment.setdefault("seed", seed)
+        artifact.environment.setdefault("sweep", sweep.params)
         artifact.environment["sweep_label"] = sweep.label
         artifact.environment["sweep_params"] = sweep.params
         return artifact
@@ -381,6 +439,8 @@ class AutoExperimentRunner:
         execution_backend: ExecutionBackendSpec | None = None,
         code_override: str | None = None,
         strategy_override: str | None = None,
+        code_filename_prefix: str | None = None,
+        code_subdir: str | None = None,
     ) -> tuple[str, str, ResultArtifact]:
         if code_override is not None and strategy_override is not None:
             strategy, code = strategy_override, code_override
@@ -395,11 +455,14 @@ class AutoExperimentRunner:
             )
 
         safe_strategy = re.sub(r"[^a-zA-Z0-9_]+", "_", strategy).strip("_") or "attempt"
+        safe_prefix = re.sub(r"[^a-zA-Z0-9_]+", "_", code_filename_prefix or "").strip("_")
+        filename_prefix = f"{safe_prefix}_" if safe_prefix else ""
         code_path = save_generated_code(
             project_id,
             run_id,
             code,
-            filename=f"experiment_round_{round_index}_{safe_strategy}.py",
+            filename=f"{filename_prefix}experiment_round_{round_index}_{safe_strategy}.py",
+            subdir=code_subdir,
         )
 
         sweep_results: list[SweepEvaluationResult] = []

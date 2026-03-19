@@ -92,8 +92,16 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["status"] == "done"
         assert run["task_family"] == "text_classification"
         assert run["spec"]["benchmark_name"] == "toy_cs_abstract_topic"
+        assert run["program"]["id"].endswith("_program")
+        assert run["program"]["benchmark_name"] == "toy_cs_abstract_topic"
         assert run["artifact"]["status"] == "done"
         assert len(run["attempts"]) == 3
+        assert len(run["candidates"]) == 3
+        assert run["portfolio"]["status"] == "done"
+        assert run["portfolio"]["total_candidates"] == 3
+        assert len(run["portfolio"]["candidate_rankings"]) == 3
+        assert len(run["portfolio"]["executed_candidate_ids"]) == 3
+        assert len(run["portfolio"]["decisions"]) == 3
         assert run["attempts"][0]["goal"] == "initial_run"
         assert run["attempts"][-1]["strategy"] == "naive_bayes_search"
         assert run["selected_round_index"] is not None
@@ -104,11 +112,56 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert len(run["artifact"]["sweep_results"]) == len(run["spec"]["sweeps"])
         assert run["artifact"]["environment"]["selected_sweep"]
         assert Path(run["generated_code_path"]).is_file()
+        run_dir = Path(run["paper_path"]).parent
+        assert (run_dir / "program.json").is_file()
+        assert (run_dir / "portfolio.json").is_file()
+        assert len(list((run_dir / "candidates").glob("*.json"))) == 3
         assert run["spec"]["seeds"] == [7, 13]
         assert len(run["spec"]["sweeps"]) == 2
+        selected_candidate = next(
+            item for item in run["candidates"] if item["id"] == run["portfolio"]["selected_candidate_id"]
+        )
+        candidate_scores = [
+            item["score"]
+            for item in run["candidates"]
+            if item["score"] is not None
+        ]
+        assert candidate_scores
+        assert selected_candidate["rank"] == 1
+        assert selected_candidate["status"] == "done"
+        assert selected_candidate["artifact"]["status"] == "done"
+        assert selected_candidate["selected_round_index"] == run["selected_round_index"]
+        assert selected_candidate["score"] == max(candidate_scores)
+        assert Path(selected_candidate["workspace_path"]).is_dir()
+        assert Path(selected_candidate["plan_path"]).is_file()
+        assert Path(selected_candidate["spec_path"]).is_file()
+        assert Path(selected_candidate["attempts_path"]).is_file()
+        assert Path(selected_candidate["artifact_path"]).is_file()
+        assert Path(selected_candidate["manifest_path"]).is_file()
+        assert Path(selected_candidate["paper_path"]).is_file()
+        assert all(item["status"] == "done" for item in run["candidates"])
+        assert all(item["attempts"] for item in run["candidates"])
+        assert all(Path(item["workspace_path"]).is_dir() for item in run["candidates"])
+        assert all(Path(item["plan_path"]).is_file() for item in run["candidates"])
+        assert all(Path(item["spec_path"]).is_file() for item in run["candidates"])
+        assert all(Path(item["attempts_path"]).is_file() for item in run["candidates"])
+        assert all(Path(item["artifact_path"]).is_file() for item in run["candidates"])
+        assert all(Path(item["manifest_path"]).is_file() for item in run["candidates"])
+        assert any(record["selected"] for record in run["portfolio"]["decisions"])
+        assert any("Won the executed portfolio" in record["reason"] for record in run["portfolio"]["decisions"])
+        assert any(record["outcome"] == "promoted" for record in run["portfolio"]["decisions"])
+        assert all(record["criteria"] for record in run["portfolio"]["decisions"])
+        selected_record = next(
+            item for item in run["portfolio"]["decisions"] if item["candidate_id"] == selected_candidate["id"]
+        )
+        assert selected_record["outcome"] == "promoted"
+        manifest = json.loads(Path(selected_candidate["manifest_path"]).read_text(encoding="utf-8"))
+        assert manifest["decision"]["outcome"] == "promoted"
+        assert manifest["files"]["paper_path"] == selected_candidate["paper_path"]
 
         paper = run["paper_markdown"]
         assert "## 2. Related Work and Research Plan" in paper
+        assert "Portfolio planning generated 3 ranked candidates" in paper
         assert "## 4. Experimental Setup" in paper
         assert "## 5. Results" in paper
         assert "| System | Accuracy | Macro F1 |" in paper
@@ -179,6 +232,123 @@ def test_autoresearch_tabular_run_supports_second_task_family(
         assert "perceptron_unscaled" in all_systems
         assert "## 3. Method" in run["paper_markdown"]
         assert "Toy Training Run Stability" in run["paper_markdown"]
+    finally:
+        client.close()
+
+
+def test_autoresearch_selects_best_executed_candidate_from_portfolio(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+
+    def fake_run(
+        self,
+        *,
+        plan,
+        spec,
+        round_index,
+        **kwargs,
+    ):
+        del self, kwargs
+        if "narrower modeling delta" in plan.proposed_method:
+            candidate_label = "baseline_anchor"
+            score = 0.84
+        elif "robustness checks" in plan.proposed_method:
+            candidate_label = "stability_probe"
+            score = 0.72
+        else:
+            candidate_label = "primary_method"
+            score = 0.79
+        strategy = spec.search_strategies[min(round_index - 1, len(spec.search_strategies) - 1)]
+        code_path = tmp_path / f"{candidate_label}_{round_index}.py"
+        code_path.write_text(f"# {candidate_label} round {round_index}\n", encoding="utf-8")
+        artifact = ResultArtifact(
+            status="done",
+            summary=f"{candidate_label} round {round_index}",
+            key_findings=[candidate_label],
+            primary_metric="macro_f1",
+            best_system="demo_system",
+            objective_system="demo_system",
+            objective_score=score,
+            system_results=[
+                {"system": "majority", "metrics": {"accuracy": 0.40, "macro_f1": 0.40}},
+                {"system": "demo_system", "metrics": {"accuracy": score, "macro_f1": score}},
+            ],
+            aggregate_system_results=[
+                {
+                    "system": "majority",
+                    "mean_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                    "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+                    "min_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                    "max_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                    "sample_count": 1,
+                },
+                {
+                    "system": "demo_system",
+                    "mean_metrics": {"accuracy": score, "macro_f1": score},
+                    "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+                    "min_metrics": {"accuracy": score, "macro_f1": score},
+                    "max_metrics": {"accuracy": score, "macro_f1": score},
+                    "sample_count": 1,
+                },
+            ],
+            acceptance_checks=[
+                {
+                    "criterion": "Record mean and standard deviation for the primary metric.",
+                    "passed": True,
+                    "detail": "Synthetic candidate passed.",
+                }
+            ],
+            tables=[
+                {
+                    "title": "Main Results",
+                    "columns": ["System", "Macro F1"],
+                    "rows": [["majority", "0.4000"], ["demo_system", f"{score:.4f}"]],
+                }
+            ],
+            environment={
+                "executor_mode": "synthetic",
+                "python_version": "3.11.0",
+                "platform": "test-platform",
+                "runtime_seconds": 0.01,
+                "selected_sweep": "default",
+                "seed_count": 1,
+            },
+        )
+        return strategy, str(code_path), artifact
+
+    monkeypatch.setattr(AutoExperimentRunner, "run", fake_run)
+    try:
+        project_id = _create_project(
+            client,
+            "Portfolio Winner Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["portfolio"]["selected_candidate_id"].endswith("cand_02")
+        assert run["candidates"][0]["id"] == run["portfolio"]["selected_candidate_id"]
+        assert run["artifact"]["summary"].startswith("baseline_anchor")
+        assert Path(run["generated_code_path"]).name.startswith("baseline_anchor_")
+        assert len(run["attempts"]) == 2
+        assert run["spec"]["search_strategies"] == [
+            "keyword_rule_search",
+            "naive_bayes_limited_vocab_search",
+        ]
+        winner = run["candidates"][0]
+        assert "Won the executed portfolio" in winner["selection_reason"]
+        assert Path(winner["workspace_path"]).is_dir()
+        assert Path(winner["manifest_path"]).is_file()
+        assert len(run["portfolio"]["decisions"]) == 3
+        assert run["portfolio"]["decisions"][0]["candidate_id"] == winner["id"]
+        assert run["portfolio"]["decisions"][0]["outcome"] == "promoted"
+        assert run["portfolio"]["decisions"][1]["outcome"] == "eliminated"
     finally:
         client.close()
 
@@ -371,6 +541,8 @@ def test_runner_aggregates_across_seeds_and_sweeps(monkeypatch, tmp_path: Path) 
                         "python_version": "3.11.0",
                         "platform": "test-platform",
                         "runtime_seconds": 0.012,
+                        "seed": seed,
+                        "sweep": sweep,
                     },
                 },
             },
@@ -404,6 +576,538 @@ def test_runner_aggregates_across_seeds_and_sweeps(monkeypatch, tmp_path: Path) 
     assert any(check.passed for check in artifact.acceptance_checks)
     assert any(table.title == "Sweep Summary" for table in artifact.tables)
     assert any(item.system == "naive_bayes" for item in artifact.aggregate_system_results)
+
+
+def test_runner_rejects_artifact_with_runtime_environment_mismatch(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    runner = AutoExperimentRunner()
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Runner Runtime Validation Test",
+        task_family="text_classification",
+        problem_statement="Test runtime mismatch rejection.",
+        motivation="Runner must reject mismatched runtime metadata.",
+        proposed_method="Validate artifact seed/sweep against injected runtime config.",
+        research_questions=["Does runner reject mismatched artifact environment?"],
+        hypotheses=["Artifacts with mismatched runtime metadata should fail."],
+        planned_contributions=["Post-run runtime contract validation."],
+        experiment_outline=["Run a single fake execution and inspect artifact validation."],
+        scope_limits=["Unit-level runner validation only."],
+    )
+    spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification")).model_copy(
+        update={"seeds": [7], "sweeps": [SweepConfig(label="base", params={"variant": "base"})]}
+    )
+
+    def fake_generate(self, **kwargs):
+        del kwargs
+        return "keyword_rule_search", 'print("__RESULT__" + "{}")'
+
+    def fake_run(payload: dict[str, object]) -> dict[str, object]:
+        del payload
+        return {
+            "logs": "mismatched runtime metadata",
+            "outputs": {
+                "returncode": 0,
+                "executor_mode": "local",
+                "docker_image": None,
+                "workdir": str(tmp_path),
+                "duration_ms": 11,
+                "host_platform": "test-platform",
+                "host_python": "3.11.0",
+                "result": {
+                    "summary": "done",
+                    "primary_metric": "macro_f1",
+                    "best_system": "keyword_rule",
+                    "objective_system": "keyword_rule",
+                    "objective_score": 0.6,
+                    "key_findings": [],
+                    "system_results": [
+                        {"system": "majority", "metrics": {"accuracy": 0.4, "macro_f1": 0.4}},
+                        {"system": "keyword_rule", "metrics": {"accuracy": 0.6, "macro_f1": 0.6}},
+                    ],
+                    "tables": [],
+                    "environment": {
+                        "python_version": "3.11.0",
+                        "platform": "test-platform",
+                        "runtime_seconds": 0.011,
+                        "seed": 999,
+                        "sweep": {"variant": "wrong"},
+                    },
+                },
+            },
+        }
+
+    monkeypatch.setattr(autoresearch_codegen.ExperimentCodeGenerator, "generate", fake_generate)
+    monkeypatch.setattr(runner.sandbox, "run", fake_run)
+
+    _, _, artifact = runner.run(
+        project_id="project-test",
+        run_id="run-runtime-mismatch",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+        round_index=1,
+        goal="initial_run",
+        prior_attempts=[],
+    )
+
+    assert artifact.status == "failed"
+    assert "runtime contract" in artifact.summary.lower()
+    assert "seed_mismatch" in artifact.environment["runtime_contract_violations"]
+    assert "sweep_mismatch" in artifact.environment["runtime_contract_violations"]
+
+
+def test_codegen_rejects_llm_code_without_runtime_controls(monkeypatch) -> None:
+    generator = autoresearch_codegen.ExperimentCodeGenerator()
+    observed_payload: dict[str, object] = {}
+
+    def fake_chat(messages):
+        observed_payload.update(json.loads(messages[1]["content"]))
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": """```python
+import json
+
+def run():
+    print("__RESULT__" + json.dumps({"summary": "ok", "primary_metric": "macro_f1", "best_system": "x", "objective_system": "x", "objective_score": 1.0, "key_findings": [], "system_results": [], "tables": [], "environment": {}}))
+
+if __name__ == "__main__":
+    run()
+```"""
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(autoresearch_codegen, "chat", fake_chat)
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Codegen Runtime Contract Test",
+        task_family="text_classification",
+        problem_statement="Test runtime contract enforcement.",
+        motivation="LLM output must honor seed/sweep controls.",
+        proposed_method="Generate a compliant script.",
+        research_questions=["Does codegen reject incomplete LLM code?"],
+        hypotheses=["Fallback code should be used when runtime controls are missing."],
+        planned_contributions=["Enforce runtime contract during validation."],
+        experiment_outline=["Generate code and validate runtime controls."],
+        scope_limits=["Unit-level validation only."],
+    )
+    spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification"))
+
+    strategy, code = generator.generate(
+        plan=plan,
+        spec=spec,
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+        round_index=1,
+        goal="initial_run",
+        prior_attempts=[],
+    )
+
+    assert strategy == "keyword_rule_search"
+    assert observed_payload["runtime_contract"]["seed_env_var"] == "SCHOLARFLOW_SEED"
+    assert observed_payload["runtime_contract"]["sweep_env_var"] == "SCHOLARFLOW_SWEEP_JSON"
+    assert "SCHOLARFLOW_SEED" in code
+    assert "SCHOLARFLOW_SWEEP_JSON" in code
+    assert 'json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON")' in code
+
+
+def test_codegen_rejects_llm_code_that_only_reads_runtime_controls(monkeypatch) -> None:
+    generator = autoresearch_codegen.ExperimentCodeGenerator()
+
+    def fake_chat(messages):
+        del messages
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": """```python
+import json
+import os
+
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{}")
+
+def run():
+    artifact = {
+        "summary": "ok",
+        "primary_metric": "macro_f1",
+        "best_system": "x",
+        "objective_system": "x",
+        "objective_score": 1.0,
+        "key_findings": [],
+        "system_results": [],
+        "tables": [],
+        "environment": {},
+    }
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+```"""
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(autoresearch_codegen, "chat", fake_chat)
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Codegen Runtime Usage Test",
+        task_family="text_classification",
+        problem_statement="Test runtime usage enforcement.",
+        motivation="LLM output must use runtime controls, not just read them.",
+        proposed_method="Generate a compliant script.",
+        research_questions=["Does codegen reject read-only runtime controls?"],
+        hypotheses=["Fallback code should replace incomplete read-only code."],
+        planned_contributions=["Enforce runtime usage during validation."],
+        experiment_outline=["Generate code and validate runtime usage."],
+        scope_limits=["Unit-level validation only."],
+    )
+    spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification"))
+
+    _, code = generator.generate(
+        plan=plan,
+        spec=spec,
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+        round_index=1,
+        goal="initial_run",
+        prior_attempts=[],
+    )
+
+    assert '"seed": SEED' in code
+    assert '"sweep": SWEEP' in code
+
+
+def test_repair_flow_requires_runtime_controls_in_candidate(monkeypatch, tmp_path: Path) -> None:
+    engine = autoresearch_repair.ExperimentRepairEngine()
+    observed_payload: dict[str, object] = {}
+    previous_code = """import json
+import os
+
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{}")
+
+def run():
+    artifact = {
+        "summary": "ok",
+        "primary_metric": "macro_f1",
+        "best_system": "demo",
+        "objective_system": "demo",
+        "objective_score": 1.0,
+        "key_findings": [],
+        "system_results": [],
+        "tables": [],
+        "environment": {"seed": SEED, "sweep": SWEEP},
+    }
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+"""
+    code_path = tmp_path / "repair_runtime_contract.py"
+    code_path.write_text(previous_code, encoding="utf-8")
+
+    def fake_chat(messages):
+        observed_payload.update(json.loads(messages[1]["content"]))
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": """```python
+import json
+
+def run():
+    artifact = {
+        "summary": "patched",
+        "primary_metric": "macro_f1",
+        "best_system": "demo",
+        "objective_system": "demo",
+        "objective_score": 1.0,
+        "key_findings": [],
+        "system_results": [],
+        "tables": [],
+        "environment": {},
+    }
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+```"""
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(autoresearch_repair, "chat", fake_chat)
+    candidate = engine.repair(
+        previous_attempt=ExperimentAttempt(
+            round_index=1,
+            strategy="forced_failure",
+            goal="initial_run",
+            status="failed",
+            summary="failed",
+            code_path=str(code_path),
+            artifact=ResultArtifact(
+                status="failed",
+                summary="failed",
+                primary_metric="macro_f1",
+                logs='Traceback (most recent call last):\n  File "main.py", line 8, in run\nValueError: boom',
+            ),
+        ),
+        plan=ResearchPlan(
+            topic="Automatic topic classification for compact CS abstracts",
+            title="Repair Runtime Contract Test",
+            task_family="text_classification",
+            problem_statement="Test repair runtime contract enforcement.",
+            motivation="Repair must preserve seed/sweep controls.",
+            proposed_method="Patch the failed script.",
+            research_questions=["Does repair reject incomplete runtime control patches?"],
+            hypotheses=["Invalid LLM patches should be discarded."],
+            planned_contributions=["Carry runtime contract into repair."],
+            experiment_outline=["Attempt LLM repair and validate the candidate."],
+            scope_limits=["Unit-level repair validation only."],
+        ),
+        spec=build_experiment_spec("text_classification", builtin_benchmark("text_classification")),
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+    )
+
+    assert observed_payload["runtime_contract"]["seed_env_var"] == "SCHOLARFLOW_SEED"
+    assert observed_payload["runtime_contract"]["sweep_env_var"] == "SCHOLARFLOW_SWEEP_JSON"
+    assert candidate.strategy == "repair_heuristic_patch"
+    assert "reads_seed_env" in candidate.sanity_checks
+    assert "reads_sweep_env" in candidate.sanity_checks
+    assert "parses_sweep_json" in candidate.sanity_checks
+    assert "SCHOLARFLOW_SEED" in candidate.code
+    assert "SCHOLARFLOW_SWEEP_JSON" in candidate.code
+
+
+def test_repair_llm_patch_applies_structured_minimal_diff(monkeypatch, tmp_path: Path) -> None:
+    engine = autoresearch_repair.ExperimentRepairEngine()
+    previous_code = """import json
+import os
+
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{}")
+
+def run():
+    raise ValueError("boom")
+    artifact = {
+        "summary": "ok",
+        "primary_metric": "macro_f1",
+        "best_system": "demo",
+        "objective_system": "demo",
+        "objective_score": 1.0,
+        "key_findings": [],
+        "system_results": [],
+        "tables": [],
+        "environment": {"seed": SEED, "sweep": SWEEP},
+    }
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+"""
+    raise_line = previous_code.splitlines().index('    raise ValueError("boom")') + 1
+    code_path = tmp_path / "repair_llm_patch.py"
+    code_path.write_text(previous_code, encoding="utf-8")
+    observed_payload: dict[str, object] = {}
+
+    def fake_chat(messages):
+        observed_payload.update(json.loads(messages[1]["content"]))
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "patch_ops": [
+                                    {
+                                        "op": "replace",
+                                        "line_number": raise_line,
+                                        "content": "    pass  # ScholarFlow llm patch",
+                                    }
+                                ]
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(autoresearch_repair, "chat", fake_chat)
+    candidate = engine.repair(
+        previous_attempt=ExperimentAttempt(
+            round_index=1,
+            strategy="forced_failure",
+            goal="initial_run",
+            status="failed",
+            summary="failed",
+            code_path=str(code_path),
+            artifact=ResultArtifact(
+                status="failed",
+                summary="failed",
+                primary_metric="macro_f1",
+                logs=f'Traceback (most recent call last):\n  File "main.py", line {raise_line}, in run\nValueError: boom',
+            ),
+        ),
+        plan=ResearchPlan(
+            topic="Automatic topic classification for compact CS abstracts",
+            title="Repair Structured Patch Test",
+            task_family="text_classification",
+            problem_statement="Test structured llm patch application.",
+            motivation="LLM repair should return a minimal patch, not a rewrite.",
+            proposed_method="Apply a one-line patch to restore execution.",
+            research_questions=["Does repair accept a small structured patch?"],
+            hypotheses=["A one-line replace patch should be accepted."],
+            planned_contributions=["Structured llm patch support."],
+            experiment_outline=["Parse patch ops and validate the candidate."],
+            scope_limits=["Unit-level repair validation only."],
+        ),
+        spec=build_experiment_spec("text_classification", builtin_benchmark("text_classification")),
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+    )
+
+    assert observed_payload["patch_budget"] == 12
+    assert "failed_code_with_line_numbers" in observed_payload
+    assert candidate.strategy == "repair_llm_patch"
+    assert candidate.patch_ops[0].line_number == raise_line
+    assert candidate.patch_ops[0].op == "replace"
+    assert "patch_within_budget" in candidate.sanity_checks
+    assert "pass  # ScholarFlow llm patch" in candidate.code
+
+
+def test_repair_llm_patch_rejects_large_structured_rewrite(tmp_path: Path) -> None:
+    engine = autoresearch_repair.ExperimentRepairEngine()
+    previous_code = """import json
+import os
+
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{}")
+
+def run():
+    artifact = {
+        "summary": "ok",
+        "primary_metric": "macro_f1",
+        "best_system": "demo",
+        "objective_system": "demo",
+        "objective_score": 1.0,
+        "key_findings": [],
+        "system_results": [],
+        "tables": [],
+        "environment": {"seed": SEED, "sweep": SWEEP},
+    }
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+"""
+    patch_ops = [
+        autoresearch_repair.PatchOp("insert", line_number=1, content=f"# rewrite {index}")
+        for index in range(1, 14)
+    ]
+    candidate_code = engine._apply_patch_ops(previous_code, patch_ops)
+    candidate = engine._build_candidate(
+        previous_code,
+        candidate_code,
+        strategy="repair_llm_patch",
+        patch_ops=patch_ops,
+        patch_budget=12,
+    )
+    assert candidate is None
+
+
+def test_local_patch_skips_runtime_contract_lines() -> None:
+    engine = autoresearch_repair.ExperimentRepairEngine()
+    code = """import json
+
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{}")
+
+def run():
+    artifact = {"summary": "ok", "primary_metric": "macro_f1", "system_results": [], "tables": [], "environment": {"seed": SEED, "sweep": SWEEP}}
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+"""
+    logs = 'Traceback (most recent call last):\n  File "main.py", line 3, in <module>\nNameError: name \'os\' is not defined'
+
+    candidate = engine._local_patch_candidate(code, logs)
+    assert candidate is None
+
+
+def test_heuristic_repair_restores_os_import_for_runtime_contract(monkeypatch, tmp_path: Path) -> None:
+    engine = autoresearch_repair.ExperimentRepairEngine()
+    previous_code = """import json
+
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{}")
+
+def run():
+    artifact = {
+        "summary": "ok",
+        "primary_metric": "macro_f1",
+        "best_system": "demo",
+        "objective_system": "demo",
+        "objective_score": 1.0,
+        "key_findings": [],
+        "system_results": [],
+        "tables": [],
+        "environment": {"seed": SEED, "sweep": SWEEP},
+    }
+    print("__RESULT__" + json.dumps(artifact))
+
+if __name__ == "__main__":
+    run()
+"""
+    code_path = tmp_path / "repair_missing_os.py"
+    code_path.write_text(previous_code, encoding="utf-8")
+
+    def fail_chat(messages):
+        del messages
+        raise RuntimeError("skip llm")
+
+    monkeypatch.setattr(autoresearch_repair, "chat", fail_chat)
+    candidate = engine.repair(
+        previous_attempt=ExperimentAttempt(
+            round_index=1,
+            strategy="forced_failure",
+            goal="initial_run",
+            status="failed",
+            summary="failed",
+            code_path=str(code_path),
+            artifact=ResultArtifact(
+                status="failed",
+                summary="failed",
+                primary_metric="macro_f1",
+                logs='Traceback (most recent call last):\n  File "main.py", line 3, in <module>\nNameError: name \'os\' is not defined',
+            ),
+        ),
+        plan=ResearchPlan(
+            topic="Automatic topic classification for compact CS abstracts",
+            title="Repair Missing Import Test",
+            task_family="text_classification",
+            problem_statement="Test heuristic import restoration.",
+            motivation="Repair should preserve runtime contract support.",
+            proposed_method="Restore missing imports instead of clobbering runtime controls.",
+            research_questions=["Does heuristic repair import os when required by runtime controls?"],
+            hypotheses=["Missing os import should be repaired with a real import."],
+            planned_contributions=["Protect runtime contract during heuristic repair."],
+            experiment_outline=["Reject local patch and apply heuristic repair."],
+            scope_limits=["Unit-level repair validation only."],
+        ),
+        spec=build_experiment_spec("text_classification", builtin_benchmark("text_classification")),
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+    )
+
+    assert candidate.strategy == "repair_heuristic_patch"
+    assert candidate.code.startswith("import os\n")
+    assert "os = None" not in candidate.code
+    assert "reads_seed_env" in candidate.sanity_checks
+    assert "preserves_runtime_contract_lines" in candidate.sanity_checks
 
 
 def test_repair_sanity_rejects_patch_without_result_marker(tmp_path: Path) -> None:

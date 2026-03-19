@@ -7,6 +7,11 @@ from schemas.autoresearch import (
     BenchmarkSource,
     ExecutionBackendSpec,
     ExperimentAttempt,
+    ExperimentSpec,
+    HypothesisCandidate,
+    PortfolioDecisionRecord,
+    PortfolioSummary,
+    ResearchPlan,
     ResultArtifact,
     TaskFamily,
 )
@@ -16,8 +21,11 @@ from services.autoresearch.literature_pipeline import gather_literature_context
 from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.repair import ExperimentRepairEngine
 from services.autoresearch.repository import (
+    candidate_paper_file_path,
     load_run,
     paper_file_path,
+    save_candidate_manifest,
+    save_candidate_snapshot,
     save_benchmark_snapshot,
     save_run,
 )
@@ -75,6 +83,370 @@ class AutoResearchOrchestrator:
             f"Objective score did not improve over the previous round ({prev_score:.4f} -> "
             f"{current_score:.4f}); retain the earlier best candidate."
         )
+
+    def _selected_candidate(
+        self,
+        candidates: list[HypothesisCandidate],
+        portfolio: PortfolioSummary | None,
+    ) -> HypothesisCandidate | None:
+        if portfolio and portfolio.selected_candidate_id:
+            for candidate in candidates:
+                if candidate.id == portfolio.selected_candidate_id:
+                    return candidate
+        return candidates[0] if candidates else None
+
+    def _update_candidate(
+        self,
+        candidates: list[HypothesisCandidate],
+        candidate_id: str | None,
+        **updates,
+    ) -> list[HypothesisCandidate]:
+        if not candidate_id:
+            return candidates
+        updated: list[HypothesisCandidate] = []
+        for candidate in candidates:
+            if candidate.id == candidate_id:
+                updated.append(candidate.model_copy(update=updates))
+            else:
+                updated.append(candidate)
+        return updated
+
+    def _defer_reserve_candidates(
+        self,
+        candidates: list[HypothesisCandidate],
+        selected_candidate_id: str | None,
+    ) -> list[HypothesisCandidate]:
+        deferred: list[HypothesisCandidate] = []
+        for candidate in candidates:
+            if candidate.id == selected_candidate_id:
+                deferred.append(candidate)
+                continue
+            if candidate.status in {"done", "failed"}:
+                deferred.append(candidate)
+                continue
+            deferred.append(candidate.model_copy(update={"status": "deferred"}))
+        return deferred
+
+    def _portfolio_decision_summary(
+        self,
+        candidate: HypothesisCandidate | None,
+        artifact: ResultArtifact | None,
+        attempts: list[ExperimentAttempt],
+        benchmark_name: str,
+    ) -> str:
+        if candidate is None or artifact is None or artifact.status != "done":
+            return (
+                "No portfolio candidate completed successfully, so the run did not produce a "
+                "winner for writing."
+            )
+        score = self._artifact_score(artifact)
+        _, passed, total, ratio = self._acceptance_summary(artifact)
+        score_fragment = (
+            f"{artifact.primary_metric}={score:.4f}"
+            if score != float("-inf")
+            else "a completed artifact"
+        )
+        return (
+            f"Selected `{candidate.title}` as the current portfolio winner after "
+            f"{len(attempts)} execution rounds on `{benchmark_name}` with {score_fragment} and "
+            f"acceptance {passed}/{total} ({ratio:.2f})."
+        )
+
+    def _acceptance_summary(self, artifact: ResultArtifact | None) -> tuple[bool, int, int, float]:
+        if artifact is None or artifact.status != "done":
+            return False, 0, 0, 0.0
+        total = len(artifact.acceptance_checks)
+        passed = sum(1 for item in artifact.acceptance_checks if item.passed)
+        ratio = (passed / total) if total else 1.0
+        return total == 0 or passed == total, passed, total, ratio
+
+    def _candidate_sort_key(self, candidate: HypothesisCandidate) -> tuple[int, int, float, float]:
+        artifact = candidate.artifact
+        is_done = int(candidate.status == "done" and artifact is not None and artifact.status == "done")
+        all_passed, _, _, ratio = self._acceptance_summary(artifact)
+        score = candidate.score if candidate.score is not None else float("-inf")
+        return is_done, int(all_passed), ratio, score
+
+    def _rank_candidates(self, candidates: list[HypothesisCandidate]) -> list[HypothesisCandidate]:
+        ranked = sorted(candidates, key=self._candidate_sort_key, reverse=True)
+        return [
+            candidate.model_copy(update={"rank": index})
+            for index, candidate in enumerate(ranked, start=1)
+        ]
+
+    def _leader_candidate(self, candidates: list[HypothesisCandidate]) -> HypothesisCandidate | None:
+        ranked = self._rank_candidates(candidates)
+        for candidate in ranked:
+            if candidate.status == "done" and candidate.artifact is not None:
+                return candidate
+        return None
+
+    def _portfolio_progress_summary(
+        self,
+        leader: HypothesisCandidate | None,
+        *,
+        executed_count: int,
+        total_candidates: int,
+        benchmark_name: str,
+    ) -> str:
+        if leader is None or leader.artifact is None:
+            return (
+                f"Executed {executed_count}/{total_candidates} portfolio candidates on "
+                f"`{benchmark_name}`, but none has produced a successful artifact yet."
+            )
+        _, passed, total, ratio = self._acceptance_summary(leader.artifact)
+        return (
+            f"Executed {executed_count}/{total_candidates} portfolio candidates on `{benchmark_name}`. "
+            f"Current leader is `{leader.title}` with score {leader.score if leader.score is not None else float('-inf'):.4f} "
+            f"and acceptance {passed}/{total} ({ratio:.2f})."
+        )
+
+    def _candidate_selection_reason(
+        self,
+        candidate: HypothesisCandidate,
+        *,
+        winner: HypothesisCandidate | None,
+        benchmark_name: str,
+    ) -> str:
+        artifact = candidate.artifact
+        if artifact is None or candidate.status != "done":
+            latest_summary = candidate.attempts[-1].summary if candidate.attempts else "No execution artifact."
+            return (
+                f"Candidate did not complete successfully on `{benchmark_name}`. "
+                f"Latest summary: {latest_summary}"
+            )
+        _, passed, total, ratio = self._acceptance_summary(artifact)
+        score_fragment = (
+            f"{artifact.primary_metric}={candidate.score:.4f}"
+            if candidate.score is not None
+            else "a completed artifact"
+        )
+        if winner is not None and candidate.id == winner.id:
+            return (
+                f"Won the executed portfolio on `{benchmark_name}` with {score_fragment} and "
+                f"acceptance {passed}/{total} ({ratio:.2f})."
+            )
+        winner_fragment = (
+            f"`{winner.title}` with {winner.artifact.primary_metric}={winner.score:.4f}"
+            if winner is not None and winner.artifact is not None and winner.score is not None
+            else "the selected winner"
+        )
+        return (
+            f"Completed on `{benchmark_name}` with {score_fragment} and acceptance "
+            f"{passed}/{total} ({ratio:.2f}), but trailed {winner_fragment}."
+        )
+
+    def _apply_selection_reasons(
+        self,
+        candidates: list[HypothesisCandidate],
+        *,
+        winner: HypothesisCandidate | None,
+        benchmark_name: str,
+    ) -> list[HypothesisCandidate]:
+        return [
+            candidate.model_copy(
+                update={
+                    "selection_reason": self._candidate_selection_reason(
+                        candidate,
+                        winner=winner,
+                        benchmark_name=benchmark_name,
+                    )
+                }
+            )
+            for candidate in candidates
+        ]
+
+    def _candidate_by_id(
+        self,
+        candidates: list[HypothesisCandidate],
+        candidate_id: str,
+    ) -> HypothesisCandidate | None:
+        for candidate in candidates:
+            if candidate.id == candidate_id:
+                return candidate
+        return None
+
+    def _replace_candidate(
+        self,
+        candidates: list[HypothesisCandidate],
+        replacement: HypothesisCandidate,
+    ) -> list[HypothesisCandidate]:
+        return [
+            replacement if candidate.id == replacement.id else candidate
+            for candidate in candidates
+        ]
+
+    def _persist_candidate(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        base_plan: ResearchPlan,
+        base_spec: ExperimentSpec,
+        candidate: HypothesisCandidate,
+    ) -> HypothesisCandidate:
+        return save_candidate_snapshot(
+            project_id,
+            run_id,
+            candidate,
+            plan=self.planner.candidate_plan(base_plan, candidate),
+            spec=self.planner.candidate_spec(base_spec, candidate),
+        )
+
+    def _decision_reason(
+        self,
+        candidate: HypothesisCandidate,
+        *,
+        winner: HypothesisCandidate | None,
+        benchmark_name: str,
+        final: bool,
+    ) -> str:
+        if final:
+            return self._candidate_selection_reason(
+                candidate,
+                winner=winner,
+                benchmark_name=benchmark_name,
+            )
+        if candidate.status == "planned":
+            return f"Pending execution on `{benchmark_name}`."
+        if candidate.status == "running":
+            return f"Currently executing on `{benchmark_name}`."
+        if candidate.status == "failed":
+            latest_summary = candidate.attempts[-1].summary if candidate.attempts else "Execution failed."
+            return f"Execution failed on `{benchmark_name}`. Latest summary: {latest_summary}"
+        if candidate.status == "done" and candidate.artifact is not None:
+            _, passed, total, ratio = self._acceptance_summary(candidate.artifact)
+            score_fragment = (
+                f"{candidate.artifact.primary_metric}={candidate.score:.4f}"
+                if candidate.score is not None
+                else "a completed artifact"
+            )
+            leader_fragment = (
+                f" Current leader: `{winner.title}`."
+                if winner is not None and winner.id != candidate.id
+                else ""
+            )
+            return (
+                f"Completed on `{benchmark_name}` with {score_fragment} and acceptance "
+                f"{passed}/{total} ({ratio:.2f}).{leader_fragment}"
+            )
+        return f"No structured decision is available yet for `{candidate.title}`."
+
+    def _decision_outcome(
+        self,
+        candidate: HypothesisCandidate,
+        *,
+        winner: HypothesisCandidate | None,
+        final: bool,
+    ) -> str:
+        if candidate.status == "failed":
+            return "failed"
+        if final:
+            if winner is not None and candidate.id == winner.id:
+                return "promoted"
+            if candidate.status == "done":
+                return "eliminated"
+            return "failed"
+        if candidate.status in {"planned", "selected", "deferred"}:
+            return "pending"
+        if candidate.status == "running":
+            return "running"
+        if winner is not None and candidate.id == winner.id and candidate.status == "done":
+            return "leading"
+        if candidate.status == "done":
+            return "running"
+        return "pending"
+
+    def _decision_criteria(
+        self,
+        candidate: HypothesisCandidate,
+        *,
+        winner: HypothesisCandidate | None,
+        benchmark_name: str,
+        final: bool,
+    ) -> list[str]:
+        _, passed, total, ratio = self._acceptance_summary(candidate.artifact)
+        criteria: list[str] = [f"benchmark={benchmark_name}", f"status={candidate.status}"]
+        if candidate.score is not None and candidate.artifact is not None:
+            criteria.append(f"{candidate.artifact.primary_metric}={candidate.score:.4f}")
+        if total:
+            criteria.append(f"acceptance={passed}/{total}")
+            criteria.append(f"acceptance_ratio={ratio:.2f}")
+        if final and winner is not None:
+            if candidate.id == winner.id:
+                criteria.append("ranked_first_among_executed_candidates")
+            else:
+                criteria.append(f"trailed={winner.id}")
+        elif winner is not None and candidate.id == winner.id and candidate.status == "done":
+            criteria.append("current_leader")
+        return criteria
+
+    def _decision_records(
+        self,
+        candidates: list[HypothesisCandidate],
+        *,
+        winner: HypothesisCandidate | None,
+        benchmark_name: str,
+        final: bool,
+    ) -> list[PortfolioDecisionRecord]:
+        records: list[PortfolioDecisionRecord] = []
+        for candidate in candidates:
+            _, passed, total, ratio = self._acceptance_summary(candidate.artifact)
+            records.append(
+                PortfolioDecisionRecord(
+                    candidate_id=candidate.id,
+                    rank=candidate.rank,
+                    status=candidate.status,
+                    outcome=self._decision_outcome(
+                        candidate,
+                        winner=winner,
+                        final=final,
+                    ),
+                    executed=bool(candidate.attempts),
+                    selected=winner is not None and candidate.id == winner.id,
+                    objective_score=candidate.score,
+                    acceptance_passed=passed,
+                    acceptance_total=total,
+                    acceptance_ratio=ratio,
+                    compared_to_candidate_id=(
+                        winner.id if winner is not None and winner.id != candidate.id else None
+                    ),
+                    criteria=self._decision_criteria(
+                        candidate,
+                        winner=winner,
+                        benchmark_name=benchmark_name,
+                        final=final,
+                    ),
+                    reason=self._decision_reason(
+                        candidate,
+                        winner=winner,
+                        benchmark_name=benchmark_name,
+                        final=final,
+                    ),
+                )
+            )
+        return records
+
+    def _sync_candidate_manifests(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        candidates: list[HypothesisCandidate],
+        decisions: list[PortfolioDecisionRecord],
+    ) -> list[HypothesisCandidate]:
+        decisions_by_candidate = {item.candidate_id: item for item in decisions}
+        synced: list[HypothesisCandidate] = []
+        for candidate in candidates:
+            synced.append(
+                save_candidate_manifest(
+                    project_id,
+                    run_id,
+                    candidate,
+                    decision=decisions_by_candidate.get(candidate.id),
+                )
+            )
+        return synced
 
     def execute(
         self,
@@ -140,133 +512,410 @@ class AutoResearchOrchestrator:
                 else "Instantiate the selected benchmark and freeze train/test partitions."
             )
             spec = build_experiment_spec(plan.task_family, benchmark)
+            program = self.planner.build_program(
+                run_id=run_id,
+                plan=plan,
+                benchmark_name=benchmark.benchmark_name,
+            )
+            candidates, portfolio = self.planner.build_portfolio(
+                program=program,
+                plan=plan,
+                spec=spec,
+            )
+            candidates = [
+                self._persist_candidate(
+                    project_id=project_id,
+                    run_id=run_id,
+                    base_plan=plan,
+                    base_spec=spec,
+                    candidate=candidate,
+                )
+                for candidate in candidates
+            ]
+            portfolio = portfolio.model_copy(
+                update={
+                    "decisions": self._decision_records(
+                        candidates,
+                        winner=None,
+                        benchmark_name=benchmark.benchmark_name,
+                        final=False,
+                    )
+                }
+            )
+            candidates = self._sync_candidate_manifests(
+                project_id=project_id,
+                run_id=run_id,
+                candidates=candidates,
+                decisions=portfolio.decisions,
+            )
             run = save_run(
                 run.model_copy(
                     update={
                         "task_family": plan.task_family,
                         "benchmark": benchmark.source,
                         "execution_backend": effective_backend,
+                        "program": program,
                         "plan": plan,
                         "spec": spec,
                         "literature": literature,
+                        "candidates": candidates,
+                        "portfolio": portfolio,
                     }
                 )
             )
 
-            attempts: list[ExperimentAttempt] = []
-            best_attempt: ExperimentAttempt | None = None
-            total_rounds = max(1, min(max_rounds, max(1, len(spec.search_strategies))))
-
-            for round_index in range(1, total_rounds + 1):
-                goal = self._attempt_goal(attempts, round_index)
-                repair_summary = None
-                if goal == "repair_previous_failure" and attempts:
-                    repair_candidate = self.repair.repair(
-                        previous_attempt=attempts[-1],
-                        plan=plan,
-                        spec=spec,
-                        benchmark_payload=benchmark.payload,
-                    )
-                    repair_summary = {
-                        "strategy": repair_candidate.strategy,
-                        "sanity_checks": repair_candidate.sanity_checks,
-                        "patch_line_count": len(
-                            {patch.line_number for patch in repair_candidate.patch_ops}
-                        ),
-                    }
-                    if repair_candidate.strategy != "repair_regenerate":
-                        strategy, code_path, artifact = self.runner.run(
+            candidate_order = list(portfolio.candidate_rankings)
+            for candidate_id in candidate_order:
+                candidate = self._candidate_by_id(candidates, candidate_id)
+                if candidate is None:
+                    continue
+                candidate_plan = self.planner.candidate_plan(plan, candidate)
+                candidate_spec = self.planner.candidate_spec(spec, candidate)
+                executed_ids = list(portfolio.executed_candidate_ids)
+                if candidate.id not in executed_ids:
+                    executed_ids.append(candidate.id)
+                candidates = self._update_candidate(
+                    candidates,
+                    candidate.id,
+                    status="running",
+                )
+                running_candidate = self._candidate_by_id(candidates, candidate.id)
+                if running_candidate is not None:
+                    candidates = self._replace_candidate(
+                        candidates,
+                        self._persist_candidate(
                             project_id=project_id,
                             run_id=run_id,
-                            plan=plan,
-                            spec=spec,
+                            base_plan=plan,
+                            base_spec=spec,
+                            candidate=running_candidate,
+                        ),
+                    )
+                leader = self._leader_candidate(candidates)
+                portfolio = portfolio.model_copy(
+                    update={
+                        "status": "running",
+                        "executed_candidate_ids": executed_ids,
+                        "decisions": self._decision_records(
+                            candidates,
+                            winner=leader,
+                            benchmark_name=benchmark.benchmark_name,
+                            final=False,
+                        ),
+                    }
+                )
+                candidates = self._sync_candidate_manifests(
+                    project_id=project_id,
+                    run_id=run_id,
+                    candidates=candidates,
+                    decisions=portfolio.decisions,
+                )
+                run = save_run(
+                    run.model_copy(
+                        update={
+                            "candidates": candidates,
+                            "portfolio": portfolio,
+                        }
+                    )
+                )
+                candidates = run.candidates
+
+                attempts: list[ExperimentAttempt] = []
+                best_attempt: ExperimentAttempt | None = None
+                total_rounds = max(
+                    1,
+                    min(max_rounds, max(1, len(candidate_spec.search_strategies))),
+                )
+
+                for round_index in range(1, total_rounds + 1):
+                    goal = self._attempt_goal(attempts, round_index)
+                    repair_summary = None
+                    if goal == "repair_previous_failure" and attempts:
+                        repair_candidate = self.repair.repair(
+                            previous_attempt=attempts[-1],
+                            plan=candidate_plan,
+                            spec=candidate_spec,
                             benchmark_payload=benchmark.payload,
-                            round_index=round_index,
-                            goal=goal,
-                            prior_attempts=attempts,
-                            execution_backend=effective_backend,
-                            code_override=repair_candidate.code,
-                            strategy_override=repair_candidate.strategy,
                         )
+                        repair_summary = {
+                            "strategy": repair_candidate.strategy,
+                            "sanity_checks": repair_candidate.sanity_checks,
+                            "patch_line_count": len(
+                                {patch.line_number for patch in repair_candidate.patch_ops}
+                            ),
+                        }
+                        if repair_candidate.strategy != "repair_regenerate":
+                            strategy, code_path, artifact = self.runner.run(
+                                project_id=project_id,
+                                run_id=run_id,
+                                plan=candidate_plan,
+                                spec=candidate_spec,
+                                benchmark_payload=benchmark.payload,
+                                round_index=round_index,
+                                goal=goal,
+                                prior_attempts=attempts,
+                                execution_backend=effective_backend,
+                                code_override=repair_candidate.code,
+                                strategy_override=repair_candidate.strategy,
+                                code_filename_prefix=candidate.id,
+                                code_subdir=f"candidates/{candidate.id}",
+                            )
+                        else:
+                            strategy, code_path, artifact = self.runner.run(
+                                project_id=project_id,
+                                run_id=run_id,
+                                plan=candidate_plan,
+                                spec=candidate_spec,
+                                benchmark_payload=benchmark.payload,
+                                round_index=round_index,
+                                goal=goal,
+                                prior_attempts=attempts,
+                                execution_backend=effective_backend,
+                                code_filename_prefix=candidate.id,
+                                code_subdir=f"candidates/{candidate.id}",
+                            )
                     else:
                         strategy, code_path, artifact = self.runner.run(
                             project_id=project_id,
                             run_id=run_id,
-                            plan=plan,
-                            spec=spec,
+                            plan=candidate_plan,
+                            spec=candidate_spec,
                             benchmark_payload=benchmark.payload,
                             round_index=round_index,
                             goal=goal,
                             prior_attempts=attempts,
                             execution_backend=effective_backend,
+                            code_filename_prefix=candidate.id,
+                            code_subdir=f"candidates/{candidate.id}",
                         )
-                else:
-                    strategy, code_path, artifact = self.runner.run(
-                        project_id=project_id,
-                        run_id=run_id,
-                        plan=plan,
-                        spec=spec,
-                        benchmark_payload=benchmark.payload,
+                    artifact.environment.setdefault("benchmark_snapshot_path", benchmark_snapshot_path)
+                    if chunk_context:
+                        artifact.environment.setdefault("literature_chunk_context", chunk_context)
+                    critique = self._attempt_critique(artifact, attempts)
+                    attempt = ExperimentAttempt(
                         round_index=round_index,
+                        strategy=strategy,
                         goal=goal,
-                        prior_attempts=attempts,
-                        execution_backend=effective_backend,
+                        status="done" if artifact.status == "done" else "failed",
+                        summary=artifact.summary,
+                        critique=critique,
+                        code_path=code_path,
+                        repair_summary=repair_summary,
+                        artifact=artifact,
                     )
-                artifact.environment.setdefault("benchmark_snapshot_path", benchmark_snapshot_path)
-                if chunk_context:
-                    artifact.environment.setdefault("literature_chunk_context", chunk_context)
-                critique = self._attempt_critique(artifact, attempts)
-                attempt = ExperimentAttempt(
-                    round_index=round_index,
-                    strategy=strategy,
-                    goal=goal,
-                    status="done" if artifact.status == "done" else "failed",
-                    summary=artifact.summary,
-                    critique=critique,
-                    code_path=code_path,
-                    repair_summary=repair_summary,
-                    artifact=artifact,
+                    attempts.append(attempt)
+
+                    if artifact.status == "done" and (
+                        best_attempt is None
+                        or self._artifact_score(artifact) > self._artifact_score(best_attempt.artifact)  # type: ignore[arg-type]
+                    ):
+                        best_attempt = attempt
+
+                if best_attempt is None or best_attempt.artifact is None:
+                    candidates = self._update_candidate(
+                        candidates,
+                        candidate.id,
+                        status="failed",
+                        attempts=attempts,
+                        artifact=attempts[-1].artifact if attempts else None,
+                        generated_code_path=attempts[-1].code_path if attempts else None,
+                        selected_round_index=None,
+                        score=None,
+                    )
+                else:
+                    best_score = self._artifact_score(best_attempt.artifact)
+                    candidates = self._update_candidate(
+                        candidates,
+                        candidate.id,
+                        status="done",
+                        attempts=attempts,
+                        artifact=best_attempt.artifact,
+                        generated_code_path=best_attempt.code_path,
+                        selected_round_index=best_attempt.round_index,
+                        score=best_score if best_score != float("-inf") else None,
+                    )
+                completed_candidate = self._candidate_by_id(candidates, candidate.id)
+                if completed_candidate is not None:
+                    candidates = self._replace_candidate(
+                        candidates,
+                        self._persist_candidate(
+                            project_id=project_id,
+                            run_id=run_id,
+                            base_plan=plan,
+                            base_spec=spec,
+                            candidate=completed_candidate,
+                        ),
+                    )
+
+                candidates = self._rank_candidates(candidates)
+                leader = self._leader_candidate(candidates)
+                leader_plan = self.planner.candidate_plan(plan, leader) if leader else plan
+                leader_spec = self.planner.candidate_spec(spec, leader) if leader else spec
+                portfolio = portfolio.model_copy(
+                    update={
+                        "candidate_rankings": [item.id for item in candidates],
+                        "selected_candidate_id": leader.id if leader else None,
+                        "winning_score": leader.score if leader else None,
+                        "decision_summary": self._portfolio_progress_summary(
+                            leader,
+                            executed_count=len(portfolio.executed_candidate_ids),
+                            total_candidates=len(candidates),
+                            benchmark_name=benchmark.benchmark_name,
+                        ),
+                        "decisions": self._decision_records(
+                            candidates,
+                            winner=leader,
+                            benchmark_name=benchmark.benchmark_name,
+                            final=False,
+                        ),
+                    }
                 )
-                attempts.append(attempt)
-
-                if artifact.status == "done" and (
-                    best_attempt is None
-                    or self._artifact_score(artifact) > self._artifact_score(best_attempt.artifact)  # type: ignore[arg-type]
-                ):
-                    best_attempt = attempt
-
+                candidates = self._sync_candidate_manifests(
+                    project_id=project_id,
+                    run_id=run_id,
+                    candidates=candidates,
+                    decisions=portfolio.decisions,
+                )
                 run = save_run(
                     run.model_copy(
                         update={
-                            "attempts": attempts,
-                            "generated_code_path": code_path,
-                            "artifact": best_attempt.artifact if best_attempt else artifact,
-                            "selected_round_index": best_attempt.round_index if best_attempt else None,
+                            "plan": leader_plan,
+                            "spec": leader_spec,
+                            "attempts": leader.attempts if leader else [],
+                            "generated_code_path": leader.generated_code_path if leader else None,
+                            "artifact": leader.artifact if leader else None,
+                            "selected_round_index": leader.selected_round_index if leader else None,
+                            "candidates": candidates,
+                            "portfolio": portfolio,
                         }
                     )
                 )
+                candidates = run.candidates
 
-            if best_attempt is None or best_attempt.artifact is None:
+            winner = self._leader_candidate(candidates)
+            if winner is None or winner.artifact is None:
+                latest_candidate = (
+                    self._candidate_by_id(candidates, portfolio.executed_candidate_ids[-1])
+                    if portfolio.executed_candidate_ids
+                    else None
+                )
+                portfolio = portfolio.model_copy(
+                    update={
+                        "status": "failed",
+                        "selected_candidate_id": None,
+                        "winning_score": None,
+                        "decision_summary": self._portfolio_progress_summary(
+                            None,
+                            executed_count=len(portfolio.executed_candidate_ids),
+                            total_candidates=len(candidates),
+                            benchmark_name=benchmark.benchmark_name,
+                        ),
+                        "decisions": self._decision_records(
+                            candidates,
+                            winner=None,
+                            benchmark_name=benchmark.benchmark_name,
+                            final=True,
+                        ),
+                    }
+                )
+                candidates = self._sync_candidate_manifests(
+                    project_id=project_id,
+                    run_id=run_id,
+                    candidates=candidates,
+                    decisions=portfolio.decisions,
+                )
                 failed = save_run(
                     run.model_copy(
                         update={
                             "status": "failed",
-                            "attempts": attempts,
-                            "error": attempts[-1].summary if attempts else "No attempt produced a result artifact",
+                            "attempts": latest_candidate.attempts if latest_candidate else [],
+                            "artifact": latest_candidate.artifact if latest_candidate else None,
+                            "generated_code_path": (
+                                latest_candidate.generated_code_path if latest_candidate else None
+                            ),
+                            "selected_round_index": (
+                                latest_candidate.selected_round_index if latest_candidate else None
+                            ),
+                            "error": (
+                                latest_candidate.attempts[-1].summary
+                                if latest_candidate and latest_candidate.attempts
+                                else "No portfolio candidate produced a result artifact"
+                            ),
+                            "candidates": candidates,
+                            "portfolio": portfolio,
                         }
                     )
                 )
                 return failed
 
-            artifact = best_attempt.artifact
-            paper_markdown = self.writer.write(
-                plan,
-                spec,
-                artifact,
-                literature=literature,
-                attempts=attempts,
+            winner_plan = self.planner.candidate_plan(plan, winner)
+            winner_spec = self.planner.candidate_spec(spec, winner)
+            portfolio = portfolio.model_copy(
+                update={
+                    "status": "done",
+                    "selected_candidate_id": winner.id,
+                    "winning_score": winner.score,
+                    "decision_summary": self._portfolio_decision_summary(
+                        winner,
+                        winner.artifact,
+                        winner.attempts,
+                        benchmark.benchmark_name,
+                    ),
+                    "decisions": self._decision_records(
+                        candidates,
+                        winner=winner,
+                        benchmark_name=benchmark.benchmark_name,
+                        final=True,
+                    ),
+                }
+            )
+            candidates = self._apply_selection_reasons(
+                candidates,
+                winner=winner,
                 benchmark_name=benchmark.benchmark_name,
             )
+            candidates = self._sync_candidate_manifests(
+                project_id=project_id,
+                run_id=run_id,
+                candidates=candidates,
+                decisions=portfolio.decisions,
+            )
+            paper_path = paper_file_path(project_id, run_id)
+            candidate_paper_path = candidate_paper_file_path(project_id, run_id, winner.id)
+            paper_markdown = self.writer.write(
+                winner_plan,
+                winner_spec,
+                winner.artifact,
+                literature=literature,
+                attempts=winner.attempts,
+                benchmark_name=benchmark.benchmark_name,
+                program=program,
+                portfolio=portfolio,
+                candidates=candidates,
+            )
+            candidates = self._update_candidate(
+                candidates,
+                winner.id,
+                paper_markdown=paper_markdown,
+                paper_path=candidate_paper_path,
+            )
+            candidates = [
+                self._persist_candidate(
+                    project_id=project_id,
+                    run_id=run_id,
+                    base_plan=plan,
+                    base_spec=spec,
+                    candidate=candidate,
+                )
+                for candidate in candidates
+            ]
+            candidates = self._sync_candidate_manifests(
+                project_id=project_id,
+                run_id=run_id,
+                candidates=candidates,
+                decisions=portfolio.decisions,
+            )
+            winner = self._candidate_by_id(candidates, winner.id) or winner
             draft = create_draft(
                 db,
                 project_id,
@@ -277,15 +926,19 @@ class AutoResearchOrchestrator:
             set_project_status(db, project_id, "edit")
             completed = save_run(
                 run.model_copy(
-                        update={
-                            "status": "done",
-                            "generated_code_path": best_attempt.code_path,
-                            "artifact": artifact,
-                            "paper_markdown": paper_markdown,
-                            "paper_path": paper_file_path(project_id, run_id),
-                            "paper_draft_version": draft.version,
-                        "attempts": attempts,
-                        "selected_round_index": best_attempt.round_index,
+                    update={
+                        "status": "done",
+                        "plan": winner_plan,
+                        "spec": winner_spec,
+                        "generated_code_path": winner.generated_code_path,
+                        "artifact": winner.artifact,
+                        "paper_markdown": paper_markdown,
+                        "paper_path": paper_path,
+                        "paper_draft_version": draft.version,
+                        "attempts": winner.attempts,
+                        "selected_round_index": winner.selected_round_index,
+                        "candidates": candidates,
+                        "portfolio": portfolio,
                     }
                 )
             )

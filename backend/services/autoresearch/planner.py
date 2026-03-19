@@ -4,7 +4,15 @@ import json
 import re
 from typing import Any
 
-from schemas.autoresearch import LiteratureInsight, ResearchPlan, TaskFamily
+from schemas.autoresearch import (
+    ExperimentSpec,
+    HypothesisCandidate,
+    LiteratureInsight,
+    PortfolioSummary,
+    ResearchPlan,
+    ResearchProgram,
+    TaskFamily,
+)
 from services.autoresearch.benchmarks import infer_task_family
 from services.llm.client import chat
 from services.llm.prompting import load_prompt
@@ -122,6 +130,178 @@ class ResearchPlanner:
                 "The benchmark is intentionally small and does not claim broad external validity.",
                 "No external datasets or large scale training jobs are attempted in this version.",
             ],
+        )
+
+    def _portfolio_templates(self, plan: ResearchPlan) -> list[dict[str, Any]]:
+        method_sentence = plan.proposed_method.rstrip(".")
+        return [
+            {
+                "title_suffix": "Primary Method Candidate",
+                "method": method_sentence,
+                "rationale": (
+                    "Highest-upside candidate that keeps the main method, the benchmark fit, "
+                    "and the baseline/ablation structure aligned."
+                ),
+                "differentiators": [
+                    "Optimizes for strongest benchmark performance under the fixed sandbox budget.",
+                    "Preserves the full baseline comparison expected by the current paper writer.",
+                    "Best fit for the leading hypothesis in the current research plan.",
+                ],
+                "selection_reason": (
+                    "Selected first because it best matches the plan's main hypothesis while "
+                    "retaining the clearest path to an executable result table."
+                ),
+            },
+            {
+                "title_suffix": "Baseline Anchor Candidate",
+                "method": (
+                    f"{method_sentence}; execution is biased toward stronger heuristic baselines "
+                    "and a narrower modeling delta."
+                ),
+                "rationale": (
+                    "Lower-risk reserve candidate that asks whether a simpler baseline-heavy "
+                    "study already satisfies the objective."
+                ),
+                "differentiators": [
+                    "Favors interpretability over upside.",
+                    "Keeps the contribution small enough to isolate benchmark and labeling issues.",
+                    "Serves as a reserve candidate when the primary method overfits or fails.",
+                ],
+                "selection_reason": (
+                    "Held in reserve as the simplest fallback candidate if the main method fails "
+                    "to clear acceptance checks."
+                ),
+            },
+            {
+                "title_suffix": "Stability Probe Candidate",
+                "method": (
+                    f"{method_sentence}; execution emphasizes robustness checks, smaller "
+                    "ablations, and failure-surface inspection."
+                ),
+                "rationale": (
+                    "Reserve candidate dedicated to stability evidence, negative results, and "
+                    "ablation signal rather than peak score."
+                ),
+                "differentiators": [
+                    "Prioritizes robustness evidence over raw objective score.",
+                    "Makes later statistical-rigor work easier by foregrounding failure cases.",
+                    "Acts as a backup path when the topic needs ablation-driven justification.",
+                ],
+                "selection_reason": (
+                    "Deferred for now, but kept as the strongest follow-up candidate when the "
+                    "portfolio needs deeper robustness evidence."
+                ),
+            },
+        ]
+
+    def _candidate_hypothesis(self, plan: ResearchPlan, index: int) -> str:
+        if plan.hypotheses:
+            return plan.hypotheses[min(index, len(plan.hypotheses) - 1)]
+        if plan.research_questions:
+            return plan.research_questions[min(index, len(plan.research_questions) - 1)]
+        return plan.proposed_method
+
+    def _candidate_search_strategies(
+        self,
+        base_strategies: list[str],
+        rank: int,
+    ) -> list[str]:
+        if not base_strategies:
+            return []
+        if rank == 1:
+            return list(base_strategies)
+        if rank == 2:
+            return list(base_strategies[:-1] or base_strategies[:1])
+        return list(base_strategies[:1])
+
+    def build_program(
+        self,
+        *,
+        run_id: str,
+        plan: ResearchPlan,
+        benchmark_name: str | None = None,
+    ) -> ResearchProgram:
+        return ResearchProgram(
+            id=f"{run_id}_program",
+            topic=plan.topic,
+            title=plan.title,
+            task_family=plan.task_family,
+            objective=plan.problem_statement,
+            benchmark_name=benchmark_name,
+            portfolio_policy=(
+                "Rank candidates by expected research signal, benchmark fit, and reproducibility "
+                "under the current execution budget before expanding to full candidate fan-out."
+            ),
+            research_questions=plan.research_questions,
+            scope_limits=plan.scope_limits,
+        )
+
+    def build_portfolio(
+        self,
+        *,
+        program: ResearchProgram,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+    ) -> tuple[list[HypothesisCandidate], PortfolioSummary]:
+        templates = self._portfolio_templates(plan)
+        candidates: list[HypothesisCandidate] = []
+        for index, template in enumerate(templates, start=1):
+            candidate_id = f"{program.id}_cand_{index:02d}"
+            planned_contributions = [
+                plan.planned_contributions[min(index - 1, len(plan.planned_contributions) - 1)]
+                if plan.planned_contributions
+                else "Preserve an auditable execution trace for the selected benchmark.",
+                "Keep seed/sweep execution, acceptance checks, and artifact persistence intact.",
+            ]
+            candidates.append(
+                HypothesisCandidate(
+                    id=candidate_id,
+                    program_id=program.id,
+                    rank=index,
+                    title=f"{plan.title}: {template['title_suffix']}",
+                    hypothesis=self._candidate_hypothesis(plan, index - 1),
+                    proposed_method=template["method"],
+                    rationale=template["rationale"],
+                    planned_contributions=planned_contributions,
+                    differentiators=template["differentiators"],
+                    search_strategies=self._candidate_search_strategies(spec.search_strategies, index),
+                    status="selected" if index == 1 else "planned",
+                    selection_reason=template["selection_reason"],
+                )
+            )
+
+        portfolio = PortfolioSummary(
+            status="planned",
+            total_candidates=len(candidates),
+            candidate_rankings=[candidate.id for candidate in candidates],
+            selected_candidate_id=candidates[0].id if candidates else None,
+            selection_policy=program.portfolio_policy,
+            decision_summary=(
+                f"Generated {len(candidates)} portfolio candidates and provisionally selected "
+                f"`{candidates[0].title}` for execution because it best matches the current main "
+                "hypothesis and execution budget."
+                if candidates
+                else "No portfolio candidates were generated."
+            ),
+        )
+        return candidates, portfolio
+
+    def candidate_plan(self, plan: ResearchPlan, candidate: HypothesisCandidate) -> ResearchPlan:
+        remaining_hypotheses = [item for item in plan.hypotheses if item != candidate.hypothesis]
+        return plan.model_copy(
+            update={
+                "proposed_method": candidate.proposed_method,
+                "hypotheses": [candidate.hypothesis, *remaining_hypotheses],
+                "planned_contributions": candidate.planned_contributions or plan.planned_contributions,
+            }
+        )
+
+    def candidate_spec(self, spec: ExperimentSpec, candidate: HypothesisCandidate) -> ExperimentSpec:
+        return spec.model_copy(
+            update={
+                "hypothesis": candidate.hypothesis,
+                "search_strategies": candidate.search_strategies or spec.search_strategies,
+            }
         )
 
     def plan(

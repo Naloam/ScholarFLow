@@ -17,6 +17,16 @@ BenchmarkKind = Literal[
     "beir_json",
 ]
 ExecutionBackendKind = Literal["auto", "local", "docker", "docker_gpu", "command"]
+HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
+PortfolioStatus = Literal["planned", "running", "done", "failed"]
+PortfolioDecisionOutcome = Literal[
+    "pending",
+    "running",
+    "leading",
+    "promoted",
+    "eliminated",
+    "failed",
+]
 
 
 class ExecutionBackendSpec(BaseModel):
@@ -219,6 +229,74 @@ class ExperimentAttempt(BaseModel):
     artifact: ResultArtifact | None = None
 
 
+class ResearchProgram(BaseModel):
+    id: str
+    topic: str
+    title: str
+    task_family: TaskFamily
+    objective: str
+    benchmark_name: str | None = None
+    portfolio_policy: str
+    research_questions: list[str] = Field(default_factory=list)
+    scope_limits: list[str] = Field(default_factory=list)
+
+
+class HypothesisCandidate(BaseModel):
+    id: str
+    program_id: str
+    rank: int
+    title: str
+    hypothesis: str
+    proposed_method: str
+    rationale: str
+    planned_contributions: list[str] = Field(default_factory=list)
+    differentiators: list[str] = Field(default_factory=list)
+    search_strategies: list[str] = Field(default_factory=list)
+    status: HypothesisCandidateStatus = "planned"
+    score: float | None = None
+    selection_reason: str | None = None
+    attempts: list[ExperimentAttempt] = Field(default_factory=list)
+    artifact: ResultArtifact | None = None
+    workspace_path: str | None = None
+    plan_path: str | None = None
+    spec_path: str | None = None
+    attempts_path: str | None = None
+    artifact_path: str | None = None
+    manifest_path: str | None = None
+    generated_code_path: str | None = None
+    paper_path: str | None = None
+    paper_markdown: str | None = None
+    selected_round_index: int | None = None
+
+
+class PortfolioDecisionRecord(BaseModel):
+    candidate_id: str
+    rank: int
+    status: HypothesisCandidateStatus
+    outcome: PortfolioDecisionOutcome = "pending"
+    executed: bool = False
+    selected: bool = False
+    objective_score: float | None = None
+    acceptance_passed: int = 0
+    acceptance_total: int = 0
+    acceptance_ratio: float = 0.0
+    compared_to_candidate_id: str | None = None
+    criteria: list[str] = Field(default_factory=list)
+    reason: str
+
+
+class PortfolioSummary(BaseModel):
+    status: PortfolioStatus = "planned"
+    total_candidates: int = 0
+    candidate_rankings: list[str] = Field(default_factory=list)
+    executed_candidate_ids: list[str] = Field(default_factory=list)
+    selected_candidate_id: str | None = None
+    selection_policy: str
+    decision_summary: str
+    winning_score: float | None = None
+    decisions: list[PortfolioDecisionRecord] = Field(default_factory=list)
+
+
 class AutoResearchRunRead(BaseModel):
     id: str
     project_id: str
@@ -227,9 +305,12 @@ class AutoResearchRunRead(BaseModel):
     task_family: TaskFamily | None = None
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
+    program: ResearchProgram | None = None
     plan: ResearchPlan | None = None
     spec: ExperimentSpec | None = None
     literature: list[LiteratureInsight] = Field(default_factory=list)
+    candidates: list[HypothesisCandidate] = Field(default_factory=list)
+    portfolio: PortfolioSummary | None = None
     attempts: list[ExperimentAttempt] = Field(default_factory=list)
     artifact: ResultArtifact | None = None
     generated_code_path: str | None = None

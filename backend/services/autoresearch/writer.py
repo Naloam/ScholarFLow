@@ -3,8 +3,11 @@ from __future__ import annotations
 from schemas.autoresearch import (
     ExperimentAttempt,
     ExperimentSpec,
+    HypothesisCandidate,
     LiteratureInsight,
+    PortfolioSummary,
     ResearchPlan,
+    ResearchProgram,
     ResultArtifact,
     ResultTable,
 )
@@ -81,6 +84,41 @@ class PaperWriter:
             for item in artifact.acceptance_checks
         )
 
+    def _portfolio_block(
+        self,
+        program: ResearchProgram | None,
+        portfolio: PortfolioSummary | None,
+        candidates: list[HypothesisCandidate],
+    ) -> str:
+        if not portfolio or not candidates:
+            return "Portfolio planning has not been enabled for this run."
+        selected = next(
+            (candidate for candidate in candidates if candidate.id == portfolio.selected_candidate_id),
+            None,
+        )
+        lines = [
+            f"- Rank {candidate.rank}: `{candidate.title}` ({candidate.status}) - {candidate.rationale}"
+            for candidate in candidates
+        ]
+        if selected is not None:
+            selected_reason = selected.selection_reason or portfolio.decision_summary
+            if selected_reason and selected_reason[-1] not in ".!?":
+                selected_reason = f"{selected_reason}."
+            selected_sentence = f"The execution focus was `{selected.title}` because {selected_reason}"
+        else:
+            selected_sentence = portfolio.decision_summary
+        benchmark_clause = (
+            f" on benchmark `{program.benchmark_name}`"
+            if program is not None and program.benchmark_name
+            else ""
+        )
+        return (
+            f"Portfolio planning generated {len(candidates)} ranked candidates{benchmark_clause}.\n"
+            f"{selected_sentence}\n"
+            f"{portfolio.decision_summary}\n"
+            + "\n".join(lines)
+        )
+
     def write(
         self,
         plan: ResearchPlan,
@@ -90,12 +128,16 @@ class PaperWriter:
         literature: list[LiteratureInsight] | None = None,
         attempts: list[ExperimentAttempt] | None = None,
         benchmark_name: str | None = None,
+        program: ResearchProgram | None = None,
+        portfolio: PortfolioSummary | None = None,
+        candidates: list[HypothesisCandidate] | None = None,
     ) -> str:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")
 
         literature = literature or []
         attempts = attempts or []
+        candidates = candidates or []
         best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
         best_std = self._aggregate_std(artifact, artifact.best_system, artifact.primary_metric)
         learned_system = spec.baselines[-1].name if spec.baselines else artifact.best_system
@@ -115,6 +157,7 @@ class PaperWriter:
         literature_block = self._literature_block(literature)
         attempt_block = self._attempt_block(attempts)
         acceptance_block = self._acceptance_block(artifact)
+        portfolio_block = self._portfolio_block(program, portfolio, candidates)
         benchmark_display = benchmark_name or spec.benchmark_name
 
         comparison_sentence = (
@@ -181,6 +224,9 @@ The planning stage produced the following working hypothesis set:
 
 Planned contributions for the run were:
 {chr(10).join(f"- {item}" for item in plan.planned_contributions)}
+
+The portfolio manager currently reports:
+{portfolio_block}
 
 Operationally, the run followed this outline:
 {chr(10).join(f"1. {item}" for item in plan.experiment_outline)}

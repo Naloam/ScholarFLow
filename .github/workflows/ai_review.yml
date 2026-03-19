@@ -1,0 +1,30 @@
+name: "AI Code Review"
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: "Check out code"
+        uses: actions/checkout@v4
+
+      - name: "AI Review"
+        uses: coderabbitai/ai-pr-reviewer@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          debug: false
+          review_simple_changes: true
+          openai_base_url: https://api.deepseek.com/v1 
+          # 核心配置：强制中文回复
+          system_message: |
+            你是一个资深的软件工程师。请使用中文进行 Code Review。
+            你的任务是检查代码中的潜在 Bug、逻辑漏洞、性能问题以及可读性。
+            请保持评论简洁明了，并给出具体的修改建议。

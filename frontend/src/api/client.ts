@@ -1,8 +1,12 @@
 import type {
+  AutoResearchBundleIndex,
+  AutoResearchCandidateRegistry,
   AnalysisSummary,
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
   AutoResearchRun,
+  AutoResearchRunRegistry,
+  AutoResearchRunRegistryViews,
   AutoResearchRunRequest,
   AuthConfig,
   AuthSessionPayload,
@@ -307,6 +311,28 @@ export const api = {
 
   getAutoResearchExecution(projectId: string, runId: string): Promise<AutoResearchExecution> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/execution`);
+  },
+
+  getAutoResearchRegistry(projectId: string, runId: string): Promise<AutoResearchRunRegistry> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/registry`);
+  },
+
+  getAutoResearchCandidateRegistry(
+    projectId: string,
+    runId: string,
+    candidateId: string,
+  ): Promise<AutoResearchCandidateRegistry> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/registry/candidates/${candidateId}`,
+    );
+  },
+
+  getAutoResearchBundleIndex(projectId: string, runId: string): Promise<AutoResearchBundleIndex> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/registry/bundles`);
+  },
+
+  getAutoResearchRegistryViews(projectId: string, runId: string): Promise<AutoResearchRunRegistryViews> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/registry/views`);
   },
 
   resumeAutoResearch(

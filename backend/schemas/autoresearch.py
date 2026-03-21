@@ -22,6 +22,49 @@ AutoResearchJobStatus = Literal["queued", "leased", "running", "succeeded", "fai
 AutoResearchWorkerStatus = Literal["idle", "starting", "running", "stopping"]
 AutoResearchCommandStatus = Literal["accepted", "noop"]
 AutoResearchRunStatus = Literal["queued", "running", "done", "failed", "canceled"]
+AutoResearchRegistryAssetKind = Literal["file", "directory"]
+AutoResearchManifestSource = Literal["file", "generated_fallback"]
+AutoResearchBundleAssetRole = Literal[
+    "run_json",
+    "program_json",
+    "portfolio_json",
+    "benchmark_json",
+    "run_plan_json",
+    "run_spec_json",
+    "run_artifact_json",
+    "run_generated_code",
+    "run_paper_markdown",
+    "workspace",
+    "candidate_json",
+    "plan_json",
+    "spec_json",
+    "attempts_json",
+    "artifact_json",
+    "manifest_json",
+    "generated_code",
+    "paper_markdown",
+]
+AutoResearchLineageNodeKind = Literal[
+    "run",
+    "program",
+    "portfolio",
+    "candidate",
+    "workspace",
+    "plan",
+    "spec",
+    "attempts",
+    "artifact",
+    "paper",
+    "manifest",
+    "generated_code",
+    "benchmark",
+]
+AutoResearchLineageRelation = Literal[
+    "owns",
+    "selected_candidate",
+    "has_asset",
+    "materialized_to_run_asset",
+]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -538,6 +581,180 @@ class AutoResearchRunRead(BaseModel):
 
 class AutoResearchRunList(BaseModel):
     items: list[AutoResearchRunRead] = Field(default_factory=list)
+
+
+class AutoResearchRegistryAssetRef(BaseModel):
+    path: str
+    kind: AutoResearchRegistryAssetKind = "file"
+    exists: bool = False
+    size_bytes: int | None = None
+    sha256: str | None = None
+
+
+class AutoResearchLineageEdgeRead(BaseModel):
+    source_kind: AutoResearchLineageNodeKind
+    source_id: str
+    relation: AutoResearchLineageRelation
+    target_kind: AutoResearchLineageNodeKind
+    target_id: str
+    target_path: str | None = None
+    exists: bool | None = None
+
+
+class AutoResearchRunRegistryFiles(BaseModel):
+    root: AutoResearchRegistryAssetRef
+    run_json: AutoResearchRegistryAssetRef
+    program_json: AutoResearchRegistryAssetRef | None = None
+    plan_json: AutoResearchRegistryAssetRef | None = None
+    spec_json: AutoResearchRegistryAssetRef | None = None
+    portfolio_json: AutoResearchRegistryAssetRef | None = None
+    artifact_json: AutoResearchRegistryAssetRef | None = None
+    benchmark_json: AutoResearchRegistryAssetRef | None = None
+    generated_code: AutoResearchRegistryAssetRef | None = None
+    paper_markdown: AutoResearchRegistryAssetRef | None = None
+
+
+class AutoResearchCandidateRegistryFiles(BaseModel):
+    workspace: AutoResearchRegistryAssetRef
+    candidate_json: AutoResearchRegistryAssetRef | None = None
+    plan_json: AutoResearchRegistryAssetRef | None = None
+    spec_json: AutoResearchRegistryAssetRef | None = None
+    attempts_json: AutoResearchRegistryAssetRef | None = None
+    artifact_json: AutoResearchRegistryAssetRef | None = None
+    manifest_json: AutoResearchRegistryAssetRef | None = None
+    generated_code: AutoResearchRegistryAssetRef | None = None
+    paper_markdown: AutoResearchRegistryAssetRef | None = None
+
+
+class AutoResearchCandidateManifestCandidate(BaseModel):
+    id: str
+    program_id: str
+    rank: int
+    title: str
+    status: HypothesisCandidateStatus
+    objective_score: float | None = None
+    selection_reason: str | None = None
+
+
+class AutoResearchCandidateManifestRead(BaseModel):
+    manifest_source: AutoResearchManifestSource = "generated_fallback"
+    candidate: AutoResearchCandidateManifestCandidate
+    decision: PortfolioDecisionRecord | None = None
+    files: AutoResearchCandidateRegistryFiles
+
+
+class AutoResearchCandidateRegistryEntry(BaseModel):
+    candidate_id: str
+    program_id: str
+    rank: int
+    title: str
+    status: HypothesisCandidateStatus
+    objective_score: float | None = None
+    selected: bool = False
+    selected_round_index: int | None = None
+    attempt_count: int = 0
+    artifact_status: str | None = None
+    manifest_source: AutoResearchManifestSource = "generated_fallback"
+    decision_outcome: PortfolioDecisionOutcome | None = None
+    decision_reason: str | None = None
+    files: AutoResearchCandidateRegistryFiles
+
+
+class AutoResearchRunLineageRead(BaseModel):
+    selected_candidate_id: str | None = None
+    top_level_plan_candidate_id: str | None = None
+    top_level_spec_candidate_id: str | None = None
+    top_level_artifact_candidate_id: str | None = None
+    top_level_paper_candidate_id: str | None = None
+    edges: list[AutoResearchLineageEdgeRead] = Field(default_factory=list)
+
+
+class AutoResearchCandidateLineageRead(BaseModel):
+    selected: bool = False
+    decision_outcome: PortfolioDecisionOutcome | None = None
+    edges: list[AutoResearchLineageEdgeRead] = Field(default_factory=list)
+
+
+class AutoResearchRunRegistryRead(BaseModel):
+    project_id: str
+    run_id: str
+    topic: str
+    status: AutoResearchRunStatus
+    task_family: TaskFamily | None = None
+    program_id: str | None = None
+    benchmark_name: str | None = None
+    portfolio_status: PortfolioStatus | None = None
+    selected_candidate_id: str | None = None
+    decision_summary: str | None = None
+    root_path: str
+    files: AutoResearchRunRegistryFiles
+    lineage: AutoResearchRunLineageRead
+    candidates: list[AutoResearchCandidateRegistryEntry] = Field(default_factory=list)
+
+
+class AutoResearchCandidateRegistryRead(BaseModel):
+    project_id: str
+    run_id: str
+    candidate_id: str
+    selected: bool = False
+    root_path: str
+    candidate: HypothesisCandidate
+    decision: PortfolioDecisionRecord | None = None
+    manifest: AutoResearchCandidateManifestRead
+    lineage: AutoResearchCandidateLineageRead
+
+
+class AutoResearchBundleAssetRead(BaseModel):
+    asset_id: str
+    label: str
+    role: AutoResearchBundleAssetRole
+    candidate_id: str | None = None
+    selected: bool = False
+    required: bool = True
+    ref: AutoResearchRegistryAssetRef
+
+
+class AutoResearchBundleRead(BaseModel):
+    id: str
+    name: str
+    description: str
+    selected_candidate_id: str | None = None
+    candidate_ids: list[str] = Field(default_factory=list)
+    asset_count: int = 0
+    existing_asset_count: int = 0
+    missing_asset_count: int = 0
+    assets: list[AutoResearchBundleAssetRead] = Field(default_factory=list)
+
+
+class AutoResearchBundleIndexRead(BaseModel):
+    project_id: str
+    run_id: str
+    bundles: list[AutoResearchBundleRead] = Field(default_factory=list)
+
+
+class AutoResearchRegistryViewRead(BaseModel):
+    id: str
+    label: str
+    description: str
+    candidate_ids: list[str] = Field(default_factory=list)
+    count: int = 0
+    entries: list[AutoResearchCandidateRegistryEntry] = Field(default_factory=list)
+
+
+class AutoResearchRegistryViewCounts(BaseModel):
+    total_candidates: int = 0
+    selected: int = 0
+    eliminated: int = 0
+    failed: int = 0
+    active: int = 0
+
+
+class AutoResearchRunRegistryViewsRead(BaseModel):
+    project_id: str
+    run_id: str
+    selected_candidate_id: str | None = None
+    counts: AutoResearchRegistryViewCounts
+    views: list[AutoResearchRegistryViewRead] = Field(default_factory=list)
 
 
 class AutoResearchExecutionJob(BaseModel):

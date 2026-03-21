@@ -335,6 +335,224 @@ export type AutoResearchExecutionCommandResponse = {
   execution: AutoResearchExecution;
 };
 
+export type AutoResearchRegistryAssetRef = {
+  path: string;
+  kind: "file" | "directory";
+  exists: boolean;
+  size_bytes?: number | null;
+  sha256?: string | null;
+};
+
+export type AutoResearchLineageEdge = {
+  source_kind:
+    | "run"
+    | "program"
+    | "portfolio"
+    | "candidate"
+    | "workspace"
+    | "plan"
+    | "spec"
+    | "attempts"
+    | "artifact"
+    | "paper"
+    | "manifest"
+    | "generated_code"
+    | "benchmark";
+  source_id: string;
+  relation: "owns" | "selected_candidate" | "has_asset" | "materialized_to_run_asset";
+  target_kind:
+    | "run"
+    | "program"
+    | "portfolio"
+    | "candidate"
+    | "workspace"
+    | "plan"
+    | "spec"
+    | "attempts"
+    | "artifact"
+    | "paper"
+    | "manifest"
+    | "generated_code"
+    | "benchmark";
+  target_id: string;
+  target_path?: string | null;
+  exists?: boolean | null;
+};
+
+export type AutoResearchRunRegistryFiles = {
+  root: AutoResearchRegistryAssetRef;
+  run_json: AutoResearchRegistryAssetRef;
+  program_json?: AutoResearchRegistryAssetRef | null;
+  plan_json?: AutoResearchRegistryAssetRef | null;
+  spec_json?: AutoResearchRegistryAssetRef | null;
+  portfolio_json?: AutoResearchRegistryAssetRef | null;
+  artifact_json?: AutoResearchRegistryAssetRef | null;
+  benchmark_json?: AutoResearchRegistryAssetRef | null;
+  generated_code?: AutoResearchRegistryAssetRef | null;
+  paper_markdown?: AutoResearchRegistryAssetRef | null;
+};
+
+export type AutoResearchCandidateRegistryFiles = {
+  workspace: AutoResearchRegistryAssetRef;
+  candidate_json?: AutoResearchRegistryAssetRef | null;
+  plan_json?: AutoResearchRegistryAssetRef | null;
+  spec_json?: AutoResearchRegistryAssetRef | null;
+  attempts_json?: AutoResearchRegistryAssetRef | null;
+  artifact_json?: AutoResearchRegistryAssetRef | null;
+  manifest_json?: AutoResearchRegistryAssetRef | null;
+  generated_code?: AutoResearchRegistryAssetRef | null;
+  paper_markdown?: AutoResearchRegistryAssetRef | null;
+};
+
+export type AutoResearchCandidateManifestCandidate = {
+  id: string;
+  program_id: string;
+  rank: number;
+  title: string;
+  status: "planned" | "selected" | "running" | "done" | "failed" | "deferred";
+  objective_score?: number | null;
+  selection_reason?: string | null;
+};
+
+export type AutoResearchCandidateManifest = {
+  manifest_source: "file" | "generated_fallback";
+  candidate: AutoResearchCandidateManifestCandidate;
+  decision?: Record<string, unknown> | null;
+  files: AutoResearchCandidateRegistryFiles;
+};
+
+export type AutoResearchCandidateRegistryEntry = {
+  candidate_id: string;
+  program_id: string;
+  rank: number;
+  title: string;
+  status: "planned" | "selected" | "running" | "done" | "failed" | "deferred";
+  objective_score?: number | null;
+  selected: boolean;
+  selected_round_index?: number | null;
+  attempt_count: number;
+  artifact_status?: string | null;
+  manifest_source: "file" | "generated_fallback";
+  decision_outcome?: "pending" | "running" | "leading" | "promoted" | "eliminated" | "failed" | null;
+  decision_reason?: string | null;
+  files: AutoResearchCandidateRegistryFiles;
+};
+
+export type AutoResearchRunLineage = {
+  selected_candidate_id?: string | null;
+  top_level_plan_candidate_id?: string | null;
+  top_level_spec_candidate_id?: string | null;
+  top_level_artifact_candidate_id?: string | null;
+  top_level_paper_candidate_id?: string | null;
+  edges: AutoResearchLineageEdge[];
+};
+
+export type AutoResearchCandidateLineage = {
+  selected: boolean;
+  decision_outcome?: "pending" | "running" | "leading" | "promoted" | "eliminated" | "failed" | null;
+  edges: AutoResearchLineageEdge[];
+};
+
+export type AutoResearchRunRegistry = {
+  project_id: string;
+  run_id: string;
+  topic: string;
+  status: AutoResearchRunStatus;
+  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+  program_id?: string | null;
+  benchmark_name?: string | null;
+  portfolio_status?: "planned" | "running" | "done" | "failed" | null;
+  selected_candidate_id?: string | null;
+  decision_summary?: string | null;
+  root_path: string;
+  files: AutoResearchRunRegistryFiles;
+  lineage: AutoResearchRunLineage;
+  candidates: AutoResearchCandidateRegistryEntry[];
+};
+
+export type AutoResearchCandidateRegistry = {
+  project_id: string;
+  run_id: string;
+  candidate_id: string;
+  selected: boolean;
+  root_path: string;
+  candidate: Record<string, unknown>;
+  decision?: Record<string, unknown> | null;
+  manifest: AutoResearchCandidateManifest;
+  lineage: AutoResearchCandidateLineage;
+};
+
+export type AutoResearchBundleAssetRead = {
+  asset_id: string;
+  label: string;
+  role:
+    | "run_json"
+    | "program_json"
+    | "portfolio_json"
+    | "benchmark_json"
+    | "run_plan_json"
+    | "run_spec_json"
+    | "run_artifact_json"
+    | "run_generated_code"
+    | "run_paper_markdown"
+    | "workspace"
+    | "candidate_json"
+    | "plan_json"
+    | "spec_json"
+    | "attempts_json"
+    | "artifact_json"
+    | "manifest_json"
+    | "generated_code"
+    | "paper_markdown";
+  candidate_id?: string | null;
+  selected: boolean;
+  required: boolean;
+  ref: AutoResearchRegistryAssetRef;
+};
+
+export type AutoResearchBundle = {
+  id: string;
+  name: string;
+  description: string;
+  selected_candidate_id?: string | null;
+  candidate_ids: string[];
+  asset_count: number;
+  existing_asset_count: number;
+  missing_asset_count: number;
+  assets: AutoResearchBundleAssetRead[];
+};
+
+export type AutoResearchBundleIndex = {
+  project_id: string;
+  run_id: string;
+  bundles: AutoResearchBundle[];
+};
+
+export type AutoResearchRegistryView = {
+  id: string;
+  label: string;
+  description: string;
+  candidate_ids: string[];
+  count: number;
+  entries: AutoResearchCandidateRegistryEntry[];
+};
+
+export type AutoResearchRegistryViewCounts = {
+  total_candidates: number;
+  selected: number;
+  eliminated: number;
+  failed: number;
+  active: number;
+};
+
+export type AutoResearchRunRegistryViews = {
+  project_id: string;
+  run_id: string;
+  selected_candidate_id?: string | null;
+  counts: AutoResearchRegistryViewCounts;
+  views: AutoResearchRegistryView[];
+};
+
 export type GenerateDraftPayload = {
   topic?: string;
   scope?: string;

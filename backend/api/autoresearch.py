@@ -6,16 +6,28 @@ from sqlalchemy.orm import Session
 from config.db import SessionLocal
 from config.deps import get_db, get_identity, require_project_access
 from schemas.autoresearch import (
+    AutoResearchBundleIndexRead,
+    AutoResearchCandidateRegistryRead,
     AutoResearchExecutionCommandResponse,
     AutoResearchRunConfig,
     AutoResearchRunList,
     AutoResearchRunRead,
+    AutoResearchRunRegistryRead,
+    AutoResearchRunRegistryViewsRead,
     AutoResearchRunRequest,
     AutoResearchRunExecutionRead,
 )
 from schemas.common import IdResponse
 from services.autoresearch.execution import AutoResearchExecutionPlane
-from services.autoresearch.repository import create_run, list_runs, load_run
+from services.autoresearch.repository import (
+    create_run,
+    list_runs,
+    load_candidate_registry,
+    load_run_bundle_index,
+    load_run,
+    load_run_registry,
+    load_run_registry_views,
+)
 from services.security.audit import write_task_audit_log
 from services.security.auth import AuthIdentity
 
@@ -88,6 +100,62 @@ def get_auto_research_execution(
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
+
+
+@router.get("/{run_id}/registry", response_model=AutoResearchRunRegistryRead)
+def get_auto_research_registry(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchRunRegistryRead:
+    del db
+    registry = load_run_registry(project_id, run_id)
+    if registry is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return registry
+
+
+@router.get(
+    "/{run_id}/registry/candidates/{candidate_id}",
+    response_model=AutoResearchCandidateRegistryRead,
+)
+def get_auto_research_candidate_registry(
+    project_id: str,
+    run_id: str,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchCandidateRegistryRead:
+    del db
+    candidate = load_candidate_registry(project_id, run_id, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Auto research candidate not found")
+    return candidate
+
+
+@router.get("/{run_id}/registry/bundles", response_model=AutoResearchBundleIndexRead)
+def get_auto_research_bundle_index(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchBundleIndexRead:
+    del db
+    bundle_index = load_run_bundle_index(project_id, run_id)
+    if bundle_index is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return bundle_index
+
+
+@router.get("/{run_id}/registry/views", response_model=AutoResearchRunRegistryViewsRead)
+def get_auto_research_registry_views(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchRunRegistryViewsRead:
+    del db
+    views = load_run_registry_views(project_id, run_id)
+    if views is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return views
 
 
 def _queue_existing_run(

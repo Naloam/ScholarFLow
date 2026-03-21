@@ -259,6 +259,374 @@ def test_autoresearch_tabular_run_supports_second_task_family(
         client.close()
 
 
+def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Registry Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        registry_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry")
+        assert registry_response.status_code == 200
+        registry = registry_response.json()
+        assert registry["project_id"] == project_id
+        assert registry["run_id"] == run_id
+        assert registry["selected_candidate_id"] == registry["lineage"]["selected_candidate_id"]
+        assert registry["lineage"]["top_level_artifact_candidate_id"] == registry["selected_candidate_id"]
+        assert registry["lineage"]["top_level_paper_candidate_id"] == registry["selected_candidate_id"]
+        assert registry["lineage"]["edges"]
+        assert registry["files"]["root"]["kind"] == "directory"
+        assert registry["files"]["run_json"]["exists"] is True
+        assert len(registry["files"]["run_json"]["sha256"]) == 64
+        assert registry["files"]["portfolio_json"]["exists"] is True
+        assert registry["files"]["artifact_json"]["exists"] is True
+        assert len(registry["files"]["artifact_json"]["sha256"]) == 64
+        assert registry["files"]["paper_markdown"]["exists"] is True
+        assert len(registry["files"]["paper_markdown"]["sha256"]) == 64
+        assert any(edge["relation"] == "selected_candidate" for edge in registry["lineage"]["edges"])
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "artifact"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert len(registry["candidates"]) == 3
+
+        selected_candidate = next(item for item in registry["candidates"] if item["selected"])
+        assert selected_candidate["candidate_id"] == registry["selected_candidate_id"]
+        assert selected_candidate["manifest_source"] == "file"
+        assert selected_candidate["decision_outcome"] == "promoted"
+        assert selected_candidate["files"]["workspace"]["kind"] == "directory"
+        assert selected_candidate["files"]["manifest_json"]["exists"] is True
+        assert len(selected_candidate["files"]["manifest_json"]["sha256"]) == 64
+        assert selected_candidate["files"]["artifact_json"]["exists"] is True
+        assert len(selected_candidate["files"]["artifact_json"]["sha256"]) == 64
+        assert selected_candidate["files"]["paper_markdown"]["exists"] is True
+        assert len(selected_candidate["files"]["paper_markdown"]["sha256"]) == 64
+
+        candidate_response = client.get(
+            f"/api/projects/{project_id}/auto-research/{run_id}/registry/candidates/{selected_candidate['candidate_id']}"
+        )
+        assert candidate_response.status_code == 200
+        candidate_registry = candidate_response.json()
+        assert candidate_registry["candidate_id"] == selected_candidate["candidate_id"]
+        assert candidate_registry["selected"] is True
+        assert candidate_registry["candidate"]["id"] == selected_candidate["candidate_id"]
+        assert candidate_registry["manifest"]["manifest_source"] == "file"
+        assert candidate_registry["manifest"]["decision"]["outcome"] == "promoted"
+        assert candidate_registry["manifest"]["files"]["manifest_json"]["exists"] is True
+        assert candidate_registry["manifest"]["files"]["paper_markdown"]["exists"] is True
+        assert candidate_registry["lineage"]["selected"] is True
+        assert candidate_registry["lineage"]["decision_outcome"] == "promoted"
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "manifest"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+    finally:
+        client.close()
+
+
+def test_autoresearch_registry_falls_back_when_candidate_manifest_is_missing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Registry Fallback Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run_detail = client.get(f"/api/projects/{project_id}/auto-research/{run_id}")
+        assert run_detail.status_code == 200
+        run = run_detail.json()
+        selected_candidate = next(
+            item for item in run["candidates"] if item["id"] == run["portfolio"]["selected_candidate_id"]
+        )
+        manifest_path = Path(selected_candidate["manifest_path"])
+        assert manifest_path.is_file()
+        manifest_path.unlink()
+
+        candidate_response = client.get(
+            f"/api/projects/{project_id}/auto-research/{run_id}/registry/candidates/{selected_candidate['id']}"
+        )
+        assert candidate_response.status_code == 200
+        candidate_registry = candidate_response.json()
+        assert candidate_registry["manifest"]["manifest_source"] == "generated_fallback"
+        assert candidate_registry["manifest"]["decision"]["outcome"] == "promoted"
+        assert candidate_registry["manifest"]["files"]["manifest_json"]["exists"] is False
+        assert candidate_registry["manifest"]["files"]["manifest_json"]["sha256"] is None
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "manifest" and edge["exists"] is False
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+
+        registry_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry")
+        assert registry_response.status_code == 200
+        registry = registry_response.json()
+        selected_entry = next(item for item in registry["candidates"] if item["candidate_id"] == selected_candidate["id"])
+        assert selected_entry["manifest_source"] == "generated_fallback"
+        assert selected_entry["files"]["manifest_json"]["exists"] is False
+
+        bundle_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry/bundles")
+        assert bundle_response.status_code == 200
+        bundle_index = bundle_response.json()
+        selected_bundle = next(item for item in bundle_index["bundles"] if item["id"] == "selected_candidate_repro")
+        missing_manifest_asset = next(
+            item
+            for item in selected_bundle["assets"]
+            if item["role"] == "manifest_json" and item["candidate_id"] == selected_candidate["id"]
+        )
+        assert selected_bundle["missing_asset_count"] >= 1
+        assert missing_manifest_asset["ref"]["exists"] is False
+        assert missing_manifest_asset["ref"]["sha256"] is None
+    finally:
+        client.close()
+
+
+def test_autoresearch_bundle_index_exposes_selected_and_portfolio_assets(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Bundle Index Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        bundle_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry/bundles")
+        assert bundle_response.status_code == 200
+        bundle_index = bundle_response.json()
+        assert bundle_index["project_id"] == project_id
+        assert bundle_index["run_id"] == run_id
+        assert [item["id"] for item in bundle_index["bundles"]] == [
+            "selected_candidate_repro",
+            "portfolio_full",
+        ]
+
+        selected_bundle = bundle_index["bundles"][0]
+        portfolio_bundle = bundle_index["bundles"][1]
+
+        assert selected_bundle["selected_candidate_id"]
+        assert selected_bundle["candidate_ids"] == [selected_bundle["selected_candidate_id"]]
+        assert selected_bundle["asset_count"] >= 8
+        assert selected_bundle["missing_asset_count"] == 0
+        assert any(item["role"] == "run_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "manifest_json" and item["selected"] for item in selected_bundle["assets"])
+        assert any(item["role"] == "artifact_json" and item["selected"] for item in selected_bundle["assets"])
+        assert any(item["role"] == "paper_markdown" and item["selected"] for item in selected_bundle["assets"])
+
+        selected_manifest_asset = next(
+            item for item in selected_bundle["assets"] if item["role"] == "manifest_json" and item["selected"]
+        )
+        assert selected_manifest_asset["ref"]["exists"] is True
+        assert len(selected_manifest_asset["ref"]["sha256"]) == 64
+
+        assert len(portfolio_bundle["candidate_ids"]) == 3
+        assert portfolio_bundle["asset_count"] > selected_bundle["asset_count"]
+        assert portfolio_bundle["missing_asset_count"] >= 1
+        assert sum(1 for item in portfolio_bundle["assets"] if item["role"] == "manifest_json") == 3
+        assert sum(1 for item in portfolio_bundle["assets"] if item["role"] == "candidate_json") == 3
+        assert any(item["selected"] for item in portfolio_bundle["assets"])
+        assert any(not item["selected"] and item["candidate_id"] for item in portfolio_bundle["assets"])
+        assert any(
+            item["role"] == "paper_markdown" and not item["selected"] and item["ref"]["exists"] is False
+            for item in portfolio_bundle["assets"]
+        )
+    finally:
+        client.close()
+
+
+def test_autoresearch_registry_views_group_selected_and_eliminated_candidates(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Registry Views Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        views_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry/views")
+        assert views_response.status_code == 200
+        payload = views_response.json()
+        assert payload["project_id"] == project_id
+        assert payload["run_id"] == run_id
+        assert payload["counts"]["total_candidates"] == 3
+        assert payload["counts"]["selected"] == 1
+        assert payload["counts"]["eliminated"] == 2
+        assert payload["counts"]["failed"] == 0
+        assert payload["counts"]["active"] == 0
+
+        views = {item["id"]: item for item in payload["views"]}
+        assert set(views) == {"selected", "eliminated", "failed", "active", "all"}
+        assert views["selected"]["count"] == 1
+        assert views["selected"]["entries"][0]["selected"] is True
+        assert views["selected"]["candidate_ids"] == [payload["selected_candidate_id"]]
+        assert views["eliminated"]["count"] == 2
+        assert all(item["decision_outcome"] == "eliminated" for item in views["eliminated"]["entries"])
+        assert views["failed"]["count"] == 0
+        assert views["active"]["count"] == 0
+        assert views["all"]["count"] == 3
+    finally:
+        client.close()
+
+
+def test_autoresearch_registry_views_include_failed_candidates(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+
+    def fake_run(
+        self,
+        *,
+        plan,
+        spec,
+        round_index,
+        **kwargs,
+    ):
+        del self, kwargs
+        if "narrower modeling delta" in plan.proposed_method:
+            candidate_label = "baseline_anchor"
+            score = 0.84
+            status = "done"
+        elif "robustness checks" in plan.proposed_method:
+            candidate_label = "stability_probe"
+            score = None
+            status = "failed"
+        else:
+            candidate_label = "primary_method"
+            score = 0.79
+            status = "done"
+        strategy = spec.search_strategies[min(round_index - 1, len(spec.search_strategies) - 1)]
+        code_path = tmp_path / f"{candidate_label}_{round_index}.py"
+        code_path.write_text(f"# {candidate_label} round {round_index}\n", encoding="utf-8")
+        if status == "failed":
+            artifact = ResultArtifact(
+                status="failed",
+                summary=f"{candidate_label} round {round_index} failed",
+                key_findings=[candidate_label],
+                primary_metric="macro_f1",
+                logs="synthetic failure",
+                environment={"executor_mode": "synthetic"},
+                outputs={"returncode": 1},
+            )
+        else:
+            artifact = ResultArtifact(
+                status="done",
+                summary=f"{candidate_label} round {round_index}",
+                key_findings=[candidate_label],
+                primary_metric="macro_f1",
+                best_system="demo_system",
+                objective_system="demo_system",
+                objective_score=score,
+                system_results=[
+                    {"system": "majority", "metrics": {"accuracy": 0.40, "macro_f1": 0.40}},
+                    {"system": "demo_system", "metrics": {"accuracy": score, "macro_f1": score}},
+                ],
+                aggregate_system_results=[
+                    {
+                        "system": "majority",
+                        "mean_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                        "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+                        "min_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                        "max_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                        "sample_count": 1,
+                    },
+                    {
+                        "system": "demo_system",
+                        "mean_metrics": {"accuracy": score, "macro_f1": score},
+                        "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+                        "min_metrics": {"accuracy": score, "macro_f1": score},
+                        "max_metrics": {"accuracy": score, "macro_f1": score},
+                        "sample_count": 1,
+                    },
+                ],
+                acceptance_checks=[
+                    {
+                        "criterion": "Record mean and standard deviation for the primary metric.",
+                        "passed": True,
+                        "detail": "Synthetic candidate passed.",
+                    }
+                ],
+                environment={"executor_mode": "synthetic"},
+            )
+        return strategy, str(code_path), artifact
+
+    monkeypatch.setattr(AutoExperimentRunner, "run", fake_run)
+    try:
+        project_id = _create_project(
+            client,
+            "Registry Failed View Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert any(item["status"] == "failed" for item in run["candidates"])
+
+        views_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry/views")
+        assert views_response.status_code == 200
+        payload = views_response.json()
+        assert payload["counts"]["selected"] == 1
+        assert payload["counts"]["eliminated"] == 1
+        assert payload["counts"]["failed"] == 1
+        assert payload["counts"]["active"] == 0
+
+        views = {item["id"]: item for item in payload["views"]}
+        assert views["failed"]["count"] == 1
+        assert views["failed"]["entries"][0]["status"] == "failed"
+        assert views["failed"]["entries"][0]["decision_outcome"] == "failed"
+        assert views["eliminated"]["count"] == 1
+        assert views["selected"]["count"] == 1
+        assert views["all"]["count"] == 3
+    finally:
+        client.close()
+
+
 def test_autoresearch_selects_best_executed_candidate_from_portfolio(
     monkeypatch,
     tmp_path: Path,

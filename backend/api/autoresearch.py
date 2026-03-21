@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from config.db import SessionLocal
@@ -9,9 +10,12 @@ from schemas.autoresearch import (
     AutoResearchBundleIndexRead,
     AutoResearchCandidateRegistryRead,
     AutoResearchExecutionCommandResponse,
+    AutoResearchPublishExportRead,
+    AutoResearchPublishPackageRead,
     AutoResearchRunConfig,
     AutoResearchRunList,
     AutoResearchRunRead,
+    AutoResearchRunReviewRead,
     AutoResearchRunRegistryRead,
     AutoResearchRunRegistryViewsRead,
     AutoResearchRunRequest,
@@ -19,6 +23,12 @@ from schemas.autoresearch import (
 )
 from schemas.common import IdResponse
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.review_publish import (
+    build_publish_package,
+    build_run_review,
+    export_publish_package,
+    get_publish_archive_path,
+)
 from services.autoresearch.repository import (
     create_run,
     list_runs,
@@ -156,6 +166,65 @@ def get_auto_research_registry_views(
     if views is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return views
+
+
+@router.get("/{run_id}/review", response_model=AutoResearchRunReviewRead)
+def get_auto_research_run_review(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchRunReviewRead:
+    del db
+    review = build_run_review(project_id, run_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return review
+
+
+@router.get("/{run_id}/publish", response_model=AutoResearchPublishPackageRead)
+def get_auto_research_publish_package(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchPublishPackageRead:
+    del db
+    package = build_publish_package(project_id, run_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return package
+
+
+@router.post("/{run_id}/publish/export", response_model=AutoResearchPublishExportRead)
+def export_auto_research_publish_package(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchPublishExportRead:
+    del db
+    export_result = export_publish_package(project_id, run_id)
+    if export_result is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return export_result
+
+
+@router.get("/{run_id}/publish/download")
+def download_auto_research_publish_package(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    del db
+    archive_path = get_publish_archive_path(project_id, run_id).resolve()
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    if not archive_path.is_file():
+        raise HTTPException(status_code=409, detail="Publish package has not been exported yet")
+    return FileResponse(
+        path=archive_path,
+        filename=archive_path.name,
+        media_type="application/zip",
+    )
 
 
 def _queue_existing_run(

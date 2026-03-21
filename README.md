@@ -18,7 +18,8 @@ ScholarFlow is being developed as a FARS-style auto-research system for computer
 - Runtime contract enforcement and structured repair patching are in place.
 - The execution plane supports queueing, checkpoint resume, retry, cancel, and worker state.
 - Artifact registry / lineage is now in place with file hashes, lineage edges, bundle indexes, and candidate views.
-- The current mainline phase is `Review / Publish`.
+- Registry-backed review reports and publish-package export are now in place.
+- The current mainline phase is `Operator Console`.
 
 ## Development Entry Points
 

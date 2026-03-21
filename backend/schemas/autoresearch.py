@@ -65,6 +65,19 @@ AutoResearchLineageRelation = Literal[
     "has_asset",
     "materialized_to_run_asset",
 ]
+AutoResearchReviewSeverity = Literal["info", "warning", "error"]
+AutoResearchReviewCategory = Literal[
+    "artifact",
+    "statistics",
+    "citation",
+    "context",
+    "provenance",
+    "publish",
+]
+AutoResearchReviewStatus = Literal["ready", "needs_revision", "blocked"]
+AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
+AutoResearchRevisionPriority = Literal["high", "medium", "low"]
+AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -755,6 +768,107 @@ class AutoResearchRunRegistryViewsRead(BaseModel):
     selected_candidate_id: str | None = None
     counts: AutoResearchRegistryViewCounts
     views: list[AutoResearchRegistryViewRead] = Field(default_factory=list)
+
+
+class AutoResearchReviewScoresRead(BaseModel):
+    evidence_support: int = 0
+    statistical_rigor: int = 0
+    contextualization: int = 0
+    reproducibility: int = 0
+    publish_readiness: int = 0
+
+
+class AutoResearchReviewEvidenceRead(BaseModel):
+    selected_bundle_id: str | None = None
+    literature_count: int = 0
+    candidate_count: int = 0
+    executed_candidate_count: int = 0
+    seed_count: int = 0
+    completed_seed_count: int = 0
+    sweep_count: int = 0
+    significance_test_count: int = 0
+    negative_result_count: int = 0
+    failed_trial_count: int = 0
+    acceptance_passed: int = 0
+    acceptance_total: int = 0
+    citation_marker_count: int = 0
+    missing_required_asset_count: int = 0
+
+
+class AutoResearchCitationCoverageRead(BaseModel):
+    literature_item_count: int = 0
+    citation_marker_count: int = 0
+    sections_without_citations: list[str] = Field(default_factory=list)
+    has_related_work_section: bool = False
+
+
+class AutoResearchReviewFindingRead(BaseModel):
+    id: str
+    severity: AutoResearchReviewSeverity
+    category: AutoResearchReviewCategory
+    summary: str
+    detail: str
+    supporting_asset_ids: list[str] = Field(default_factory=list)
+
+
+class AutoResearchRevisionActionRead(BaseModel):
+    id: str
+    priority: AutoResearchRevisionPriority
+    title: str
+    detail: str
+    finding_ids: list[str] = Field(default_factory=list)
+
+
+class AutoResearchRunReviewRead(BaseModel):
+    project_id: str
+    run_id: str
+    generated_at: datetime
+    selected_candidate_id: str | None = None
+    backed_by_bundle_id: str | None = None
+    overall_status: AutoResearchReviewStatus = "needs_revision"
+    unsupported_claim_risk: AutoResearchUnsupportedClaimRisk = "medium"
+    summary: str
+    persisted_path: str | None = None
+    evidence: AutoResearchReviewEvidenceRead
+    citation_coverage: AutoResearchCitationCoverageRead
+    scores: AutoResearchReviewScoresRead
+    findings: list[AutoResearchReviewFindingRead] = Field(default_factory=list)
+    revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)
+
+
+class AutoResearchPublishPackageRead(BaseModel):
+    project_id: str
+    run_id: str
+    package_id: str
+    generated_at: datetime
+    selected_candidate_id: str | None = None
+    source_bundle_id: str | None = None
+    status: AutoResearchPublishStatus = "revision_required"
+    publish_ready: bool = False
+    review_path: str | None = None
+    manifest_path: str | None = None
+    archive_path: str | None = None
+    asset_count: int = 0
+    existing_asset_count: int = 0
+    missing_required_asset_count: int = 0
+    blocker_count: int = 0
+    revision_count: int = 0
+    blockers: list[str] = Field(default_factory=list)
+    revision_actions: list[str] = Field(default_factory=list)
+    required_assets: list[AutoResearchBundleAssetRead] = Field(default_factory=list)
+    optional_assets: list[AutoResearchBundleAssetRead] = Field(default_factory=list)
+
+
+class AutoResearchPublishExportRead(BaseModel):
+    project_id: str
+    run_id: str
+    package_id: str
+    generated_at: datetime
+    file_name: str
+    archive_path: str
+    download_path: str
+    asset_count: int = 0
+    download_ready: bool = True
 
 
 class AutoResearchExecutionJob(BaseModel):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -623,6 +624,133 @@ def test_autoresearch_registry_views_include_failed_candidates(
         assert views["eliminated"]["count"] == 1
         assert views["selected"]["count"] == 1
         assert views["all"]["count"] == 3
+    finally:
+        client.close()
+
+
+def test_autoresearch_review_report_is_grounded_in_persisted_run_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Review Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        review_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review")
+        assert review_response.status_code == 200
+        review = review_response.json()
+        assert review["project_id"] == project_id
+        assert review["run_id"] == run_id
+        assert review["backed_by_bundle_id"] == "selected_candidate_repro"
+        assert review["overall_status"] == "needs_revision"
+        assert review["unsupported_claim_risk"] == "medium"
+        assert review["evidence"]["candidate_count"] == 3
+        assert review["evidence"]["executed_candidate_count"] == 3
+        assert review["evidence"]["seed_count"] == len(
+            client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()["spec"]["seeds"]
+        )
+        assert review["scores"]["reproducibility"] >= 3
+        assert any(item["category"] == "citation" for item in review["findings"])
+        assert any(item["category"] == "context" for item in review["findings"])
+        assert any(item["title"] == "Add citation support to contextual and related-work claims" for item in review["revision_plan"])
+        assert Path(review["persisted_path"]).is_file()
+    finally:
+        client.close()
+
+
+def test_autoresearch_publish_package_is_derived_from_selected_bundle(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Publish Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        package_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish")
+        assert package_response.status_code == 200
+        package = package_response.json()
+        assert package["project_id"] == project_id
+        assert package["run_id"] == run_id
+        assert package["package_id"] == "publish_ready_bundle"
+        assert package["source_bundle_id"] == "selected_candidate_repro"
+        assert package["status"] == "revision_required"
+        assert package["publish_ready"] is False
+        assert package["missing_required_asset_count"] == 0
+        assert package["blocker_count"] == 0
+        assert package["revision_count"] >= 1
+        required_roles = {item["role"] for item in package["required_assets"]}
+        optional_roles = {item["role"] for item in package["optional_assets"]}
+        assert "run_json" in required_roles
+        assert "manifest_json" in required_roles
+        assert "candidate_json" in required_roles
+        assert "workspace" in required_roles
+        assert "run_artifact_json" in optional_roles
+        assert "generated_code" in optional_roles
+        assert Path(package["review_path"]).is_file()
+        assert Path(package["manifest_path"]).is_file()
+    finally:
+        client.close()
+
+
+def test_autoresearch_publish_export_materializes_archive(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Export Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        export_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/publish/export")
+        assert export_response.status_code == 200
+        export_body = export_response.json()
+        assert export_body["project_id"] == project_id
+        assert export_body["run_id"] == run_id
+        assert export_body["download_ready"] is True
+        archive_path = Path(export_body["archive_path"])
+        assert archive_path.is_file()
+        assert export_body["file_name"] == archive_path.name
+
+        with ZipFile(archive_path) as archive:
+            names = set(archive.namelist())
+        assert "review.json" in names
+        assert "publish_package.json" in names
+        assert "run.json" in names
+        assert any(name.endswith("/manifest.json") for name in names)
+        assert any(name.endswith("/artifact.json") for name in names)
+
+        download_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
+        assert download_response.status_code == 200
+        assert download_response.headers["content-disposition"].endswith('publish_bundle.zip"')
     finally:
         client.close()
 

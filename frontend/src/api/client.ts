@@ -4,7 +4,10 @@ import type {
   AnalysisSummary,
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
+  AutoResearchPublishExport,
+  AutoResearchPublishPackage,
   AutoResearchRun,
+  AutoResearchRunReview,
   AutoResearchRunRegistry,
   AutoResearchRunRegistryViews,
   AutoResearchRunRequest,
@@ -333,6 +336,30 @@ export const api = {
 
   getAutoResearchRegistryViews(projectId: string, runId: string): Promise<AutoResearchRunRegistryViews> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/registry/views`);
+  },
+
+  getAutoResearchRunReview(projectId: string, runId: string): Promise<AutoResearchRunReview> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/review`);
+  },
+
+  getAutoResearchPublishPackage(projectId: string, runId: string): Promise<AutoResearchPublishPackage> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/publish`);
+  },
+
+  exportAutoResearchPublishPackage(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchPublishExport> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/publish/export`, {
+      method: "POST",
+    });
+  },
+
+  downloadAutoResearchPublishPackage(projectId: string, runId: string): Promise<string> {
+    return download(
+      `/api/projects/${projectId}/auto-research/${runId}/publish/download`,
+      `${runId}-publish_bundle.zip`,
+    );
   },
 
   resumeAutoResearch(

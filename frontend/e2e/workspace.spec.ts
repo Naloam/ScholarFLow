@@ -28,7 +28,7 @@ test("workspace supports browser flow from project creation to export", async ({
   await page.getByTestId("run-review-button").click();
 
   await expect(page.getByTestId("review-panel")).toContainText("补充关键断言的证据来源");
-  await expect(page.getByTestId("header-phase-chip")).toHaveText("Phase 4");
+  await expect(page.getByTestId("header-phase-chip")).toHaveText("Phase 5");
 
   await page.getByTestId("beta-comment-input").fill("Browser beta feedback captured from the open workspace flow.");
   await page.getByTestId("beta-submit-button").click();

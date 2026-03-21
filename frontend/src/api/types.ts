@@ -553,6 +553,107 @@ export type AutoResearchRunRegistryViews = {
   views: AutoResearchRegistryView[];
 };
 
+export type AutoResearchReviewScores = {
+  evidence_support: number;
+  statistical_rigor: number;
+  contextualization: number;
+  reproducibility: number;
+  publish_readiness: number;
+};
+
+export type AutoResearchReviewEvidence = {
+  selected_bundle_id?: string | null;
+  literature_count: number;
+  candidate_count: number;
+  executed_candidate_count: number;
+  seed_count: number;
+  completed_seed_count: number;
+  sweep_count: number;
+  significance_test_count: number;
+  negative_result_count: number;
+  failed_trial_count: number;
+  acceptance_passed: number;
+  acceptance_total: number;
+  citation_marker_count: number;
+  missing_required_asset_count: number;
+};
+
+export type AutoResearchCitationCoverage = {
+  literature_item_count: number;
+  citation_marker_count: number;
+  sections_without_citations: string[];
+  has_related_work_section: boolean;
+};
+
+export type AutoResearchReviewFinding = {
+  id: string;
+  severity: "info" | "warning" | "error";
+  category: "artifact" | "statistics" | "citation" | "context" | "provenance" | "publish";
+  summary: string;
+  detail: string;
+  supporting_asset_ids: string[];
+};
+
+export type AutoResearchRevisionAction = {
+  id: string;
+  priority: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  finding_ids: string[];
+};
+
+export type AutoResearchRunReview = {
+  project_id: string;
+  run_id: string;
+  generated_at: string;
+  selected_candidate_id?: string | null;
+  backed_by_bundle_id?: string | null;
+  overall_status: "ready" | "needs_revision" | "blocked";
+  unsupported_claim_risk: "low" | "medium" | "high";
+  summary: string;
+  persisted_path?: string | null;
+  evidence: AutoResearchReviewEvidence;
+  citation_coverage: AutoResearchCitationCoverage;
+  scores: AutoResearchReviewScores;
+  findings: AutoResearchReviewFinding[];
+  revision_plan: AutoResearchRevisionAction[];
+};
+
+export type AutoResearchPublishPackage = {
+  project_id: string;
+  run_id: string;
+  package_id: string;
+  generated_at: string;
+  selected_candidate_id?: string | null;
+  source_bundle_id?: string | null;
+  status: "publish_ready" | "revision_required" | "blocked";
+  publish_ready: boolean;
+  review_path?: string | null;
+  manifest_path?: string | null;
+  archive_path?: string | null;
+  asset_count: number;
+  existing_asset_count: number;
+  missing_required_asset_count: number;
+  blocker_count: number;
+  revision_count: number;
+  blockers: string[];
+  revision_actions: string[];
+  required_assets: AutoResearchBundleAssetRead[];
+  optional_assets: AutoResearchBundleAssetRead[];
+};
+
+export type AutoResearchPublishExport = {
+  project_id: string;
+  run_id: string;
+  package_id: string;
+  generated_at: string;
+  file_name: string;
+  archive_path: string;
+  download_path: string;
+  asset_count: number;
+  download_ready: boolean;
+};
+
 export type GenerateDraftPayload = {
   topic?: string;
   scope?: string;

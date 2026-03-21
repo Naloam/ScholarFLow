@@ -30,8 +30,8 @@ PHASE_BY_STATUS = {
     "evidence": "Phase 2",
     "write": "Phase 3",
     "edit": "Phase 3",
-    "review": "Phase 4",
-    "export": "Phase 3",
+    "review": "Phase 5",
+    "export": "Phase 5",
     "done": "Phase 6",
 }
 

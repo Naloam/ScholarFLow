@@ -27,3 +27,9 @@ def autoresearch_dir(project_id: str) -> Path:
     path = project_root(project_id) / "autorresearch"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def autoresearch_execution_dir() -> Path:
+    path = settings.data_dir / "execution" / "autorresearch"
+    path.mkdir(parents=True, exist_ok=True)
+    return path

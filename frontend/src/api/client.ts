@@ -1,5 +1,9 @@
 import type {
   AnalysisSummary,
+  AutoResearchExecution,
+  AutoResearchExecutionCommandResponse,
+  AutoResearchRun,
+  AutoResearchRunRequest,
   AuthConfig,
   AuthSessionPayload,
   AuthSessionResponse,
@@ -288,5 +292,47 @@ export const api = {
       `/api/projects/${projectId}/export/${fileId}/download`,
       `${fileId}.bin`,
     );
+  },
+
+  startAutoResearch(projectId: string, payload: AutoResearchRunRequest): Promise<IdResponse> {
+    return request(`/api/projects/${projectId}/auto-research/run`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getAutoResearchRun(projectId: string, runId: string): Promise<AutoResearchRun> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}`);
+  },
+
+  getAutoResearchExecution(projectId: string, runId: string): Promise<AutoResearchExecution> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/execution`);
+  },
+
+  resumeAutoResearch(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExecutionCommandResponse> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/resume`, {
+      method: "POST",
+    });
+  },
+
+  retryAutoResearch(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExecutionCommandResponse> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/retry`, {
+      method: "POST",
+    });
+  },
+
+  cancelAutoResearch(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExecutionCommandResponse> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/cancel`, {
+      method: "POST",
+    });
   },
 };

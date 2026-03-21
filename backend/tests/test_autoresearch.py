@@ -17,7 +17,9 @@ import models  # noqa: F401
 import services.autoresearch.codegen as autoresearch_codegen
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_pipeline as literature_pipeline
+import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.repair as autoresearch_repair
+import services.autoresearch.repository as autoresearch_repository
 from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark
 from services.autoresearch.runner import AutoExperimentRunner
 import services.llm.client as llm_client
@@ -1867,5 +1869,293 @@ def test_autoresearch_can_ingest_openml_arff_benchmark(
         assert run["spec"]["dataset"]["train_size"] == 6
         assert run["spec"]["dataset"]["test_size"] == 3
         assert run["spec"]["dataset"]["name"] == "ToyOpenMLStability"
+    finally:
+        client.close()
+
+
+def test_autoresearch_exposes_execution_state_for_completed_run(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Execution Plane Success",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        execution = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/execution")
+        assert execution.status_code == 200
+        payload = execution.json()
+        assert payload["run_id"] == run_id
+        assert len(payload["jobs"]) == 1
+        assert payload["jobs"][0]["action"] == "run"
+        assert payload["jobs"][0]["status"] == "succeeded"
+        assert payload["active_job_id"] is None
+        assert payload["cancel_requested"] is False
+        assert payload["worker"]["status"] == "idle"
+        assert payload["worker"]["queue_depth"] == 0
+    finally:
+        client.close()
+
+
+def test_autoresearch_resume_enqueues_new_job_after_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    call_count = {"count": 0}
+
+    def fake_execute(self, *, project_id: str, run_id: str, **kwargs):
+        del self, kwargs
+        call_count["count"] += 1
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        if call_count["count"] == 1:
+            return autoresearch_repository.save_run(
+                run.model_copy(update={"status": "failed", "error": "synthetic failure"})
+            )
+        return autoresearch_repository.save_run(
+            run.model_copy(update={"status": "done", "error": None})
+        )
+
+    monkeypatch.setattr(autoresearch_orchestrator.AutoResearchOrchestrator, "execute", fake_execute)
+    try:
+        project_id = _create_project(client, "Resume Run", "Synthetic execution resume")
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Synthetic execution resume"},
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "failed"
+        assert run["error"] == "synthetic failure"
+
+        resume = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/resume")
+        assert resume.status_code == 200
+        body = resume.json()
+        assert body["run_id"] == run_id
+        assert body["status"] == "accepted"
+        assert body["execution"]["jobs"][-1]["action"] == "resume"
+
+        execution = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/execution")
+        assert execution.status_code == 200
+        jobs = execution.json()["jobs"]
+        assert [item["action"] for item in jobs] == ["run", "resume"]
+        assert [item["status"] for item in jobs] == ["failed", "succeeded"]
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+    finally:
+        client.close()
+
+
+def test_autoresearch_retry_enqueues_new_job_after_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    call_count = {"count": 0}
+
+    def fake_execute(self, *, project_id: str, run_id: str, **kwargs):
+        del self, kwargs
+        call_count["count"] += 1
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        if call_count["count"] == 1:
+            return autoresearch_repository.save_run(
+                run.model_copy(update={"status": "failed", "error": "retry me"})
+            )
+        return autoresearch_repository.save_run(
+            run.model_copy(update={"status": "done", "error": None})
+        )
+
+    monkeypatch.setattr(autoresearch_orchestrator.AutoResearchOrchestrator, "execute", fake_execute)
+    try:
+        project_id = _create_project(client, "Retry Run", "Synthetic execution retry")
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Synthetic execution retry"},
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "failed"
+        assert run["error"] == "retry me"
+
+        retry = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/retry")
+        assert retry.status_code == 200
+        body = retry.json()
+        assert body["run_id"] == run_id
+        assert body["status"] == "accepted"
+        assert body["execution"]["jobs"][-1]["action"] == "retry"
+
+        execution = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/execution")
+        assert execution.status_code == 200
+        jobs = execution.json()["jobs"]
+        assert [item["action"] for item in jobs] == ["run", "retry"]
+        assert [item["status"] for item in jobs] == ["failed", "succeeded"]
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+    finally:
+        client.close()
+
+
+def test_autoresearch_can_cancel_queued_job_before_worker_starts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(autoresearch_api.AutoResearchExecutionPlane, "drain", lambda self: None)
+    try:
+        project_id = _create_project(client, "Cancel Run", "Synthetic execution cancel")
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Synthetic execution cancel"},
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "queued"
+
+        cancel = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/cancel")
+        assert cancel.status_code == 200
+        body = cancel.json()
+        assert body["run_id"] == run_id
+        assert body["status"] == "accepted"
+        assert body["execution"]["jobs"][-1]["status"] == "canceled"
+        assert body["execution"]["active_job_id"] is None
+
+        execution = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/execution")
+        assert execution.status_code == 200
+        jobs = execution.json()["jobs"]
+        assert len(jobs) == 1
+        assert jobs[0]["status"] == "canceled"
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "canceled"
+        assert run["error"] == "Run canceled before execution started."
+    finally:
+        client.close()
+
+
+def test_autoresearch_resume_reuses_checkpointed_rounds(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    call_log: list[tuple[str, int]] = []
+    cancel_state = {"armed": False}
+
+    def fake_run(
+        self,
+        *,
+        code_filename_prefix: str,
+        round_index: int,
+        **kwargs,
+    ):
+        del self, kwargs
+        call_log.append((code_filename_prefix, round_index))
+        score = 0.60 + (0.01 * round_index)
+        code_path = tmp_path / f"{code_filename_prefix}_{round_index}.py"
+        code_path.write_text(f"# {code_filename_prefix} round {round_index}\n", encoding="utf-8")
+        artifact = ResultArtifact(
+            status="done",
+            summary=f"{code_filename_prefix} round {round_index}",
+            key_findings=[f"{code_filename_prefix}:{round_index}"],
+            primary_metric="macro_f1",
+            best_system="demo_system",
+            objective_system="demo_system",
+            objective_score=score,
+            system_results=[
+                {"system": "demo_system", "metrics": {"accuracy": score, "macro_f1": score}},
+            ],
+            aggregate_system_results=[
+                {
+                    "system": "demo_system",
+                    "mean_metrics": {"accuracy": score, "macro_f1": score},
+                    "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+                    "min_metrics": {"accuracy": score, "macro_f1": score},
+                    "max_metrics": {"accuracy": score, "macro_f1": score},
+                    "sample_count": 1,
+                },
+            ],
+            acceptance_checks=[
+                {
+                    "criterion": "Record mean and standard deviation for the primary metric.",
+                    "passed": True,
+                    "detail": "ok",
+                    "rule_id": "aggregate_metric_reporting",
+                    "rule_kind": "aggregate_metric_reporting",
+                }
+            ],
+            tables=[],
+            environment={},
+            outputs={},
+        )
+        cancel_state["armed"] = True
+        return f"strategy_{round_index}", str(code_path), artifact
+
+    monkeypatch.setattr(AutoExperimentRunner, "run", fake_run)
+    monkeypatch.setattr(
+        autoresearch_orchestrator.PaperWriter,
+        "write",
+        lambda self, *args, **kwargs: "# resumed checkpoint paper\n",
+    )
+    try:
+        project_id = _create_project(client, "Checkpoint Resume", "Checkpoint resume topic")
+        run = autoresearch_repository.create_run(project_id, "Checkpoint resume topic")
+
+        db = db_module.SessionLocal()
+        try:
+            try:
+                autoresearch_orchestrator.AutoResearchOrchestrator().execute(
+                    db=db,
+                    project_id=project_id,
+                    run_id=run.id,
+                    topic="Checkpoint resume topic",
+                    should_cancel=lambda: cancel_state["armed"],
+                )
+                raise AssertionError("expected cancellation")
+            except autoresearch_orchestrator.AutoResearchExecutionCancelled:
+                pass
+        finally:
+            db.close()
+
+        canceled = autoresearch_repository.load_run(project_id, run.id)
+        assert canceled is not None
+        assert canceled.status == "canceled"
+        running_candidate = next(item for item in canceled.candidates if item.status == "running")
+        assert len(running_candidate.attempts) == 1
+        assert running_candidate.attempts[0].round_index == 1
+        first_candidate_id = running_candidate.id
+
+        cancel_state["armed"] = False
+        db = db_module.SessionLocal()
+        try:
+            resumed = autoresearch_orchestrator.AutoResearchOrchestrator().execute(
+                db=db,
+                project_id=project_id,
+                run_id=run.id,
+                topic="Checkpoint resume topic",
+                execution_action="resume",
+                should_cancel=lambda: False,
+            )
+        finally:
+            db.close()
+
+        assert resumed.status == "done"
+        resumed_candidate = next(item for item in resumed.candidates if item.id == first_candidate_id)
+        assert [item.round_index for item in resumed_candidate.attempts] == [1, 2, 3]
+        assert call_log.count((first_candidate_id, 1)) == 1
+        assert (first_candidate_id, 2) in call_log
+        assert (first_candidate_id, 3) in call_log
     finally:
         client.close()

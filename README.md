@@ -8,6 +8,7 @@ ScholarFlow 是面向大学生的全流程学术论文写作 Agent 系统。
 
 - Phase 7 进行中：导师审阅模式与本地重合度筛查已落地
 - 前后端与核心写作、审稿、导出链路已可运行
+- Auto-research 现在带有 execution plane：job queue、worker 状态机、checkpoint-based `resume/retry/cancel`
 - 仓库现在同时支持本地开发模式和 Docker 全栈部署模式
 
 ## 开发入口
@@ -43,3 +44,4 @@ ScholarFlow 是面向大学生的全流程学术论文写作 Agent 系统。
 - 用户教程：[docs/user-guide.md](docs/user-guide.md)
 - 架构说明：[docs/architecture.md](docs/architecture.md)
 - API 概览：[docs/api-reference.md](docs/api-reference.md)
+- Auto-research 执行平面：[docs/autoresearch-execution-plane.md](docs/autoresearch-execution-plane.md)

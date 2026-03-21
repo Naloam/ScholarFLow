@@ -260,6 +260,81 @@ export type CreateProjectPayload = {
   status?: string;
 };
 
+export type AutoResearchRunStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "canceled";
+
+export type AutoResearchJobAction = "run" | "resume" | "retry";
+
+export type AutoResearchRunRequest = {
+  topic: string;
+  task_family_hint?: "text_classification" | "tabular_classification" | "ir_reranking";
+  docker_image?: string | null;
+  paper_ids?: string[] | null;
+  max_rounds?: number;
+  benchmark?: Record<string, unknown> | null;
+  execution_backend?: Record<string, unknown> | null;
+  auto_search_literature?: boolean;
+  auto_fetch_literature?: boolean;
+};
+
+export type AutoResearchRun = {
+  id: string;
+  project_id: string;
+  topic: string;
+  status: AutoResearchRunStatus;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+};
+
+export type AutoResearchExecutionJob = {
+  id: string;
+  project_id: string;
+  run_id: string;
+  action: AutoResearchJobAction;
+  status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
+  detail?: string | null;
+  enqueued_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  cancellation_requested_at?: string | null;
+  attempt_count: number;
+  worker_id?: string | null;
+  error?: string | null;
+};
+
+export type AutoResearchWorkerState = {
+  worker_id?: string | null;
+  status: "idle" | "starting" | "running" | "stopping";
+  current_job_id?: string | null;
+  current_run_id?: string | null;
+  heartbeat_at?: string | null;
+  processed_jobs: number;
+  queue_depth: number;
+  last_error?: string | null;
+};
+
+export type AutoResearchExecution = {
+  project_id: string;
+  run_id: string;
+  jobs: AutoResearchExecutionJob[];
+  active_job_id?: string | null;
+  cancel_requested: boolean;
+  worker?: AutoResearchWorkerState | null;
+};
+
+export type AutoResearchExecutionCommandResponse = {
+  run_id: string;
+  job_id?: string | null;
+  status: "accepted" | "noop";
+  execution: AutoResearchExecution;
+};
+
 export type GenerateDraftPayload = {
   topic?: string;
   scope?: string;

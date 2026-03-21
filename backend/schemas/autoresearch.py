@@ -17,6 +17,11 @@ BenchmarkKind = Literal[
     "beir_json",
 ]
 ExecutionBackendKind = Literal["auto", "local", "docker", "docker_gpu", "command"]
+AutoResearchJobAction = Literal["run", "resume", "retry"]
+AutoResearchJobStatus = Literal["queued", "leased", "running", "succeeded", "failed", "canceled"]
+AutoResearchWorkerStatus = Literal["idle", "starting", "running", "stopping"]
+AutoResearchCommandStatus = Literal["accepted", "noop"]
+AutoResearchRunStatus = Literal["queued", "running", "done", "failed", "canceled"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -105,6 +110,30 @@ class AutoResearchRunRequest(BaseModel):
     execution_backend: ExecutionBackendSpec | None = None
     auto_search_literature: bool = False
     auto_fetch_literature: bool = False
+
+
+class AutoResearchRunConfig(BaseModel):
+    task_family_hint: TaskFamily | None = None
+    paper_ids: list[str] | None = None
+    max_rounds: int = 3
+    benchmark: BenchmarkSource | None = None
+    execution_backend: ExecutionBackendSpec | None = None
+    auto_search_literature: bool = False
+    auto_fetch_literature: bool = False
+    docker_image: str | None = None
+
+    @classmethod
+    def from_request(cls, payload: AutoResearchRunRequest) -> "AutoResearchRunConfig":
+        return cls(
+            task_family_hint=payload.task_family_hint,
+            paper_ids=payload.paper_ids,
+            max_rounds=payload.max_rounds,
+            benchmark=payload.benchmark,
+            execution_backend=payload.execution_backend,
+            auto_search_literature=payload.auto_search_literature,
+            auto_fetch_literature=payload.auto_fetch_literature,
+            docker_image=payload.docker_image,
+        )
 
 
 class DatasetSpec(BaseModel):
@@ -483,7 +512,8 @@ class AutoResearchRunRead(BaseModel):
     id: str
     project_id: str
     topic: str
-    status: Literal["queued", "running", "done", "failed"]
+    status: AutoResearchRunStatus
+    request: AutoResearchRunConfig | None = None
     task_family: TaskFamily | None = None
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
@@ -508,3 +538,46 @@ class AutoResearchRunRead(BaseModel):
 
 class AutoResearchRunList(BaseModel):
     items: list[AutoResearchRunRead] = Field(default_factory=list)
+
+
+class AutoResearchExecutionJob(BaseModel):
+    id: str
+    project_id: str
+    run_id: str
+    action: AutoResearchJobAction
+    status: AutoResearchJobStatus = "queued"
+    detail: str | None = None
+    enqueued_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    cancellation_requested_at: datetime | None = None
+    attempt_count: int = 0
+    worker_id: str | None = None
+    error: str | None = None
+
+
+class AutoResearchWorkerState(BaseModel):
+    worker_id: str | None = None
+    status: AutoResearchWorkerStatus = "idle"
+    current_job_id: str | None = None
+    current_run_id: str | None = None
+    heartbeat_at: datetime | None = None
+    processed_jobs: int = 0
+    queue_depth: int = 0
+    last_error: str | None = None
+
+
+class AutoResearchRunExecutionRead(BaseModel):
+    project_id: str
+    run_id: str
+    jobs: list[AutoResearchExecutionJob] = Field(default_factory=list)
+    active_job_id: str | None = None
+    cancel_requested: bool = False
+    worker: AutoResearchWorkerState | None = None
+
+
+class AutoResearchExecutionCommandResponse(BaseModel):
+    run_id: str
+    job_id: str | None = None
+    status: AutoResearchCommandStatus = "accepted"
+    execution: AutoResearchRunExecutionRead

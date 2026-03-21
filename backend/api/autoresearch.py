@@ -6,15 +6,15 @@ from sqlalchemy.orm import Session
 from config.db import SessionLocal
 from config.deps import get_db, get_identity, require_project_access
 from schemas.autoresearch import (
+    AutoResearchExecutionCommandResponse,
+    AutoResearchRunConfig,
     AutoResearchRunList,
     AutoResearchRunRead,
     AutoResearchRunRequest,
-    BenchmarkSource,
-    ExecutionBackendSpec,
-    TaskFamily,
+    AutoResearchRunExecutionRead,
 )
 from schemas.common import IdResponse
-from services.autoresearch.orchestrator import AutoResearchOrchestrator
+from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.repository import create_run, list_runs, load_run
 from services.security.audit import write_task_audit_log
 from services.security.auth import AuthIdentity
@@ -26,67 +26,6 @@ router = APIRouter(
 )
 
 
-def _run_autoresearch(
-    project_id: str,
-    run_id: str,
-    topic: str,
-    task_family_hint: TaskFamily | None,
-    paper_ids: list[str] | None,
-    max_rounds: int,
-    benchmark: dict | None,
-    execution_backend: dict | None,
-    auto_search_literature: bool,
-    auto_fetch_literature: bool,
-    docker_image: str | None,
-    user_id: str | None,
-) -> None:
-    write_task_audit_log(
-        SessionLocal,
-        correlation_id=run_id,
-        task_name="autoresearch.run",
-        project_id=project_id,
-        action="running",
-        status_code=102,
-        user_id=user_id,
-        detail=f"topic={topic}",
-    )
-    db = SessionLocal()
-    try:
-        result = AutoResearchOrchestrator().execute(
-            db=db,
-            project_id=project_id,
-            run_id=run_id,
-            topic=topic,
-            task_family_hint=task_family_hint,
-            paper_ids=paper_ids,
-            max_rounds=max_rounds,
-            benchmark_source=BenchmarkSource.model_validate(benchmark) if benchmark else None,
-            execution_backend=(
-                ExecutionBackendSpec.model_validate(execution_backend)
-                if execution_backend
-                else None
-            ),
-            auto_search_literature=auto_search_literature,
-            auto_fetch_literature=auto_fetch_literature,
-            docker_image=docker_image,
-        )
-        status_code = 200 if result.status == "done" else 500
-        action = "done" if result.status == "done" else "failed"
-        detail = result.error or f"task_family={result.task_family}"
-        write_task_audit_log(
-            SessionLocal,
-            correlation_id=run_id,
-            task_name="autoresearch.run",
-            project_id=project_id,
-            action=action,
-            status_code=status_code,
-            user_id=user_id,
-            detail=detail,
-        )
-    finally:
-        db.close()
-
-
 @router.post("/run", response_model=IdResponse)
 def run_auto_research(
     project_id: str,
@@ -94,13 +33,14 @@ def run_auto_research(
     background_tasks: BackgroundTasks,
     identity: AuthIdentity | None = Depends(get_identity),
 ) -> IdResponse:
+    execution_plane = AutoResearchExecutionPlane()
+    request_snapshot = AutoResearchRunConfig.from_request(payload)
     run = create_run(
         project_id,
         payload.topic,
-        payload.docker_image,
-        payload.benchmark,
-        payload.execution_backend,
+        request=request_snapshot,
     )
+    job, _created = execution_plane.enqueue(project_id=project_id, run_id=run.id, action="run")
     write_task_audit_log(
         SessionLocal,
         correlation_id=run.id,
@@ -109,23 +49,9 @@ def run_auto_research(
         action="queued",
         status_code=202,
         user_id=identity.user_id if identity else None,
-        detail=f"topic={payload.topic}",
+        detail=f"job_id={job.id} action=run topic={payload.topic}",
     )
-    background_tasks.add_task(
-        _run_autoresearch,
-        project_id,
-        run.id,
-        payload.topic,
-        payload.task_family_hint,
-        payload.paper_ids,
-        payload.max_rounds,
-        payload.benchmark.model_dump(mode="json") if payload.benchmark else None,
-        payload.execution_backend.model_dump(mode="json") if payload.execution_backend else None,
-        payload.auto_search_literature,
-        payload.auto_fetch_literature,
-        payload.docker_image,
-        identity.user_id if identity else None,
-    )
+    background_tasks.add_task(execution_plane.drain)
     return IdResponse(id=run.id)
 
 
@@ -149,3 +75,122 @@ def get_auto_research_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return run
+
+
+@router.get("/{run_id}/execution", response_model=AutoResearchRunExecutionRead)
+def get_auto_research_execution(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchRunExecutionRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
+
+
+def _queue_existing_run(
+    *,
+    project_id: str,
+    run_id: str,
+    action: str,
+    background_tasks: BackgroundTasks,
+    identity: AuthIdentity | None,
+) -> AutoResearchExecutionCommandResponse:
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    plane = AutoResearchExecutionPlane()
+    if action == "resume" and run.status == "done":
+        execution = plane.get_run_execution(project_id, run_id)
+        latest_job = execution.jobs[-1] if execution.jobs else None
+        return AutoResearchExecutionCommandResponse(
+            run_id=run_id,
+            job_id=latest_job.id if latest_job is not None else None,
+            status="noop",
+            execution=execution,
+        )
+    job, created = plane.enqueue(
+        project_id=project_id,
+        run_id=run_id,
+        action=str(action),
+    )
+    if created:
+        write_task_audit_log(
+            SessionLocal,
+            correlation_id=run_id,
+            task_name="autoresearch.run",
+            project_id=project_id,
+            action="queued",
+            status_code=202,
+            user_id=identity.user_id if identity else None,
+            detail=f"job_id={job.id} action={action} topic={run.topic}",
+        )
+    background_tasks.add_task(plane.drain)
+    execution = plane.get_run_execution(project_id, run_id)
+    return AutoResearchExecutionCommandResponse(
+        run_id=run_id,
+        job_id=job.id,
+        status="accepted" if created else "noop",
+        execution=execution,
+    )
+
+
+@router.post("/{run_id}/resume", response_model=AutoResearchExecutionCommandResponse)
+def resume_auto_research_run(
+    project_id: str,
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    identity: AuthIdentity | None = Depends(get_identity),
+) -> AutoResearchExecutionCommandResponse:
+    del db
+    return _queue_existing_run(
+        project_id=project_id,
+        run_id=run_id,
+        action="resume",
+        background_tasks=background_tasks,
+        identity=identity,
+    )
+
+
+@router.post("/{run_id}/retry", response_model=AutoResearchExecutionCommandResponse)
+def retry_auto_research_run(
+    project_id: str,
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    identity: AuthIdentity | None = Depends(get_identity),
+) -> AutoResearchExecutionCommandResponse:
+    del db
+    return _queue_existing_run(
+        project_id=project_id,
+        run_id=run_id,
+        action="retry",
+        background_tasks=background_tasks,
+        identity=identity,
+    )
+
+
+@router.post("/{run_id}/cancel", response_model=AutoResearchExecutionCommandResponse)
+def cancel_auto_research_run(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchExecutionCommandResponse:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    try:
+        execution = AutoResearchExecutionPlane().request_cancel(project_id=project_id, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    latest_job = execution.jobs[-1] if execution.jobs else None
+    return AutoResearchExecutionCommandResponse(
+        run_id=run_id,
+        job_id=latest_job.id if latest_job is not None else None,
+        status="accepted",
+        execution=execution,
+    )

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from sqlalchemy.orm import Session
 
 from schemas.autoresearch import (
+    AutoResearchJobAction,
     AutoResearchRunRead,
     BenchmarkSource,
     ExecutionBackendSpec,
@@ -15,7 +18,7 @@ from schemas.autoresearch import (
     ResultArtifact,
     TaskFamily,
 )
-from services.autoresearch.benchmarks import build_experiment_spec
+from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec
 from services.autoresearch.ingestion import resolve_benchmark
 from services.autoresearch.literature_pipeline import gather_literature_context
 from services.autoresearch.planner import ResearchPlanner
@@ -23,6 +26,7 @@ from services.autoresearch.repair import ExperimentRepairEngine
 from services.autoresearch.repository import (
     candidate_paper_file_path,
     load_run,
+    load_benchmark_snapshot,
     paper_file_path,
     save_candidate_manifest,
     save_candidate_snapshot,
@@ -33,6 +37,10 @@ from services.autoresearch.runner import AutoExperimentRunner
 from services.autoresearch.writer import PaperWriter
 from services.drafts.repository import create_draft
 from services.projects.repository import set_project_status
+
+
+class AutoResearchExecutionCancelled(RuntimeError):
+    pass
 
 
 class AutoResearchOrchestrator:
@@ -306,6 +314,119 @@ class AutoResearchOrchestrator:
             spec=self.planner.candidate_spec(base_spec, candidate),
         )
 
+    def _raise_if_cancelled(self, should_cancel: Callable[[], bool] | None) -> None:
+        if should_cancel is not None and should_cancel():
+            raise AutoResearchExecutionCancelled("Run canceled by user")
+
+    def _can_resume_from_checkpoint(self, run: AutoResearchRunRead) -> bool:
+        return (
+            run.program is not None
+            and run.plan is not None
+            and run.spec is not None
+            and run.portfolio is not None
+            and bool(run.candidates)
+        )
+
+    def _benchmark_from_checkpoint(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+    ) -> ResolvedBenchmark | None:
+        payload = load_benchmark_snapshot(project_id, run_id)
+        if payload is None:
+            return None
+        raw_source = payload.get("source")
+        raw_task_family = payload.get("task_family")
+        raw_benchmark_payload = payload.get("payload")
+        raw_name = payload.get("benchmark_name")
+        raw_description = payload.get("benchmark_description")
+        if not isinstance(raw_source, dict):
+            return None
+        if not isinstance(raw_task_family, str):
+            return None
+        if not isinstance(raw_benchmark_payload, dict):
+            return None
+        if not isinstance(raw_name, str):
+            return None
+        if not isinstance(raw_description, str):
+            return None
+        return ResolvedBenchmark(
+            source=BenchmarkSource.model_validate(raw_source),
+            task_family=raw_task_family,  # type: ignore[arg-type]
+            payload=raw_benchmark_payload,
+            benchmark_name=raw_name,
+            benchmark_description=raw_description,
+        )
+
+    def _best_attempt_from_history(
+        self,
+        attempts: list[ExperimentAttempt],
+    ) -> ExperimentAttempt | None:
+        best_attempt: ExperimentAttempt | None = None
+        for attempt in attempts:
+            artifact = attempt.artifact
+            if artifact is None or artifact.status != "done":
+                continue
+            if best_attempt is None or self._attempt_preference_key(artifact) > self._attempt_preference_key(
+                best_attempt.artifact
+            ):
+                best_attempt = attempt
+        return best_attempt
+
+    def _retry_candidate(
+        self,
+        candidate: HypothesisCandidate,
+        *,
+        selected: bool,
+    ) -> HypothesisCandidate:
+        return candidate.model_copy(
+            update={
+                "status": "selected" if selected else "planned",
+                "score": None,
+                "attempts": [],
+                "artifact": None,
+                "generated_code_path": None,
+                "paper_path": None,
+                "paper_markdown": None,
+                "selected_round_index": None,
+            }
+        )
+
+    def _retry_portfolio(
+        self,
+        portfolio: PortfolioSummary,
+        candidates: list[HypothesisCandidate],
+    ) -> PortfolioSummary:
+        candidate_rankings = list(portfolio.candidate_rankings) or [candidate.id for candidate in candidates]
+        selected_candidate_id = candidate_rankings[0] if candidate_rankings else None
+        summary = (
+            f"Retry reset the executed portfolio to rerun {len(candidate_rankings)} candidates."
+            if candidate_rankings
+            else "Retry reset the portfolio, but no candidates are available."
+        )
+        return portfolio.model_copy(
+            update={
+                "status": "planned",
+                "candidate_rankings": candidate_rankings,
+                "executed_candidate_ids": [],
+                "selected_candidate_id": selected_candidate_id,
+                "winning_score": None,
+                "decision_summary": summary,
+                "decisions": [],
+            }
+        )
+
+    def _should_skip_candidate(
+        self,
+        candidate: HypothesisCandidate,
+        *,
+        execution_action: AutoResearchJobAction,
+    ) -> bool:
+        if execution_action == "retry":
+            return False
+        return candidate.status in {"done", "failed"}
+
     def _decision_reason(
         self,
         candidate: HypothesisCandidate,
@@ -461,6 +582,41 @@ class AutoResearchOrchestrator:
             )
         return synced
 
+    def _checkpoint_run_state(
+        self,
+        run: AutoResearchRunRead,
+        *,
+        candidates: list[HypothesisCandidate],
+        portfolio: PortfolioSummary,
+        preferred_candidate_id: str | None = None,
+    ) -> AutoResearchRunRead:
+        preferred_candidate = (
+            self._candidate_by_id(candidates, preferred_candidate_id)
+            if preferred_candidate_id is not None
+            else None
+        )
+        snapshot_candidate = preferred_candidate or self._leader_candidate(candidates)
+        return save_run(
+            run.model_copy(
+                update={
+                    "candidates": candidates,
+                    "portfolio": portfolio,
+                    "attempts": snapshot_candidate.attempts if snapshot_candidate else run.attempts,
+                    "artifact": snapshot_candidate.artifact if snapshot_candidate else run.artifact,
+                    "generated_code_path": (
+                        snapshot_candidate.generated_code_path
+                        if snapshot_candidate is not None
+                        else run.generated_code_path
+                    ),
+                    "selected_round_index": (
+                        snapshot_candidate.selected_round_index
+                        if snapshot_candidate is not None
+                        else run.selected_round_index
+                    ),
+                }
+            )
+        )
+
     def execute(
         self,
         *,
@@ -476,30 +632,98 @@ class AutoResearchOrchestrator:
         auto_search_literature: bool = True,
         auto_fetch_literature: bool = False,
         docker_image: str | None = None,
+        execution_action: AutoResearchJobAction = "run",
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AutoResearchRunRead:
         run = load_run(project_id, run_id)
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
 
+        self._raise_if_cancelled(should_cancel)
         set_project_status(db, project_id, "write")
         run = save_run(run.model_copy(update={"status": "running"}))
         try:
             effective_backend = execution_backend or run.execution_backend
             if effective_backend is None and docker_image:
                 effective_backend = ExecutionBackendSpec(docker_image=docker_image)
-            papers, literature, chunk_context = gather_literature_context(
-                db=db,
-                project_id=project_id,
-                topic=topic,
-                paper_ids=paper_ids,
-                auto_search=auto_search_literature,
-                auto_fetch=auto_fetch_literature,
+            self._raise_if_cancelled(should_cancel)
+            restoring_from_checkpoint = (
+                execution_action in {"resume", "retry"} and self._can_resume_from_checkpoint(run)
             )
-            benchmark = resolve_benchmark(
-                topic=topic,
-                task_family_hint=task_family_hint,
-                benchmark_source=benchmark_source,
-            )
+            chunk_context = None
+
+            if restoring_from_checkpoint:
+                benchmark = self._benchmark_from_checkpoint(project_id=project_id, run_id=run_id)
+                if benchmark is None:
+                    benchmark = resolve_benchmark(
+                        topic=topic,
+                        task_family_hint=task_family_hint,
+                        benchmark_source=benchmark_source or run.benchmark,
+                    )
+                literature = list(run.literature)
+                plan = run.plan
+                spec = run.spec
+                program = run.program
+                portfolio = run.portfolio
+                candidates = [candidate.model_copy(deep=True) for candidate in run.candidates]
+                assert plan is not None
+                assert spec is not None
+                assert program is not None
+                assert portfolio is not None
+                if execution_action == "retry":
+                    selected_candidate_id = (
+                        portfolio.candidate_rankings[0]
+                        if portfolio.candidate_rankings
+                        else (candidates[0].id if candidates else None)
+                    )
+                    candidates = [
+                        self._retry_candidate(
+                            candidate,
+                            selected=candidate.id == selected_candidate_id,
+                        )
+                        for candidate in candidates
+                    ]
+                    portfolio = self._retry_portfolio(portfolio, candidates)
+            else:
+                _papers, literature, chunk_context = gather_literature_context(
+                    db=db,
+                    project_id=project_id,
+                    topic=topic,
+                    paper_ids=paper_ids,
+                    auto_search=auto_search_literature,
+                    auto_fetch=auto_fetch_literature,
+                )
+                benchmark = resolve_benchmark(
+                    topic=topic,
+                    task_family_hint=task_family_hint,
+                    benchmark_source=benchmark_source,
+                )
+                self._raise_if_cancelled(should_cancel)
+                plan = self.planner.plan(topic, benchmark.task_family, literature)
+                if not plan.experiment_outline:
+                    plan.experiment_outline = [
+                        "Pull or instantiate a benchmark snapshot and freeze train/test partitions.",
+                        "Run baseline and candidate systems.",
+                        "Summarize metrics and environment metadata.",
+                    ]
+                plan.experiment_outline[0] = (
+                    "Pull a benchmark snapshot, validate its schema, and freeze train/test partitions."
+                    if benchmark.source.kind != "builtin"
+                    else "Instantiate the selected benchmark and freeze train/test partitions."
+                )
+                spec = build_experiment_spec(plan.task_family, benchmark)
+                program = self.planner.build_program(
+                    run_id=run_id,
+                    plan=plan,
+                    benchmark_name=benchmark.benchmark_name,
+                )
+                candidates, portfolio = self.planner.build_portfolio(
+                    program=program,
+                    plan=plan,
+                    spec=spec,
+                )
+
+            self._raise_if_cancelled(should_cancel)
             benchmark_snapshot_path = save_benchmark_snapshot(
                 project_id,
                 run_id,
@@ -512,29 +736,6 @@ class AutoResearchOrchestrator:
                 },
             )
 
-            plan = self.planner.plan(topic, benchmark.task_family, literature)
-            if not plan.experiment_outline:
-                plan.experiment_outline = [
-                    "Pull or instantiate a benchmark snapshot and freeze train/test partitions.",
-                    "Run baseline and candidate systems.",
-                    "Summarize metrics and environment metadata.",
-                ]
-            plan.experiment_outline[0] = (
-                "Pull a benchmark snapshot, validate its schema, and freeze train/test partitions."
-                if benchmark.source.kind != "builtin"
-                else "Instantiate the selected benchmark and freeze train/test partitions."
-            )
-            spec = build_experiment_spec(plan.task_family, benchmark)
-            program = self.planner.build_program(
-                run_id=run_id,
-                plan=plan,
-                benchmark_name=benchmark.benchmark_name,
-            )
-            candidates, portfolio = self.planner.build_portfolio(
-                program=program,
-                plan=plan,
-                spec=spec,
-            )
             candidates = [
                 self._persist_candidate(
                     project_id=project_id,
@@ -545,11 +746,12 @@ class AutoResearchOrchestrator:
                 )
                 for candidate in candidates
             ]
+            leader = self._leader_candidate(candidates)
             portfolio = portfolio.model_copy(
                 update={
                     "decisions": self._decision_records(
                         candidates,
-                        winner=None,
+                        winner=leader,
                         benchmark_name=benchmark.benchmark_name,
                         final=False,
                     )
@@ -561,32 +763,52 @@ class AutoResearchOrchestrator:
                 candidates=candidates,
                 decisions=portfolio.decisions,
             )
-            run = save_run(
-                run.model_copy(
-                    update={
-                        "task_family": plan.task_family,
-                        "benchmark": benchmark.source,
-                        "execution_backend": effective_backend,
-                        "program": program,
-                        "plan": plan,
-                        "spec": spec,
-                        "literature": literature,
-                        "candidates": candidates,
-                        "portfolio": portfolio,
+            run_updates = {
+                "task_family": plan.task_family,
+                "benchmark": benchmark.source,
+                "execution_backend": effective_backend,
+                "program": program,
+                "plan": plan,
+                "spec": spec,
+                "literature": literature,
+                "candidates": candidates,
+                "portfolio": portfolio,
+                "error": None,
+            }
+            if execution_action == "retry":
+                run_updates.update(
+                    {
+                        "attempts": [],
+                        "artifact": None,
+                        "generated_code_path": None,
+                        "paper_markdown": None,
+                        "paper_path": None,
+                        "paper_draft_version": None,
+                        "selected_round_index": None,
                     }
                 )
-            )
+            run = save_run(run.model_copy(update=run_updates))
 
             candidate_order = list(portfolio.candidate_rankings)
             for candidate_id in candidate_order:
+                self._raise_if_cancelled(should_cancel)
                 candidate = self._candidate_by_id(candidates, candidate_id)
                 if candidate is None:
+                    continue
+                if self._should_skip_candidate(candidate, execution_action=execution_action):
                     continue
                 candidate_plan = self.planner.candidate_plan(plan, candidate)
                 candidate_spec = self.planner.candidate_spec(spec, candidate)
                 executed_ids = list(portfolio.executed_candidate_ids)
                 if candidate.id not in executed_ids:
                     executed_ids.append(candidate.id)
+                attempts = (
+                    list(candidate.attempts)
+                    if execution_action == "resume" and candidate.status == "running"
+                    else []
+                )
+                best_attempt = self._best_attempt_from_history(attempts)
+                start_round = len(attempts) + 1 if attempts else 1
                 candidates = self._update_candidate(
                     candidates,
                     candidate.id,
@@ -623,24 +845,21 @@ class AutoResearchOrchestrator:
                     candidates=candidates,
                     decisions=portfolio.decisions,
                 )
-                run = save_run(
-                    run.model_copy(
-                        update={
-                            "candidates": candidates,
-                            "portfolio": portfolio,
-                        }
-                    )
+                run = self._checkpoint_run_state(
+                    run,
+                    candidates=candidates,
+                    portfolio=portfolio,
+                    preferred_candidate_id=candidate.id,
                 )
                 candidates = run.candidates
 
-                attempts: list[ExperimentAttempt] = []
-                best_attempt: ExperimentAttempt | None = None
                 total_rounds = max(
                     1,
                     min(max_rounds, max(1, len(candidate_spec.search_strategies))),
                 )
 
-                for round_index in range(1, total_rounds + 1):
+                for round_index in range(start_round, total_rounds + 1):
+                    self._raise_if_cancelled(should_cancel)
                     goal = self._attempt_goal(attempts, round_index)
                     repair_summary = None
                     if goal == "repair_previous_failure" and attempts:
@@ -724,6 +943,56 @@ class AutoResearchOrchestrator:
                         > self._attempt_preference_key(best_attempt.artifact)
                     ):
                         best_attempt = attempt
+                    best_artifact = (
+                        best_attempt.artifact if best_attempt is not None else attempts[-1].artifact
+                    )
+                    best_code_path = (
+                        best_attempt.code_path if best_attempt is not None else attempts[-1].code_path
+                    )
+                    best_score = (
+                        self._artifact_score(best_attempt.artifact)
+                        if best_attempt is not None and best_attempt.artifact is not None
+                        else None
+                    )
+                    candidates = self._update_candidate(
+                        candidates,
+                        candidate.id,
+                        status="running",
+                        attempts=attempts,
+                        artifact=best_artifact,
+                        generated_code_path=best_code_path,
+                        selected_round_index=best_attempt.round_index if best_attempt else None,
+                        score=(
+                            best_score
+                            if best_score is not None and best_score != float("-inf")
+                            else None
+                        ),
+                    )
+                    checkpoint_candidate = self._candidate_by_id(candidates, candidate.id)
+                    if checkpoint_candidate is not None:
+                        candidates = self._replace_candidate(
+                            candidates,
+                            self._persist_candidate(
+                                project_id=project_id,
+                                run_id=run_id,
+                                base_plan=plan,
+                                base_spec=spec,
+                                candidate=checkpoint_candidate,
+                            ),
+                        )
+                    candidates = self._sync_candidate_manifests(
+                        project_id=project_id,
+                        run_id=run_id,
+                        candidates=candidates,
+                        decisions=portfolio.decisions,
+                    )
+                    run = self._checkpoint_run_state(
+                        run,
+                        candidates=candidates,
+                        portfolio=portfolio,
+                        preferred_candidate_id=candidate.id,
+                    )
+                    candidates = run.candidates
 
                 if best_attempt is None or best_attempt.artifact is None:
                     candidates = self._update_candidate(
@@ -807,6 +1076,7 @@ class AutoResearchOrchestrator:
                 candidates = run.candidates
 
             winner = self._leader_candidate(candidates)
+            self._raise_if_cancelled(should_cancel)
             if winner is None or winner.artifact is None:
                 latest_candidate = (
                     self._candidate_by_id(candidates, portfolio.executed_candidate_ids[-1])
@@ -957,6 +1227,16 @@ class AutoResearchOrchestrator:
                 )
             )
             return completed
+        except AutoResearchExecutionCancelled as exc:
+            canceled = save_run(
+                run.model_copy(
+                    update={
+                        "status": "canceled",
+                        "error": str(exc),
+                    }
+                )
+            )
+            raise AutoResearchExecutionCancelled(canceled.error or str(exc)) from exc
         except Exception as exc:
             failed = save_run(
                 run.model_copy(

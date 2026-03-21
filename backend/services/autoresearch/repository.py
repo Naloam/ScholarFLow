@@ -11,6 +11,7 @@ from schemas.autoresearch import (
     ExecutionBackendSpec,
     ExperimentSpec,
     HypothesisCandidate,
+    AutoResearchRunConfig,
     PortfolioDecisionRecord,
     ResearchPlan,
 )
@@ -65,22 +66,35 @@ def _write_json(path: Path, payload: object) -> None:
     )
 
 
+def _read_json(path: Path) -> object | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def create_run(
     project_id: str,
     topic: str,
+    request: AutoResearchRunConfig | None = None,
     docker_image: str | None = None,
     benchmark: BenchmarkSource | None = None,
     execution_backend: ExecutionBackendSpec | None = None,
 ) -> AutoResearchRunRead:
     now = _utcnow()
+    effective_request = request or AutoResearchRunConfig(
+        benchmark=benchmark,
+        execution_backend=execution_backend,
+        docker_image=docker_image,
+    )
     run = AutoResearchRunRead(
         id=f"arun_{uuid4().hex}",
         project_id=project_id,
         topic=topic,
         status="queued",
-        benchmark=benchmark,
-        execution_backend=execution_backend,
-        docker_image=docker_image,
+        request=effective_request,
+        benchmark=effective_request.benchmark,
+        execution_backend=effective_request.execution_backend,
+        docker_image=effective_request.docker_image,
         created_at=now,
         updated_at=now,
     )
@@ -159,6 +173,11 @@ def save_benchmark_snapshot(project_id: str, run_id: str, payload: dict) -> str:
     path = run_dir(project_id, run_id) / BENCHMARK_FILENAME
     _write_json(path, payload)
     return str(path)
+
+
+def load_benchmark_snapshot(project_id: str, run_id: str) -> dict | None:
+    payload = _read_json(_run_path(project_id, run_id) / BENCHMARK_FILENAME)
+    return payload if isinstance(payload, dict) else None
 
 
 def save_candidate_snapshot(

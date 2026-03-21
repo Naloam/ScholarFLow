@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import type {
   AnalysisSummary,
+  AutoResearchOperatorConsole,
   AuthConfig,
   AuthUser,
   BetaSummary,
@@ -61,6 +62,7 @@ const emptyWorkspaceSlice = {
   focusedText: "",
   evidence: [] as EvidenceItem[],
   reviews: [] as ReviewReport[],
+  autoResearchConsole: null as AutoResearchOperatorConsole | null,
   analysis: null as AnalysisSummary | null,
   betaSummary: null as BetaSummary | null,
   mentorAccess: [] as MentorAccessEntry[],
@@ -86,6 +88,7 @@ type WorkspaceState = {
   focusedText: string;
   evidence: EvidenceItem[];
   reviews: ReviewReport[];
+  autoResearchConsole: AutoResearchOperatorConsole | null;
   analysis: AnalysisSummary | null;
   betaSummary: BetaSummary | null;
   mentorAccess: MentorAccessEntry[];
@@ -108,13 +111,21 @@ type WorkspaceState = {
   }) => Promise<void>;
   loadProject: (projectId: string) => Promise<void>;
   refreshProject: () => Promise<void>;
+  refreshAutoResearchConsole: (runId?: string) => Promise<void>;
   selectDraft: (version: number) => void;
+  selectAutoResearchRun: (runId: string) => Promise<void>;
   setEditorContent: (content: string) => void;
   setFocusedText: (content: string) => void;
   setConnectionState: (state: ConnectionState) => void;
   applyProgressSnapshot: (snapshot: ProjectProgressSnapshot) => void;
   saveDraft: () => Promise<void>;
   generateDraft: () => Promise<void>;
+  startAutoResearch: () => Promise<void>;
+  resumeAutoResearch: () => Promise<void>;
+  retryAutoResearch: () => Promise<void>;
+  cancelAutoResearch: () => Promise<void>;
+  exportAutoResearchPublish: () => Promise<void>;
+  downloadAutoResearchPublish: () => Promise<void>;
   runReview: () => Promise<void>;
   exportDraft: (format: "markdown" | "latex" | "word" | "docx") => Promise<void>;
   downloadLatestExport: () => Promise<void>;
@@ -340,13 +351,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     async loadProject(projectId) {
       set({ working: true, notice: "Loading project..." });
       try {
-        const [projectResult, statusResult, draftsResult, evidenceResult, reviewsResult, analysisResult, betaResult, mentorAccessResult, mentorFeedbackResult, projectListResult] =
+        const [projectResult, statusResult, draftsResult, evidenceResult, reviewsResult, consoleResult, analysisResult, betaResult, mentorAccessResult, mentorFeedbackResult, projectListResult] =
           await Promise.allSettled([
             api.getProject(projectId),
             api.getProjectStatus(projectId),
             api.listDrafts(projectId),
             api.listEvidence(projectId),
             api.listReviews(projectId),
+            api.getAutoResearchOperatorConsole(projectId),
             api.getAnalysisSummary(projectId),
             api.getBetaSummary(projectId),
             api.listMentorAccess(projectId),
@@ -380,6 +392,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           focusedText: "",
           evidence: evidenceResult.status === "fulfilled" ? evidenceResult.value : [],
           reviews: reviewsResult.status === "fulfilled" ? reviewsResult.value : [],
+          autoResearchConsole: consoleResult.status === "fulfilled" ? consoleResult.value : null,
           analysis: analysisResult.status === "fulfilled" ? analysisResult.value : null,
           betaSummary: betaResult.status === "fulfilled" ? betaResult.value : null,
           mentorAccess: mentorAccessResult.status === "fulfilled" ? mentorAccessResult.value : [],
@@ -400,11 +413,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        const [status, drafts, evidence, reviews, analysis, betaSummary, mentorAccess, mentorFeedback] = await Promise.all([
+        const selectedRunId = get().autoResearchConsole?.selected_run_id ?? undefined;
+        const [status, drafts, evidence, reviews, autoResearchConsole, analysis, betaSummary, mentorAccess, mentorFeedback] = await Promise.all([
           api.getProjectStatus(projectId),
           api.listDrafts(projectId),
           api.listEvidence(projectId),
           api.listReviews(projectId),
+          api.getAutoResearchOperatorConsole(projectId, selectedRunId),
           api.getAnalysisSummary(projectId),
           api.getBetaSummary(projectId),
           api.listMentorAccess(projectId),
@@ -432,6 +447,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           editorContent: preserveDirty ? get().editorContent : selectedDraft?.content ?? "",
           evidence,
           reviews,
+          autoResearchConsole,
           analysis,
           betaSummary,
           mentorAccess,
@@ -440,6 +456,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         });
       } catch (error) {
         handleActionError(error, "Refresh failed");
+      }
+    },
+
+    async refreshAutoResearchConsole(runId) {
+      const projectId = get().currentProjectId;
+      if (!projectId) {
+        return;
+      }
+
+      try {
+        const console = await api.getAutoResearchOperatorConsole(
+          projectId,
+          runId ?? get().autoResearchConsole?.selected_run_id ?? undefined,
+        );
+        set({ autoResearchConsole: console });
+      } catch (error) {
+        handleActionError(error, "Auto-research console refresh failed");
       }
     },
 
@@ -455,6 +488,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         focusedText: "",
         notice: `Draft v${version} selected`,
       });
+    },
+
+    async selectAutoResearchRun(runId) {
+      const projectId = get().currentProjectId;
+      if (!projectId) {
+        return;
+      }
+
+      set({ working: true, notice: `Loading auto-research run ${runId}...` });
+      try {
+        const console = await api.getAutoResearchOperatorConsole(projectId, runId);
+        set({
+          autoResearchConsole: console,
+          notice: `Auto-research run ${runId} loaded`,
+        });
+      } catch (error) {
+        handleActionError(error, "Load auto-research run failed");
+      } finally {
+        set({ working: false });
+      }
     },
 
     setEditorContent(content) {
@@ -504,6 +557,134 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       if (shouldRefresh) {
         void get().refreshProject();
+      }
+    },
+
+    async startAutoResearch() {
+      const { currentProjectId, project } = get();
+      if (!currentProjectId || !project) {
+        set({ notice: "Create or open a project before starting auto-research" });
+        return;
+      }
+
+      set({ working: true, notice: "Starting auto-research run..." });
+      try {
+        const response = await api.startAutoResearch(currentProjectId, {
+          topic: project.topic ?? project.title,
+        });
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(response.id);
+        set({ notice: `Auto-research run ${response.id} queued` });
+      } catch (error) {
+        handleActionError(error, "Start auto-research failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async resumeAutoResearch() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before resume" });
+        return;
+      }
+
+      set({ working: true, notice: `Resuming auto-research run ${runId}...` });
+      try {
+        await api.resumeAutoResearch(currentProjectId, runId);
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Resume requested for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Resume auto-research failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async retryAutoResearch() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before retry" });
+        return;
+      }
+
+      set({ working: true, notice: `Retrying auto-research run ${runId}...` });
+      try {
+        await api.retryAutoResearch(currentProjectId, runId);
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Retry requested for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Retry auto-research failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async cancelAutoResearch() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before cancel" });
+        return;
+      }
+
+      set({ working: true, notice: `Canceling auto-research run ${runId}...` });
+      try {
+        await api.cancelAutoResearch(currentProjectId, runId);
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Cancel requested for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Cancel auto-research failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async exportAutoResearchPublish() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before exporting publish assets" });
+        return;
+      }
+
+      set({ working: true, notice: `Exporting publish package for ${runId}...` });
+      try {
+        const exportResult = await api.exportAutoResearchPublishPackage(currentProjectId, runId);
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Publish package ${exportResult.file_name} ready` });
+      } catch (error) {
+        handleActionError(error, "Publish export failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async downloadAutoResearchPublish() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before download" });
+        return;
+      }
+
+      set({ working: true, notice: "Preparing publish bundle download..." });
+      try {
+        const fileName = await api.downloadAutoResearchPublishPackage(currentProjectId, runId);
+        set({ notice: `Downloaded ${fileName}` });
+      } catch (error) {
+        handleActionError(error, "Publish download failed");
+      } finally {
+        set({ working: false });
       }
     },
 

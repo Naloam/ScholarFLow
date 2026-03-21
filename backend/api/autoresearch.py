@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from schemas.autoresearch import (
     AutoResearchBundleIndexRead,
     AutoResearchCandidateRegistryRead,
     AutoResearchExecutionCommandResponse,
+    AutoResearchOperatorConsoleRead,
     AutoResearchPublishExportRead,
     AutoResearchPublishPackageRead,
     AutoResearchRunConfig,
@@ -22,6 +23,7 @@ from schemas.autoresearch import (
     AutoResearchRunExecutionRead,
 )
 from schemas.common import IdResponse
+from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.review_publish import (
     build_publish_package,
@@ -84,6 +86,16 @@ def list_auto_research_runs(
 ) -> AutoResearchRunList:
     del db
     return AutoResearchRunList(items=list_runs(project_id))
+
+
+@router.get("/console", response_model=AutoResearchOperatorConsoleRead)
+def get_auto_research_operator_console(
+    project_id: str,
+    run_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchOperatorConsoleRead:
+    del db
+    return build_operator_console(project_id, run_id=run_id)
 
 
 @router.get("/{run_id}", response_model=AutoResearchRunRead)

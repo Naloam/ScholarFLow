@@ -16,6 +16,7 @@ import api.review as review_api
 import main as main_module
 import models  # noqa: F401
 import services.autoresearch.codegen as autoresearch_codegen
+from services.autoresearch.execution import AutoResearchExecutionPlane
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_pipeline as literature_pipeline
 import services.autoresearch.orchestrator as autoresearch_orchestrator
@@ -751,6 +752,97 @@ def test_autoresearch_publish_export_materializes_archive(
         download_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
         assert download_response.status_code == 200
         assert download_response.headers["content-disposition"].endswith('publish_bundle.zip"')
+    finally:
+        client.close()
+
+
+def test_autoresearch_operator_console_aggregates_current_run_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 6 Console Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        export_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/publish/export")
+        assert export_response.status_code == 200
+
+        console_response = client.get(f"/api/projects/{project_id}/auto-research/console")
+        assert console_response.status_code == 200
+        console = console_response.json()
+        assert console["project_id"] == project_id
+        assert console["run_count"] == 1
+        assert console["latest_run_id"] == run_id
+        assert console["selected_run_id"] == run_id
+        assert console["actions"]["start_run"] is True
+        assert len(console["runs"]) == 1
+        assert console["runs"][0]["run_id"] == run_id
+        assert console["runs"][0]["status"] == "done"
+        assert console["runs"][0]["selected_count"] == 1
+        assert console["runs"][0]["failed_count"] == 0
+        assert console["runs"][0]["publish_status"] == "revision_required"
+
+        current = console["current_run"]
+        assert current["run"]["id"] == run_id
+        assert current["execution"]["active_job_id"] is None
+        assert current["registry"]["run_id"] == run_id
+        assert current["registry"]["lineage"]["edges"]
+        assert current["registry_views"]["counts"]["selected"] == 1
+        assert current["review"]["overall_status"] == "needs_revision"
+        assert current["publish"]["status"] == "revision_required"
+        assert current["actions"]["resume"] is False
+        assert current["actions"]["retry"] is True
+        assert current["actions"]["cancel"] is False
+        assert current["actions"]["export_publish"] is True
+        assert current["actions"]["download_publish"] is True
+    finally:
+        client.close()
+
+
+def test_autoresearch_operator_console_exposes_cancel_for_queued_run(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 6 Queued Console Project",
+            "Queued auto research control path",
+        )
+        run = autoresearch_repository.create_run(project_id, "Queued auto research control path")
+        AutoResearchExecutionPlane().enqueue(project_id=project_id, run_id=run.id, action="run")
+
+        console_response = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"run_id": run.id},
+        )
+        assert console_response.status_code == 200
+        console = console_response.json()
+        assert console["run_count"] == 1
+        assert console["selected_run_id"] == run.id
+        assert console["runs"][0]["latest_job_status"] == "queued"
+        assert console["runs"][0]["active_job_id"] is None
+
+        current = console["current_run"]
+        assert current["run"]["status"] == "queued"
+        assert current["review"] is None
+        assert current["publish"] is None
+        assert current["actions"]["resume"] is True
+        assert current["actions"]["retry"] is False
+        assert current["actions"]["cancel"] is True
+        assert current["actions"]["export_publish"] is False
+        assert current["actions"]["download_publish"] is False
     finally:
         client.close()
 

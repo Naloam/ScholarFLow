@@ -4,6 +4,7 @@ import type {
   AnalysisSummary,
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
+  AutoResearchOperatorConsole,
   AutoResearchPublishExport,
   AutoResearchPublishPackage,
   AutoResearchRun,
@@ -314,6 +315,14 @@ export const api = {
 
   getAutoResearchExecution(projectId: string, runId: string): Promise<AutoResearchExecution> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/execution`);
+  },
+
+  getAutoResearchOperatorConsole(
+    projectId: string,
+    runId?: string,
+  ): Promise<AutoResearchOperatorConsole> {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return request(`/api/projects/${projectId}/auto-research/console${query}`);
   },
 
   getAutoResearchRegistry(projectId: string, runId: string): Promise<AutoResearchRunRegistry> {

@@ -6,6 +6,7 @@ import { WizardPanel } from "../components/Wizard/WizardPanel";
 import { FileManager } from "../components/FileManager/FileManager";
 import { EditorSurface } from "../components/Editor/EditorSurface";
 import { EvidencePanel } from "../components/EvidencePanel/EvidencePanel";
+import { OperatorConsolePanel } from "../components/OperatorConsole/OperatorConsolePanel";
 import { ReviewPanel } from "../components/ReviewPanel/ReviewPanel";
 import { StatusBar } from "../components/Status/StatusBar";
 import { VersionDiffPanel } from "../components/VersionDiffPanel/VersionDiffPanel";
@@ -24,6 +25,7 @@ export function WorkspacePage() {
   const focusedText = useWorkspaceStore((state) => state.focusedText);
   const evidence = useWorkspaceStore((state) => state.evidence);
   const reviews = useWorkspaceStore((state) => state.reviews);
+  const autoResearchConsole = useWorkspaceStore((state) => state.autoResearchConsole);
   const analysis = useWorkspaceStore((state) => state.analysis);
   const betaSummary = useWorkspaceStore((state) => state.betaSummary);
   const mentorAccess = useWorkspaceStore((state) => state.mentorAccess);
@@ -47,6 +49,13 @@ export function WorkspacePage() {
   const setFocusedText = useWorkspaceStore((state) => state.setFocusedText);
   const saveDraft = useWorkspaceStore((state) => state.saveDraft);
   const generateDraft = useWorkspaceStore((state) => state.generateDraft);
+  const startAutoResearch = useWorkspaceStore((state) => state.startAutoResearch);
+  const selectAutoResearchRun = useWorkspaceStore((state) => state.selectAutoResearchRun);
+  const resumeAutoResearch = useWorkspaceStore((state) => state.resumeAutoResearch);
+  const retryAutoResearch = useWorkspaceStore((state) => state.retryAutoResearch);
+  const cancelAutoResearch = useWorkspaceStore((state) => state.cancelAutoResearch);
+  const exportAutoResearchPublish = useWorkspaceStore((state) => state.exportAutoResearchPublish);
+  const downloadAutoResearchPublish = useWorkspaceStore((state) => state.downloadAutoResearchPublish);
   const runReview = useWorkspaceStore((state) => state.runReview);
   const exportDraft = useWorkspaceStore((state) => state.exportDraft);
   const downloadLatestExport = useWorkspaceStore((state) => state.downloadLatestExport);
@@ -73,7 +82,7 @@ export function WorkspacePage() {
       <header className="app-header">
         <div>
           <p className="eyebrow">ScholarFlow</p>
-          <h1>Phase 7 Workspace</h1>
+          <h1>Operator Console Workspace</h1>
         </div>
         <div className="header-meta">
           <span className="meta-chip" data-testid="header-phase-chip">
@@ -134,6 +143,18 @@ export function WorkspacePage() {
         </aside>
 
         <section className="workspace-column workspace-column-center">
+          <OperatorConsolePanel
+            consoleState={autoResearchConsole}
+            projectTopic={project?.topic ?? project?.title}
+            disabled={workspaceBusy || authLocked}
+            onStartRun={startAutoResearch}
+            onSelectRun={selectAutoResearchRun}
+            onResume={resumeAutoResearch}
+            onRetry={retryAutoResearch}
+            onCancel={cancelAutoResearch}
+            onExportPublish={exportAutoResearchPublish}
+            onDownloadPublish={downloadAutoResearchPublish}
+          />
           <EditorSurface
             content={editorContent}
             canEdit={Boolean(currentProjectId) && !projectReadOnly}

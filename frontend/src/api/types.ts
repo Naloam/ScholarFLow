@@ -654,6 +654,59 @@ export type AutoResearchPublishExport = {
   download_ready: boolean;
 };
 
+export type AutoResearchOperatorProjectActions = {
+  start_run: boolean;
+};
+
+export type AutoResearchOperatorRunActions = {
+  resume: boolean;
+  retry: boolean;
+  cancel: boolean;
+  export_publish: boolean;
+  download_publish: boolean;
+};
+
+export type AutoResearchOperatorRunSummary = {
+  run_id: string;
+  topic: string;
+  status: AutoResearchRunStatus;
+  created_at: string;
+  updated_at: string;
+  selected_candidate_id?: string | null;
+  candidate_count: number;
+  selected_count: number;
+  active_count: number;
+  failed_count: number;
+  eliminated_count: number;
+  latest_job_status?: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled" | null;
+  active_job_id?: string | null;
+  cancel_requested: boolean;
+  publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
+  publish_ready: boolean;
+  blocker_count: number;
+  revision_count: number;
+};
+
+export type AutoResearchOperatorRunDetail = {
+  run: AutoResearchRun;
+  execution: AutoResearchExecution;
+  registry: AutoResearchRunRegistry;
+  registry_views: AutoResearchRunRegistryViews;
+  review?: AutoResearchRunReview | null;
+  publish?: AutoResearchPublishPackage | null;
+  actions: AutoResearchOperatorRunActions;
+};
+
+export type AutoResearchOperatorConsole = {
+  project_id: string;
+  run_count: number;
+  latest_run_id?: string | null;
+  selected_run_id?: string | null;
+  actions: AutoResearchOperatorProjectActions;
+  runs: AutoResearchOperatorRunSummary[];
+  current_run?: AutoResearchOperatorRunDetail | null;
+};
+
 export type GenerateDraftPayload = {
   topic?: string;
   scope?: string;

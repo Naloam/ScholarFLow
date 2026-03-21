@@ -871,6 +871,59 @@ class AutoResearchPublishExportRead(BaseModel):
     download_ready: bool = True
 
 
+class AutoResearchOperatorProjectActionsRead(BaseModel):
+    start_run: bool = True
+
+
+class AutoResearchOperatorRunActionsRead(BaseModel):
+    resume: bool = False
+    retry: bool = False
+    cancel: bool = False
+    export_publish: bool = False
+    download_publish: bool = False
+
+
+class AutoResearchOperatorRunSummaryRead(BaseModel):
+    run_id: str
+    topic: str
+    status: AutoResearchRunStatus
+    created_at: datetime
+    updated_at: datetime
+    selected_candidate_id: str | None = None
+    candidate_count: int = 0
+    selected_count: int = 0
+    active_count: int = 0
+    failed_count: int = 0
+    eliminated_count: int = 0
+    latest_job_status: AutoResearchJobStatus | None = None
+    active_job_id: str | None = None
+    cancel_requested: bool = False
+    publish_status: AutoResearchPublishStatus | None = None
+    publish_ready: bool = False
+    blocker_count: int = 0
+    revision_count: int = 0
+
+
+class AutoResearchOperatorRunDetailRead(BaseModel):
+    run: AutoResearchRunRead
+    execution: AutoResearchRunExecutionRead
+    registry: AutoResearchRunRegistryRead
+    registry_views: AutoResearchRunRegistryViewsRead
+    review: AutoResearchRunReviewRead | None = None
+    publish: AutoResearchPublishPackageRead | None = None
+    actions: AutoResearchOperatorRunActionsRead
+
+
+class AutoResearchOperatorConsoleRead(BaseModel):
+    project_id: str
+    run_count: int = 0
+    latest_run_id: str | None = None
+    selected_run_id: str | None = None
+    actions: AutoResearchOperatorProjectActionsRead
+    runs: list[AutoResearchOperatorRunSummaryRead] = Field(default_factory=list)
+    current_run: AutoResearchOperatorRunDetailRead | None = None
+
+
 class AutoResearchExecutionJob(BaseModel):
     id: str
     project_id: str

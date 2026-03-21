@@ -657,6 +657,8 @@ def test_autoresearch_review_report_is_grounded_in_persisted_run_state(
         assert review["unsupported_claim_risk"] == "medium"
         assert review["evidence"]["candidate_count"] == 3
         assert review["evidence"]["executed_candidate_count"] == 3
+        assert review["citation_coverage"]["cited_literature_count"] == 0
+        assert review["citation_coverage"]["invalid_citation_indices"] == []
         assert review["evidence"]["seed_count"] == len(
             client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()["spec"]["seeds"]
         )
@@ -2031,6 +2033,138 @@ def test_autoresearch_auto_searches_literature_when_project_has_no_papers(
         papers = client.get(f"/api/projects/{project_id}/papers")
         assert papers.status_code == 200
         assert len(papers.json()) >= 1
+    finally:
+        client.close()
+
+
+def test_autoresearch_review_resolves_persisted_literature_citations(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-lit-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-lit-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Citation Hardening Project",
+            "Compact reranking for cs retrieval",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert "## 9. References" in run["paper_markdown"]
+        assert "[1]" in run["paper_markdown"]
+        assert "[2]" in run["paper_markdown"]
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["overall_status"] == "ready"
+        assert review["unsupported_claim_risk"] == "low"
+        assert review["citation_coverage"]["literature_item_count"] >= 2
+        assert review["citation_coverage"]["cited_literature_count"] >= 2
+        assert review["citation_coverage"]["invalid_citation_indices"] == []
+        assert review["citation_coverage"]["has_related_work_section"] is True
+        assert review["citation_coverage"]["has_references_section"] is True
+        assert not any(
+            item["category"] in {"citation", "context", "provenance"} and item["severity"] != "info"
+            for item in review["findings"]
+        )
+    finally:
+        client.close()
+
+
+def test_autoresearch_review_flags_invalid_citation_provenance(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-lit-1",
+                    title="Compact Retrieval Signals",
+                    abstract="This paper studies compact retrieval signals under reproducible settings.",
+                    year=2024,
+                    source="semantic_scholar",
+                )
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Citation Provenance Project",
+            "Compact reranking for cs retrieval",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.paper_markdown is not None
+        autoresearch_repository.save_run(
+            run.model_copy(
+                update={
+                    "paper_markdown": run.paper_markdown
+                    + "\n\nAdditional unsupported prior-work claim [99].\n"
+                }
+            )
+        )
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["overall_status"] == "blocked"
+        assert review["unsupported_claim_risk"] == "high"
+        assert review["citation_coverage"]["invalid_citation_indices"] == [99]
+        assert any(
+            item["category"] == "provenance"
+            and "persisted run literature" in item["summary"].lower()
+            for item in review["findings"]
+        )
+        assert any(
+            item["title"] == "Repair citation provenance against persisted literature state"
+            for item in review["revision_plan"]
+        )
     finally:
         client.close()
 

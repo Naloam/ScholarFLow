@@ -32,6 +32,21 @@ REVIEW_FILENAME = "review.json"
 PUBLISH_PACKAGE_FILENAME = "publish_package.json"
 PUBLISH_ARCHIVE_FILENAME = "publish_bundle.zip"
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
+_REFERENCE_SECTION_MARKERS = ("references", "bibliography")
+_ALWAYS_CITED_SECTION_MARKERS = ("related work", "prior work", "background")
+_CONTEXTUAL_SECTION_MARKERS = ("introduction", "discussion", "conclusion", "limitations")
+_CONTEXTUAL_CITATION_CUES = (
+    "prior work",
+    "related work",
+    "background",
+    "literature",
+    "previous",
+    "existing",
+    "retrieved work",
+    "papers",
+    "studies",
+    "reported",
+)
 
 
 def _utcnow() -> datetime:
@@ -92,32 +107,56 @@ def _markdown_sections(markdown: str) -> list[tuple[str, str]]:
     return sections
 
 
-def _sections_without_citations(markdown: str) -> tuple[list[str], bool]:
+def _is_reference_section(title: str) -> bool:
+    lowered = title.lower()
+    return any(marker in lowered for marker in _REFERENCE_SECTION_MARKERS)
+
+
+def _parse_citation_indices(markdown: str) -> list[int]:
+    indices: list[int] = []
+    for match in _CITATION_PATTERN.findall(markdown):
+        for part in match.split(","):
+            candidate = part.strip()
+            if candidate.isdigit():
+                indices.append(int(candidate))
+    return indices
+
+
+def _section_requires_citations(title: str, content: str) -> bool:
+    lowered_title = title.lower()
+    lowered_content = content.lower()
+    if any(marker in lowered_title for marker in _ALWAYS_CITED_SECTION_MARKERS):
+        return True
+    if not any(marker in lowered_title for marker in _CONTEXTUAL_SECTION_MARKERS):
+        return False
+    return any(marker in lowered_content for marker in _CONTEXTUAL_CITATION_CUES)
+
+
+def _sections_without_citations(markdown: str) -> tuple[list[str], bool, bool]:
     sections = _markdown_sections(markdown)
-    relevant_markers = (
-        "introduction",
-        "background",
-        "related work",
-        "prior work",
-        "discussion",
-        "conclusion",
-        "limitations",
-    )
     uncited: list[str] = []
     has_related_work = False
+    has_references = False
     for title, content in sections:
         lowered = title.lower()
         if "related work" in lowered or "prior work" in lowered or "background" in lowered:
             has_related_work = True
-        if not any(marker in lowered for marker in relevant_markers):
+        if _is_reference_section(title):
+            has_references = True
+        if not _section_requires_citations(title, content):
             continue
         if len(content.strip()) < 40:
             continue
         if not _CITATION_PATTERN.search(content):
             uncited.append(title)
-    if not sections and markdown.strip() and not _CITATION_PATTERN.search(markdown):
+    if (
+        not sections
+        and markdown.strip()
+        and not _CITATION_PATTERN.search(markdown)
+        and any(marker in markdown.lower() for marker in _CONTEXTUAL_CITATION_CUES)
+    ):
         uncited.append("Paper body")
-    return uncited, has_related_work
+    return uncited, has_related_work, has_references
 
 
 def _clamp_score(value: int) -> int:
@@ -158,7 +197,13 @@ def _review_findings(
 
     artifact = run.artifact
     citation_marker_count = len(_CITATION_PATTERN.findall(paper_markdown))
-    sections_without_citations, has_related_work = _sections_without_citations(paper_markdown)
+    citation_indices = _parse_citation_indices(paper_markdown)
+    unique_citation_indices = sorted(set(citation_indices))
+    sections_without_citations, has_related_work, has_references = _sections_without_citations(paper_markdown)
+    invalid_citation_indices = [
+        item for item in unique_citation_indices if item < 1 or item > len(run.literature)
+    ]
+    cited_literature_count = sum(1 for item in unique_citation_indices if 1 <= item <= len(run.literature))
     required_assets = [item for item in bundle.assets if item.required] if bundle is not None else []
     optional_assets = [item for item in bundle.assets if not item.required] if bundle is not None else []
     missing_required_assets = [item for item in required_assets if not item.ref.exists]
@@ -183,8 +228,11 @@ def _review_findings(
     citation_coverage = AutoResearchCitationCoverageRead(
         literature_item_count=len(run.literature),
         citation_marker_count=citation_marker_count,
+        cited_literature_count=cited_literature_count,
+        invalid_citation_indices=invalid_citation_indices,
         sections_without_citations=sections_without_citations,
         has_related_work_section=has_related_work,
+        has_references_section=has_references,
     )
 
     if artifact is None or artifact.status != "done":
@@ -260,12 +308,32 @@ def _review_findings(
             ),
             supporting_asset_ids=["run_paper_markdown"],
         )
+    elif invalid_citation_indices:
+        add_finding(
+            severity="error",
+            category="provenance",
+            summary="Paper citations do not resolve to persisted run literature.",
+            detail=(
+                "Citation indices outside the persisted literature range were found: "
+                + ", ".join(str(item) for item in invalid_citation_indices)
+                + f". The run retains {len(run.literature)} literature items."
+            ),
+            supporting_asset_ids=["run_json", "run_paper_markdown"],
+        )
     elif sections_without_citations:
         add_finding(
             severity="warning",
             category="citation",
             summary="Some contextual sections lack citation support.",
             detail="Sections without citation markers: " + ", ".join(sections_without_citations) + ".",
+            supporting_asset_ids=["run_paper_markdown"],
+        )
+    if len(run.literature) > 0 and citation_marker_count > 0 and not has_references:
+        add_finding(
+            severity="warning",
+            category="citation",
+            summary="Paper citations are missing a references section.",
+            detail="Persisted literature is cited in the paper body, but no references or bibliography section was found.",
             supporting_asset_ids=["run_paper_markdown"],
         )
 
@@ -360,10 +428,14 @@ def _review_scores(
 
     contextualization = 0
     contextualization += 1 if evidence.literature_count > 0 else 0
-    contextualization += 2 if citation_coverage.citation_marker_count > 0 else 0
+    contextualization += 1 if citation_coverage.citation_marker_count > 0 else 0
+    contextualization += 1 if citation_coverage.cited_literature_count > 0 else 0
     contextualization += 1 if citation_coverage.has_related_work_section else 0
+    contextualization += 1 if citation_coverage.has_references_section and citation_coverage.cited_literature_count > 0 else 0
     contextualization += 1 if not citation_coverage.sections_without_citations and evidence.literature_count > 0 else 0
     if citation_coverage.sections_without_citations:
+        contextualization -= 1
+    if citation_coverage.invalid_citation_indices:
         contextualization -= 1
 
     reproducibility = 0
@@ -447,13 +519,22 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
                 finding_id=finding.id,
             )
         elif finding.category == "provenance":
-            add_action(
-                key="provenance",
-                priority="medium",
-                title="Restore direct provenance files for the selected candidate",
-                detail="Prefer an on-disk candidate manifest over generated fallback metadata before publication review.",
-                finding_id=finding.id,
-            )
+            if "literature" in finding.summary.lower() or "citation" in finding.summary.lower():
+                add_action(
+                    key="citation_provenance",
+                    priority="high" if finding.severity == "error" else "medium",
+                    title="Repair citation provenance against persisted literature state",
+                    detail="Ensure every citation marker resolves to run-local literature metadata and keep a references section in the paper.",
+                    finding_id=finding.id,
+                )
+            else:
+                add_action(
+                    key="provenance",
+                    priority="medium",
+                    title="Restore direct provenance files for the selected candidate",
+                    detail="Prefer an on-disk candidate manifest over generated fallback metadata before publication review.",
+                    finding_id=finding.id,
+                )
     return actions
 
 
@@ -499,7 +580,8 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
     summary = (
         f"Review built from persisted run, artifact, paper, and registry bundle state. "
         f"Candidates={evidence.candidate_count}, seeds={evidence.seed_count}, sweeps={evidence.sweep_count}, "
-        f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}."
+        f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}, "
+        f"resolved_literature={citation_coverage.cited_literature_count}."
     )
     review = AutoResearchRunReviewRead(
         project_id=project_id,

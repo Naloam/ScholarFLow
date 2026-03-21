@@ -581,8 +581,11 @@ export type AutoResearchReviewEvidence = {
 export type AutoResearchCitationCoverage = {
   literature_item_count: number;
   citation_marker_count: number;
+  cited_literature_count: number;
+  invalid_citation_indices: number[];
   sections_without_citations: string[];
   has_related_work_section: boolean;
+  has_references_section: boolean;
 };
 
 export type AutoResearchReviewFinding = {

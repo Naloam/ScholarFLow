@@ -24,6 +24,51 @@ def _markdown_table(table: ResultTable) -> str:
 
 
 class PaperWriter:
+    def _literature_citation_span(self, literature: list[LiteratureInsight], *, limit: int = 2) -> str:
+        if not literature:
+            return ""
+        count = min(len(literature), max(1, limit))
+        labels = ", ".join(str(index) for index in range(1, count + 1))
+        return f"[{labels}]"
+
+    def _literature_context_sentence(self, literature: list[LiteratureInsight]) -> str:
+        if not literature:
+            return ""
+        return (
+            f"Recent retrieved work {self._literature_citation_span(literature)} anchored the benchmark framing and "
+            "preserved explicit related-work context for the selected hypothesis."
+        )
+
+    def _discussion_context_sentence(self, literature: list[LiteratureInsight]) -> str:
+        if not literature:
+            return ""
+        return (
+            f"The preserved literature context {self._literature_citation_span(literature)} makes the contribution "
+            "boundary explicit: this run is a bounded executable check rather than a state-of-the-art claim."
+        )
+
+    def _conclusion_context_sentence(self, literature: list[LiteratureInsight]) -> str:
+        if not literature:
+            return ""
+        return (
+            f"Relative to the retrieved literature context {self._literature_citation_span(literature)}, the primary "
+            "contribution here is the end-to-end evidence trail and not a claim of algorithmic novelty."
+        )
+
+    def _reference_entry(self, index: int, item: LiteratureInsight) -> str:
+        year = str(item.year) if item.year is not None else "n.d."
+        source = (item.source or "unknown source").replace("_", " ")
+        paper_id = f" id={item.paper_id}." if item.paper_id else ""
+        return f"[{index}] {item.title}. {source}, {year}.{paper_id}"
+
+    def _references_block(self, literature: list[LiteratureInsight]) -> str:
+        if not literature:
+            return ""
+        return "\n".join(
+            self._reference_entry(index + 1, item)
+            for index, item in enumerate(literature)
+        )
+
     def _aggregate_metric(self, artifact: ResultArtifact, system_name: str | None, metric: str) -> float | None:
         if not system_name:
             return None
@@ -84,8 +129,19 @@ class PaperWriter:
         if not literature:
             return "No project-specific literature was attached, so related-work grounding is limited."
         return "\n".join(
-            f"- {item.title} ({item.year or 'n.d.'}): {item.insight}"
-            for item in literature
+            (
+                f"- [{index + 1}] {item.title} ({item.year or 'n.d.'}; {(item.source or 'unknown source').replace('_', ' ')}): "
+                + " ".join(
+                    part
+                    for part in (
+                        item.insight,
+                        item.method_hint,
+                        item.gap_hint,
+                    )
+                    if part
+                )
+            )
+            for index, item in enumerate(literature)
         )
 
     def _attempt_block(self, attempts: list[ExperimentAttempt]) -> str:
@@ -209,6 +265,10 @@ class PaperWriter:
         metrics = ", ".join(metric.name for metric in spec.metrics)
         results_table = self._results_table(artifact)
         literature_block = self._literature_block(literature)
+        literature_context_sentence = self._literature_context_sentence(literature)
+        discussion_context_sentence = self._discussion_context_sentence(literature)
+        conclusion_context_sentence = self._conclusion_context_sentence(literature)
+        references_block = self._references_block(literature)
         attempt_block = self._attempt_block(attempts)
         acceptance_block = self._acceptance_block(artifact)
         significance_block = self._significance_block(artifact)
@@ -276,6 +336,8 @@ The experimental study follows the hypothesis that {spec.hypothesis.lower()} {co
 {plan.problem_statement}
 
 The motivation for this run is practical rather than purely stylistic. ScholarFlow should not stop at generating generic prose. It should be able to define a tractable problem, select an executable benchmark, compare baselines, and report measurable outcomes. In this version, the scope is intentionally restricted to small classification tasks that can be executed quickly without external dependencies. This restriction makes the pipeline reproducible while still forcing the system to reason about hypotheses, baselines, ablations, and result interpretation.
+
+{literature_context_sentence}
 
 The central research questions are:
 {chr(10).join(f"- {item}" for item in plan.research_questions)}
@@ -346,6 +408,8 @@ The results show that the pipeline can now produce a paper-shaped artifact with 
 
 At the same time, the benchmark remains intentionally small. The value of this v0 system is not that it solves an open scientific problem, but that it demonstrates the operational scaffolding required for future automated research runs: a planner, a structured experiment specification, executable code generation, artifact preservation, and grounded writing.
 
+{discussion_context_sentence}
+
 ## 7. Limitations
 {chr(10).join(f"- {item}" for item in plan.scope_limits)}
 - The benchmark is built into the repository, so data collection and large scale reproducibility are out of scope.
@@ -354,4 +418,7 @@ At the same time, the benchmark remains intentionally small. The value of this v
 
 ## 8. Conclusion
 `CS AutoResearch v0` completes a narrow but real research loop for `{plan.topic}`. The system planned the study, executed the benchmark, preserved a structured result artifact, and produced a paper whose claims are anchored to the recorded experiment outputs. This establishes the minimum backend skeleton needed to push ScholarFlow toward an automated computer science research system rather than a generic writing assistant.
+
+{conclusion_context_sentence}
+{f"{chr(10)}## 9. References{chr(10)}{references_block}" if references_block else ""}
 """

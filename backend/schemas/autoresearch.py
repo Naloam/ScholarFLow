@@ -798,8 +798,11 @@ class AutoResearchReviewEvidenceRead(BaseModel):
 class AutoResearchCitationCoverageRead(BaseModel):
     literature_item_count: int = 0
     citation_marker_count: int = 0
+    cited_literature_count: int = 0
+    invalid_citation_indices: list[int] = Field(default_factory=list)
     sections_without_citations: list[str] = Field(default_factory=list)
     has_related_work_section: bool = False
+    has_references_section: bool = False
 
 
 class AutoResearchReviewFindingRead(BaseModel):

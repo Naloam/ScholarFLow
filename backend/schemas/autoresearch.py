@@ -81,6 +81,7 @@ AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "block
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
 AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
+AutoResearchBudgetStatus = Literal["default", "constrained"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -165,21 +166,37 @@ class AutoResearchRunRequest(BaseModel):
     language: str = "en"
     paper_ids: list[str] | None = None
     max_rounds: int = 3
+    candidate_execution_limit: int | None = None
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
     auto_search_literature: bool = False
     auto_fetch_literature: bool = False
+
+    @field_validator("candidate_execution_limit")
+    @classmethod
+    def validate_candidate_execution_limit(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("candidate_execution_limit must be at least 1")
+        return value
 
 
 class AutoResearchRunConfig(BaseModel):
     task_family_hint: TaskFamily | None = None
     paper_ids: list[str] | None = None
     max_rounds: int = 3
+    candidate_execution_limit: int | None = None
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
     auto_search_literature: bool = False
     auto_fetch_literature: bool = False
     docker_image: str | None = None
+
+    @field_validator("candidate_execution_limit")
+    @classmethod
+    def validate_candidate_execution_limit(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("candidate_execution_limit must be at least 1")
+        return value
 
     @classmethod
     def from_request(cls, payload: AutoResearchRunRequest) -> "AutoResearchRunConfig":
@@ -187,6 +204,7 @@ class AutoResearchRunConfig(BaseModel):
             task_family_hint=payload.task_family_hint,
             paper_ids=payload.paper_ids,
             max_rounds=payload.max_rounds,
+            candidate_execution_limit=payload.candidate_execution_limit,
             benchmark=payload.benchmark,
             execution_backend=payload.execution_backend,
             auto_search_literature=payload.auto_search_literature,
@@ -924,6 +942,7 @@ class AutoResearchOperatorConsoleFiltersRead(BaseModel):
     publish_status: AutoResearchPublishStatus | None = None
     review_risk: AutoResearchUnsupportedClaimRisk | None = None
     novelty_status: AutoResearchNoveltyStatus | None = None
+    budget_status: AutoResearchBudgetStatus | None = None
 
 
 class AutoResearchOperatorRunActionsRead(BaseModel):
@@ -949,6 +968,10 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     latest_job_status: AutoResearchJobStatus | None = None
     active_job_id: str | None = None
     cancel_requested: bool = False
+    budget_status: AutoResearchBudgetStatus = "default"
+    max_rounds: int = 3
+    candidate_execution_limit: int | None = None
+    executed_candidate_count: int = 0
     publish_status: AutoResearchPublishStatus | None = None
     publish_ready: bool = False
     review_risk: AutoResearchUnsupportedClaimRisk | None = None

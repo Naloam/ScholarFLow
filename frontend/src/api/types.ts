@@ -275,6 +275,7 @@ export type AutoResearchRunRequest = {
   docker_image?: string | null;
   paper_ids?: string[] | null;
   max_rounds?: number;
+  candidate_execution_limit?: number | null;
   benchmark?: Record<string, unknown> | null;
   execution_backend?: Record<string, unknown> | null;
   auto_search_literature?: boolean;
@@ -704,6 +705,7 @@ export type AutoResearchOperatorConsoleFilters = {
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   review_risk?: "low" | "medium" | "high" | null;
   novelty_status?: "missing_context" | "grounded" | "incremental" | "weak" | null;
+  budget_status?: "default" | "constrained" | null;
 };
 
 export type AutoResearchOperatorRunActions = {
@@ -729,6 +731,10 @@ export type AutoResearchOperatorRunSummary = {
   latest_job_status?: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled" | null;
   active_job_id?: string | null;
   cancel_requested: boolean;
+  budget_status: "default" | "constrained";
+  max_rounds: number;
+  candidate_execution_limit?: number | null;
+  executed_candidate_count: number;
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   publish_ready: boolean;
   review_risk?: "low" | "medium" | "high" | null;

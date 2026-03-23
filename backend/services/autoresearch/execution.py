@@ -443,6 +443,7 @@ class AutoResearchExecutionPlane:
                 task_family_hint=request.task_family_hint,
                 paper_ids=request.paper_ids,
                 max_rounds=request.max_rounds,
+                candidate_execution_limit=request.candidate_execution_limit,
                 benchmark_source=request.benchmark,
                 execution_backend=request.execution_backend,
                 auto_search_literature=request.auto_search_literature,

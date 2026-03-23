@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from schemas.autoresearch import (
+    AutoResearchBudgetStatus,
     AutoResearchOperatorConsoleRead,
     AutoResearchOperatorConsoleFiltersRead,
     AutoResearchOperatorProjectActionsRead,
@@ -47,6 +48,17 @@ def _run_summary(
     registry_views = load_run_registry_views(run.project_id, run.id)
     counts = registry_views.counts if registry_views is not None else None
     latest_job = execution.jobs[-1] if execution.jobs else None
+    request = run.request
+    candidate_count = counts.total_candidates if counts is not None else len(run.candidates)
+    budget_status = (
+        "constrained"
+        if request is not None
+        and (
+            request.candidate_execution_limit is not None
+            or request.max_rounds != 3
+        )
+        else "default"
+    )
     return AutoResearchOperatorRunSummaryRead(
         run_id=run.id,
         topic=run.topic,
@@ -54,7 +66,7 @@ def _run_summary(
         created_at=run.created_at,
         updated_at=run.updated_at,
         selected_candidate_id=run.portfolio.selected_candidate_id if run.portfolio is not None else None,
-        candidate_count=counts.total_candidates if counts is not None else len(run.candidates),
+        candidate_count=candidate_count,
         selected_count=counts.selected if counts is not None else 0,
         active_count=counts.active if counts is not None else 0,
         failed_count=counts.failed if counts is not None else 0,
@@ -62,6 +74,10 @@ def _run_summary(
         latest_job_status=latest_job.status if latest_job is not None else None,
         active_job_id=execution.active_job_id,
         cancel_requested=execution.cancel_requested,
+        budget_status=budget_status,
+        max_rounds=request.max_rounds if request is not None else 3,
+        candidate_execution_limit=request.candidate_execution_limit if request is not None else None,
+        executed_candidate_count=len(run.portfolio.executed_candidate_ids) if run.portfolio is not None else 0,
         publish_status=publish.status if publish is not None else None,
         publish_ready=publish.publish_ready if publish is not None else False,
         review_risk=review.unsupported_claim_risk if review is not None else None,
@@ -101,6 +117,19 @@ def _matches_filters(
         novelty_status = review.novelty_assessment.status if review is not None and review.novelty_assessment is not None else None
         if novelty_status != filters.novelty_status:
             return False
+    if filters.budget_status is not None:
+        request = run.request
+        budget_status = (
+            "constrained"
+            if request is not None
+            and (
+                request.candidate_execution_limit is not None
+                or request.max_rounds != 3
+            )
+            else "default"
+        )
+        if budget_status != filters.budget_status:
+            return False
     return True
 
 
@@ -113,6 +142,7 @@ def build_operator_console(
     publish_status: AutoResearchPublishStatus | None = None,
     review_risk: AutoResearchUnsupportedClaimRisk | None = None,
     novelty_status: AutoResearchNoveltyStatus | None = None,
+    budget_status: AutoResearchBudgetStatus | None = None,
 ) -> AutoResearchOperatorConsoleRead:
     runs = list_runs(project_id)
     filters = AutoResearchOperatorConsoleFiltersRead(
@@ -121,6 +151,7 @@ def build_operator_console(
         publish_status=publish_status,
         review_risk=review_risk,
         novelty_status=novelty_status,
+        budget_status=budget_status,
     )
     execution_plane = AutoResearchExecutionPlane()
     summaries: list[AutoResearchOperatorRunSummaryRead] = []

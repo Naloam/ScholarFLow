@@ -47,6 +47,7 @@ export function OperatorConsolePanel({
     filters.publish_status,
     filters.review_risk,
     filters.novelty_status,
+    filters.budget_status,
   ]);
 
   const current = consoleState?.current_run ?? null;
@@ -57,6 +58,8 @@ export function OperatorConsolePanel({
   const lineage = current?.registry?.lineage;
   const novelty = review?.novelty_assessment ?? null;
   const activeConsole = consoleState;
+  const currentSummary =
+    activeConsole?.runs.find((run) => run.run_id === current?.run.id) ?? null;
   const hasRuns = Boolean(consoleState && consoleState.run_count > 0);
   const hasFilteredRuns = Boolean(consoleState && consoleState.filtered_run_count > 0);
   const hasActiveFilters = Boolean(
@@ -64,7 +67,8 @@ export function OperatorConsolePanel({
       filters.status ||
       filters.publish_status ||
       filters.review_risk ||
-      filters.novelty_status,
+      filters.novelty_status ||
+      filters.budget_status,
   );
 
   function updateFilter<K extends keyof AutoResearchOperatorConsoleFilters>(
@@ -236,6 +240,23 @@ export function OperatorConsolePanel({
             <option value="weak">Weak</option>
             <option value="missing_context">Missing Context</option>
           </select>
+          <select
+            value={draftFilters.budget_status ?? ""}
+            onChange={(event) =>
+              updateFilter(
+                "budget_status",
+                (event.target.value
+                  ? event.target.value
+                  : null) as AutoResearchOperatorConsoleFilters["budget_status"],
+              )
+            }
+            disabled={disabled}
+            data-testid="operator-filter-budget"
+          >
+            <option value="">All Budget Modes</option>
+            <option value="default">Default</option>
+            <option value="constrained">Constrained</option>
+          </select>
           <button
             type="submit"
             className="ghost-btn"
@@ -296,6 +317,10 @@ export function OperatorConsolePanel({
                     risk {run.review_risk ?? "n/a"} / novelty {run.novelty_status ?? "n/a"} / publish{" "}
                     {run.publish_status ?? "n/a"}
                   </small>
+                  <small>
+                    budget {run.budget_status} / executed {run.executed_candidate_count}
+                    {run.candidate_execution_limit ? ` / limit ${run.candidate_execution_limit}` : ""}
+                  </small>
                 </div>
               </button>
             ))}
@@ -338,6 +363,18 @@ export function OperatorConsolePanel({
                 <div>
                   <span className="meta-label">Novelty</span>
                   <strong>{novelty?.status ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Budget</span>
+                  <strong>
+                    {currentSummary
+                      ? `${currentSummary.budget_status} (${currentSummary.executed_candidate_count}${
+                          currentSummary.candidate_execution_limit
+                            ? `/${currentSummary.candidate_execution_limit}`
+                            : ""
+                        } candidates, ${currentSummary.max_rounds} rounds)`
+                      : "n/a"}
+                  </strong>
                 </div>
               </div>
 

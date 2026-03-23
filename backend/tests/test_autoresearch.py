@@ -1001,6 +1001,9 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert console["runs"][0]["publish_status"] == "revision_required"
         assert console["runs"][0]["review_risk"] == "medium"
         assert console["runs"][0]["novelty_status"] == "missing_context"
+        assert console["runs"][0]["budget_status"] == "default"
+        assert console["runs"][0]["max_rounds"] == 3
+        assert console["runs"][0]["candidate_execution_limit"] is None
         assert console["filtered_run_count"] == 1
         assert console["filters"]["search"] is None
 
@@ -1058,6 +1061,74 @@ def test_autoresearch_operator_console_exposes_cancel_for_queued_run(
         assert current["actions"]["cancel"] is True
         assert current["actions"]["export_publish"] is False
         assert current["actions"]["download_publish"] is False
+    finally:
+        client.close()
+
+
+def test_autoresearch_respects_candidate_execution_limit_and_exposes_budget_status(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 6 Budget Console Project",
+            "Budget-aware portfolio truncation for compact CS abstracts",
+        )
+
+        limited_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Budget-aware portfolio truncation for compact CS abstracts",
+                "candidate_execution_limit": 1,
+            },
+        )
+        assert limited_response.status_code == 200
+        limited_run_id = limited_response.json()["id"]
+
+        default_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert default_response.status_code == 200
+        default_run_id = default_response.json()["id"]
+
+        limited_run = client.get(f"/api/projects/{project_id}/auto-research/{limited_run_id}").json()
+        assert limited_run["request"]["candidate_execution_limit"] == 1
+        assert len(limited_run["portfolio"]["executed_candidate_ids"]) == 1
+        executed_candidates = [item for item in limited_run["candidates"] if item["attempts"]]
+        deferred_candidates = [item for item in limited_run["candidates"] if item["status"] == "deferred"]
+        assert len(executed_candidates) == 1
+        assert len(deferred_candidates) == 2
+        assert all(item["attempts"] == [] for item in deferred_candidates)
+
+        constrained_console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"budget_status": "constrained"},
+        )
+        assert constrained_console.status_code == 200
+        constrained_payload = constrained_console.json()
+        assert constrained_payload["run_count"] == 2
+        assert constrained_payload["filtered_run_count"] == 1
+        assert constrained_payload["selected_run_id"] == limited_run_id
+        assert constrained_payload["filters"]["budget_status"] == "constrained"
+        assert constrained_payload["runs"][0]["run_id"] == limited_run_id
+        assert constrained_payload["runs"][0]["budget_status"] == "constrained"
+        assert constrained_payload["runs"][0]["candidate_execution_limit"] == 1
+        assert constrained_payload["runs"][0]["executed_candidate_count"] == 1
+
+        default_console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"budget_status": "default"},
+        )
+        assert default_console.status_code == 200
+        default_payload = default_console.json()
+        assert default_payload["filtered_run_count"] == 1
+        assert default_payload["selected_run_id"] == default_run_id
+        assert default_payload["runs"][0]["run_id"] == default_run_id
+        assert default_payload["runs"][0]["budget_status"] == "default"
+        assert default_payload["runs"][0]["candidate_execution_limit"] is None
     finally:
         client.close()
 

@@ -55,6 +55,7 @@ function normalizeConsoleFilters(
     publish_status: filters.publish_status ?? null,
     review_risk: filters.review_risk ?? null,
     novelty_status: filters.novelty_status ?? null,
+    budget_status: filters.budget_status ?? null,
   };
 }
 

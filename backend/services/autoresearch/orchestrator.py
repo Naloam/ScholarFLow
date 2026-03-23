@@ -129,18 +129,45 @@ class AutoResearchOrchestrator:
     def _defer_reserve_candidates(
         self,
         candidates: list[HypothesisCandidate],
+        allowed_candidate_ids: set[str],
+        *,
         selected_candidate_id: str | None,
     ) -> list[HypothesisCandidate]:
         deferred: list[HypothesisCandidate] = []
         for candidate in candidates:
-            if candidate.id == selected_candidate_id:
+            if candidate.id in allowed_candidate_ids:
+                if candidate.status == "deferred" and not candidate.attempts and candidate.artifact is None:
+                    deferred.append(
+                        candidate.model_copy(
+                            update={
+                                "status": "selected" if candidate.id == selected_candidate_id else "planned",
+                            }
+                        )
+                    )
+                    continue
                 deferred.append(candidate)
                 continue
-            if candidate.status in {"done", "failed"}:
+            if candidate.status in {"done", "failed"} or candidate.attempts:
                 deferred.append(candidate)
                 continue
             deferred.append(candidate.model_copy(update={"status": "deferred"}))
         return deferred
+
+    def _budgeted_candidate_order(
+        self,
+        *,
+        candidates: list[HypothesisCandidate],
+        portfolio: PortfolioSummary,
+        candidate_execution_limit: int | None,
+    ) -> list[str]:
+        candidate_order = list(portfolio.candidate_rankings) or [candidate.id for candidate in candidates]
+        if candidate_execution_limit is None:
+            return candidate_order
+        executed_count = len(
+            [candidate_id for candidate_id in portfolio.executed_candidate_ids if candidate_id in candidate_order]
+        )
+        effective_limit = min(len(candidate_order), max(candidate_execution_limit, executed_count))
+        return candidate_order[:effective_limit]
 
     def _portfolio_decision_summary(
         self,
@@ -229,6 +256,11 @@ class AutoResearchOrchestrator:
         winner: HypothesisCandidate | None,
         benchmark_name: str,
     ) -> str:
+        if candidate.status == "deferred":
+            return (
+                f"Candidate stayed in the ranked portfolio for `{benchmark_name}`, but execution was deferred "
+                "before benchmarking because the run hit its candidate budget."
+            )
         artifact = candidate.artifact
         if artifact is None or candidate.status != "done":
             latest_summary = candidate.attempts[-1].summary if candidate.attempts else "No execution artifact."
@@ -443,6 +475,11 @@ class AutoResearchOrchestrator:
             )
         if candidate.status == "planned":
             return f"Pending execution on `{benchmark_name}`."
+        if candidate.status == "deferred":
+            return (
+                f"Execution was deferred on `{benchmark_name}` because the run's candidate budget "
+                "did not extend far enough down the ranked portfolio."
+            )
         if candidate.status == "running":
             return f"Currently executing on `{benchmark_name}`."
         if candidate.status == "failed":
@@ -478,6 +515,8 @@ class AutoResearchOrchestrator:
         if final:
             if winner is not None and candidate.id == winner.id:
                 return "promoted"
+            if candidate.status == "deferred":
+                return "eliminated"
             if candidate.status == "done":
                 return "eliminated"
             return "failed"
@@ -506,6 +545,8 @@ class AutoResearchOrchestrator:
         if total:
             criteria.append(f"acceptance={passed}/{total}")
             criteria.append(f"acceptance_ratio={ratio:.2f}")
+        if candidate.status == "deferred":
+            criteria.append("deferred_by_candidate_budget")
         if final and winner is not None:
             if candidate.id == winner.id:
                 criteria.append("ranked_first_among_executed_candidates")
@@ -627,6 +668,7 @@ class AutoResearchOrchestrator:
         task_family_hint: TaskFamily | None = None,
         paper_ids: list[str] | None = None,
         max_rounds: int = 3,
+        candidate_execution_limit: int | None = None,
         benchmark_source: BenchmarkSource | None = None,
         execution_backend: ExecutionBackendSpec | None = None,
         auto_search_literature: bool = True,
@@ -763,6 +805,32 @@ class AutoResearchOrchestrator:
                 candidates=candidates,
                 decisions=portfolio.decisions,
             )
+            candidate_order = self._budgeted_candidate_order(
+                candidates=candidates,
+                portfolio=portfolio,
+                candidate_execution_limit=candidate_execution_limit,
+            )
+            candidates = self._defer_reserve_candidates(
+                candidates,
+                set(candidate_order),
+                selected_candidate_id=portfolio.selected_candidate_id,
+            )
+            portfolio = portfolio.model_copy(
+                update={
+                    "decisions": self._decision_records(
+                        candidates,
+                        winner=leader,
+                        benchmark_name=benchmark.benchmark_name,
+                        final=False,
+                    )
+                }
+            )
+            candidates = self._sync_candidate_manifests(
+                project_id=project_id,
+                run_id=run_id,
+                candidates=candidates,
+                decisions=portfolio.decisions,
+            )
             run_updates = {
                 "task_family": plan.task_family,
                 "benchmark": benchmark.source,
@@ -789,7 +857,6 @@ class AutoResearchOrchestrator:
                 )
             run = save_run(run.model_copy(update=run_updates))
 
-            candidate_order = list(portfolio.candidate_rankings)
             for candidate_id in candidate_order:
                 self._raise_if_cancelled(should_cancel)
                 candidate = self._candidate_by_id(candidates, candidate_id)

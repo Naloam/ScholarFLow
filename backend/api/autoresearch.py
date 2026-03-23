@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from config.db import SessionLocal
 from config.deps import get_db, get_identity, require_project_access
 from schemas.autoresearch import (
+    AutoResearchBudgetStatus,
     AutoResearchBundleIndexRead,
     AutoResearchCandidateRegistryRead,
     AutoResearchExecutionCommandResponse,
@@ -101,6 +102,7 @@ def get_auto_research_operator_console(
     publish_status: AutoResearchPublishStatus | None = Query(default=None),
     review_risk: AutoResearchUnsupportedClaimRisk | None = Query(default=None),
     novelty_status: AutoResearchNoveltyStatus | None = Query(default=None),
+    budget_status: AutoResearchBudgetStatus | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> AutoResearchOperatorConsoleRead:
     del db
@@ -112,6 +114,7 @@ def get_auto_research_operator_console(
         publish_status=publish_status,
         review_risk=review_risk,
         novelty_status=novelty_status,
+        budget_status=budget_status,
     )
 
 

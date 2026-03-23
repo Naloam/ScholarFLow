@@ -341,6 +341,9 @@ export const api = {
     if (options?.novelty_status) {
       params.set("novelty_status", options.novelty_status);
     }
+    if (options?.budget_status) {
+      params.set("budget_status", options.budget_status);
+    }
     const query = params.size > 0 ? `?${params.toString()}` : "";
     return request(`/api/projects/${projectId}/auto-research/console${query}`);
   },

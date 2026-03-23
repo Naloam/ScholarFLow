@@ -108,6 +108,7 @@ AutoResearchFigureAssetKind = Literal["table", "chart", "diagram"]
 AutoResearchFigureStatus = Literal["planned", "ready", "not_available"]
 AutoResearchPaperRevisionStatus = Literal["drafted", "needs_review", "revising", "ready_for_publish"]
 AutoResearchPaperSourceKind = Literal["latex", "bibtex", "json"]
+AutoResearchPaperRevisionActionStatus = Literal["open", "done"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -614,6 +615,26 @@ class AutoResearchPaperRevisionStateRead(BaseModel):
     status: AutoResearchPaperRevisionStatus = "drafted"
     open_issues: list[str] = Field(default_factory=list)
     completed_actions: list[str] = Field(default_factory=list)
+    focus_sections: list[str] = Field(default_factory=list)
+    next_actions: list["AutoResearchPaperRevisionActionRead"] = Field(default_factory=list)
+    checkpoints: list["AutoResearchPaperRevisionCheckpointRead"] = Field(default_factory=list)
+
+
+class AutoResearchPaperRevisionActionRead(BaseModel):
+    action_id: str
+    priority: AutoResearchRevisionPriority = "medium"
+    section_title: str
+    detail: str
+    status: AutoResearchPaperRevisionActionStatus = "open"
+
+
+class AutoResearchPaperRevisionCheckpointRead(BaseModel):
+    revision_round: int = 0
+    generated_at: datetime
+    status: AutoResearchPaperRevisionStatus = "drafted"
+    summary: str
+    open_issue_count: int = 0
+    relative_assets: list[str] = Field(default_factory=list)
 
 
 class AutoResearchPaperSourceFileRead(BaseModel):

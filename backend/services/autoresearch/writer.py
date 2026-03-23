@@ -12,6 +12,8 @@ from schemas.autoresearch import (
     AutoResearchPaperPipelineArtifactsRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
+    AutoResearchPaperRevisionActionRead,
+    AutoResearchPaperRevisionCheckpointRead,
     AutoResearchPaperRevisionStateRead,
     AutoResearchPaperSourceFileRead,
     AutoResearchPaperSourcesManifestRead,
@@ -759,11 +761,75 @@ Program objective:
     def build_paper_revision_state(
         self,
         claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+        *,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+        figure_plan: AutoResearchFigurePlanRead | None = None,
     ) -> AutoResearchPaperRevisionStateRead:
         open_issues = [
             gap
             for entry in claim_evidence_matrix.entries
             for gap in entry.gaps
+        ]
+        focus_sections: list[str] = []
+        next_actions: list[AutoResearchPaperRevisionActionRead] = []
+
+        for entry in claim_evidence_matrix.entries:
+            if entry.support_status == "supported" and not entry.gaps:
+                continue
+            if entry.section_hint not in focus_sections:
+                focus_sections.append(entry.section_hint)
+            next_actions.append(
+                AutoResearchPaperRevisionActionRead(
+                    action_id=f"revise_{entry.claim_id}",
+                    priority="high" if entry.support_status == "unsupported" else "medium",
+                    section_title=entry.section_hint,
+                    detail=(
+                        "; ".join(entry.gaps)
+                        if entry.gaps
+                        else "Tighten the claim wording so the section only states what the artifact supports."
+                    ),
+                )
+            )
+
+        if figure_plan is not None:
+            pending_figures = [item for item in figure_plan.items if item.status != "ready"]
+            if pending_figures and "Results" not in focus_sections:
+                focus_sections.append("Results")
+            for item in pending_figures:
+                next_actions.append(
+                    AutoResearchPaperRevisionActionRead(
+                        action_id=f"figure_{item.figure_id}",
+                        priority="medium",
+                        section_title="Results",
+                        detail=f"Either materialize `{item.title}` for the paper source package or remove it from the figure plan.",
+                    )
+                )
+
+        if not focus_sections and paper_plan is not None:
+            focus_sections = [section.title for section in paper_plan.sections[:3]]
+
+        checkpoints = [
+            AutoResearchPaperRevisionCheckpointRead(
+                revision_round=0,
+                generated_at=_utcnow(),
+                status="needs_review",
+                summary=(
+                    "Initial grounded draft captured with narrative, evidence matrix, manuscript markdown, "
+                    "and compile-oriented paper sources."
+                ),
+                open_issue_count=len(open_issues),
+                relative_assets=[
+                    "paper.md",
+                    "narrative_report.md",
+                    "claim_evidence_matrix.json",
+                    "paper_plan.json",
+                    "figure_plan.json",
+                    "paper_revision_state.json",
+                    "paper_sources/main.tex",
+                    "paper_sources/references.bib",
+                    "paper_sources/manifest.json",
+                ],
+            )
         ]
         return AutoResearchPaperRevisionStateRead(
             generated_at=_utcnow(),
@@ -775,8 +841,12 @@ Program objective:
                 "Persisted claim-evidence matrix",
                 "Persisted paper plan",
                 "Persisted figure plan",
+                "Persisted compile-ready paper sources",
                 "Rendered grounded manuscript draft",
             ],
+            focus_sections=focus_sections,
+            next_actions=next_actions,
+            checkpoints=checkpoints,
         )
 
     def build_paper_bibliography(
@@ -972,7 +1042,11 @@ Program objective:
         )
         paper_plan = self.build_paper_plan(plan, claim_evidence_matrix)
         figure_plan = self.build_figure_plan(artifact, portfolio=portfolio)
-        paper_revision_state = self.build_paper_revision_state(claim_evidence_matrix)
+        paper_revision_state = self.build_paper_revision_state(
+            claim_evidence_matrix,
+            paper_plan=paper_plan,
+            figure_plan=figure_plan,
+        )
         paper_markdown = self.write(
             plan,
             spec,
@@ -1044,7 +1118,11 @@ Program objective:
         )
         paper_plan = paper_plan or self.build_paper_plan(plan, claim_evidence_matrix)
         figure_plan = figure_plan or self.build_figure_plan(artifact, portfolio=portfolio)
-        paper_revision_state = paper_revision_state or self.build_paper_revision_state(claim_evidence_matrix)
+        paper_revision_state = paper_revision_state or self.build_paper_revision_state(
+            claim_evidence_matrix,
+            paper_plan=paper_plan,
+            figure_plan=figure_plan,
+        )
         narrative_report_markdown = narrative_report_markdown or self.build_narrative_report(
             plan,
             spec,

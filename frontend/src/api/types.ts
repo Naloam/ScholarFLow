@@ -349,12 +349,32 @@ export type AutoResearchPaperRevisionState = {
   status: "drafted" | "needs_review" | "revising" | "ready_for_publish";
   open_issues: string[];
   completed_actions: string[];
+  focus_sections: string[];
+  next_actions: AutoResearchPaperRevisionAction[];
+  checkpoints: AutoResearchPaperRevisionCheckpoint[];
 };
 
 export type AutoResearchPaperSourceFile = {
   relative_path: string;
   kind: "latex" | "bibtex" | "json";
   description: string;
+};
+
+export type AutoResearchPaperRevisionAction = {
+  action_id: string;
+  priority: "high" | "medium" | "low";
+  section_title: string;
+  detail: string;
+  status: "open" | "done";
+};
+
+export type AutoResearchPaperRevisionCheckpoint = {
+  revision_round: number;
+  generated_at: string;
+  status: "drafted" | "needs_review" | "revising" | "ready_for_publish";
+  summary: string;
+  open_issue_count: number;
+  relative_assets: string[];
 };
 
 export type AutoResearchPaperSourcesManifest = {

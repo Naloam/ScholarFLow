@@ -203,6 +203,11 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert any(item["kind"] == "table" for item in run["figure_plan"]["items"])
         assert run["paper_revision_state"]["status"] == "needs_review"
         assert "Persisted narrative report" in run["paper_revision_state"]["completed_actions"]
+        assert "Persisted compile-ready paper sources" in run["paper_revision_state"]["completed_actions"]
+        assert run["paper_revision_state"]["focus_sections"]
+        assert run["paper_revision_state"]["next_actions"]
+        assert run["paper_revision_state"]["checkpoints"][0]["revision_round"] == 0
+        assert "paper_sources/main.tex" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert run["paper_sources_manifest"]["entrypoint"] == "main.tex"
         assert "pdflatex main.tex" in run["paper_sources_manifest"]["compile_commands"]
         assert run["paper_sources_manifest"]["compiler_hint"] in {"pdflatex", "pdflatex + bibtex"}

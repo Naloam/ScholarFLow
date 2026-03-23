@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import timedelta
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -16,6 +17,7 @@ import api.review as review_api
 import main as main_module
 import models  # noqa: F401
 import services.autoresearch.codegen as autoresearch_codegen
+import services.autoresearch.execution as autoresearch_execution
 from services.autoresearch.execution import AutoResearchExecutionPlane
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_pipeline as literature_pipeline
@@ -1213,6 +1215,76 @@ def test_autoresearch_run_controls_patch_updates_queue_priority_and_console_filt
         assert console["runs"][0]["max_rounds"] == 2
         assert console["runs"][0]["candidate_execution_limit"] == 1
         assert console["current_run"]["actions"]["update_controls"] is True
+    finally:
+        client.close()
+
+
+def test_autoresearch_stale_lease_recovery_increments_recovery_count_and_fences_old_updates(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 3 Recovery Hardening Project",
+            "Stale lease recovery fencing for auto research",
+        )
+        run = autoresearch_repository.create_run(
+            project_id,
+            "Stale lease recovery fencing for auto research",
+        )
+        plane = AutoResearchExecutionPlane()
+        plane.enqueue(project_id=project_id, run_id=run.id, action="run")
+
+        leased = plane._lease_next_job()
+        assert leased is not None
+        assert leased.lease_id is not None
+
+        with autoresearch_execution._STATE_LOCK:
+            state = autoresearch_execution._load_state()
+            stale_heartbeat = (
+                autoresearch_execution._utcnow()
+                - autoresearch_execution.LEASE_TIMEOUT
+                - timedelta(seconds=1)
+            )
+            autoresearch_execution._save_state(
+                state.model_copy(
+                    update={
+                        "worker": state.worker.model_copy(
+                            update={
+                                "status": "running",
+                                "current_job_id": leased.id,
+                                "current_run_id": run.id,
+                                "current_lease_id": leased.lease_id,
+                                "heartbeat_at": stale_heartbeat,
+                            }
+                        )
+                    }
+                )
+            )
+
+        recovered = plane._lease_next_job()
+        assert recovered is not None
+        assert recovered.run_id == run.id
+        assert recovered.lease_id is not None
+        assert recovered.lease_id != leased.lease_id
+        assert recovered.recovery_count == 1
+
+        stale_update = plane._update_job(
+            leased.id,
+            status="succeeded",
+            detail="done",
+            expected_lease_id=leased.lease_id,
+        )
+        assert stale_update is None
+
+        execution = plane.get_run_execution(project_id, run.id)
+        assert execution.jobs[-1].recovery_count == 1
+        assert execution.jobs[-1].last_recovered_at is not None
+        assert execution.worker is not None
+        assert execution.worker.recovered_job_count == 1
+        assert execution.worker.current_lease_id == recovered.lease_id
     finally:
         client.close()
 

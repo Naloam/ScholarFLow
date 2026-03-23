@@ -129,19 +129,24 @@ class AutoResearchExecutionPlane:
             return state
         now = _utcnow()
         recovered = False
+        recovered_job_count = 0
         jobs: list[AutoResearchExecutionJob] = []
         for job in state.jobs:
             if job.status not in {"leased", "running"}:
                 jobs.append(job)
                 continue
             recovered = True
+            recovered_job_count += 1
             if job.cancellation_requested_at is not None:
                 jobs.append(
                     job.model_copy(
                         update={
                             "status": "canceled",
                             "detail": "lease_recovered_after_cancel",
+                            "lease_id": None,
                             "finished_at": now,
+                            "recovery_count": job.recovery_count + 1,
+                            "last_recovered_at": now,
                             "error": job.error or "Recovered canceled job after stale worker lease.",
                             "worker_id": WORKER_ID,
                         }
@@ -153,7 +158,10 @@ class AutoResearchExecutionPlane:
                     update={
                         "status": "queued",
                         "detail": "lease_recovered",
+                        "lease_id": None,
                         "started_at": None,
+                        "recovery_count": job.recovery_count + 1,
+                        "last_recovered_at": now,
                         "worker_id": None,
                     }
                 )
@@ -169,16 +177,39 @@ class AutoResearchExecutionPlane:
                         "status": "idle",
                         "current_job_id": None,
                         "current_run_id": None,
+                        "current_lease_id": None,
                         "heartbeat_at": now,
+                        "recovered_job_count": worker.recovered_job_count + recovered_job_count,
                         "last_error": "Recovered stale auto-research worker lease.",
                     }
                 ),
             }
         )
 
-    def _sync_worker(self, *, status: str, job_id: str | None, run_id: str | None, error: str | None = None) -> None:
+    def _sync_worker(
+        self,
+        *,
+        status: str,
+        job_id: str | None,
+        run_id: str | None,
+        lease_id: str | None = None,
+        error: str | None = None,
+        expected_lease_id: str | None = None,
+    ) -> None:
         with _STATE_LOCK:
             state = _load_state()
+            if (
+                expected_lease_id is not None
+                and state.worker.current_lease_id != expected_lease_id
+            ):
+                return
+            if (
+                expected_lease_id is None
+                and status == "idle"
+                and job_id is None
+                and state.worker.current_job_id is not None
+            ):
+                return
             processed_jobs = state.worker.processed_jobs
             if status in {"idle"} and state.worker.current_job_id:
                 processed_jobs += 1
@@ -190,6 +221,7 @@ class AutoResearchExecutionPlane:
                             "status": status,
                             "current_job_id": job_id,
                             "current_run_id": run_id,
+                            "current_lease_id": lease_id,
                             "heartbeat_at": _utcnow(),
                             "processed_jobs": processed_jobs,
                             "last_error": error,
@@ -207,6 +239,7 @@ class AutoResearchExecutionPlane:
         detail: str | None = None,
         error: str | None = None,
         cancellation_requested_at: datetime | None = None,
+        expected_lease_id: str | None = None,
     ) -> AutoResearchExecutionJob | None:
         with _STATE_LOCK:
             state = _load_state()
@@ -215,6 +248,9 @@ class AutoResearchExecutionPlane:
             jobs: list[AutoResearchExecutionJob] = []
             for job in state.jobs:
                 if job.id != job_id:
+                    jobs.append(job)
+                    continue
+                if expected_lease_id is not None and job.lease_id != expected_lease_id:
                     jobs.append(job)
                     continue
                 payload: dict[str, object] = {
@@ -229,6 +265,7 @@ class AutoResearchExecutionPlane:
                     payload["finished_at"] = now
                 if status == "leased":
                     payload["attempt_count"] = job.attempt_count + 1
+                    payload["lease_id"] = f"lease_{uuid4().hex}"
                 if cancellation_requested_at is not None:
                     payload["cancellation_requested_at"] = cancellation_requested_at
                 updated_job = job.model_copy(update=payload)
@@ -264,6 +301,7 @@ class AutoResearchExecutionPlane:
                     leased_job = job.model_copy(
                         update={
                             "status": "leased",
+                            "lease_id": f"lease_{uuid4().hex}",
                             "worker_id": WORKER_ID,
                             "started_at": now,
                             "attempt_count": job.attempt_count + 1,
@@ -297,6 +335,7 @@ class AutoResearchExecutionPlane:
                             "status": "starting",
                             "current_job_id": leased_job.id,
                             "current_run_id": leased_job.run_id,
+                            "current_lease_id": leased_job.lease_id,
                             "heartbeat_at": now,
                         }
                     ),
@@ -305,10 +344,10 @@ class AutoResearchExecutionPlane:
             _save_state(state)
             return leased_job
 
-    def _is_cancel_requested(self, job_id: str) -> bool:
+    def _is_cancel_requested(self, job_id: str, lease_id: str | None) -> bool:
         with _STATE_LOCK:
             state = _load_state()
-            if state.worker.current_job_id == job_id:
+            if state.worker.current_job_id == job_id and state.worker.current_lease_id == lease_id:
                 state = state.model_copy(
                     update={
                         "worker": state.worker.model_copy(
@@ -322,6 +361,8 @@ class AutoResearchExecutionPlane:
                 _save_state(state)
             for job in state.jobs:
                 if job.id == job_id:
+                    if lease_id is not None and job.lease_id != lease_id:
+                        return False
                     return job.cancellation_requested_at is not None
         return False
 
@@ -400,6 +441,7 @@ class AutoResearchExecutionPlane:
                                 "status": "canceled",
                                 "detail": "cancel_requested",
                                 "error": "Run canceled before execution started.",
+                                "lease_id": None,
                                 "finished_at": now,
                                 "cancellation_requested_at": now,
                                 "worker_id": WORKER_ID,
@@ -521,7 +563,7 @@ class AutoResearchExecutionPlane:
                 auto_fetch_literature=request.auto_fetch_literature,
                 docker_image=request.docker_image,
                 execution_action=job.action,
-                should_cancel=lambda: self._is_cancel_requested(job.id),
+                should_cancel=lambda: self._is_cancel_requested(job.id, job.lease_id),
             )
         finally:
             db.close()
@@ -534,8 +576,19 @@ class AutoResearchExecutionPlane:
                 job = self._lease_next_job()
                 if job is None:
                     return
-                self._sync_worker(status="running", job_id=job.id, run_id=job.run_id)
-                self._update_job(job.id, status="running", detail=f"running:{job.action}")
+                self._sync_worker(
+                    status="running",
+                    job_id=job.id,
+                    run_id=job.run_id,
+                    lease_id=job.lease_id,
+                    expected_lease_id=job.lease_id,
+                )
+                self._update_job(
+                    job.id,
+                    status="running",
+                    detail=f"running:{job.action}",
+                    expected_lease_id=job.lease_id,
+                )
                 try:
                     result = self._execute_job(job)
                 except AutoResearchExecutionCancelled as exc:
@@ -546,8 +599,16 @@ class AutoResearchExecutionPlane:
                         detail="canceled",
                         error=detail,
                         cancellation_requested_at=_utcnow(),
+                        expected_lease_id=job.lease_id,
                     )
-                    self._sync_worker(status="idle", job_id=None, run_id=None, error=detail)
+                    self._sync_worker(
+                        status="idle",
+                        job_id=None,
+                        run_id=None,
+                        lease_id=None,
+                        error=detail,
+                        expected_lease_id=job.lease_id,
+                    )
                     write_task_audit_log(
                         db_module.SessionLocal,
                         correlation_id=job.run_id,
@@ -560,9 +621,23 @@ class AutoResearchExecutionPlane:
                     continue
                 except Exception as exc:
                     detail = str(exc)
-                    self._update_job(job.id, status="failed", detail="failed", error=detail)
-                    self._update_run_for_cancel(job.project_id, job.run_id, detail)
-                    self._sync_worker(status="idle", job_id=None, run_id=None, error=detail)
+                    updated = self._update_job(
+                        job.id,
+                        status="failed",
+                        detail="failed",
+                        error=detail,
+                        expected_lease_id=job.lease_id,
+                    )
+                    if updated is not None:
+                        self._update_run_for_cancel(job.project_id, job.run_id, detail)
+                    self._sync_worker(
+                        status="idle",
+                        job_id=None,
+                        run_id=None,
+                        lease_id=None,
+                        error=detail,
+                        expected_lease_id=job.lease_id,
+                    )
                     write_task_audit_log(
                         db_module.SessionLocal,
                         correlation_id=job.run_id,
@@ -575,8 +650,21 @@ class AutoResearchExecutionPlane:
                     continue
 
                 if result.status == "done":
-                    self._update_job(job.id, status="succeeded", detail="done", error=None)
-                    self._sync_worker(status="idle", job_id=None, run_id=None, error=None)
+                    self._update_job(
+                        job.id,
+                        status="succeeded",
+                        detail="done",
+                        error=None,
+                        expected_lease_id=job.lease_id,
+                    )
+                    self._sync_worker(
+                        status="idle",
+                        job_id=None,
+                        run_id=None,
+                        lease_id=None,
+                        error=None,
+                        expected_lease_id=job.lease_id,
+                    )
                     write_task_audit_log(
                         db_module.SessionLocal,
                         correlation_id=job.run_id,
@@ -594,8 +682,16 @@ class AutoResearchExecutionPlane:
                         detail="canceled",
                         error=detail,
                         cancellation_requested_at=_utcnow(),
+                        expected_lease_id=job.lease_id,
                     )
-                    self._sync_worker(status="idle", job_id=None, run_id=None, error=detail)
+                    self._sync_worker(
+                        status="idle",
+                        job_id=None,
+                        run_id=None,
+                        lease_id=None,
+                        error=detail,
+                        expected_lease_id=job.lease_id,
+                    )
                     write_task_audit_log(
                         db_module.SessionLocal,
                         correlation_id=job.run_id,
@@ -607,8 +703,21 @@ class AutoResearchExecutionPlane:
                     )
                 else:
                     detail = result.error or "Auto-research run failed"
-                    self._update_job(job.id, status="failed", detail="failed", error=detail)
-                    self._sync_worker(status="idle", job_id=None, run_id=None, error=detail)
+                    self._update_job(
+                        job.id,
+                        status="failed",
+                        detail="failed",
+                        error=detail,
+                        expected_lease_id=job.lease_id,
+                    )
+                    self._sync_worker(
+                        status="idle",
+                        job_id=None,
+                        run_id=None,
+                        lease_id=None,
+                        error=detail,
+                        expected_lease_id=job.lease_id,
+                    )
                     write_task_audit_log(
                         db_module.SessionLocal,
                         correlation_id=job.run_id,

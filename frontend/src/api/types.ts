@@ -307,12 +307,15 @@ export type AutoResearchExecutionJob = {
   action: AutoResearchJobAction;
   priority: "low" | "normal" | "high";
   status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
+  lease_id?: string | null;
   detail?: string | null;
   enqueued_at: string;
   started_at?: string | null;
   finished_at?: string | null;
   cancellation_requested_at?: string | null;
   attempt_count: number;
+  recovery_count: number;
+  last_recovered_at?: string | null;
   worker_id?: string | null;
   error?: string | null;
 };
@@ -322,9 +325,11 @@ export type AutoResearchWorkerState = {
   status: "idle" | "starting" | "running" | "stopping";
   current_job_id?: string | null;
   current_run_id?: string | null;
+  current_lease_id?: string | null;
   heartbeat_at?: string | null;
   processed_jobs: number;
   queue_depth: number;
+  recovered_job_count: number;
   last_error?: string | null;
 };
 
@@ -746,6 +751,7 @@ export type AutoResearchOperatorRunSummary = {
   max_rounds: number;
   candidate_execution_limit?: number | null;
   executed_candidate_count: number;
+  recovery_count: number;
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   publish_ready: boolean;
   review_risk?: "low" | "medium" | "high" | null;

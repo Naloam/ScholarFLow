@@ -81,6 +81,7 @@ def _run_summary(
         max_rounds=request.max_rounds if request is not None else 3,
         candidate_execution_limit=request.candidate_execution_limit if request is not None else None,
         executed_candidate_count=len(run.portfolio.executed_candidate_ids) if run.portfolio is not None else 0,
+        recovery_count=max((job.recovery_count for job in execution.jobs), default=0),
         publish_status=publish.status if publish is not None else None,
         publish_ready=publish.publish_ready if publish is not None else False,
         review_risk=review.unsupported_claim_risk if review is not None else None,

@@ -377,6 +377,7 @@ export function OperatorConsolePanel({
                     {run.candidate_execution_limit ? ` / limit ${run.candidate_execution_limit}` : ""}
                   </small>
                   <small>priority {run.queue_priority} / rounds {run.max_rounds}</small>
+                  <small>recoveries {run.recovery_count}</small>
                 </div>
               </button>
             ))}
@@ -506,6 +507,10 @@ export function OperatorConsolePanel({
                 <div>
                   <span className="meta-label">Priority</span>
                   <strong>{currentSummary?.queue_priority ?? "normal"}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Recoveries</span>
+                  <strong>{currentSummary?.recovery_count ?? 0}</strong>
                 </div>
               </div>
 

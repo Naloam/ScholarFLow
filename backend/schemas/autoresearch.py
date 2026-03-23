@@ -999,6 +999,7 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     max_rounds: int = 3
     candidate_execution_limit: int | None = None
     executed_candidate_count: int = 0
+    recovery_count: int = 0
     publish_status: AutoResearchPublishStatus | None = None
     publish_ready: bool = False
     review_risk: AutoResearchUnsupportedClaimRisk | None = None
@@ -1036,12 +1037,15 @@ class AutoResearchExecutionJob(BaseModel):
     action: AutoResearchJobAction
     priority: AutoResearchQueuePriority = "normal"
     status: AutoResearchJobStatus = "queued"
+    lease_id: str | None = None
     detail: str | None = None
     enqueued_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
     cancellation_requested_at: datetime | None = None
     attempt_count: int = 0
+    recovery_count: int = 0
+    last_recovered_at: datetime | None = None
     worker_id: str | None = None
     error: str | None = None
 
@@ -1051,9 +1055,11 @@ class AutoResearchWorkerState(BaseModel):
     status: AutoResearchWorkerStatus = "idle"
     current_job_id: str | None = None
     current_run_id: str | None = None
+    current_lease_id: str | None = None
     heartbeat_at: datetime | None = None
     processed_jobs: int = 0
     queue_depth: int = 0
+    recovered_job_count: int = 0
     last_error: str | None = None
 
 

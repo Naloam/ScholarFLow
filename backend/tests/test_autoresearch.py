@@ -698,19 +698,152 @@ def test_autoresearch_publish_package_is_derived_from_selected_bundle(
         assert package["source_bundle_id"] == "selected_candidate_repro"
         assert package["status"] == "revision_required"
         assert package["publish_ready"] is False
+        assert package["review_bundle_ready"] is True
+        assert package["final_publish_ready"] is False
+        assert package["completeness_status"] == "complete"
         assert package["missing_required_asset_count"] == 0
+        assert package["missing_final_asset_count"] == 0
         assert package["blocker_count"] == 0
+        assert package["final_blocker_count"] == 0
         assert package["revision_count"] >= 1
         required_roles = {item["role"] for item in package["required_assets"]}
+        final_required_roles = {item["role"] for item in package["final_required_assets"]}
         optional_roles = {item["role"] for item in package["optional_assets"]}
         assert "run_json" in required_roles
         assert "manifest_json" in required_roles
         assert "candidate_json" in required_roles
         assert "workspace" in required_roles
+        assert "run_generated_code" in final_required_roles
+        assert "attempts_json" in final_required_roles
+        assert "artifact_json" in final_required_roles
         assert "run_artifact_json" in optional_roles
         assert "generated_code" in optional_roles
         assert Path(package["review_path"]).is_file()
         assert Path(package["manifest_path"]).is_file()
+    finally:
+        client.close()
+
+
+def test_autoresearch_publish_package_marks_final_publish_ready_when_review_and_assets_align(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-publish-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-publish-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Final Publish Project",
+            "Compact reranking for cs retrieval",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert package["status"] == "publish_ready"
+        assert package["publish_ready"] is True
+        assert package["review_bundle_ready"] is True
+        assert package["final_publish_ready"] is True
+        assert package["completeness_status"] == "complete"
+        assert package["missing_required_asset_count"] == 0
+        assert package["missing_final_asset_count"] == 0
+        assert package["final_blockers"] == []
+    finally:
+        client.close()
+
+
+def test_autoresearch_publish_package_flags_missing_final_semantic_assets(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-publish-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-publish-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Missing Final Asset Project",
+            "Compact reranking for cs retrieval",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.portfolio is not None
+        selected_candidate = next(
+            item for item in run.candidates if item.id == run.portfolio.selected_candidate_id
+        )
+        assert selected_candidate.generated_code_path is not None
+        generated_code_path = Path(selected_candidate.generated_code_path)
+        generated_code_path.unlink()
+
+        package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert package["status"] == "revision_required"
+        assert package["publish_ready"] is False
+        assert package["review_bundle_ready"] is True
+        assert package["final_publish_ready"] is False
+        assert package["completeness_status"] == "incomplete"
+        assert package["missing_required_asset_count"] == 0
+        assert package["missing_final_asset_count"] >= 1
+        assert package["final_blocker_count"] >= 1
+        assert any("generated_code" in item for item in package["final_blockers"])
     finally:
         client.close()
 

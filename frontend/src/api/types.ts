@@ -655,17 +655,24 @@ export type AutoResearchPublishPackage = {
   source_bundle_id?: string | null;
   status: "publish_ready" | "revision_required" | "blocked";
   publish_ready: boolean;
+  review_bundle_ready: boolean;
+  final_publish_ready: boolean;
+  completeness_status: "complete" | "incomplete";
   review_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;
   asset_count: number;
   existing_asset_count: number;
   missing_required_asset_count: number;
+  missing_final_asset_count: number;
   blocker_count: number;
+  final_blocker_count: number;
   revision_count: number;
   blockers: string[];
+  final_blockers: string[];
   revision_actions: string[];
   required_assets: AutoResearchBundleAssetRead[];
+  final_required_assets: AutoResearchBundleAssetRead[];
   optional_assets: AutoResearchBundleAssetRead[];
 };
 

@@ -78,6 +78,7 @@ AutoResearchReviewStatus = Literal["ready", "needs_revision", "blocked"]
 AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
 AutoResearchRevisionPriority = Literal["high", "medium", "low"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
+AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
@@ -873,17 +874,24 @@ class AutoResearchPublishPackageRead(BaseModel):
     source_bundle_id: str | None = None
     status: AutoResearchPublishStatus = "revision_required"
     publish_ready: bool = False
+    review_bundle_ready: bool = False
+    final_publish_ready: bool = False
+    completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
     manifest_path: str | None = None
     archive_path: str | None = None
     asset_count: int = 0
     existing_asset_count: int = 0
     missing_required_asset_count: int = 0
+    missing_final_asset_count: int = 0
     blocker_count: int = 0
+    final_blocker_count: int = 0
     revision_count: int = 0
     blockers: list[str] = Field(default_factory=list)
+    final_blockers: list[str] = Field(default_factory=list)
     revision_actions: list[str] = Field(default_factory=list)
     required_assets: list[AutoResearchBundleAssetRead] = Field(default_factory=list)
+    final_required_assets: list[AutoResearchBundleAssetRead] = Field(default_factory=list)
     optional_assets: list[AutoResearchBundleAssetRead] = Field(default_factory=list)
 
 

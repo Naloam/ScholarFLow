@@ -22,7 +22,8 @@ ScholarFlow is being developed as a FARS-style auto-research system for computer
 - Review hardening now resolves paper citations against persisted literature state and checks for reference-section completeness.
 - Review now also derives a novelty / related-work assessment from persisted literature and the selected candidate.
 - The operator console now supports run filtering/search, candidate comparison, lineage summary, review-risk/novelty triage, and recovery/publish actions inside the workspace.
-- The numbered Phase 1-6 baseline is complete; the current focus is stronger publish-package completeness plus remaining operator controls.
+- Publish hardening now distinguishes review-bundle readiness from final publish completeness, so missing reproducibility assets are exposed explicitly before final packaging.
+- The numbered Phase 1-6 baseline is complete; the current focus is remaining operator controls plus deeper export/repro hardening.
 
 ## Development Entry Points
 

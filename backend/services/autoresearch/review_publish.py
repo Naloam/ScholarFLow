@@ -34,6 +34,25 @@ from services.autoresearch.repository import (
 REVIEW_FILENAME = "review.json"
 PUBLISH_PACKAGE_FILENAME = "publish_package.json"
 PUBLISH_ARCHIVE_FILENAME = "publish_bundle.zip"
+_FINAL_PUBLISH_REQUIRED_ROLES = {
+    "run_json",
+    "program_json",
+    "portfolio_json",
+    "benchmark_json",
+    "run_plan_json",
+    "run_spec_json",
+    "run_artifact_json",
+    "run_generated_code",
+    "run_paper_markdown",
+    "workspace",
+    "candidate_json",
+    "plan_json",
+    "spec_json",
+    "attempts_json",
+    "artifact_json",
+    "manifest_json",
+    "generated_code",
+}
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
 _REFERENCE_SECTION_MARKERS = ("references", "bibliography")
 _ALWAYS_CITED_SECTION_MARKERS = ("related work", "prior work", "background")
@@ -132,6 +151,12 @@ def _publish_archive_path(project_id: str, run_id: str) -> Path:
 
 def _selected_bundle(bundle_index: AutoResearchBundleIndexRead) -> AutoResearchBundleRead | None:
     return next((item for item in bundle_index.bundles if item.id == "selected_candidate_repro"), None)
+
+
+def _final_required_assets(bundle: AutoResearchBundleRead | None) -> list[AutoResearchBundleAssetRead]:
+    if bundle is None:
+        return []
+    return [item for item in bundle.assets if item.role in _FINAL_PUBLISH_REQUIRED_ROLES]
 
 
 def _paper_markdown(run: AutoResearchRunRead) -> str:
@@ -852,14 +877,23 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         return None
 
     required_assets = [item for item in bundle.assets if item.required]
+    final_required_assets = _final_required_assets(bundle)
     optional_assets = [item for item in bundle.assets if not item.required]
     missing_required_assets = [item for item in required_assets if not item.ref.exists]
+    missing_final_assets = [item for item in final_required_assets if not item.ref.exists]
     blockers = [item.summary for item in review.findings if item.severity == "error"]
+    final_blockers = [
+        f"Missing final publish asset: {item.role}"
+        for item in missing_final_assets
+    ]
+    review_bundle_ready = not missing_required_assets
+    final_publish_ready = review.overall_status == "ready" and not missing_final_assets
+    completeness_status = "complete" if not missing_final_assets else "incomplete"
     status = (
         "blocked"
-        if blockers
+        if blockers or not review_bundle_ready
         else "publish_ready"
-        if not missing_required_assets and review.overall_status == "ready"
+        if final_publish_ready
         else "revision_required"
     )
     package = AutoResearchPublishPackageRead(
@@ -870,18 +904,25 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         selected_candidate_id=review.selected_candidate_id,
         source_bundle_id=bundle.id,
         status=status,
-        publish_ready=status == "publish_ready",
+        publish_ready=final_publish_ready,
+        review_bundle_ready=review_bundle_ready,
+        final_publish_ready=final_publish_ready,
+        completeness_status=completeness_status,
         review_path=review.persisted_path,
         manifest_path=str(_publish_manifest_path(project_id, run_id)),
         archive_path=str(_publish_archive_path(project_id, run_id)),
         asset_count=bundle.asset_count,
         existing_asset_count=bundle.existing_asset_count,
         missing_required_asset_count=len(missing_required_assets),
+        missing_final_asset_count=len(missing_final_assets),
         blocker_count=len(blockers),
+        final_blocker_count=len(final_blockers),
         revision_count=len(review.revision_plan),
         blockers=blockers,
+        final_blockers=final_blockers,
         revision_actions=[item.title for item in review.revision_plan],
         required_assets=required_assets,
+        final_required_assets=final_required_assets,
         optional_assets=optional_assets,
     )
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))

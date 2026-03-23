@@ -44,6 +44,11 @@ PORTFOLIO_FILENAME = "portfolio.json"
 ARTIFACT_FILENAME = "artifact.json"
 CODE_FILENAME = "experiment.py"
 PAPER_FILENAME = "paper.md"
+NARRATIVE_REPORT_FILENAME = "narrative_report.md"
+CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
+PAPER_PLAN_FILENAME = "paper_plan.json"
+FIGURE_PLAN_FILENAME = "figure_plan.json"
+PAPER_REVISION_STATE_FILENAME = "paper_revision_state.json"
 BENCHMARK_FILENAME = "benchmark.json"
 CANDIDATES_DIRNAME = "candidates"
 CANDIDATE_FILENAME = "candidate.json"
@@ -254,6 +259,11 @@ def _candidate_lineage_edges(
             ("spec_json", "spec"),
             ("artifact_json", "artifact"),
             ("paper_markdown", "paper"),
+            ("narrative_report_markdown", "narrative_report"),
+            ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("paper_plan_json", "paper_plan"),
+            ("figure_plan_json", "figure_plan"),
+            ("paper_revision_state_json", "paper_revision_state"),
             ("generated_code", "generated_code"),
         ]
         for attr, target_kind in mirrored_assets:
@@ -311,6 +321,11 @@ def _run_lineage_edges(
         ("spec_json", "spec"),
         ("artifact_json", "artifact"),
         ("paper_markdown", "paper"),
+        ("narrative_report_markdown", "narrative_report"),
+        ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+        ("paper_plan_json", "paper_plan"),
+        ("figure_plan_json", "figure_plan"),
+        ("paper_revision_state_json", "paper_revision_state"),
         ("generated_code", "generated_code"),
         ("benchmark_json", "benchmark"),
     ]
@@ -421,6 +436,41 @@ def _run_bundle_assets(
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_artifact_json", label="Selected run artifact", role="run_artifact_json", ref=files.artifact_json, required=False),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_generated_code", label="Selected run generated code", role="run_generated_code", ref=files.generated_code, required=False),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_paper_markdown", label="Selected run paper", role="run_paper_markdown", ref=files.paper_markdown, required=False),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_narrative_report_markdown",
+            label="Selected run narrative report",
+            role="run_narrative_report_markdown",
+            ref=files.narrative_report_markdown,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_claim_evidence_matrix_json",
+            label="Selected run claim-evidence matrix",
+            role="run_claim_evidence_matrix_json",
+            ref=files.claim_evidence_matrix_json,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_plan_json",
+            label="Selected run paper plan",
+            role="run_paper_plan_json",
+            ref=files.paper_plan_json,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_figure_plan_json",
+            label="Selected run figure plan",
+            role="run_figure_plan_json",
+            ref=files.figure_plan_json,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_revision_state_json",
+            label="Selected run paper revision state",
+            role="run_paper_revision_state_json",
+            ref=files.paper_revision_state_json,
+            required=False,
+        ),
     ]
 
 
@@ -562,6 +612,16 @@ def save_run(run: AutoResearchRunRead) -> AutoResearchRunRead:
         _write_json(base / ARTIFACT_FILENAME, payload.artifact.model_dump(mode="json"))
     if payload.paper_markdown:
         (base / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
+    if payload.narrative_report_markdown:
+        (base / NARRATIVE_REPORT_FILENAME).write_text(payload.narrative_report_markdown, encoding="utf-8")
+    if payload.claim_evidence_matrix is not None:
+        _write_json(base / CLAIM_EVIDENCE_MATRIX_FILENAME, payload.claim_evidence_matrix.model_dump(mode="json"))
+    if payload.paper_plan is not None:
+        _write_json(base / PAPER_PLAN_FILENAME, payload.paper_plan.model_dump(mode="json"))
+    if payload.figure_plan is not None:
+        _write_json(base / FIGURE_PLAN_FILENAME, payload.figure_plan.model_dump(mode="json"))
+    if payload.paper_revision_state is not None:
+        _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
     return payload
 
 
@@ -602,6 +662,26 @@ def save_generated_code(
 
 def paper_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_FILENAME)
+
+
+def narrative_report_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / NARRATIVE_REPORT_FILENAME)
+
+
+def claim_evidence_matrix_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / CLAIM_EVIDENCE_MATRIX_FILENAME)
+
+
+def paper_plan_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PAPER_PLAN_FILENAME)
+
+
+def figure_plan_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / FIGURE_PLAN_FILENAME)
+
+
+def paper_revision_state_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PAPER_REVISION_STATE_FILENAME)
 
 
 def candidate_paper_file_path(project_id: str, run_id: str, candidate_id: str) -> str:
@@ -701,6 +781,21 @@ def load_candidate_registry(
             benchmark_json=_asset_ref(run_base / BENCHMARK_FILENAME),
             generated_code=_asset_ref(current_run.generated_code_path),
             paper_markdown=_asset_ref(run_paper_path),
+            narrative_report_markdown=_asset_ref(
+                current_run.narrative_report_path or (run_base / NARRATIVE_REPORT_FILENAME)
+            ),
+            claim_evidence_matrix_json=_asset_ref(
+                current_run.claim_evidence_matrix_path or (run_base / CLAIM_EVIDENCE_MATRIX_FILENAME)
+            ),
+            paper_plan_json=_asset_ref(
+                current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
+            ),
+            figure_plan_json=_asset_ref(
+                current_run.figure_plan_path or (run_base / FIGURE_PLAN_FILENAME)
+            ),
+            paper_revision_state_json=_asset_ref(
+                current_run.paper_revision_state_path or (run_base / PAPER_REVISION_STATE_FILENAME)
+            ),
         )
     manifest = load_candidate_manifest(
         project_id,
@@ -787,6 +882,21 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         benchmark_json=_asset_ref(base / BENCHMARK_FILENAME),
         generated_code=_asset_ref(run.generated_code_path),
         paper_markdown=_asset_ref(paper_path),
+        narrative_report_markdown=_asset_ref(
+            run.narrative_report_path or (base / NARRATIVE_REPORT_FILENAME)
+        ),
+        claim_evidence_matrix_json=_asset_ref(
+            run.claim_evidence_matrix_path or (base / CLAIM_EVIDENCE_MATRIX_FILENAME)
+        ),
+        paper_plan_json=_asset_ref(
+            run.paper_plan_path or (base / PAPER_PLAN_FILENAME)
+        ),
+        figure_plan_json=_asset_ref(
+            run.figure_plan_path or (base / FIGURE_PLAN_FILENAME)
+        ),
+        paper_revision_state_json=_asset_ref(
+            run.paper_revision_state_path or (base / PAPER_REVISION_STATE_FILENAME)
+        ),
     )
 
     return AutoResearchRunRegistryRead(

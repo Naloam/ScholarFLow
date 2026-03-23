@@ -289,12 +289,84 @@ export type AutoResearchRunControlPatch = {
   queue_priority?: "low" | "normal" | "high" | null;
 };
 
+export type AutoResearchClaimEvidenceRef = {
+  source_kind: "plan" | "portfolio" | "artifact" | "literature" | "attempts";
+  label: string;
+  detail: string;
+  locator?: string | null;
+};
+
+export type AutoResearchClaimEvidenceEntry = {
+  claim_id: string;
+  category: "problem" | "method" | "result" | "context" | "limitation";
+  section_hint: string;
+  claim: string;
+  support_status: "supported" | "partial" | "unsupported";
+  evidence: AutoResearchClaimEvidenceRef[];
+  gaps: string[];
+};
+
+export type AutoResearchClaimEvidenceMatrix = {
+  generated_at: string;
+  claim_count: number;
+  supported_claim_count: number;
+  unsupported_claim_count: number;
+  entries: AutoResearchClaimEvidenceEntry[];
+};
+
+export type AutoResearchPaperPlanSection = {
+  section_id: string;
+  title: string;
+  objective: string;
+  claim_ids: string[];
+  evidence_focus: string[];
+};
+
+export type AutoResearchPaperPlan = {
+  generated_at: string;
+  title: string;
+  narrative_summary: string;
+  sections: AutoResearchPaperPlanSection[];
+};
+
+export type AutoResearchFigurePlanItem = {
+  figure_id: string;
+  title: string;
+  kind: "table" | "chart" | "diagram";
+  source: string;
+  caption: string;
+  status: "planned" | "ready" | "not_available";
+};
+
+export type AutoResearchFigurePlan = {
+  generated_at: string;
+  items: AutoResearchFigurePlanItem[];
+};
+
+export type AutoResearchPaperRevisionState = {
+  generated_at: string;
+  revision_round: number;
+  status: "drafted" | "needs_review" | "revising" | "ready_for_publish";
+  open_issues: string[];
+  completed_actions: string[];
+};
+
 export type AutoResearchRun = {
   id: string;
   project_id: string;
   topic: string;
   status: AutoResearchRunStatus;
   error?: string | null;
+  narrative_report_markdown?: string | null;
+  narrative_report_path?: string | null;
+  claim_evidence_matrix?: AutoResearchClaimEvidenceMatrix | null;
+  claim_evidence_matrix_path?: string | null;
+  paper_plan?: AutoResearchPaperPlan | null;
+  paper_plan_path?: string | null;
+  figure_plan?: AutoResearchFigurePlan | null;
+  figure_plan_path?: string | null;
+  paper_revision_state?: AutoResearchPaperRevisionState | null;
+  paper_revision_state_path?: string | null;
   created_at: string;
   updated_at: string;
   [key: string]: unknown;
@@ -371,7 +443,12 @@ export type AutoResearchLineageEdge = {
     | "paper"
     | "manifest"
     | "generated_code"
-    | "benchmark";
+    | "benchmark"
+    | "narrative_report"
+    | "claim_evidence_matrix"
+    | "paper_plan"
+    | "figure_plan"
+    | "paper_revision_state";
   source_id: string;
   relation: "owns" | "selected_candidate" | "has_asset" | "materialized_to_run_asset";
   target_kind:
@@ -387,7 +464,12 @@ export type AutoResearchLineageEdge = {
     | "paper"
     | "manifest"
     | "generated_code"
-    | "benchmark";
+    | "benchmark"
+    | "narrative_report"
+    | "claim_evidence_matrix"
+    | "paper_plan"
+    | "figure_plan"
+    | "paper_revision_state";
   target_id: string;
   target_path?: string | null;
   exists?: boolean | null;
@@ -404,6 +486,11 @@ export type AutoResearchRunRegistryFiles = {
   benchmark_json?: AutoResearchRegistryAssetRef | null;
   generated_code?: AutoResearchRegistryAssetRef | null;
   paper_markdown?: AutoResearchRegistryAssetRef | null;
+  narrative_report_markdown?: AutoResearchRegistryAssetRef | null;
+  claim_evidence_matrix_json?: AutoResearchRegistryAssetRef | null;
+  paper_plan_json?: AutoResearchRegistryAssetRef | null;
+  figure_plan_json?: AutoResearchRegistryAssetRef | null;
+  paper_revision_state_json?: AutoResearchRegistryAssetRef | null;
 };
 
 export type AutoResearchCandidateRegistryFiles = {
@@ -509,6 +596,11 @@ export type AutoResearchBundleAssetRead = {
     | "run_artifact_json"
     | "run_generated_code"
     | "run_paper_markdown"
+    | "run_narrative_report_markdown"
+    | "run_claim_evidence_matrix_json"
+    | "run_paper_plan_json"
+    | "run_figure_plan_json"
+    | "run_paper_revision_state_json"
     | "workspace"
     | "candidate_json"
     | "plan_json"

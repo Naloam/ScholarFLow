@@ -131,6 +131,11 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         run_dir = Path(run["paper_path"]).parent
         assert (run_dir / "program.json").is_file()
         assert (run_dir / "portfolio.json").is_file()
+        assert Path(run["narrative_report_path"]).is_file()
+        assert Path(run["claim_evidence_matrix_path"]).is_file()
+        assert Path(run["paper_plan_path"]).is_file()
+        assert Path(run["figure_plan_path"]).is_file()
+        assert Path(run["paper_revision_state_path"]).is_file()
         assert len(list((run_dir / "candidates").glob("*.json"))) == 3
         assert run["spec"]["seeds"] == [7, 13]
         assert len(run["spec"]["sweeps"]) == 2
@@ -183,9 +188,22 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert manifest["files"]["paper_path"] == selected_candidate["paper_path"]
 
         paper = run["paper_markdown"]
+        assert run["narrative_report_markdown"].startswith("# Narrative Report:")
+        assert "## Claim-Evidence Commitments" in run["narrative_report_markdown"]
+        assert run["claim_evidence_matrix"]["claim_count"] >= 5
+        assert run["claim_evidence_matrix"]["supported_claim_count"] >= 4
+        assert any(item["claim_id"] == "claim_result_summary" for item in run["claim_evidence_matrix"]["entries"])
+        assert run["paper_plan"]["title"] == run["plan"]["title"]
+        assert len(run["paper_plan"]["sections"]) >= 6
+        assert run["figure_plan"]["items"]
+        assert any(item["kind"] == "table" for item in run["figure_plan"]["items"])
+        assert run["paper_revision_state"]["status"] == "needs_review"
+        assert "Persisted narrative report" in run["paper_revision_state"]["completed_actions"]
         assert "## 2. Related Work and Research Plan" in paper
+        assert "Claim-evidence commitments carried into manuscript drafting were" in paper
         assert "Portfolio planning generated 3 ranked candidates" in paper
         assert "## 4. Experimental Setup" in paper
+        assert "The figure plan promoted the following artifact-backed visuals" in paper
         assert "## 5. Results" in paper
         assert "| System | Accuracy | Macro F1 |" in paper
         assert "Aggregate Stability" in paper
@@ -298,9 +316,18 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         assert len(registry["files"]["artifact_json"]["sha256"]) == 64
         assert registry["files"]["paper_markdown"]["exists"] is True
         assert len(registry["files"]["paper_markdown"]["sha256"]) == 64
+        assert registry["files"]["narrative_report_markdown"]["exists"] is True
+        assert registry["files"]["claim_evidence_matrix_json"]["exists"] is True
+        assert registry["files"]["paper_plan_json"]["exists"] is True
+        assert registry["files"]["figure_plan_json"]["exists"] is True
+        assert registry["files"]["paper_revision_state_json"]["exists"] is True
         assert any(edge["relation"] == "selected_candidate" for edge in registry["lineage"]["edges"])
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "artifact"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "narrative_report"
             for edge in registry["lineage"]["edges"]
         )
         assert len(registry["candidates"]) == 3
@@ -337,6 +364,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_plan"
             for edge in candidate_registry["lineage"]["edges"]
         )
     finally:
@@ -444,6 +475,11 @@ def test_autoresearch_bundle_index_exposes_selected_and_portfolio_assets(
         assert selected_bundle["asset_count"] >= 8
         assert selected_bundle["missing_asset_count"] == 0
         assert any(item["role"] == "run_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_narrative_report_markdown" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_claim_evidence_matrix_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_plan_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_figure_plan_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_revision_state_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "manifest_json" and item["selected"] for item in selected_bundle["assets"])
         assert any(item["role"] == "artifact_json" and item["selected"] for item in selected_bundle["assets"])
         assert any(item["role"] == "paper_markdown" and item["selected"] for item in selected_bundle["assets"])

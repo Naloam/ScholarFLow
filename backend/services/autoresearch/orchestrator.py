@@ -25,8 +25,13 @@ from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.repair import ExperimentRepairEngine
 from services.autoresearch.repository import (
     candidate_paper_file_path,
+    claim_evidence_matrix_file_path,
+    figure_plan_file_path,
     load_run,
     load_benchmark_snapshot,
+    narrative_report_file_path,
+    paper_plan_file_path,
+    paper_revision_state_file_path,
     paper_file_path,
     save_candidate_manifest,
     save_candidate_snapshot,
@@ -851,6 +856,16 @@ class AutoResearchOrchestrator:
                         "generated_code_path": None,
                         "paper_markdown": None,
                         "paper_path": None,
+                        "narrative_report_markdown": None,
+                        "narrative_report_path": None,
+                        "claim_evidence_matrix": None,
+                        "claim_evidence_matrix_path": None,
+                        "paper_plan": None,
+                        "paper_plan_path": None,
+                        "figure_plan": None,
+                        "figure_plan_path": None,
+                        "paper_revision_state": None,
+                        "paper_revision_state_path": None,
                         "paper_draft_version": None,
                         "selected_round_index": None,
                     }
@@ -1233,7 +1248,12 @@ class AutoResearchOrchestrator:
             )
             paper_path = paper_file_path(project_id, run_id)
             candidate_paper_path = candidate_paper_file_path(project_id, run_id, winner.id)
-            paper_markdown = self.writer.write(
+            narrative_report_path = narrative_report_file_path(project_id, run_id)
+            claim_evidence_matrix_path = claim_evidence_matrix_file_path(project_id, run_id)
+            paper_plan_path = paper_plan_file_path(project_id, run_id)
+            figure_plan_path = figure_plan_file_path(project_id, run_id)
+            paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
+            paper_pipeline = self.writer.build_pipeline(
                 winner_plan,
                 winner_spec,
                 winner.artifact,
@@ -1244,6 +1264,7 @@ class AutoResearchOrchestrator:
                 portfolio=portfolio,
                 candidates=candidates,
             )
+            paper_markdown = paper_pipeline.paper_markdown
             candidates = self._update_candidate(
                 candidates,
                 winner.id,
@@ -1283,6 +1304,16 @@ class AutoResearchOrchestrator:
                         "spec": winner_spec,
                         "generated_code_path": winner.generated_code_path,
                         "artifact": winner.artifact,
+                        "narrative_report_markdown": paper_pipeline.narrative_report_markdown,
+                        "narrative_report_path": narrative_report_path,
+                        "claim_evidence_matrix": paper_pipeline.claim_evidence_matrix,
+                        "claim_evidence_matrix_path": claim_evidence_matrix_path,
+                        "paper_plan": paper_pipeline.paper_plan,
+                        "paper_plan_path": paper_plan_path,
+                        "figure_plan": paper_pipeline.figure_plan,
+                        "figure_plan_path": figure_plan_path,
+                        "paper_revision_state": paper_pipeline.paper_revision_state,
+                        "paper_revision_state_path": paper_revision_state_path,
                         "paper_markdown": paper_markdown,
                         "paper_path": paper_path,
                         "paper_draft_version": draft.version,

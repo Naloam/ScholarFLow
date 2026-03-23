@@ -35,6 +35,11 @@ AutoResearchBundleAssetRole = Literal[
     "run_artifact_json",
     "run_generated_code",
     "run_paper_markdown",
+    "run_narrative_report_markdown",
+    "run_claim_evidence_matrix_json",
+    "run_paper_plan_json",
+    "run_figure_plan_json",
+    "run_paper_revision_state_json",
     "workspace",
     "candidate_json",
     "plan_json",
@@ -59,6 +64,11 @@ AutoResearchLineageNodeKind = Literal[
     "manifest",
     "generated_code",
     "benchmark",
+    "narrative_report",
+    "claim_evidence_matrix",
+    "paper_plan",
+    "figure_plan",
+    "paper_revision_state",
 ]
 AutoResearchLineageRelation = Literal[
     "owns",
@@ -83,6 +93,12 @@ AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
 AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
 AutoResearchBudgetStatus = Literal["default", "constrained"]
+AutoResearchClaimSupportStatus = Literal["supported", "partial", "unsupported"]
+AutoResearchClaimCategory = Literal["problem", "method", "result", "context", "limitation"]
+AutoResearchEvidenceSourceKind = Literal["plan", "portfolio", "artifact", "literature", "attempts"]
+AutoResearchFigureAssetKind = Literal["table", "chart", "diagram"]
+AutoResearchFigureStatus = Literal["planned", "ready", "not_available"]
+AutoResearchPaperRevisionStatus = Literal["drafted", "needs_review", "revising", "ready_for_publish"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -529,6 +545,77 @@ class LiteratureInsight(BaseModel):
     gap_hint: str | None = None
 
 
+class AutoResearchClaimEvidenceRefRead(BaseModel):
+    source_kind: AutoResearchEvidenceSourceKind
+    label: str
+    detail: str
+    locator: str | None = None
+
+
+class AutoResearchClaimEvidenceEntryRead(BaseModel):
+    claim_id: str
+    category: AutoResearchClaimCategory
+    section_hint: str
+    claim: str
+    support_status: AutoResearchClaimSupportStatus = "supported"
+    evidence: list[AutoResearchClaimEvidenceRefRead] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+
+
+class AutoResearchClaimEvidenceMatrixRead(BaseModel):
+    generated_at: datetime
+    claim_count: int = 0
+    supported_claim_count: int = 0
+    unsupported_claim_count: int = 0
+    entries: list[AutoResearchClaimEvidenceEntryRead] = Field(default_factory=list)
+
+
+class AutoResearchPaperPlanSectionRead(BaseModel):
+    section_id: str
+    title: str
+    objective: str
+    claim_ids: list[str] = Field(default_factory=list)
+    evidence_focus: list[str] = Field(default_factory=list)
+
+
+class AutoResearchPaperPlanRead(BaseModel):
+    generated_at: datetime
+    title: str
+    narrative_summary: str
+    sections: list[AutoResearchPaperPlanSectionRead] = Field(default_factory=list)
+
+
+class AutoResearchFigurePlanItemRead(BaseModel):
+    figure_id: str
+    title: str
+    kind: AutoResearchFigureAssetKind = "table"
+    source: str
+    caption: str
+    status: AutoResearchFigureStatus = "planned"
+
+
+class AutoResearchFigurePlanRead(BaseModel):
+    generated_at: datetime
+    items: list[AutoResearchFigurePlanItemRead] = Field(default_factory=list)
+
+
+class AutoResearchPaperRevisionStateRead(BaseModel):
+    generated_at: datetime
+    revision_round: int = 0
+    status: AutoResearchPaperRevisionStatus = "drafted"
+    open_issues: list[str] = Field(default_factory=list)
+    completed_actions: list[str] = Field(default_factory=list)
+
+
+class AutoResearchPaperPipelineArtifactsRead(BaseModel):
+    narrative_report_markdown: str
+    claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead
+    paper_plan: AutoResearchPaperPlanRead
+    figure_plan: AutoResearchFigurePlanRead
+    paper_revision_state: AutoResearchPaperRevisionStateRead
+    paper_markdown: str
+
+
 class ExperimentAttempt(BaseModel):
     round_index: int
     strategy: str
@@ -622,6 +709,16 @@ class AutoResearchRunRead(BaseModel):
     plan: ResearchPlan | None = None
     spec: ExperimentSpec | None = None
     literature: list[LiteratureInsight] = Field(default_factory=list)
+    narrative_report_markdown: str | None = None
+    narrative_report_path: str | None = None
+    claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead | None = None
+    claim_evidence_matrix_path: str | None = None
+    paper_plan: AutoResearchPaperPlanRead | None = None
+    paper_plan_path: str | None = None
+    figure_plan: AutoResearchFigurePlanRead | None = None
+    figure_plan_path: str | None = None
+    paper_revision_state: AutoResearchPaperRevisionStateRead | None = None
+    paper_revision_state_path: str | None = None
     candidates: list[HypothesisCandidate] = Field(default_factory=list)
     portfolio: PortfolioSummary | None = None
     attempts: list[ExperimentAttempt] = Field(default_factory=list)
@@ -670,6 +767,11 @@ class AutoResearchRunRegistryFiles(BaseModel):
     benchmark_json: AutoResearchRegistryAssetRef | None = None
     generated_code: AutoResearchRegistryAssetRef | None = None
     paper_markdown: AutoResearchRegistryAssetRef | None = None
+    narrative_report_markdown: AutoResearchRegistryAssetRef | None = None
+    claim_evidence_matrix_json: AutoResearchRegistryAssetRef | None = None
+    paper_plan_json: AutoResearchRegistryAssetRef | None = None
+    figure_plan_json: AutoResearchRegistryAssetRef | None = None
+    paper_revision_state_json: AutoResearchRegistryAssetRef | None = None
 
 
 class AutoResearchCandidateRegistryFiles(BaseModel):

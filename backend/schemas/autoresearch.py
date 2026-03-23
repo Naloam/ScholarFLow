@@ -903,6 +903,14 @@ class AutoResearchOperatorProjectActionsRead(BaseModel):
     start_run: bool = True
 
 
+class AutoResearchOperatorConsoleFiltersRead(BaseModel):
+    search: str | None = None
+    status: AutoResearchRunStatus | None = None
+    publish_status: AutoResearchPublishStatus | None = None
+    review_risk: AutoResearchUnsupportedClaimRisk | None = None
+    novelty_status: AutoResearchNoveltyStatus | None = None
+
+
 class AutoResearchOperatorRunActionsRead(BaseModel):
     resume: bool = False
     retry: bool = False
@@ -928,6 +936,8 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     cancel_requested: bool = False
     publish_status: AutoResearchPublishStatus | None = None
     publish_ready: bool = False
+    review_risk: AutoResearchUnsupportedClaimRisk | None = None
+    novelty_status: AutoResearchNoveltyStatus | None = None
     blocker_count: int = 0
     revision_count: int = 0
 
@@ -945,8 +955,10 @@ class AutoResearchOperatorRunDetailRead(BaseModel):
 class AutoResearchOperatorConsoleRead(BaseModel):
     project_id: str
     run_count: int = 0
+    filtered_run_count: int = 0
     latest_run_id: str | None = None
     selected_run_id: str | None = None
+    filters: AutoResearchOperatorConsoleFiltersRead = Field(default_factory=AutoResearchOperatorConsoleFiltersRead)
     actions: AutoResearchOperatorProjectActionsRead
     runs: list[AutoResearchOperatorRunSummaryRead] = Field(default_factory=list)
     current_run: AutoResearchOperatorRunDetailRead | None = None

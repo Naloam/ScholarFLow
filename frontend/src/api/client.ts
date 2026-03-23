@@ -5,6 +5,7 @@ import type {
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
   AutoResearchOperatorConsole,
+  AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExport,
   AutoResearchPublishPackage,
   AutoResearchRun,
@@ -319,9 +320,28 @@ export const api = {
 
   getAutoResearchOperatorConsole(
     projectId: string,
-    runId?: string,
+    options?: ({ runId?: string } & AutoResearchOperatorConsoleFilters),
   ): Promise<AutoResearchOperatorConsole> {
-    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    const params = new URLSearchParams();
+    if (options?.runId) {
+      params.set("run_id", options.runId);
+    }
+    if (options?.search) {
+      params.set("search", options.search);
+    }
+    if (options?.status) {
+      params.set("status", options.status);
+    }
+    if (options?.publish_status) {
+      params.set("publish_status", options.publish_status);
+    }
+    if (options?.review_risk) {
+      params.set("review_risk", options.review_risk);
+    }
+    if (options?.novelty_status) {
+      params.set("novelty_status", options.novelty_status);
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
     return request(`/api/projects/${projectId}/auto-research/console${query}`);
   },
 

@@ -793,6 +793,10 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert console["runs"][0]["selected_count"] == 1
         assert console["runs"][0]["failed_count"] == 0
         assert console["runs"][0]["publish_status"] == "revision_required"
+        assert console["runs"][0]["review_risk"] == "medium"
+        assert console["runs"][0]["novelty_status"] == "missing_context"
+        assert console["filtered_run_count"] == 1
+        assert console["filters"]["search"] is None
 
         current = console["current_run"]
         assert current["run"]["id"] == run_id
@@ -832,9 +836,12 @@ def test_autoresearch_operator_console_exposes_cancel_for_queued_run(
         assert console_response.status_code == 200
         console = console_response.json()
         assert console["run_count"] == 1
+        assert console["filtered_run_count"] == 1
         assert console["selected_run_id"] == run.id
         assert console["runs"][0]["latest_job_status"] == "queued"
         assert console["runs"][0]["active_job_id"] is None
+        assert console["runs"][0]["review_risk"] is None
+        assert console["runs"][0]["novelty_status"] is None
 
         current = console["current_run"]
         assert current["run"]["status"] == "queued"
@@ -845,6 +852,151 @@ def test_autoresearch_operator_console_exposes_cancel_for_queued_run(
         assert current["actions"]["cancel"] is True
         assert current["actions"]["export_publish"] is False
         assert current["actions"]["download_publish"] is False
+    finally:
+        client.close()
+
+
+def test_autoresearch_operator_console_supports_run_filtering_and_search(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-console-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-console-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 6 Filter Console Project",
+            "Console triage filter project",
+        )
+
+        grounded_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert grounded_response.status_code == 200
+        grounded_run_id = grounded_response.json()["id"]
+
+        baseline_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert baseline_response.status_code == 200
+        baseline_run_id = baseline_response.json()["id"]
+        baseline_run = autoresearch_repository.load_run(project_id, baseline_run_id)
+        assert baseline_run is not None
+        autoresearch_repository.save_run(
+            baseline_run.model_copy(
+                update={
+                    "literature": [],
+                    "paper_markdown": """# Controlled Baseline Paper
+
+## 1. Introduction
+This controlled baseline paper summarizes a completed experiment and artifact trail without explicit literature grounding.
+
+## 2. Related Work and Research Plan
+No project-specific literature was attached, so related-work grounding is limited.
+
+## 3. Method
+The selected candidate keeps the benchmark and execution path intact.
+
+## 4. Experimental Setup
+The run executed the benchmark with persisted seeds, sweeps, and artifacts.
+
+## 5. Results
+The artifact retained benchmark outputs for the selected candidate.
+
+## 6. Discussion
+The run is operationally complete but does not yet make a literature-grounded novelty argument.
+
+## 7. Limitations
+- Related-work grounding was intentionally removed for this controlled console test.
+
+## 8. Conclusion
+This paper remains artifact-grounded but should require revision before publication packaging.
+""",
+                }
+            )
+        )
+
+        queued_run = autoresearch_repository.create_run(project_id, "Queued auto research control path")
+        AutoResearchExecutionPlane().enqueue(project_id=project_id, run_id=queued_run.id, action="run")
+
+        grounded_console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"publish_status": "publish_ready", "novelty_status": "grounded"},
+        )
+        assert grounded_console.status_code == 200
+        grounded_payload = grounded_console.json()
+        assert grounded_payload["run_count"] == 3
+        assert grounded_payload["filtered_run_count"] == 1
+        assert grounded_payload["selected_run_id"] == grounded_run_id
+        assert grounded_payload["filters"]["publish_status"] == "publish_ready"
+        assert grounded_payload["filters"]["novelty_status"] == "grounded"
+        assert grounded_payload["runs"][0]["run_id"] == grounded_run_id
+        assert grounded_payload["runs"][0]["review_risk"] == "low"
+        assert grounded_payload["runs"][0]["novelty_status"] == "grounded"
+
+        medium_console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"status": "done", "review_risk": "medium"},
+        )
+        assert medium_console.status_code == 200
+        medium_payload = medium_console.json()
+        assert medium_payload["filtered_run_count"] == 1
+        assert medium_payload["selected_run_id"] == baseline_run_id
+        assert medium_payload["runs"][0]["run_id"] == baseline_run_id
+        assert medium_payload["runs"][0]["publish_status"] == "revision_required"
+        assert medium_payload["runs"][0]["review_risk"] == "medium"
+        assert medium_payload["runs"][0]["novelty_status"] == "missing_context"
+
+        queued_console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"search": "queued auto research"},
+        )
+        assert queued_console.status_code == 200
+        queued_payload = queued_console.json()
+        assert queued_payload["filtered_run_count"] == 1
+        assert queued_payload["selected_run_id"] == queued_run.id
+        assert queued_payload["filters"]["search"] == "queued auto research"
+        assert queued_payload["runs"][0]["run_id"] == queued_run.id
+        assert queued_payload["runs"][0]["status"] == "queued"
+
+        empty_console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"search": "does-not-match"},
+        )
+        assert empty_console.status_code == 200
+        empty_payload = empty_console.json()
+        assert empty_payload["run_count"] == 3
+        assert empty_payload["filtered_run_count"] == 0
+        assert empty_payload["selected_run_id"] is None
+        assert empty_payload["current_run"] is None
+        assert empty_payload["runs"] == []
     finally:
         client.close()
 

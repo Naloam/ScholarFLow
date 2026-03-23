@@ -685,6 +685,14 @@ export type AutoResearchOperatorProjectActions = {
   start_run: boolean;
 };
 
+export type AutoResearchOperatorConsoleFilters = {
+  search?: string | null;
+  status?: AutoResearchRunStatus | null;
+  publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
+  review_risk?: "low" | "medium" | "high" | null;
+  novelty_status?: "missing_context" | "grounded" | "incremental" | "weak" | null;
+};
+
 export type AutoResearchOperatorRunActions = {
   resume: boolean;
   retry: boolean;
@@ -710,6 +718,8 @@ export type AutoResearchOperatorRunSummary = {
   cancel_requested: boolean;
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   publish_ready: boolean;
+  review_risk?: "low" | "medium" | "high" | null;
+  novelty_status?: "missing_context" | "grounded" | "incremental" | "weak" | null;
   blocker_count: number;
   revision_count: number;
 };
@@ -727,8 +737,10 @@ export type AutoResearchOperatorRunDetail = {
 export type AutoResearchOperatorConsole = {
   project_id: string;
   run_count: number;
+  filtered_run_count: number;
   latest_run_id?: string | null;
   selected_run_id?: string | null;
+  filters: AutoResearchOperatorConsoleFilters;
   actions: AutoResearchOperatorProjectActions;
   runs: AutoResearchOperatorRunSummary[];
   current_run?: AutoResearchOperatorRunDetail | null;

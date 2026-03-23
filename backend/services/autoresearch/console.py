@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from schemas.autoresearch import (
     AutoResearchOperatorConsoleRead,
+    AutoResearchOperatorConsoleFiltersRead,
     AutoResearchOperatorProjectActionsRead,
     AutoResearchOperatorRunActionsRead,
     AutoResearchOperatorRunDetailRead,
     AutoResearchOperatorRunSummaryRead,
+    AutoResearchPublishStatus,
+    AutoResearchRunStatus,
     AutoResearchRunExecutionRead,
     AutoResearchRunRead,
+    AutoResearchUnsupportedClaimRisk,
+    AutoResearchNoveltyStatus,
+    AutoResearchRunReviewRead,
+    AutoResearchPublishPackageRead,
 )
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.repository import list_runs, load_run_registry, load_run_registry_views
@@ -34,9 +41,10 @@ def _run_summary(
     *,
     run: AutoResearchRunRead,
     execution: AutoResearchRunExecutionRead,
+    review: AutoResearchRunReviewRead | None,
+    publish: AutoResearchPublishPackageRead | None,
 ) -> AutoResearchOperatorRunSummaryRead:
     registry_views = load_run_registry_views(run.project_id, run.id)
-    publish = build_publish_package(run.project_id, run.id) if run.status == "done" else None
     counts = registry_views.counts if registry_views is not None else None
     latest_job = execution.jobs[-1] if execution.jobs else None
     return AutoResearchOperatorRunSummaryRead(
@@ -56,34 +64,93 @@ def _run_summary(
         cancel_requested=execution.cancel_requested,
         publish_status=publish.status if publish is not None else None,
         publish_ready=publish.publish_ready if publish is not None else False,
+        review_risk=review.unsupported_claim_risk if review is not None else None,
+        novelty_status=review.novelty_assessment.status if review is not None and review.novelty_assessment is not None else None,
         blocker_count=publish.blocker_count if publish is not None else 0,
         revision_count=publish.revision_count if publish is not None else 0,
     )
+
+
+def _matches_search(run: AutoResearchRunRead, query: str | None) -> bool:
+    if not query:
+        return True
+    lowered = query.strip().lower()
+    if not lowered:
+        return True
+    return lowered in run.id.lower() or lowered in run.topic.lower()
+
+
+def _matches_filters(
+    *,
+    run: AutoResearchRunRead,
+    review: AutoResearchRunReviewRead | None,
+    publish: AutoResearchPublishPackageRead | None,
+    filters: AutoResearchOperatorConsoleFiltersRead,
+) -> bool:
+    if not _matches_search(run, filters.search):
+        return False
+    if filters.status is not None and run.status != filters.status:
+        return False
+    if filters.publish_status is not None:
+        if publish is None or publish.status != filters.publish_status:
+            return False
+    if filters.review_risk is not None:
+        if review is None or review.unsupported_claim_risk != filters.review_risk:
+            return False
+    if filters.novelty_status is not None:
+        novelty_status = review.novelty_assessment.status if review is not None and review.novelty_assessment is not None else None
+        if novelty_status != filters.novelty_status:
+            return False
+    return True
 
 
 def build_operator_console(
     project_id: str,
     *,
     run_id: str | None = None,
+    search: str | None = None,
+    status: AutoResearchRunStatus | None = None,
+    publish_status: AutoResearchPublishStatus | None = None,
+    review_risk: AutoResearchUnsupportedClaimRisk | None = None,
+    novelty_status: AutoResearchNoveltyStatus | None = None,
 ) -> AutoResearchOperatorConsoleRead:
     runs = list_runs(project_id)
+    filters = AutoResearchOperatorConsoleFiltersRead(
+        search=search.strip() if search and search.strip() else None,
+        status=status,
+        publish_status=publish_status,
+        review_risk=review_risk,
+        novelty_status=novelty_status,
+    )
     execution_plane = AutoResearchExecutionPlane()
     summaries: list[AutoResearchOperatorRunSummaryRead] = []
     execution_by_run: dict[str, AutoResearchRunExecutionRead] = {}
+    filtered_runs: list[AutoResearchRunRead] = []
+    review_by_run: dict[str, AutoResearchRunReviewRead | None] = {}
+    publish_by_run: dict[str, AutoResearchPublishPackageRead | None] = {}
 
     for run in runs:
         execution = execution_plane.get_run_execution(project_id, run.id)
         execution_by_run[run.id] = execution
+        review = build_run_review(run.project_id, run.id) if run.status == "done" else None
+        publish = build_publish_package(run.project_id, run.id) if run.status == "done" else None
+        review_by_run[run.id] = review
+        publish_by_run[run.id] = publish
+        if not _matches_filters(run=run, review=review, publish=publish, filters=filters):
+            continue
+        filtered_runs.append(run)
         summaries.append(
             _run_summary(
                 run=run,
                 execution=execution,
+                review=review,
+                publish=publish,
             )
         )
 
-    selected_run = next((item for item in runs if item.id == run_id), None) if run_id else None
-    if selected_run is None and runs:
-        selected_run = runs[0]
+    selected_run = next((item for item in filtered_runs if item.id == run_id), None) if run_id else None
+    if selected_run is None and filtered_runs:
+        selected_run = filtered_runs[0]
 
     current_run = None
     if selected_run is not None:
@@ -91,8 +158,8 @@ def build_operator_console(
         registry = load_run_registry(project_id, selected_run.id)
         registry_views = load_run_registry_views(project_id, selected_run.id)
         if registry is not None and registry_views is not None:
-            review = build_run_review(project_id, selected_run.id) if selected_run.status == "done" else None
-            publish = build_publish_package(project_id, selected_run.id) if selected_run.status == "done" else None
+            review = review_by_run[selected_run.id]
+            publish = publish_by_run[selected_run.id]
             has_publish_archive = get_publish_archive_path(project_id, selected_run.id).is_file()
             current_run = AutoResearchOperatorRunDetailRead(
                 run=selected_run,
@@ -111,8 +178,10 @@ def build_operator_console(
     return AutoResearchOperatorConsoleRead(
         project_id=project_id,
         run_count=len(runs),
+        filtered_run_count=len(filtered_runs),
         latest_run_id=runs[0].id if runs else None,
         selected_run_id=current_run.run.id if current_run is not None else None,
+        filters=filters,
         actions=AutoResearchOperatorProjectActionsRead(start_run=True),
         runs=summaries,
         current_run=current_run,

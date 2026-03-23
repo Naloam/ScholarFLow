@@ -1,10 +1,15 @@
-import type { AutoResearchOperatorConsole } from "../../api/types";
+import { useEffect, useState } from "react";
+
+import type { AutoResearchOperatorConsole, AutoResearchOperatorConsoleFilters } from "../../api/types";
 
 type OperatorConsolePanelProps = {
   consoleState: AutoResearchOperatorConsole | null;
+  filters: AutoResearchOperatorConsoleFilters;
   projectTopic?: string | null;
   disabled: boolean;
   onStartRun: () => void;
+  onApplyFilters: (filters: AutoResearchOperatorConsoleFilters) => void;
+  onClearFilters: () => void;
   onSelectRun: (runId: string) => void;
   onResume: () => void;
   onRetry: () => void;
@@ -19,9 +24,12 @@ function formatScore(value: unknown): string {
 
 export function OperatorConsolePanel({
   consoleState,
+  filters,
   projectTopic,
   disabled,
   onStartRun,
+  onApplyFilters,
+  onClearFilters,
   onSelectRun,
   onResume,
   onRetry,
@@ -29,12 +37,45 @@ export function OperatorConsolePanel({
   onExportPublish,
   onDownloadPublish,
 }: OperatorConsolePanelProps) {
+  const [draftFilters, setDraftFilters] = useState<AutoResearchOperatorConsoleFilters>(filters);
+
+  useEffect(() => {
+    setDraftFilters(filters);
+  }, [
+    filters.search,
+    filters.status,
+    filters.publish_status,
+    filters.review_risk,
+    filters.novelty_status,
+  ]);
+
   const current = consoleState?.current_run ?? null;
   const review = current?.review ?? null;
   const publish = current?.publish ?? null;
   const candidateEntries = current?.registry?.candidates ?? [];
   const counts = current?.registry_views?.counts;
   const lineage = current?.registry?.lineage;
+  const novelty = review?.novelty_assessment ?? null;
+  const activeConsole = consoleState;
+  const hasRuns = Boolean(consoleState && consoleState.run_count > 0);
+  const hasFilteredRuns = Boolean(consoleState && consoleState.filtered_run_count > 0);
+  const hasActiveFilters = Boolean(
+    filters.search ||
+      filters.status ||
+      filters.publish_status ||
+      filters.review_risk ||
+      filters.novelty_status,
+  );
+
+  function updateFilter<K extends keyof AutoResearchOperatorConsoleFilters>(
+    key: K,
+    value: AutoResearchOperatorConsoleFilters[K],
+  ) {
+    setDraftFilters((state) => ({
+      ...state,
+      [key]: value,
+    }));
+  }
 
   return (
     <section className="panel" data-testid="operator-console-panel">
@@ -44,7 +85,7 @@ export function OperatorConsolePanel({
           <h2 className="panel-title">Operator Console</h2>
         </div>
         <span className="badge badge-soft">
-          {consoleState ? `${consoleState.run_count} runs` : "No runs"}
+          {consoleState ? `${consoleState.filtered_run_count}/${consoleState.run_count} shown` : "No runs"}
         </span>
       </div>
 
@@ -105,7 +146,117 @@ export function OperatorConsolePanel({
         </button>
       </div>
 
-      {!consoleState || consoleState.run_count === 0 ? (
+      <form
+        className="stack"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onApplyFilters(draftFilters);
+        }}
+      >
+        <p className="inline-title">Run Filters</p>
+        <div className="button-row">
+          <input
+            type="search"
+            value={draftFilters.search ?? ""}
+            onChange={(event) => updateFilter("search", event.target.value || null)}
+            placeholder="Search run id or topic"
+            disabled={disabled}
+            data-testid="operator-filter-search"
+          />
+          <select
+            value={draftFilters.status ?? ""}
+            onChange={(event) =>
+              updateFilter(
+                "status",
+                (event.target.value ? event.target.value : null) as AutoResearchOperatorConsoleFilters["status"],
+              )
+            }
+            disabled={disabled}
+            data-testid="operator-filter-status"
+          >
+            <option value="">All Statuses</option>
+            <option value="queued">Queued</option>
+            <option value="running">Running</option>
+            <option value="done">Done</option>
+            <option value="failed">Failed</option>
+            <option value="canceled">Canceled</option>
+          </select>
+          <select
+            value={draftFilters.publish_status ?? ""}
+            onChange={(event) =>
+              updateFilter(
+                "publish_status",
+                (event.target.value
+                  ? event.target.value
+                  : null) as AutoResearchOperatorConsoleFilters["publish_status"],
+              )
+            }
+            disabled={disabled}
+            data-testid="operator-filter-publish"
+          >
+            <option value="">All Publish States</option>
+            <option value="publish_ready">Publish Ready</option>
+            <option value="revision_required">Revision Required</option>
+            <option value="blocked">Blocked</option>
+          </select>
+          <select
+            value={draftFilters.review_risk ?? ""}
+            onChange={(event) =>
+              updateFilter(
+                "review_risk",
+                (event.target.value
+                  ? event.target.value
+                  : null) as AutoResearchOperatorConsoleFilters["review_risk"],
+              )
+            }
+            disabled={disabled}
+            data-testid="operator-filter-risk"
+          >
+            <option value="">All Review Risks</option>
+            <option value="low">Low Risk</option>
+            <option value="medium">Medium Risk</option>
+            <option value="high">High Risk</option>
+          </select>
+          <select
+            value={draftFilters.novelty_status ?? ""}
+            onChange={(event) =>
+              updateFilter(
+                "novelty_status",
+                (event.target.value
+                  ? event.target.value
+                  : null) as AutoResearchOperatorConsoleFilters["novelty_status"],
+              )
+            }
+            disabled={disabled}
+            data-testid="operator-filter-novelty"
+          >
+            <option value="">All Novelty States</option>
+            <option value="grounded">Grounded</option>
+            <option value="incremental">Incremental</option>
+            <option value="weak">Weak</option>
+            <option value="missing_context">Missing Context</option>
+          </select>
+          <button
+            type="submit"
+            className="ghost-btn"
+            disabled={disabled}
+            data-testid="operator-apply-filters-button"
+          >
+            Apply
+          </button>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={onClearFilters}
+            disabled={disabled || !hasActiveFilters}
+            data-testid="operator-clear-filters-button"
+          >
+            Clear
+          </button>
+        </div>
+      </form>
+
+      {!hasRuns ? (
         <div className="empty-state">
           <p>No auto-research runs yet.</p>
           <span>
@@ -113,15 +264,20 @@ export function OperatorConsolePanel({
             publish inspection state.
           </span>
         </div>
+      ) : !hasFilteredRuns ? (
+        <div className="empty-state">
+          <p>No runs match the current console filters.</p>
+          <span>Clear filters or widen the search to resume triage.</span>
+        </div>
       ) : (
         <>
           <div className="list-block operator-run-list">
-            {consoleState.runs.map((run) => (
+            {activeConsole?.runs.map((run) => (
               <button
                 key={run.run_id}
                 type="button"
                 className={
-                  run.run_id === consoleState.selected_run_id ? "list-item selected" : "list-item"
+                  run.run_id === activeConsole.selected_run_id ? "list-item selected" : "list-item"
                 }
                 onClick={() => onSelectRun(run.run_id)}
                 disabled={disabled}
@@ -135,6 +291,10 @@ export function OperatorConsolePanel({
                   <span className="badge badge-soft">{run.status}</span>
                   <small>
                     selected {run.selected_count} / failed {run.failed_count} / active {run.active_count}
+                  </small>
+                  <small>
+                    risk {run.review_risk ?? "n/a"} / novelty {run.novelty_status ?? "n/a"} / publish{" "}
+                    {run.publish_status ?? "n/a"}
                   </small>
                 </div>
               </button>
@@ -176,8 +336,8 @@ export function OperatorConsolePanel({
                   <strong>{review?.unsupported_claim_risk ?? "n/a"}</strong>
                 </div>
                 <div>
-                  <span className="meta-label">Revision Actions</span>
-                  <strong>{publish?.revision_count ?? review?.revision_plan.length ?? 0}</strong>
+                  <span className="meta-label">Novelty</span>
+                  <strong>{novelty?.status ?? "n/a"}</strong>
                 </div>
               </div>
 
@@ -189,6 +349,16 @@ export function OperatorConsolePanel({
                   {lineage?.top_level_paper_candidate_id ?? "n/a"} edges={lineage?.edges.length ?? 0}
                 </code>
               </div>
+
+              {novelty ? (
+                <div className="meta-block">
+                  <span className="meta-label">Novelty Triage</span>
+                  <p data-testid="operator-novelty-summary">
+                    {novelty.summary} Top matches={novelty.top_related_work.length} uncovered_claims=
+                    {novelty.uncovered_claims.length}
+                  </p>
+                </div>
+              ) : null}
 
               <div className="stack">
                 <p className="inline-title">Candidate Comparison</p>

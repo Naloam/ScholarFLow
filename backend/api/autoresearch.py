@@ -10,17 +10,21 @@ from schemas.autoresearch import (
     AutoResearchBundleIndexRead,
     AutoResearchCandidateRegistryRead,
     AutoResearchExecutionCommandResponse,
+    AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
+    AutoResearchPublishStatus,
     AutoResearchPublishExportRead,
     AutoResearchPublishPackageRead,
     AutoResearchRunConfig,
     AutoResearchRunList,
     AutoResearchRunRead,
+    AutoResearchRunStatus,
     AutoResearchRunReviewRead,
     AutoResearchRunRegistryRead,
     AutoResearchRunRegistryViewsRead,
     AutoResearchRunRequest,
     AutoResearchRunExecutionRead,
+    AutoResearchUnsupportedClaimRisk,
 )
 from schemas.common import IdResponse
 from services.autoresearch.console import build_operator_console
@@ -92,10 +96,23 @@ def list_auto_research_runs(
 def get_auto_research_operator_console(
     project_id: str,
     run_id: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    status: AutoResearchRunStatus | None = Query(default=None),
+    publish_status: AutoResearchPublishStatus | None = Query(default=None),
+    review_risk: AutoResearchUnsupportedClaimRisk | None = Query(default=None),
+    novelty_status: AutoResearchNoveltyStatus | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> AutoResearchOperatorConsoleRead:
     del db
-    return build_operator_console(project_id, run_id=run_id)
+    return build_operator_console(
+        project_id,
+        run_id=run_id,
+        search=search,
+        status=status,
+        publish_status=publish_status,
+        review_risk=review_risk,
+        novelty_status=novelty_status,
+    )
 
 
 @router.get("/{run_id}", response_model=AutoResearchRunRead)

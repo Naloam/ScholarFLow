@@ -26,6 +26,7 @@ export function WorkspacePage() {
   const evidence = useWorkspaceStore((state) => state.evidence);
   const reviews = useWorkspaceStore((state) => state.reviews);
   const autoResearchConsole = useWorkspaceStore((state) => state.autoResearchConsole);
+  const autoResearchConsoleFilters = useWorkspaceStore((state) => state.autoResearchConsoleFilters);
   const analysis = useWorkspaceStore((state) => state.analysis);
   const betaSummary = useWorkspaceStore((state) => state.betaSummary);
   const mentorAccess = useWorkspaceStore((state) => state.mentorAccess);
@@ -44,6 +45,8 @@ export function WorkspacePage() {
   const signOut = useWorkspaceStore((state) => state.signOut);
   const createProject = useWorkspaceStore((state) => state.createProject);
   const loadProject = useWorkspaceStore((state) => state.loadProject);
+  const applyAutoResearchConsoleFilters = useWorkspaceStore((state) => state.applyAutoResearchConsoleFilters);
+  const clearAutoResearchConsoleFilters = useWorkspaceStore((state) => state.clearAutoResearchConsoleFilters);
   const selectDraft = useWorkspaceStore((state) => state.selectDraft);
   const setEditorContent = useWorkspaceStore((state) => state.setEditorContent);
   const setFocusedText = useWorkspaceStore((state) => state.setFocusedText);
@@ -145,9 +148,12 @@ export function WorkspacePage() {
         <section className="workspace-column workspace-column-center">
           <OperatorConsolePanel
             consoleState={autoResearchConsole}
+            filters={autoResearchConsoleFilters}
             projectTopic={project?.topic ?? project?.title}
             disabled={workspaceBusy || authLocked}
             onStartRun={startAutoResearch}
+            onApplyFilters={applyAutoResearchConsoleFilters}
+            onClearFilters={clearAutoResearchConsoleFilters}
             onSelectRun={selectAutoResearchRun}
             onResume={resumeAutoResearch}
             onRetry={retryAutoResearch}

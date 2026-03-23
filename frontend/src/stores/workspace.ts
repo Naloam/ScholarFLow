@@ -11,6 +11,7 @@ import {
 import type {
   AnalysisSummary,
   AutoResearchOperatorConsole,
+  AutoResearchOperatorConsoleFilters,
   AuthConfig,
   AuthUser,
   BetaSummary,
@@ -44,6 +45,19 @@ function isUnauthorizedError(error: unknown): boolean {
   return isApiError(error) && error.status === 401;
 }
 
+function normalizeConsoleFilters(
+  filters: AutoResearchOperatorConsoleFilters,
+): AutoResearchOperatorConsoleFilters {
+  const search = filters.search?.trim();
+  return {
+    search: search ? search : null,
+    status: filters.status ?? null,
+    publish_status: filters.publish_status ?? null,
+    review_risk: filters.review_risk ?? null,
+    novelty_status: filters.novelty_status ?? null,
+  };
+}
+
 type ConnectionState = "disconnected" | "connecting" | "live";
 type AuthState = "checking" | "anonymous" | "user" | "service";
 
@@ -63,6 +77,7 @@ const emptyWorkspaceSlice = {
   evidence: [] as EvidenceItem[],
   reviews: [] as ReviewReport[],
   autoResearchConsole: null as AutoResearchOperatorConsole | null,
+  autoResearchConsoleFilters: {} as AutoResearchOperatorConsoleFilters,
   analysis: null as AnalysisSummary | null,
   betaSummary: null as BetaSummary | null,
   mentorAccess: [] as MentorAccessEntry[],
@@ -89,6 +104,7 @@ type WorkspaceState = {
   evidence: EvidenceItem[];
   reviews: ReviewReport[];
   autoResearchConsole: AutoResearchOperatorConsole | null;
+  autoResearchConsoleFilters: AutoResearchOperatorConsoleFilters;
   analysis: AnalysisSummary | null;
   betaSummary: BetaSummary | null;
   mentorAccess: MentorAccessEntry[];
@@ -112,6 +128,8 @@ type WorkspaceState = {
   loadProject: (projectId: string) => Promise<void>;
   refreshProject: () => Promise<void>;
   refreshAutoResearchConsole: (runId?: string) => Promise<void>;
+  applyAutoResearchConsoleFilters: (filters: AutoResearchOperatorConsoleFilters) => Promise<void>;
+  clearAutoResearchConsoleFilters: () => Promise<void>;
   selectDraft: (version: number) => void;
   selectAutoResearchRun: (runId: string) => Promise<void>;
   setEditorContent: (content: string) => void;
@@ -358,7 +376,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             api.listDrafts(projectId),
             api.listEvidence(projectId),
             api.listReviews(projectId),
-            api.getAutoResearchOperatorConsole(projectId),
+            api.getAutoResearchOperatorConsole(projectId, {}),
             api.getAnalysisSummary(projectId),
             api.getBetaSummary(projectId),
             api.listMentorAccess(projectId),
@@ -393,6 +411,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           evidence: evidenceResult.status === "fulfilled" ? evidenceResult.value : [],
           reviews: reviewsResult.status === "fulfilled" ? reviewsResult.value : [],
           autoResearchConsole: consoleResult.status === "fulfilled" ? consoleResult.value : null,
+          autoResearchConsoleFilters:
+            consoleResult.status === "fulfilled" ? consoleResult.value.filters : {},
           analysis: analysisResult.status === "fulfilled" ? analysisResult.value : null,
           betaSummary: betaResult.status === "fulfilled" ? betaResult.value : null,
           mentorAccess: mentorAccessResult.status === "fulfilled" ? mentorAccessResult.value : [],
@@ -414,12 +434,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       try {
         const selectedRunId = get().autoResearchConsole?.selected_run_id ?? undefined;
+        const filters = normalizeConsoleFilters(get().autoResearchConsoleFilters);
         const [status, drafts, evidence, reviews, autoResearchConsole, analysis, betaSummary, mentorAccess, mentorFeedback] = await Promise.all([
           api.getProjectStatus(projectId),
           api.listDrafts(projectId),
           api.listEvidence(projectId),
           api.listReviews(projectId),
-          api.getAutoResearchOperatorConsole(projectId, selectedRunId),
+          api.getAutoResearchOperatorConsole(projectId, {
+            runId: selectedRunId,
+            ...filters,
+          }),
           api.getAnalysisSummary(projectId),
           api.getBetaSummary(projectId),
           api.listMentorAccess(projectId),
@@ -448,6 +472,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           evidence,
           reviews,
           autoResearchConsole,
+          autoResearchConsoleFilters: autoResearchConsole.filters,
           analysis,
           betaSummary,
           mentorAccess,
@@ -466,14 +491,50 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
+        const filters = normalizeConsoleFilters(get().autoResearchConsoleFilters);
         const console = await api.getAutoResearchOperatorConsole(
           projectId,
-          runId ?? get().autoResearchConsole?.selected_run_id ?? undefined,
+          {
+            runId: runId ?? get().autoResearchConsole?.selected_run_id ?? undefined,
+            ...filters,
+          },
         );
-        set({ autoResearchConsole: console });
+        set({
+          autoResearchConsole: console,
+          autoResearchConsoleFilters: console.filters,
+        });
       } catch (error) {
         handleActionError(error, "Auto-research console refresh failed");
       }
+    },
+
+    async applyAutoResearchConsoleFilters(filters) {
+      const projectId = get().currentProjectId;
+      if (!projectId) {
+        return;
+      }
+
+      const nextFilters = normalizeConsoleFilters(filters);
+      set({ working: true, notice: "Applying auto-research console filters..." });
+      try {
+        const console = await api.getAutoResearchOperatorConsole(projectId, {
+          runId: get().autoResearchConsole?.selected_run_id ?? undefined,
+          ...nextFilters,
+        });
+        set({
+          autoResearchConsole: console,
+          autoResearchConsoleFilters: console.filters,
+          notice: `Auto-research console filtered to ${console.filtered_run_count}/${console.run_count} runs`,
+        });
+      } catch (error) {
+        handleActionError(error, "Apply auto-research console filters failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async clearAutoResearchConsoleFilters() {
+      return get().applyAutoResearchConsoleFilters({});
     },
 
     selectDraft(version) {
@@ -498,9 +559,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       set({ working: true, notice: `Loading auto-research run ${runId}...` });
       try {
-        const console = await api.getAutoResearchOperatorConsole(projectId, runId);
+        const console = await api.getAutoResearchOperatorConsole(projectId, {
+          runId,
+          ...normalizeConsoleFilters(get().autoResearchConsoleFilters),
+        });
         set({
           autoResearchConsole: console,
+          autoResearchConsoleFilters: console.filters,
           notice: `Auto-research run ${runId} loaded`,
         });
       } catch (error) {

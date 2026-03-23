@@ -12,6 +12,8 @@ import config.db as db_module
 from schemas.autoresearch import (
     AutoResearchExecutionJob,
     AutoResearchJobAction,
+    AutoResearchQueuePriority,
+    AutoResearchRunControlPatch,
     AutoResearchRunConfig,
     AutoResearchRunExecutionRead,
     AutoResearchRunRead,
@@ -35,6 +37,14 @@ _DRAIN_LOCK = Lock()
 
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _priority_rank(priority: AutoResearchQueuePriority) -> int:
+    if priority == "high":
+        return 2
+    if priority == "normal":
+        return 1
+    return 0
 
 
 class _ExecutionQueueState(BaseModel):
@@ -78,6 +88,7 @@ class AutoResearchExecutionPlane:
         return AutoResearchRunConfig(
             task_family_hint=run.task_family,
             max_rounds=3,
+            queue_priority="normal",
             benchmark=run.benchmark,
             execution_backend=run.execution_backend,
             auto_search_literature=False,
@@ -234,8 +245,22 @@ class AutoResearchExecutionPlane:
             now = _utcnow()
             jobs: list[AutoResearchExecutionJob] = []
             leased_job: AutoResearchExecutionJob | None = None
-            for job in state.jobs:
-                if leased_job is None and job.status == "queued":
+            queued_indices = [
+                index
+                for index, job in enumerate(state.jobs)
+                if job.status == "queued"
+            ]
+            selected_index = None
+            if queued_indices:
+                selected_index = max(
+                    queued_indices,
+                    key=lambda index: (
+                        _priority_rank(state.jobs[index].priority),
+                        -state.jobs[index].enqueued_at.timestamp(),
+                    ),
+                )
+            for index, job in enumerate(state.jobs):
+                if selected_index is not None and index == selected_index:
                     leased_job = job.model_copy(
                         update={
                             "status": "leased",
@@ -324,6 +349,7 @@ class AutoResearchExecutionPlane:
                 project_id=project_id,
                 run_id=run_id,
                 action=action,
+                priority=self._run_config(run).queue_priority,
                 status="queued",
                 detail=f"{action}:{run_id}",
                 enqueued_at=_utcnow(),
@@ -418,6 +444,51 @@ class AutoResearchExecutionPlane:
                 detail=detail,
             )
         return self.get_run_execution(project_id, run_id)
+
+    def update_run_controls(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        payload: AutoResearchRunControlPatch,
+    ) -> AutoResearchRunRead:
+        run = load_run(project_id, run_id)
+        if run is None:
+            raise ValueError(f"Auto research run not found: {run_id}")
+        if not payload.model_fields_set:
+            return run
+
+        request = self._run_config(run)
+        request_updates: dict[str, object] = {}
+        if "max_rounds" in payload.model_fields_set:
+            request_updates["max_rounds"] = payload.max_rounds if payload.max_rounds is not None else request.max_rounds
+        if "candidate_execution_limit" in payload.model_fields_set:
+            request_updates["candidate_execution_limit"] = payload.candidate_execution_limit
+        if "queue_priority" in payload.model_fields_set:
+            request_updates["queue_priority"] = payload.queue_priority if payload.queue_priority is not None else "normal"
+
+        updated_run = save_run(
+            run.model_copy(
+                update={
+                    "request": request.model_copy(update=request_updates),
+                }
+            )
+        )
+
+        if "queue_priority" not in payload.model_fields_set:
+            return updated_run
+
+        queue_priority = payload.queue_priority if payload.queue_priority is not None else "normal"
+        with _STATE_LOCK:
+            state = _load_state()
+            jobs = [
+                job.model_copy(update={"priority": queue_priority})
+                if job.project_id == project_id and job.run_id == run_id and job.status == "queued"
+                else job
+                for job in state.jobs
+            ]
+            _save_state(state.model_copy(update={"jobs": jobs}))
+        return updated_run
 
     def _execute_job(self, job: AutoResearchExecutionJob) -> AutoResearchRunRead:
         run = load_run(job.project_id, job.run_id)

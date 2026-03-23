@@ -56,6 +56,7 @@ function normalizeConsoleFilters(
     review_risk: filters.review_risk ?? null,
     novelty_status: filters.novelty_status ?? null,
     budget_status: filters.budget_status ?? null,
+    queue_priority: filters.queue_priority ?? null,
   };
 }
 
@@ -131,6 +132,11 @@ type WorkspaceState = {
   refreshAutoResearchConsole: (runId?: string) => Promise<void>;
   applyAutoResearchConsoleFilters: (filters: AutoResearchOperatorConsoleFilters) => Promise<void>;
   clearAutoResearchConsoleFilters: () => Promise<void>;
+  updateAutoResearchRunControls: (payload: {
+    max_rounds?: number | null;
+    candidate_execution_limit?: number | null;
+    queue_priority?: "low" | "normal" | "high" | null;
+  }) => Promise<void>;
   selectDraft: (version: number) => void;
   selectAutoResearchRun: (runId: string) => Promise<void>;
   setEditorContent: (content: string) => void;
@@ -536,6 +542,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     async clearAutoResearchConsoleFilters() {
       return get().applyAutoResearchConsoleFilters({});
+    },
+
+    async updateAutoResearchRunControls(payload) {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before updating controls" });
+        return;
+      }
+
+      set({ working: true, notice: `Updating auto-research controls for ${runId}...` });
+      try {
+        await api.updateAutoResearchRunControls(currentProjectId, runId, payload);
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Auto-research controls updated for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Update auto-research controls failed");
+      } finally {
+        set({ working: false });
+      }
     },
 
     selectDraft(version) {

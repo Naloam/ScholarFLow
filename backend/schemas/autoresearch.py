@@ -20,6 +20,7 @@ ExecutionBackendKind = Literal["auto", "local", "docker", "docker_gpu", "command
 AutoResearchJobAction = Literal["run", "resume", "retry"]
 AutoResearchJobStatus = Literal["queued", "leased", "running", "succeeded", "failed", "canceled"]
 AutoResearchWorkerStatus = Literal["idle", "starting", "running", "stopping"]
+AutoResearchQueuePriority = Literal["low", "normal", "high"]
 AutoResearchCommandStatus = Literal["accepted", "noop"]
 AutoResearchRunStatus = Literal["queued", "running", "done", "failed", "canceled"]
 AutoResearchRegistryAssetKind = Literal["file", "directory"]
@@ -167,6 +168,7 @@ class AutoResearchRunRequest(BaseModel):
     paper_ids: list[str] | None = None
     max_rounds: int = 3
     candidate_execution_limit: int | None = None
+    queue_priority: AutoResearchQueuePriority = "normal"
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
     auto_search_literature: bool = False
@@ -185,6 +187,7 @@ class AutoResearchRunConfig(BaseModel):
     paper_ids: list[str] | None = None
     max_rounds: int = 3
     candidate_execution_limit: int | None = None
+    queue_priority: AutoResearchQueuePriority = "normal"
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
     auto_search_literature: bool = False
@@ -205,12 +208,33 @@ class AutoResearchRunConfig(BaseModel):
             paper_ids=payload.paper_ids,
             max_rounds=payload.max_rounds,
             candidate_execution_limit=payload.candidate_execution_limit,
+            queue_priority=payload.queue_priority,
             benchmark=payload.benchmark,
             execution_backend=payload.execution_backend,
             auto_search_literature=payload.auto_search_literature,
             auto_fetch_literature=payload.auto_fetch_literature,
             docker_image=payload.docker_image,
         )
+
+
+class AutoResearchRunControlPatch(BaseModel):
+    max_rounds: int | None = None
+    candidate_execution_limit: int | None = None
+    queue_priority: AutoResearchQueuePriority | None = None
+
+    @field_validator("max_rounds")
+    @classmethod
+    def validate_max_rounds(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("max_rounds must be at least 1")
+        return value
+
+    @field_validator("candidate_execution_limit")
+    @classmethod
+    def validate_candidate_execution_limit(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("candidate_execution_limit must be at least 1")
+        return value
 
 
 class DatasetSpec(BaseModel):
@@ -943,6 +967,7 @@ class AutoResearchOperatorConsoleFiltersRead(BaseModel):
     review_risk: AutoResearchUnsupportedClaimRisk | None = None
     novelty_status: AutoResearchNoveltyStatus | None = None
     budget_status: AutoResearchBudgetStatus | None = None
+    queue_priority: AutoResearchQueuePriority | None = None
 
 
 class AutoResearchOperatorRunActionsRead(BaseModel):
@@ -951,6 +976,7 @@ class AutoResearchOperatorRunActionsRead(BaseModel):
     cancel: bool = False
     export_publish: bool = False
     download_publish: bool = False
+    update_controls: bool = False
 
 
 class AutoResearchOperatorRunSummaryRead(BaseModel):
@@ -968,6 +994,7 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     latest_job_status: AutoResearchJobStatus | None = None
     active_job_id: str | None = None
     cancel_requested: bool = False
+    queue_priority: AutoResearchQueuePriority = "normal"
     budget_status: AutoResearchBudgetStatus = "default"
     max_rounds: int = 3
     candidate_execution_limit: int | None = None
@@ -1007,6 +1034,7 @@ class AutoResearchExecutionJob(BaseModel):
     project_id: str
     run_id: str
     action: AutoResearchJobAction
+    priority: AutoResearchQueuePriority = "normal"
     status: AutoResearchJobStatus = "queued"
     detail: str | None = None
     enqueued_at: datetime
@@ -1042,4 +1070,9 @@ class AutoResearchExecutionCommandResponse(BaseModel):
     run_id: str
     job_id: str | None = None
     status: AutoResearchCommandStatus = "accepted"
+    execution: AutoResearchRunExecutionRead
+
+
+class AutoResearchRunControlUpdateRead(BaseModel):
+    run: AutoResearchRunRead
     execution: AutoResearchRunExecutionRead

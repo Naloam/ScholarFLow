@@ -9,6 +9,7 @@ from schemas.autoresearch import (
     AutoResearchOperatorRunDetailRead,
     AutoResearchOperatorRunSummaryRead,
     AutoResearchPublishStatus,
+    AutoResearchQueuePriority,
     AutoResearchRunStatus,
     AutoResearchRunExecutionRead,
     AutoResearchRunRead,
@@ -35,6 +36,7 @@ def _run_actions(
         cancel=active_or_queued and not execution.cancel_requested,
         export_publish=run.status == "done",
         download_publish=has_publish_archive,
+        update_controls=True,
     )
 
 
@@ -74,6 +76,7 @@ def _run_summary(
         latest_job_status=latest_job.status if latest_job is not None else None,
         active_job_id=execution.active_job_id,
         cancel_requested=execution.cancel_requested,
+        queue_priority=request.queue_priority if request is not None else "normal",
         budget_status=budget_status,
         max_rounds=request.max_rounds if request is not None else 3,
         candidate_execution_limit=request.candidate_execution_limit if request is not None else None,
@@ -130,6 +133,10 @@ def _matches_filters(
         )
         if budget_status != filters.budget_status:
             return False
+    if filters.queue_priority is not None:
+        queue_priority = run.request.queue_priority if run.request is not None else "normal"
+        if queue_priority != filters.queue_priority:
+            return False
     return True
 
 
@@ -143,6 +150,7 @@ def build_operator_console(
     review_risk: AutoResearchUnsupportedClaimRisk | None = None,
     novelty_status: AutoResearchNoveltyStatus | None = None,
     budget_status: AutoResearchBudgetStatus | None = None,
+    queue_priority: AutoResearchQueuePriority | None = None,
 ) -> AutoResearchOperatorConsoleRead:
     runs = list_runs(project_id)
     filters = AutoResearchOperatorConsoleFiltersRead(
@@ -152,6 +160,7 @@ def build_operator_console(
         review_risk=review_risk,
         novelty_status=novelty_status,
         budget_status=budget_status,
+        queue_priority=queue_priority,
     )
     execution_plane = AutoResearchExecutionPlane()
     summaries: list[AutoResearchOperatorRunSummaryRead] = []

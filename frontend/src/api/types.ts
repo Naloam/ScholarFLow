@@ -276,10 +276,17 @@ export type AutoResearchRunRequest = {
   paper_ids?: string[] | null;
   max_rounds?: number;
   candidate_execution_limit?: number | null;
+  queue_priority?: "low" | "normal" | "high";
   benchmark?: Record<string, unknown> | null;
   execution_backend?: Record<string, unknown> | null;
   auto_search_literature?: boolean;
   auto_fetch_literature?: boolean;
+};
+
+export type AutoResearchRunControlPatch = {
+  max_rounds?: number | null;
+  candidate_execution_limit?: number | null;
+  queue_priority?: "low" | "normal" | "high" | null;
 };
 
 export type AutoResearchRun = {
@@ -298,6 +305,7 @@ export type AutoResearchExecutionJob = {
   project_id: string;
   run_id: string;
   action: AutoResearchJobAction;
+  priority: "low" | "normal" | "high";
   status: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled";
   detail?: string | null;
   enqueued_at: string;
@@ -706,6 +714,7 @@ export type AutoResearchOperatorConsoleFilters = {
   review_risk?: "low" | "medium" | "high" | null;
   novelty_status?: "missing_context" | "grounded" | "incremental" | "weak" | null;
   budget_status?: "default" | "constrained" | null;
+  queue_priority?: "low" | "normal" | "high" | null;
 };
 
 export type AutoResearchOperatorRunActions = {
@@ -714,6 +723,7 @@ export type AutoResearchOperatorRunActions = {
   cancel: boolean;
   export_publish: boolean;
   download_publish: boolean;
+  update_controls: boolean;
 };
 
 export type AutoResearchOperatorRunSummary = {
@@ -731,6 +741,7 @@ export type AutoResearchOperatorRunSummary = {
   latest_job_status?: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled" | null;
   active_job_id?: string | null;
   cancel_requested: boolean;
+  queue_priority: "low" | "normal" | "high";
   budget_status: "default" | "constrained";
   max_rounds: number;
   candidate_execution_limit?: number | null;
@@ -751,6 +762,11 @@ export type AutoResearchOperatorRunDetail = {
   review?: AutoResearchRunReview | null;
   publish?: AutoResearchPublishPackage | null;
   actions: AutoResearchOperatorRunActions;
+};
+
+export type AutoResearchRunControlUpdate = {
+  run: AutoResearchRun;
+  execution: AutoResearchExecution;
 };
 
 export type AutoResearchOperatorConsole = {

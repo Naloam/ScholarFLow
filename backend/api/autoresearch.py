@@ -16,7 +16,10 @@ from schemas.autoresearch import (
     AutoResearchPublishStatus,
     AutoResearchPublishExportRead,
     AutoResearchPublishPackageRead,
+    AutoResearchQueuePriority,
     AutoResearchRunConfig,
+    AutoResearchRunControlPatch,
+    AutoResearchRunControlUpdateRead,
     AutoResearchRunList,
     AutoResearchRunRead,
     AutoResearchRunStatus,
@@ -103,6 +106,7 @@ def get_auto_research_operator_console(
     review_risk: AutoResearchUnsupportedClaimRisk | None = Query(default=None),
     novelty_status: AutoResearchNoveltyStatus | None = Query(default=None),
     budget_status: AutoResearchBudgetStatus | None = Query(default=None),
+    queue_priority: AutoResearchQueuePriority | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> AutoResearchOperatorConsoleRead:
     del db
@@ -115,6 +119,7 @@ def get_auto_research_operator_console(
         review_risk=review_risk,
         novelty_status=novelty_status,
         budget_status=budget_status,
+        queue_priority=queue_priority,
     )
 
 
@@ -129,6 +134,25 @@ def get_auto_research_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return run
+
+
+@router.patch("/{run_id}/controls", response_model=AutoResearchRunControlUpdateRead)
+def patch_auto_research_run_controls(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchRunControlPatch,
+    db: Session = Depends(get_db),
+) -> AutoResearchRunControlUpdateRead:
+    del db
+    plane = AutoResearchExecutionPlane()
+    try:
+        run = plane.update_run_controls(project_id=project_id, run_id=run_id, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return AutoResearchRunControlUpdateRead(
+        run=run,
+        execution=plane.get_run_execution(project_id, run_id),
+    )
 
 
 @router.get("/{run_id}/execution", response_model=AutoResearchRunExecutionRead)

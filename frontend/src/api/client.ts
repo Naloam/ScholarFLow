@@ -8,6 +8,8 @@ import type {
   AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExport,
   AutoResearchPublishPackage,
+  AutoResearchRunControlPatch,
+  AutoResearchRunControlUpdate,
   AutoResearchRun,
   AutoResearchRunReview,
   AutoResearchRunRegistry,
@@ -314,6 +316,17 @@ export const api = {
     return request(`/api/projects/${projectId}/auto-research/${runId}`);
   },
 
+  updateAutoResearchRunControls(
+    projectId: string,
+    runId: string,
+    payload: AutoResearchRunControlPatch,
+  ): Promise<AutoResearchRunControlUpdate> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/controls`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
   getAutoResearchExecution(projectId: string, runId: string): Promise<AutoResearchExecution> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/execution`);
   },
@@ -343,6 +356,9 @@ export const api = {
     }
     if (options?.budget_status) {
       params.set("budget_status", options.budget_status);
+    }
+    if (options?.queue_priority) {
+      params.set("queue_priority", options.queue_priority);
     }
     const query = params.size > 0 ? `?${params.toString()}` : "";
     return request(`/api/projects/${projectId}/auto-research/console${query}`);

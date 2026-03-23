@@ -30,7 +30,7 @@ from config import deps as deps_module
 from config.settings import settings
 from main import app
 from models.base import Base
-from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, LiteratureInsight, ResearchPlan, ResultArtifact, SweepConfig
+from schemas.autoresearch import AutoResearchRunConfig, ExperimentAttempt, ExperimentSpec, LiteratureInsight, ResearchPlan, ResultArtifact, SweepConfig
 from schemas.papers import PaperMeta
 from schemas.search import SearchResult
 
@@ -1002,6 +1002,7 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert console["runs"][0]["review_risk"] == "medium"
         assert console["runs"][0]["novelty_status"] == "missing_context"
         assert console["runs"][0]["budget_status"] == "default"
+        assert console["runs"][0]["queue_priority"] == "normal"
         assert console["runs"][0]["max_rounds"] == 3
         assert console["runs"][0]["candidate_execution_limit"] is None
         assert console["filtered_run_count"] == 1
@@ -1020,6 +1021,7 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert current["actions"]["cancel"] is False
         assert current["actions"]["export_publish"] is True
         assert current["actions"]["download_publish"] is True
+        assert current["actions"]["update_controls"] is True
     finally:
         client.close()
 
@@ -1129,6 +1131,88 @@ def test_autoresearch_respects_candidate_execution_limit_and_exposes_budget_stat
         assert default_payload["runs"][0]["run_id"] == default_run_id
         assert default_payload["runs"][0]["budget_status"] == "default"
         assert default_payload["runs"][0]["candidate_execution_limit"] is None
+    finally:
+        client.close()
+
+
+def test_autoresearch_execution_plane_prefers_high_priority_jobs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 6 Priority Queue Project",
+            "Priority queue ordering for auto research",
+        )
+        low_run = autoresearch_repository.create_run(
+            project_id,
+            "Low priority auto research",
+            request=AutoResearchRunConfig(queue_priority="low"),
+        )
+        high_run = autoresearch_repository.create_run(
+            project_id,
+            "High priority auto research",
+            request=AutoResearchRunConfig(queue_priority="high"),
+        )
+        plane = AutoResearchExecutionPlane()
+        plane.enqueue(project_id=project_id, run_id=low_run.id, action="run")
+        plane.enqueue(project_id=project_id, run_id=high_run.id, action="run")
+
+        leased = plane._lease_next_job()
+        assert leased is not None
+        assert leased.run_id == high_run.id
+        assert leased.priority == "high"
+    finally:
+        client.close()
+
+
+def test_autoresearch_run_controls_patch_updates_queue_priority_and_console_filters(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 6 Control Patch Project",
+            "Queue priority controls for auto research",
+        )
+        run = autoresearch_repository.create_run(
+            project_id,
+            "Queue priority controls for auto research",
+        )
+        AutoResearchExecutionPlane().enqueue(project_id=project_id, run_id=run.id, action="run")
+
+        patch_response = client.patch(
+            f"/api/projects/{project_id}/auto-research/{run.id}/controls",
+            json={
+                "queue_priority": "high",
+                "max_rounds": 2,
+                "candidate_execution_limit": 1,
+            },
+        )
+        assert patch_response.status_code == 200
+        payload = patch_response.json()
+        assert payload["run"]["request"]["queue_priority"] == "high"
+        assert payload["run"]["request"]["max_rounds"] == 2
+        assert payload["run"]["request"]["candidate_execution_limit"] == 1
+        assert payload["execution"]["jobs"][0]["priority"] == "high"
+
+        console_response = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"queue_priority": "high", "budget_status": "constrained"},
+        )
+        assert console_response.status_code == 200
+        console = console_response.json()
+        assert console["filtered_run_count"] == 1
+        assert console["selected_run_id"] == run.id
+        assert console["filters"]["queue_priority"] == "high"
+        assert console["runs"][0]["queue_priority"] == "high"
+        assert console["runs"][0]["max_rounds"] == 2
+        assert console["runs"][0]["candidate_execution_limit"] == 1
+        assert console["current_run"]["actions"]["update_controls"] is True
     finally:
         client.close()
 

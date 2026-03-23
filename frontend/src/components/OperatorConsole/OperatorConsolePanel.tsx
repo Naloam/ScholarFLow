@@ -16,6 +16,11 @@ type OperatorConsolePanelProps = {
   onCancel: () => void;
   onExportPublish: () => void;
   onDownloadPublish: () => void;
+  onUpdateControls: (payload: {
+    max_rounds?: number | null;
+    candidate_execution_limit?: number | null;
+    queue_priority?: "low" | "normal" | "high" | null;
+  }) => void;
 };
 
 function formatScore(value: unknown): string {
@@ -36,8 +41,14 @@ export function OperatorConsolePanel({
   onCancel,
   onExportPublish,
   onDownloadPublish,
+  onUpdateControls,
 }: OperatorConsolePanelProps) {
   const [draftFilters, setDraftFilters] = useState<AutoResearchOperatorConsoleFilters>(filters);
+  const [controlDraft, setControlDraft] = useState({
+    queue_priority: "normal" as "low" | "normal" | "high",
+    max_rounds: "3",
+    candidate_execution_limit: "",
+  });
 
   useEffect(() => {
     setDraftFilters(filters);
@@ -68,8 +79,34 @@ export function OperatorConsolePanel({
       filters.publish_status ||
       filters.review_risk ||
       filters.novelty_status ||
-      filters.budget_status,
+      filters.budget_status ||
+      filters.queue_priority,
   );
+
+  useEffect(() => {
+    if (!currentSummary) {
+      setControlDraft({
+        queue_priority: "normal",
+        max_rounds: "3",
+        candidate_execution_limit: "",
+      });
+      return;
+    }
+    setControlDraft({
+      queue_priority: currentSummary.queue_priority,
+      max_rounds: String(currentSummary.max_rounds),
+      candidate_execution_limit:
+        currentSummary.candidate_execution_limit !== null &&
+        currentSummary.candidate_execution_limit !== undefined
+          ? String(currentSummary.candidate_execution_limit)
+          : "",
+    });
+  }, [
+    currentSummary?.run_id,
+    currentSummary?.queue_priority,
+    currentSummary?.max_rounds,
+    currentSummary?.candidate_execution_limit,
+  ]);
 
   function updateFilter<K extends keyof AutoResearchOperatorConsoleFilters>(
     key: K,
@@ -257,6 +294,24 @@ export function OperatorConsolePanel({
             <option value="default">Default</option>
             <option value="constrained">Constrained</option>
           </select>
+          <select
+            value={draftFilters.queue_priority ?? ""}
+            onChange={(event) =>
+              updateFilter(
+                "queue_priority",
+                (event.target.value
+                  ? event.target.value
+                  : null) as AutoResearchOperatorConsoleFilters["queue_priority"],
+              )
+            }
+            disabled={disabled}
+            data-testid="operator-filter-priority"
+          >
+            <option value="">All Priorities</option>
+            <option value="high">High</option>
+            <option value="normal">Normal</option>
+            <option value="low">Low</option>
+          </select>
           <button
             type="submit"
             className="ghost-btn"
@@ -321,6 +376,7 @@ export function OperatorConsolePanel({
                     budget {run.budget_status} / executed {run.executed_candidate_count}
                     {run.candidate_execution_limit ? ` / limit ${run.candidate_execution_limit}` : ""}
                   </small>
+                  <small>priority {run.queue_priority} / rounds {run.max_rounds}</small>
                 </div>
               </button>
             ))}
@@ -328,6 +384,77 @@ export function OperatorConsolePanel({
 
           {current ? (
             <>
+              <form
+                className="stack"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onUpdateControls({
+                    queue_priority: controlDraft.queue_priority,
+                    max_rounds: Number(controlDraft.max_rounds),
+                    candidate_execution_limit: controlDraft.candidate_execution_limit
+                      ? Number(controlDraft.candidate_execution_limit)
+                      : null,
+                  });
+                }}
+              >
+                <p className="inline-title">Run Controls</p>
+                <div className="button-row">
+                  <select
+                    value={controlDraft.queue_priority}
+                    onChange={(event) =>
+                      setControlDraft((state) => ({
+                        ...state,
+                        queue_priority: event.target.value as "low" | "normal" | "high",
+                      }))
+                    }
+                    disabled={disabled || !current.actions.update_controls}
+                    data-testid="operator-control-priority"
+                  >
+                    <option value="high">High Priority</option>
+                    <option value="normal">Normal Priority</option>
+                    <option value="low">Low Priority</option>
+                  </select>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={controlDraft.max_rounds}
+                    onChange={(event) =>
+                      setControlDraft((state) => ({
+                        ...state,
+                        max_rounds: event.target.value,
+                      }))
+                    }
+                    disabled={disabled || !current.actions.update_controls}
+                    placeholder="Max rounds"
+                    data-testid="operator-control-rounds"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={controlDraft.candidate_execution_limit}
+                    onChange={(event) =>
+                      setControlDraft((state) => ({
+                        ...state,
+                        candidate_execution_limit: event.target.value,
+                      }))
+                    }
+                    disabled={disabled || !current.actions.update_controls}
+                    placeholder="Candidate limit"
+                    data-testid="operator-control-candidate-limit"
+                  />
+                  <button
+                    type="submit"
+                    className="ghost-btn"
+                    disabled={disabled || !current.actions.update_controls || !controlDraft.max_rounds}
+                    data-testid="operator-apply-controls-button"
+                  >
+                    Apply Controls
+                  </button>
+                </div>
+              </form>
+
               <div className="summary-banner operator-summary-grid">
                 <div>
                   <span className="meta-label">Run Status</span>
@@ -375,6 +502,10 @@ export function OperatorConsolePanel({
                         } candidates, ${currentSummary.max_rounds} rounds)`
                       : "n/a"}
                   </strong>
+                </div>
+                <div>
+                  <span className="meta-label">Priority</span>
+                  <strong>{currentSummary?.queue_priority ?? "normal"}</strong>
                 </div>
               </div>
 

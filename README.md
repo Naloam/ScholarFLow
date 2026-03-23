@@ -20,8 +20,9 @@ ScholarFlow is being developed as a FARS-style auto-research system for computer
 - Artifact registry / lineage is now in place with file hashes, lineage edges, bundle indexes, and candidate views.
 - Registry-backed review reports and publish-package export are now in place.
 - Review hardening now resolves paper citations against persisted literature state and checks for reference-section completeness.
+- Review now also derives a novelty / related-work assessment from persisted literature and the selected candidate.
 - The operator console now surfaces run lists, candidate comparison, lineage summary, failure triage, and recovery/publish actions inside the workspace.
-- The numbered Phase 1-6 baseline is complete; the current focus is deeper literature-backed novelty analysis plus console depth.
+- The numbered Phase 1-6 baseline is complete; the current focus is operator-console depth plus stronger publish-package completeness.
 
 ## Development Entry Points
 

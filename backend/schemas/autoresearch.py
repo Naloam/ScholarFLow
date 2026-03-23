@@ -78,6 +78,7 @@ AutoResearchReviewStatus = Literal["ready", "needs_revision", "blocked"]
 AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
 AutoResearchRevisionPriority = Literal["high", "medium", "low"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
+AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -805,6 +806,29 @@ class AutoResearchCitationCoverageRead(BaseModel):
     has_references_section: bool = False
 
 
+class AutoResearchRelatedWorkMatchRead(BaseModel):
+    paper_id: str | None = None
+    title: str
+    year: int | None = None
+    source: str | None = None
+    overlap_score: int = 0
+    shared_terms: list[str] = Field(default_factory=list)
+    gap_alignment_terms: list[str] = Field(default_factory=list)
+    rationale: str
+
+
+class AutoResearchNoveltyAssessmentRead(BaseModel):
+    status: AutoResearchNoveltyStatus = "missing_context"
+    summary: str
+    compared_paper_count: int = 0
+    strong_match_count: int = 0
+    gap_aligned_paper_count: int = 0
+    covered_claim_count: int = 0
+    total_claim_count: int = 0
+    uncovered_claims: list[str] = Field(default_factory=list)
+    top_related_work: list[AutoResearchRelatedWorkMatchRead] = Field(default_factory=list)
+
+
 class AutoResearchReviewFindingRead(BaseModel):
     id: str
     severity: AutoResearchReviewSeverity
@@ -834,6 +858,7 @@ class AutoResearchRunReviewRead(BaseModel):
     persisted_path: str | None = None
     evidence: AutoResearchReviewEvidenceRead
     citation_coverage: AutoResearchCitationCoverageRead
+    novelty_assessment: AutoResearchNoveltyAssessmentRead | None = None
     scores: AutoResearchReviewScoresRead
     findings: list[AutoResearchReviewFindingRead] = Field(default_factory=list)
     revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)

@@ -11,14 +11,17 @@ from schemas.autoresearch import (
     AutoResearchBundleIndexRead,
     AutoResearchBundleRead,
     AutoResearchCitationCoverageRead,
+    AutoResearchNoveltyAssessmentRead,
     AutoResearchPublishExportRead,
     AutoResearchPublishPackageRead,
+    AutoResearchRelatedWorkMatchRead,
     AutoResearchReviewEvidenceRead,
     AutoResearchReviewFindingRead,
     AutoResearchReviewScoresRead,
     AutoResearchRevisionActionRead,
     AutoResearchRunRead,
     AutoResearchRunReviewRead,
+    HypothesisCandidate,
 )
 from services.autoresearch.repository import (
     load_run,
@@ -46,6 +49,61 @@ _CONTEXTUAL_CITATION_CUES = (
     "papers",
     "studies",
     "reported",
+)
+_NOVELTY_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "into",
+    "over",
+    "under",
+    "through",
+    "using",
+    "based",
+    "current",
+    "selected",
+    "candidate",
+    "research",
+    "paper",
+    "papers",
+    "study",
+    "studies",
+    "method",
+    "methods",
+    "system",
+    "systems",
+    "result",
+    "results",
+    "experimental",
+    "experiment",
+    "artifacts",
+    "artifact",
+    "evidence",
+    "generated",
+    "reports",
+    "report",
+    "only",
+    "small",
+    "minimal",
+    "task",
+    "tasks",
+}
+_INFRASTRUCTURE_CLAIM_CUES = (
+    "seed",
+    "sweep",
+    "artifact",
+    "artifacts",
+    "acceptance",
+    "persistence",
+    "persisted",
+    "repair",
+    "runtime contract",
+    "execution trace",
+    "execution plane",
 )
 
 
@@ -163,12 +221,170 @@ def _clamp_score(value: int) -> int:
     return max(0, min(5, value))
 
 
+def _normalize_term(token: str) -> str:
+    normalized = token.lower()
+    for suffix in ("ings", "ing", "ers", "ies", "ions", "ion", "ed", "er", "s"):
+        if normalized.endswith(suffix) and len(normalized) - len(suffix) >= 4:
+            normalized = normalized[: -len(suffix)] + ("y" if suffix == "ies" else "")
+            break
+    return normalized
+
+
+def _terms(*texts: str | None) -> set[str]:
+    tokens: set[str] = set()
+    for text in texts:
+        for raw in re.findall(r"[a-z][a-z0-9_]+", (text or "").lower()):
+            token = _normalize_term(raw)
+            if len(token) < 4 or token in _NOVELTY_STOPWORDS:
+                continue
+            tokens.add(token)
+    return tokens
+
+
+def _research_claims(run: AutoResearchRunRead, selected_candidate_id: str | None) -> list[str]:
+    candidate = next((item for item in run.candidates if item.id == selected_candidate_id), None)
+    if candidate is None:
+        return []
+    claims = []
+    for claim in candidate.planned_contributions:
+        lowered = claim.lower()
+        if any(marker in lowered for marker in _INFRASTRUCTURE_CLAIM_CUES):
+            continue
+        if _terms(claim):
+            claims.append(claim)
+    return claims
+
+
+def _selected_candidate(
+    run: AutoResearchRunRead,
+    selected_candidate_id: str | None,
+) -> HypothesisCandidate | None:
+    return next((item for item in run.candidates if item.id == selected_candidate_id), None)
+
+
+def _build_novelty_assessment(
+    *,
+    run: AutoResearchRunRead,
+    selected_candidate_id: str | None,
+) -> AutoResearchNoveltyAssessmentRead:
+    candidate = _selected_candidate(run, selected_candidate_id)
+    if candidate is None:
+        return AutoResearchNoveltyAssessmentRead(
+            status="missing_context",
+            summary="No selected candidate was available, so novelty and related-work analysis could not be computed.",
+        )
+    if not run.literature:
+        return AutoResearchNoveltyAssessmentRead(
+            status="missing_context",
+            summary="No persisted literature was available, so novelty and related-work analysis remains weakly grounded.",
+        )
+
+    candidate_method_terms = _terms(candidate.title, candidate.hypothesis, candidate.proposed_method)
+    candidate_claim_terms = _terms(*candidate.planned_contributions)
+    matches: list[AutoResearchRelatedWorkMatchRead] = []
+    strong_match_count = 0
+    gap_aligned_paper_count = 0
+
+    for item in run.literature:
+        literature_terms = _terms(item.title, item.insight, item.method_hint)
+        gap_terms = _terms(item.gap_hint)
+        shared_terms = sorted(candidate_method_terms & literature_terms)
+        gap_alignment_terms = sorted((candidate_method_terms | candidate_claim_terms) & gap_terms)
+        overlap_score = len(shared_terms) * 2 + len(gap_alignment_terms)
+        if overlap_score <= 0:
+            continue
+        if len(shared_terms) >= 2 or overlap_score >= 3:
+            strong_match_count += 1
+        if gap_alignment_terms:
+            gap_aligned_paper_count += 1
+        rationale = (
+            "Shares method vocabulary and aligns with an explicit preserved gap."
+            if shared_terms and gap_alignment_terms
+            else "Aligns one or more selected-candidate claims with a preserved literature gap."
+            if gap_alignment_terms
+            else "Shares method vocabulary with the selected candidate."
+        )
+        matches.append(
+            AutoResearchRelatedWorkMatchRead(
+                paper_id=item.paper_id,
+                title=item.title,
+                year=item.year,
+                source=item.source,
+                overlap_score=overlap_score,
+                shared_terms=shared_terms[:6],
+                gap_alignment_terms=gap_alignment_terms[:6],
+                rationale=rationale,
+            )
+        )
+
+    matches.sort(
+        key=lambda item: (
+            -item.overlap_score,
+            -len(item.gap_alignment_terms),
+            -len(item.shared_terms),
+            item.title.lower(),
+        )
+    )
+    research_claims = _research_claims(run, selected_candidate_id)
+    covered_claims = 0
+    uncovered_claims: list[str] = []
+    literature_claim_terms = [
+        _terms(item.title, item.insight, item.method_hint, item.gap_hint)
+        for item in run.literature
+    ]
+    for claim in research_claims:
+        claim_terms = _terms(claim)
+        if any(len(claim_terms & item_terms) >= 2 for item_terms in literature_claim_terms):
+            covered_claims += 1
+        else:
+            uncovered_claims.append(claim)
+
+    if strong_match_count == 0:
+        status = "weak"
+        summary = (
+            f"The selected candidate does not show a strong lexical or gap-aligned match against {len(run.literature)} "
+            "persisted literature items."
+        )
+    elif research_claims and covered_claims == 0:
+        status = "weak"
+        summary = (
+            "Related work was preserved, but none of the selected candidate's research-facing contribution claims were "
+            "well covered by the persisted literature state."
+        )
+    elif gap_aligned_paper_count == 0 or covered_claims < len(research_claims):
+        status = "incremental"
+        summary = (
+            f"The selected candidate is grounded in related work with {strong_match_count} strong matches, but the "
+            "novelty posture still looks incremental and should be framed carefully."
+        )
+    else:
+        status = "grounded"
+        summary = (
+            f"The selected candidate is grounded against {strong_match_count} strong related-work matches and "
+            f"{covered_claims}/{len(research_claims) if research_claims else 0} research-facing claims are tied back "
+            "to the persisted literature state."
+        )
+
+    return AutoResearchNoveltyAssessmentRead(
+        status=status,
+        summary=summary,
+        compared_paper_count=len(run.literature),
+        strong_match_count=strong_match_count,
+        gap_aligned_paper_count=gap_aligned_paper_count,
+        covered_claim_count=covered_claims,
+        total_claim_count=len(research_claims),
+        uncovered_claims=uncovered_claims,
+        top_related_work=matches[:3],
+    )
+
+
 def _review_findings(
     *,
     run: AutoResearchRunRead,
     bundle: AutoResearchBundleRead | None,
     selected_manifest_source: str | None,
     paper_markdown: str,
+    novelty_assessment: AutoResearchNoveltyAssessmentRead,
 ) -> tuple[
     list[AutoResearchReviewFindingRead],
     AutoResearchReviewEvidenceRead,
@@ -354,6 +570,22 @@ def _review_findings(
                 "background section before publish review."
             ),
             supporting_asset_ids=["run_paper_markdown"],
+        )
+    if novelty_assessment.status == "weak":
+        add_finding(
+            severity="warning",
+            category="context",
+            summary="Selected candidate novelty framing is weakly grounded in persisted literature.",
+            detail=novelty_assessment.summary,
+            supporting_asset_ids=["run_json", "run_paper_markdown"],
+        )
+    elif novelty_assessment.status == "incremental":
+        add_finding(
+            severity="info",
+            category="context",
+            summary="Selected candidate appears incremental relative to preserved related work.",
+            detail=novelty_assessment.summary,
+            supporting_asset_ids=["run_json", "run_paper_markdown"],
         )
 
     if artifact is not None and artifact.status == "done":
@@ -548,11 +780,16 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
     bundle = _selected_bundle(bundle_index)
     selected_entry = next((item for item in registry.candidates if item.selected), None)
     paper_markdown = _paper_markdown(run)
+    novelty_assessment = _build_novelty_assessment(
+        run=run,
+        selected_candidate_id=registry.selected_candidate_id,
+    )
     findings, evidence, citation_coverage = _review_findings(
         run=run,
         bundle=bundle,
         selected_manifest_source=selected_entry.manifest_source if selected_entry is not None else None,
         paper_markdown=paper_markdown,
+        novelty_assessment=novelty_assessment,
     )
     scores = _review_scores(
         run=run,
@@ -581,7 +818,7 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
         f"Review built from persisted run, artifact, paper, and registry bundle state. "
         f"Candidates={evidence.candidate_count}, seeds={evidence.seed_count}, sweeps={evidence.sweep_count}, "
         f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}, "
-        f"resolved_literature={citation_coverage.cited_literature_count}."
+        f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}."
     )
     review = AutoResearchRunReviewRead(
         project_id=project_id,
@@ -595,6 +832,7 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
         persisted_path=str(_review_path(project_id, run_id)),
         evidence=evidence,
         citation_coverage=citation_coverage,
+        novelty_assessment=novelty_assessment,
         scores=scores,
         findings=findings,
         revision_plan=revision_plan,

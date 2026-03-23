@@ -588,6 +588,29 @@ export type AutoResearchCitationCoverage = {
   has_references_section: boolean;
 };
 
+export type AutoResearchRelatedWorkMatch = {
+  paper_id?: string | null;
+  title: string;
+  year?: number | null;
+  source?: string | null;
+  overlap_score: number;
+  shared_terms: string[];
+  gap_alignment_terms: string[];
+  rationale: string;
+};
+
+export type AutoResearchNoveltyAssessment = {
+  status: "missing_context" | "grounded" | "incremental" | "weak";
+  summary: string;
+  compared_paper_count: number;
+  strong_match_count: number;
+  gap_aligned_paper_count: number;
+  covered_claim_count: number;
+  total_claim_count: number;
+  uncovered_claims: string[];
+  top_related_work: AutoResearchRelatedWorkMatch[];
+};
+
 export type AutoResearchReviewFinding = {
   id: string;
   severity: "info" | "warning" | "error";
@@ -617,6 +640,7 @@ export type AutoResearchRunReview = {
   persisted_path?: string | null;
   evidence: AutoResearchReviewEvidence;
   citation_coverage: AutoResearchCitationCoverage;
+  novelty_assessment?: AutoResearchNoveltyAssessment | null;
   scores: AutoResearchReviewScores;
   findings: AutoResearchReviewFinding[];
   revision_plan: AutoResearchRevisionAction[];

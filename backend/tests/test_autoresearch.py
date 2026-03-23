@@ -30,7 +30,7 @@ from config import deps as deps_module
 from config.settings import settings
 from main import app
 from models.base import Base
-from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, ResearchPlan, ResultArtifact, SweepConfig
+from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, LiteratureInsight, ResearchPlan, ResultArtifact, SweepConfig
 from schemas.papers import PaperMeta
 from schemas.search import SearchResult
 
@@ -2095,8 +2095,102 @@ def test_autoresearch_review_resolves_persisted_literature_citations(
         assert review["citation_coverage"]["invalid_citation_indices"] == []
         assert review["citation_coverage"]["has_related_work_section"] is True
         assert review["citation_coverage"]["has_references_section"] is True
+        assert review["novelty_assessment"]["status"] == "grounded"
+        assert review["novelty_assessment"]["compared_paper_count"] >= 2
+        assert review["novelty_assessment"]["strong_match_count"] >= 1
+        assert review["novelty_assessment"]["covered_claim_count"] >= 1
+        assert review["novelty_assessment"]["top_related_work"]
         assert not any(
             item["category"] in {"citation", "context", "provenance"} and item["severity"] != "info"
+            for item in review["findings"]
+        )
+    finally:
+        client.close()
+
+
+def test_autoresearch_review_flags_weak_novelty_grounding_from_persisted_literature_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-lit-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-lit-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Weak Novelty Project",
+            "Compact reranking for cs retrieval",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        autoresearch_repository.save_run(
+            run.model_copy(
+                update={
+                    "literature": [
+                        LiteratureInsight(
+                            paper_id="paper-unrelated-1",
+                            title="Vision Transformers for Medical Imaging",
+                            year=2024,
+                            source="semantic_scholar",
+                            insight="Focuses on radiology segmentation and pathology localization.",
+                            method_hint="Use pathology-specific convolutional image encoders.",
+                            gap_hint="Test whether mammography pretraining improves lesion localization.",
+                        ),
+                        LiteratureInsight(
+                            paper_id="paper-unrelated-2",
+                            title="Protein Folding Acceleration with Diffusion Priors",
+                            year=2025,
+                            source="semantic_scholar",
+                            insight="Studies molecular structure prediction with diffusion-style priors.",
+                            method_hint="Use structure-conditioned priors for folding trajectories.",
+                            gap_hint="Measure folding stability under simulated biophysics constraints.",
+                        ),
+                    ]
+                }
+            )
+        )
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["overall_status"] == "needs_revision"
+        assert review["unsupported_claim_risk"] == "medium"
+        assert review["novelty_assessment"]["status"] == "weak"
+        assert review["novelty_assessment"]["strong_match_count"] == 0
+        assert review["novelty_assessment"]["covered_claim_count"] == 0
+        assert review["novelty_assessment"]["uncovered_claims"]
+        assert any(
+            item["category"] == "context"
+            and "novelty framing is weakly grounded" in item["summary"].lower()
             for item in review["findings"]
         )
     finally:

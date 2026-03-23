@@ -79,6 +79,7 @@ AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
 AutoResearchRevisionPriority = Literal["high", "medium", "low"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
+AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
 AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
@@ -900,10 +901,16 @@ class AutoResearchPublishExportRead(BaseModel):
     run_id: str
     package_id: str
     generated_at: datetime
+    bundle_kind: AutoResearchPublishBundleKind = "review_bundle"
+    review_bundle_ready: bool = False
+    final_publish_ready: bool = False
     file_name: str
     archive_path: str
+    archive_manifest_path: str | None = None
     download_path: str
     asset_count: int = 0
+    included_asset_count: int = 0
+    omitted_asset_count: int = 0
     download_ready: bool = True
 
 

@@ -871,22 +871,95 @@ def test_autoresearch_publish_export_materializes_archive(
         export_body = export_response.json()
         assert export_body["project_id"] == project_id
         assert export_body["run_id"] == run_id
+        assert export_body["bundle_kind"] == "review_bundle"
+        assert export_body["review_bundle_ready"] is True
+        assert export_body["final_publish_ready"] is False
         assert export_body["download_ready"] is True
         archive_path = Path(export_body["archive_path"])
         assert archive_path.is_file()
         assert export_body["file_name"] == archive_path.name
+        assert Path(export_body["archive_manifest_path"]).is_file()
+        assert export_body["included_asset_count"] >= 1
+        assert export_body["omitted_asset_count"] >= 0
 
         with ZipFile(archive_path) as archive:
             names = set(archive.namelist())
+            archive_manifest = json.loads(archive.read("archive_manifest.json").decode("utf-8"))
         assert "review.json" in names
         assert "publish_package.json" in names
+        assert "archive_manifest.json" in names
         assert "run.json" in names
         assert any(name.endswith("/manifest.json") for name in names)
         assert any(name.endswith("/artifact.json") for name in names)
+        assert archive_manifest["bundle_kind"] == "review_bundle"
+        assert archive_manifest["review_bundle_ready"] is True
+        assert archive_manifest["final_publish_ready"] is False
+        assert archive_manifest["included_asset_count"] == export_body["included_asset_count"]
+        assert archive_manifest["omitted_asset_count"] == export_body["omitted_asset_count"]
+        assert "archive_manifest.json" in archive_manifest["generated_files"]
 
         download_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
         assert download_response.status_code == 200
         assert download_response.headers["content-disposition"].endswith('publish_bundle.zip"')
+    finally:
+        client.close()
+
+
+def test_autoresearch_publish_export_marks_final_bundle_kind_for_complete_package(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-export-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-export-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Final Export Project",
+            "Compact reranking for cs retrieval",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        export_body = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/export"
+        ).json()
+        assert export_body["bundle_kind"] == "final_publish_bundle"
+        assert export_body["review_bundle_ready"] is True
+        assert export_body["final_publish_ready"] is True
+        with ZipFile(Path(export_body["archive_path"])) as archive:
+            archive_manifest = json.loads(archive.read("archive_manifest.json").decode("utf-8"))
+        assert archive_manifest["bundle_kind"] == "final_publish_bundle"
+        assert archive_manifest["final_publish_ready"] is True
+        assert archive_manifest["omitted_final_asset_ids"] == []
     finally:
         client.close()
 

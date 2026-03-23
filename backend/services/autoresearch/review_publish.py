@@ -34,6 +34,7 @@ from services.autoresearch.repository import (
 REVIEW_FILENAME = "review.json"
 PUBLISH_PACKAGE_FILENAME = "publish_package.json"
 PUBLISH_ARCHIVE_FILENAME = "publish_bundle.zip"
+PUBLISH_ARCHIVE_MANIFEST_FILENAME = "archive_manifest.json"
 _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_json",
     "program_json",
@@ -147,6 +148,10 @@ def _publish_manifest_path(project_id: str, run_id: str) -> Path:
 
 def _publish_archive_path(project_id: str, run_id: str) -> Path:
     return run_dir(project_id, run_id) / PUBLISH_ARCHIVE_FILENAME
+
+
+def _publish_archive_manifest_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / PUBLISH_ARCHIVE_MANIFEST_FILENAME
 
 
 def _selected_bundle(bundle_index: AutoResearchBundleIndexRead) -> AutoResearchBundleRead | None:
@@ -958,6 +963,58 @@ def _add_path_to_zip(handle: ZipFile, *, run_root: Path, path: Path, added: set[
     added.add(arcname)
 
 
+def _archive_bundle_kind(package: AutoResearchPublishPackageRead) -> str:
+    return "final_publish_bundle" if package.final_publish_ready else "review_bundle"
+
+
+def _archive_manifest(
+    *,
+    project_id: str,
+    run_id: str,
+    package: AutoResearchPublishPackageRead,
+) -> dict[str, object]:
+    included_assets = [
+        asset
+        for asset in [*package.required_assets, *package.optional_assets]
+        if asset.ref.exists
+    ]
+    omitted_assets = [
+        asset
+        for asset in [*package.required_assets, *package.optional_assets]
+        if not asset.ref.exists
+    ]
+    omitted_required_assets = [asset.asset_id for asset in package.required_assets if not asset.ref.exists]
+    omitted_final_assets = [asset.asset_id for asset in package.final_required_assets if not asset.ref.exists]
+    omitted_optional_assets = [asset.asset_id for asset in package.optional_assets if not asset.ref.exists]
+    return {
+        "project_id": project_id,
+        "run_id": run_id,
+        "package_id": package.package_id,
+        "generated_at": _utcnow().isoformat(),
+        "bundle_kind": _archive_bundle_kind(package),
+        "review_bundle_ready": package.review_bundle_ready,
+        "final_publish_ready": package.final_publish_ready,
+        "completeness_status": package.completeness_status,
+        "selected_candidate_id": package.selected_candidate_id,
+        "source_bundle_id": package.source_bundle_id,
+        "archive_file_name": PUBLISH_ARCHIVE_FILENAME,
+        "generated_files": [
+            REVIEW_FILENAME,
+            PUBLISH_PACKAGE_FILENAME,
+            PUBLISH_ARCHIVE_MANIFEST_FILENAME,
+        ],
+        "included_asset_count": len(included_assets),
+        "omitted_asset_count": len(omitted_assets),
+        "included_asset_ids": [asset.asset_id for asset in included_assets],
+        "omitted_required_asset_ids": omitted_required_assets,
+        "omitted_final_asset_ids": omitted_final_assets,
+        "omitted_optional_asset_ids": omitted_optional_assets,
+        "blockers": package.blockers,
+        "final_blockers": package.final_blockers,
+        "revision_actions": package.revision_actions,
+    }
+
+
 def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishExportRead | None:
     package = build_publish_package(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
@@ -970,11 +1027,19 @@ def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishE
 
     run_root = run_dir(project_id, run_id)
     archive_path = _publish_archive_path(project_id, run_id)
+    archive_manifest_path = _publish_archive_manifest_path(project_id, run_id)
+    archive_manifest = _archive_manifest(
+        project_id=project_id,
+        run_id=run_id,
+        package=package,
+    )
+    _write_json(archive_manifest_path, archive_manifest)
     added: set[str] = set()
     with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
         for generated_path in (
             _review_path(project_id, run_id),
             _publish_manifest_path(project_id, run_id),
+            archive_manifest_path,
         ):
             if generated_path.is_file():
                 handle.write(generated_path, arcname=generated_path.name)
@@ -991,10 +1056,16 @@ def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishE
         run_id=run_id,
         package_id=package.package_id,
         generated_at=_utcnow(),
+        bundle_kind=_archive_bundle_kind(package),
+        review_bundle_ready=package.review_bundle_ready,
+        final_publish_ready=package.final_publish_ready,
         file_name=archive_path.name,
         archive_path=str(archive_path),
+        archive_manifest_path=str(archive_manifest_path),
         download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/download",
         asset_count=package.asset_count,
+        included_asset_count=int(archive_manifest["included_asset_count"]),
+        omitted_asset_count=int(archive_manifest["omitted_asset_count"]),
         download_ready=archive_path.is_file(),
     )
 

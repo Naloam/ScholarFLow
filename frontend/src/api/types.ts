@@ -681,10 +681,16 @@ export type AutoResearchPublishExport = {
   run_id: string;
   package_id: string;
   generated_at: string;
+  bundle_kind: "review_bundle" | "final_publish_bundle";
+  review_bundle_ready: boolean;
+  final_publish_ready: boolean;
   file_name: string;
   archive_path: string;
+  archive_manifest_path?: string | null;
   download_path: string;
   asset_count: number;
+  included_asset_count: number;
+  omitted_asset_count: number;
   download_ready: boolean;
 };
 

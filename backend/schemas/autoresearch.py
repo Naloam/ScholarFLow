@@ -40,6 +40,10 @@ AutoResearchBundleAssetRole = Literal[
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_state_json",
+    "run_paper_sources_dir",
+    "run_paper_latex_source",
+    "run_paper_bibliography_bib",
+    "run_paper_sources_manifest_json",
     "workspace",
     "candidate_json",
     "plan_json",
@@ -69,6 +73,10 @@ AutoResearchLineageNodeKind = Literal[
     "paper_plan",
     "figure_plan",
     "paper_revision_state",
+    "paper_sources",
+    "paper_latex",
+    "paper_bibliography",
+    "paper_sources_manifest",
 ]
 AutoResearchLineageRelation = Literal[
     "owns",
@@ -99,6 +107,7 @@ AutoResearchEvidenceSourceKind = Literal["plan", "portfolio", "artifact", "liter
 AutoResearchFigureAssetKind = Literal["table", "chart", "diagram"]
 AutoResearchFigureStatus = Literal["planned", "ready", "not_available"]
 AutoResearchPaperRevisionStatus = Literal["drafted", "needs_review", "revising", "ready_for_publish"]
+AutoResearchPaperSourceKind = Literal["latex", "bibtex", "json"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -607,12 +616,30 @@ class AutoResearchPaperRevisionStateRead(BaseModel):
     completed_actions: list[str] = Field(default_factory=list)
 
 
+class AutoResearchPaperSourceFileRead(BaseModel):
+    relative_path: str
+    kind: AutoResearchPaperSourceKind
+    description: str
+
+
+class AutoResearchPaperSourcesManifestRead(BaseModel):
+    generated_at: datetime
+    entrypoint: str
+    bibliography: str | None = None
+    compiler_hint: str
+    compile_commands: list[str] = Field(default_factory=list)
+    files: list[AutoResearchPaperSourceFileRead] = Field(default_factory=list)
+
+
 class AutoResearchPaperPipelineArtifactsRead(BaseModel):
     narrative_report_markdown: str
     claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead
     paper_plan: AutoResearchPaperPlanRead
     figure_plan: AutoResearchFigurePlanRead
     paper_revision_state: AutoResearchPaperRevisionStateRead
+    paper_latex_source: str
+    paper_bibliography_bib: str
+    paper_sources_manifest: AutoResearchPaperSourcesManifestRead
     paper_markdown: str
 
 
@@ -719,6 +746,13 @@ class AutoResearchRunRead(BaseModel):
     figure_plan_path: str | None = None
     paper_revision_state: AutoResearchPaperRevisionStateRead | None = None
     paper_revision_state_path: str | None = None
+    paper_sources_dir: str | None = None
+    paper_latex_source: str | None = None
+    paper_latex_path: str | None = None
+    paper_bibliography_bib: str | None = None
+    paper_bibliography_path: str | None = None
+    paper_sources_manifest: AutoResearchPaperSourcesManifestRead | None = None
+    paper_sources_manifest_path: str | None = None
     candidates: list[HypothesisCandidate] = Field(default_factory=list)
     portfolio: PortfolioSummary | None = None
     attempts: list[ExperimentAttempt] = Field(default_factory=list)
@@ -772,6 +806,10 @@ class AutoResearchRunRegistryFiles(BaseModel):
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_state_json: AutoResearchRegistryAssetRef | None = None
+    paper_sources_dir: AutoResearchRegistryAssetRef | None = None
+    paper_latex_source: AutoResearchRegistryAssetRef | None = None
+    paper_bibliography_bib: AutoResearchRegistryAssetRef | None = None
+    paper_sources_manifest_json: AutoResearchRegistryAssetRef | None = None
 
 
 class AutoResearchCandidateRegistryFiles(BaseModel):

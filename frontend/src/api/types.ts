@@ -351,6 +351,21 @@ export type AutoResearchPaperRevisionState = {
   completed_actions: string[];
 };
 
+export type AutoResearchPaperSourceFile = {
+  relative_path: string;
+  kind: "latex" | "bibtex" | "json";
+  description: string;
+};
+
+export type AutoResearchPaperSourcesManifest = {
+  generated_at: string;
+  entrypoint: string;
+  bibliography?: string | null;
+  compiler_hint: string;
+  compile_commands: string[];
+  files: AutoResearchPaperSourceFile[];
+};
+
 export type AutoResearchRun = {
   id: string;
   project_id: string;
@@ -367,6 +382,13 @@ export type AutoResearchRun = {
   figure_plan_path?: string | null;
   paper_revision_state?: AutoResearchPaperRevisionState | null;
   paper_revision_state_path?: string | null;
+  paper_sources_dir?: string | null;
+  paper_latex_source?: string | null;
+  paper_latex_path?: string | null;
+  paper_bibliography_bib?: string | null;
+  paper_bibliography_path?: string | null;
+  paper_sources_manifest?: AutoResearchPaperSourcesManifest | null;
+  paper_sources_manifest_path?: string | null;
   created_at: string;
   updated_at: string;
   [key: string]: unknown;
@@ -448,7 +470,11 @@ export type AutoResearchLineageEdge = {
     | "claim_evidence_matrix"
     | "paper_plan"
     | "figure_plan"
-    | "paper_revision_state";
+    | "paper_revision_state"
+    | "paper_sources"
+    | "paper_latex"
+    | "paper_bibliography"
+    | "paper_sources_manifest";
   source_id: string;
   relation: "owns" | "selected_candidate" | "has_asset" | "materialized_to_run_asset";
   target_kind:
@@ -469,7 +495,11 @@ export type AutoResearchLineageEdge = {
     | "claim_evidence_matrix"
     | "paper_plan"
     | "figure_plan"
-    | "paper_revision_state";
+    | "paper_revision_state"
+    | "paper_sources"
+    | "paper_latex"
+    | "paper_bibliography"
+    | "paper_sources_manifest";
   target_id: string;
   target_path?: string | null;
   exists?: boolean | null;
@@ -491,6 +521,10 @@ export type AutoResearchRunRegistryFiles = {
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_state_json?: AutoResearchRegistryAssetRef | null;
+  paper_sources_dir?: AutoResearchRegistryAssetRef | null;
+  paper_latex_source?: AutoResearchRegistryAssetRef | null;
+  paper_bibliography_bib?: AutoResearchRegistryAssetRef | null;
+  paper_sources_manifest_json?: AutoResearchRegistryAssetRef | null;
 };
 
 export type AutoResearchCandidateRegistryFiles = {
@@ -601,6 +635,10 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_plan_json"
     | "run_figure_plan_json"
     | "run_paper_revision_state_json"
+    | "run_paper_sources_dir"
+    | "run_paper_latex_source"
+    | "run_paper_bibliography_bib"
+    | "run_paper_sources_manifest_json"
     | "workspace"
     | "candidate_json"
     | "plan_json"

@@ -24,14 +24,18 @@ from services.autoresearch.literature_pipeline import gather_literature_context
 from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.repair import ExperimentRepairEngine
 from services.autoresearch.repository import (
+    paper_bibliography_file_path,
     candidate_paper_file_path,
     claim_evidence_matrix_file_path,
     figure_plan_file_path,
     load_run,
     load_benchmark_snapshot,
     narrative_report_file_path,
+    paper_latex_file_path,
     paper_plan_file_path,
     paper_revision_state_file_path,
+    paper_sources_dir_path,
+    paper_sources_manifest_file_path,
     paper_file_path,
     save_candidate_manifest,
     save_candidate_snapshot,
@@ -866,6 +870,13 @@ class AutoResearchOrchestrator:
                         "figure_plan_path": None,
                         "paper_revision_state": None,
                         "paper_revision_state_path": None,
+                        "paper_sources_dir": None,
+                        "paper_latex_source": None,
+                        "paper_latex_path": None,
+                        "paper_bibliography_bib": None,
+                        "paper_bibliography_path": None,
+                        "paper_sources_manifest": None,
+                        "paper_sources_manifest_path": None,
                         "paper_draft_version": None,
                         "selected_round_index": None,
                     }
@@ -1253,6 +1264,10 @@ class AutoResearchOrchestrator:
             paper_plan_path = paper_plan_file_path(project_id, run_id)
             figure_plan_path = figure_plan_file_path(project_id, run_id)
             paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
+            paper_sources_dir = paper_sources_dir_path(project_id, run_id)
+            paper_latex_path = paper_latex_file_path(project_id, run_id)
+            paper_bibliography_path = paper_bibliography_file_path(project_id, run_id)
+            paper_sources_manifest_path = paper_sources_manifest_file_path(project_id, run_id)
             paper_pipeline = self.writer.build_pipeline(
                 winner_plan,
                 winner_spec,
@@ -1314,6 +1329,13 @@ class AutoResearchOrchestrator:
                         "figure_plan_path": figure_plan_path,
                         "paper_revision_state": paper_pipeline.paper_revision_state,
                         "paper_revision_state_path": paper_revision_state_path,
+                        "paper_sources_dir": paper_sources_dir,
+                        "paper_latex_source": paper_pipeline.paper_latex_source,
+                        "paper_latex_path": paper_latex_path,
+                        "paper_bibliography_bib": paper_pipeline.paper_bibliography_bib,
+                        "paper_bibliography_path": paper_bibliography_path,
+                        "paper_sources_manifest": paper_pipeline.paper_sources_manifest,
+                        "paper_sources_manifest_path": paper_sources_manifest_path,
                         "paper_markdown": paper_markdown,
                         "paper_path": paper_path,
                         "paper_draft_version": draft.version,

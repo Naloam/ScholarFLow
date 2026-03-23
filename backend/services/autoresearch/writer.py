@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from schemas.autoresearch import (
@@ -12,6 +13,8 @@ from schemas.autoresearch import (
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchPaperRevisionStateRead,
+    AutoResearchPaperSourceFileRead,
+    AutoResearchPaperSourcesManifestRead,
     ConfidenceIntervalSummary,
     ExperimentAttempt,
     ExperimentSpec,
@@ -36,6 +39,93 @@ def _markdown_table(table: ResultTable) -> str:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+_INLINE_LATEX_PATTERN = re.compile(r"`([^`]+)`|\[(\d+(?:,\s*\d+)*)\]")
+
+
+def _latex_escape(text: str) -> str:
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(replacements.get(character, character) for character in text)
+
+
+def _render_inline_latex(text: str) -> str:
+    segments: list[str] = []
+    cursor = 0
+    for match in _INLINE_LATEX_PATTERN.finditer(text):
+        if match.start() > cursor:
+            segments.append(_latex_escape(text[cursor:match.start()]))
+        inline_code = match.group(1)
+        citation_indices = match.group(2)
+        if inline_code is not None:
+            segments.append(r"\texttt{" + _latex_escape(inline_code) + "}")
+        elif citation_indices is not None:
+            keys = ",".join(f"ref{item.strip()}" for item in citation_indices.split(","))
+            segments.append(r"\cite{" + keys + "}")
+        cursor = match.end()
+    if cursor < len(text):
+        segments.append(_latex_escape(text[cursor:]))
+    return "".join(segments)
+
+
+def _parse_markdown_table_block(lines: list[str], start: int) -> tuple[list[list[str]], int] | None:
+    if start + 1 >= len(lines):
+        return None
+    if "|" not in lines[start] or "|" not in lines[start + 1]:
+        return None
+    if not re.search(r"[-:]+", lines[start + 1]):
+        return None
+    rows: list[list[str]] = []
+    index = start
+    while index < len(lines) and "|" in lines[index]:
+        cells = [cell.strip() for cell in lines[index].strip().strip("|").split("|")]
+        if index == start + 1:
+            index += 1
+            continue
+        rows.append(cells)
+        index += 1
+    return rows, index
+
+
+def _latex_table_block(rows: list[list[str]]) -> list[str]:
+    if not rows:
+        return []
+    column_count = max(len(row) for row in rows)
+    align = " | ".join(["l"] * column_count)
+
+    def _row_cells(row: list[str]) -> list[str]:
+        padded = list(row[:column_count])
+        while len(padded) < column_count:
+            padded.append("")
+        return [_render_inline_latex(cell) for cell in padded]
+
+    rendered = [
+        r"\begin{center}",
+        r"\begin{tabular}{" + align + "}",
+        r"\hline",
+        " & ".join(_row_cells(rows[0])) + r" \\ \hline",
+    ]
+    for row in rows[1:]:
+        rendered.append(" & ".join(_row_cells(row)) + r" \\")
+    rendered.extend(
+        [
+            r"\hline",
+            r"\end{tabular}",
+            r"\end{center}",
+        ]
+    )
+    return rendered
 
 
 class PaperWriter:
@@ -689,6 +779,160 @@ Program objective:
             ],
         )
 
+    def build_paper_bibliography(
+        self,
+        literature: list[LiteratureInsight] | None = None,
+    ) -> str:
+        literature = literature or []
+        if not literature:
+            return "% No persisted literature entries were available for this run.\n"
+        entries: list[str] = []
+        for index, item in enumerate(literature, start=1):
+            note_parts = []
+            if item.source:
+                note_parts.append(f"source={item.source.replace('_', ' ')}")
+            if item.paper_id:
+                note_parts.append(f"paper_id={item.paper_id}")
+            if item.insight:
+                note_parts.append(item.insight)
+            if item.method_hint:
+                note_parts.append(f"method_hint={item.method_hint}")
+            if item.gap_hint:
+                note_parts.append(f"gap_hint={item.gap_hint}")
+            fields = [f"  title = {{{_latex_escape(item.title)}}}"]
+            if item.year is not None:
+                fields.append(f"  year = {{{item.year}}}")
+            if item.source:
+                fields.append(f"  howpublished = {{{_latex_escape(item.source.replace('_', ' '))}}}")
+            if note_parts:
+                fields.append(f"  note = {{{_latex_escape(' '.join(note_parts))}}}")
+            entries.append("@misc{ref" + str(index) + ",\n" + ",\n".join(fields) + "\n}")
+        return "\n\n".join(entries) + "\n"
+
+    def build_paper_latex_source(
+        self,
+        paper_markdown: str,
+        *,
+        literature: list[LiteratureInsight] | None = None,
+    ) -> str:
+        literature = literature or []
+        raw_lines = paper_markdown.splitlines()
+        title = "ScholarFlow AutoResearch Paper"
+        body: list[str] = []
+        index = 0
+
+        while index < len(raw_lines):
+            line = raw_lines[index].rstrip()
+            stripped = line.strip()
+            if index == 0 and stripped.startswith("# "):
+                title = stripped[2:].strip()
+                index += 1
+                continue
+            table = _parse_markdown_table_block(raw_lines, index)
+            if table is not None:
+                rows, index = table
+                body.extend(_latex_table_block(rows))
+                body.append("")
+                continue
+            if not stripped:
+                body.append("")
+                index += 1
+                continue
+            if stripped.startswith("## "):
+                body.append(r"\section{" + _render_inline_latex(stripped[3:].strip()) + "}")
+                body.append("")
+                index += 1
+                continue
+            if stripped.startswith("### "):
+                body.append(r"\subsection{" + _render_inline_latex(stripped[4:].strip()) + "}")
+                body.append("")
+                index += 1
+                continue
+            if stripped.startswith("- "):
+                items: list[str] = []
+                while index < len(raw_lines) and raw_lines[index].strip().startswith("- "):
+                    items.append(raw_lines[index].strip()[2:].strip())
+                    index += 1
+                body.append(r"\begin{itemize}")
+                body.extend(r"\item " + _render_inline_latex(item) for item in items)
+                body.append(r"\end{itemize}")
+                body.append("")
+                continue
+            if re.match(r"^\d+\.\s+", stripped):
+                items = []
+                while index < len(raw_lines) and re.match(r"^\d+\.\s+", raw_lines[index].strip()):
+                    items.append(re.sub(r"^\d+\.\s+", "", raw_lines[index].strip()))
+                    index += 1
+                body.append(r"\begin{enumerate}")
+                body.extend(r"\item " + _render_inline_latex(item) for item in items)
+                body.append(r"\end{enumerate}")
+                body.append("")
+                continue
+            body.append(_render_inline_latex(stripped))
+            index += 1
+
+        bibliography_block = "\n".join(
+            [
+                r"\bibliographystyle{plain}",
+                r"\bibliography{references}",
+            ]
+        )
+        if not literature:
+            bibliography_block = "% No bibliography pass is required for this run."
+        return "\n".join(
+            [
+                r"\documentclass{article}",
+                r"\usepackage[utf8]{inputenc}",
+                r"\usepackage[T1]{fontenc}",
+                r"\usepackage{hyperref}",
+                r"\title{" + _latex_escape(title) + "}",
+                r"\date{}",
+                r"\begin{document}",
+                r"\maketitle",
+                "",
+                *body,
+                "",
+                bibliography_block,
+                r"\end{document}",
+                "",
+            ]
+        )
+
+    def build_paper_sources_manifest(
+        self,
+        *,
+        has_bibliography: bool,
+    ) -> AutoResearchPaperSourcesManifestRead:
+        compile_commands = ["pdflatex main.tex"]
+        if has_bibliography:
+            compile_commands.append("bibtex main")
+        compile_commands.extend(["pdflatex main.tex", "pdflatex main.tex"])
+        compiler_hint = "pdflatex + bibtex" if has_bibliography else "pdflatex"
+        return AutoResearchPaperSourcesManifestRead(
+            generated_at=_utcnow(),
+            entrypoint="main.tex",
+            bibliography="references.bib",
+            compiler_hint=compiler_hint,
+            compile_commands=compile_commands,
+            files=[
+                AutoResearchPaperSourceFileRead(
+                    relative_path="main.tex",
+                    kind="latex",
+                    description="Compile-oriented LaTeX manuscript generated from the grounded paper draft.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="references.bib",
+                    kind="bibtex",
+                    description="BibTeX bibliography derived from the persisted run literature context.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="manifest.json",
+                    kind="json",
+                    description="Paper source package manifest with compile commands and file inventory.",
+                ),
+            ],
+        )
+
     def build_pipeline(
         self,
         plan: ResearchPlan,
@@ -745,12 +989,23 @@ Program objective:
             figure_plan=figure_plan,
             paper_revision_state=paper_revision_state,
         )
+        paper_bibliography_bib = self.build_paper_bibliography(literature)
+        paper_latex_source = self.build_paper_latex_source(
+            paper_markdown,
+            literature=literature,
+        )
+        paper_sources_manifest = self.build_paper_sources_manifest(
+            has_bibliography=bool(literature),
+        )
         return AutoResearchPaperPipelineArtifactsRead(
             narrative_report_markdown=narrative_report_markdown,
             claim_evidence_matrix=claim_evidence_matrix,
             paper_plan=paper_plan,
             figure_plan=figure_plan,
             paper_revision_state=paper_revision_state,
+            paper_latex_source=paper_latex_source,
+            paper_bibliography_bib=paper_bibliography_bib,
+            paper_sources_manifest=paper_sources_manifest,
             paper_markdown=paper_markdown,
         )
 

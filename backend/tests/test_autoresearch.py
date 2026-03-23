@@ -136,6 +136,10 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert Path(run["paper_plan_path"]).is_file()
         assert Path(run["figure_plan_path"]).is_file()
         assert Path(run["paper_revision_state_path"]).is_file()
+        assert Path(run["paper_sources_dir"]).is_dir()
+        assert Path(run["paper_latex_path"]).is_file()
+        assert Path(run["paper_bibliography_path"]).is_file()
+        assert Path(run["paper_sources_manifest_path"]).is_file()
         assert len(list((run_dir / "candidates").glob("*.json"))) == 3
         assert run["spec"]["seeds"] == [7, 13]
         assert len(run["spec"]["sweeps"]) == 2
@@ -199,6 +203,16 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert any(item["kind"] == "table" for item in run["figure_plan"]["items"])
         assert run["paper_revision_state"]["status"] == "needs_review"
         assert "Persisted narrative report" in run["paper_revision_state"]["completed_actions"]
+        assert run["paper_sources_manifest"]["entrypoint"] == "main.tex"
+        assert "pdflatex main.tex" in run["paper_sources_manifest"]["compile_commands"]
+        assert run["paper_sources_manifest"]["compiler_hint"] in {"pdflatex", "pdflatex + bibtex"}
+        assert any(item["relative_path"] == "references.bib" for item in run["paper_sources_manifest"]["files"])
+        assert "\\documentclass{article}" in run["paper_latex_source"]
+        assert (
+            "\\bibliography{references}" in run["paper_latex_source"]
+            or "% No bibliography pass is required for this run." in run["paper_latex_source"]
+        )
+        assert run["paper_bibliography_bib"]
         assert "## 2. Related Work and Research Plan" in paper
         assert "Claim-evidence commitments carried into manuscript drafting were" in paper
         assert "Portfolio planning generated 3 ranked candidates" in paper
@@ -321,6 +335,11 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         assert registry["files"]["paper_plan_json"]["exists"] is True
         assert registry["files"]["figure_plan_json"]["exists"] is True
         assert registry["files"]["paper_revision_state_json"]["exists"] is True
+        assert registry["files"]["paper_sources_dir"]["exists"] is True
+        assert registry["files"]["paper_sources_dir"]["kind"] == "directory"
+        assert registry["files"]["paper_latex_source"]["exists"] is True
+        assert registry["files"]["paper_bibliography_bib"]["exists"] is True
+        assert registry["files"]["paper_sources_manifest_json"]["exists"] is True
         assert any(edge["relation"] == "selected_candidate" for edge in registry["lineage"]["edges"])
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "artifact"
@@ -328,6 +347,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "narrative_report"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_latex"
             for edge in registry["lineage"]["edges"]
         )
         assert len(registry["candidates"]) == 3
@@ -368,6 +391,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_plan"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_sources"
             for edge in candidate_registry["lineage"]["edges"]
         )
     finally:
@@ -480,6 +507,10 @@ def test_autoresearch_bundle_index_exposes_selected_and_portfolio_assets(
         assert any(item["role"] == "run_paper_plan_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_figure_plan_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_revision_state_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_sources_dir" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_latex_source" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_bibliography_bib" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_sources_manifest_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "manifest_json" and item["selected"] for item in selected_bundle["assets"])
         assert any(item["role"] == "artifact_json" and item["selected"] for item in selected_bundle["assets"])
         assert any(item["role"] == "paper_markdown" and item["selected"] for item in selected_bundle["assets"])

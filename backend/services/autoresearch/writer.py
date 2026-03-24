@@ -1163,6 +1163,31 @@ Program objective:
             compile_commands=compile_commands,
             files=[
                 AutoResearchPaperSourceFileRead(
+                    relative_path="narrative_report.md",
+                    kind="markdown",
+                    description="Persisted narrative report copied into the paper source package for offline revision work.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="claim_evidence_matrix.json",
+                    kind="json",
+                    description="Claim-evidence matrix snapshot carried alongside the manuscript source package.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="paper_plan.json",
+                    kind="json",
+                    description="Paper plan snapshot aligned with the generated manuscript structure.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="figure_plan.json",
+                    kind="json",
+                    description="Figure-plan snapshot for the promoted artifact-backed visuals.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="paper_revision_state.json",
+                    kind="json",
+                    description="Latest paper revision state copied into the paper source package for resume workflows.",
+                ),
+                AutoResearchPaperSourceFileRead(
                     relative_path="main.tex",
                     kind="latex",
                     description="Compile-oriented LaTeX manuscript generated from the grounded paper draft.",

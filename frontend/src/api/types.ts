@@ -356,7 +356,7 @@ export type AutoResearchPaperRevisionState = {
 
 export type AutoResearchPaperSourceFile = {
   relative_path: string;
-  kind: "latex" | "bibtex" | "json";
+  kind: "latex" | "bibtex" | "json" | "markdown";
   description: string;
 };
 

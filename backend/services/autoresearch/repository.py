@@ -669,6 +669,31 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
     ):
         paper_sources_dir = base / PAPER_SOURCES_DIRNAME
         paper_sources_dir.mkdir(parents=True, exist_ok=True)
+        if payload.narrative_report_markdown:
+            (paper_sources_dir / NARRATIVE_REPORT_FILENAME).write_text(
+                payload.narrative_report_markdown,
+                encoding="utf-8",
+            )
+        if payload.claim_evidence_matrix is not None:
+            _write_json(
+                paper_sources_dir / CLAIM_EVIDENCE_MATRIX_FILENAME,
+                payload.claim_evidence_matrix.model_dump(mode="json"),
+            )
+        if payload.paper_plan is not None:
+            _write_json(
+                paper_sources_dir / PAPER_PLAN_FILENAME,
+                payload.paper_plan.model_dump(mode="json"),
+            )
+        if payload.figure_plan is not None:
+            _write_json(
+                paper_sources_dir / FIGURE_PLAN_FILENAME,
+                payload.figure_plan.model_dump(mode="json"),
+            )
+        if payload.paper_revision_state is not None:
+            _write_json(
+                paper_sources_dir / PAPER_REVISION_STATE_FILENAME,
+                payload.paper_revision_state.model_dump(mode="json"),
+            )
         if payload.paper_latex_source is not None:
             (paper_sources_dir / PAPER_LATEX_FILENAME).write_text(payload.paper_latex_source, encoding="utf-8")
         if payload.paper_bibliography_bib is not None:

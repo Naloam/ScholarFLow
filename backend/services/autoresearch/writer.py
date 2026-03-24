@@ -145,7 +145,46 @@ def _dedupe_preserving_order(items: list[str]) -> list[str]:
     return deduped
 
 
+def _section_slug(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+    return slug or "section"
+
+
 class PaperWriter:
+    def _fallback_section_body(self, section: AutoResearchPaperPlanSectionRead) -> str:
+        claim_block = "\n".join(f"- `{item}`" for item in section.claim_ids) or "- No explicit claim ids were attached."
+        evidence_block = "\n".join(f"- {item}" for item in section.evidence_focus) or "- No explicit evidence focus was attached."
+        return (
+            f"{section.objective}\n\n"
+            "Claim focus:\n"
+            f"{claim_block}\n\n"
+            "Evidence focus:\n"
+            f"{evidence_block}"
+        )
+
+    def _render_section_sequence(
+        self,
+        *,
+        title: str,
+        paper_plan: AutoResearchPaperPlanRead,
+        section_bodies: dict[str, str],
+        references_block: str,
+    ) -> str:
+        rendered_sections: list[str] = []
+        numbered_section_index = 0
+        for section in paper_plan.sections:
+            slug = _section_slug(section.title)
+            body = section_bodies.get(slug, self._fallback_section_body(section)).strip()
+            if slug == "abstract":
+                heading = "## Abstract"
+            else:
+                numbered_section_index += 1
+                heading = f"## {numbered_section_index}. {section.title}"
+            rendered_sections.append(f"{heading}\n{body}")
+        if references_block:
+            rendered_sections.append(f"## {numbered_section_index + 1}. References\n{references_block}")
+        return f"# {title}\n\n" + "\n\n".join(rendered_sections) + "\n"
+
     def _paper_plan_title(
         self,
         paper_plan: AutoResearchPaperPlanRead | None,
@@ -1427,119 +1466,129 @@ Program objective:
                 f"Inputs are represented through the fields {', '.join(spec.dataset.input_fields)}, "
                 f"and labels belong to {{{', '.join(spec.dataset.label_space)}}}."
             )
-
-        return f"""# {plan.title}
-
-## Abstract
-This paper presents `CS AutoResearch v0`, a minimal computer science research loop that maps a topic into a research plan, generates executable experiment code, runs the experiment in a sandbox-oriented environment, and writes a paper only from the resulting evidence. The concrete topic for this run is **{plan.topic}**, instantiated as a `{spec.task_family}` benchmark named `{benchmark_display}`.
-
-The experimental study follows the hypothesis that {spec.hypothesis.lower()} {comparison_sentence} The run reports {metrics}, preserves logs and environment metadata, and exports a structured artifact that can be inspected independently from the paper text. The writing pipeline first materialized a narrative report, claim-evidence matrix, paper plan, and figure plan; {narrative_summary.lower()}
-
-## 1. Introduction
-{plan.problem_statement}
-
-The motivation for this run is practical rather than purely stylistic. ScholarFlow should not stop at generating generic prose. It should be able to define a tractable problem, select an executable benchmark, compare baselines, and report measurable outcomes. In this version, the scope is intentionally restricted to small classification tasks that can be executed quickly without external dependencies. This restriction makes the pipeline reproducible while still forcing the system to reason about hypotheses, baselines, ablations, and result interpretation.
-
-{literature_context_sentence}
-
-The central research questions are:
-{chr(10).join(f"- {item}" for item in plan.research_questions)}
-
-## 2. Related Work and Research Plan
-The planning stage was conditioned on the following literature cues:
-{literature_block}
-
-The persisted narrative report summarized the drafting target as:
-{narrative_summary}
-
-The planning stage produced the following working hypothesis set:
-{chr(10).join(f"- {item}" for item in plan.hypotheses)}
-
-Planned contributions for the run were:
-{chr(10).join(f"- {item}" for item in plan.planned_contributions)}
-
-The portfolio manager currently reports:
-{portfolio_block}
-
-Operationally, the run followed this outline:
-{chr(10).join(f"1. {item}" for item in plan.experiment_outline)}
-
-The paper plan locked the manuscript into these sections before prose rendering:
-- {plan_section_titles}
-
-Claim-evidence commitments carried into manuscript drafting were:
-{claim_commitments}
-
-## 3. Method
-The proposed method in the plan is summarized as {plan.proposed_method.lower()} The executable experiment specification narrows that idea into a benchmark with fixed train and test partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is `{benchmark_display}`, described as: {spec.benchmark_description}
-
-{dataset_sentence} The compared baselines are {", ".join(item.name for item in spec.baselines)}. The ablation suite contains {", ".join(item.name for item in spec.ablations) if spec.ablations else "no ablations"}.
-
-Implementation constraints were also explicit:
-{chr(10).join(f"- {item}" for item in spec.implementation_notes)}
-
-## 4. Experimental Setup
-All experiments were executed from generated Python code inside the existing ScholarFlow sandbox runner. The observed execution mode for this run was `{executor_mode}`. The recorded environment reports Python `{environment.get("python_version") or environment.get("host_python") or "unknown"}` on `{environment.get("platform") or environment.get("host_platform") or "unknown"}`. The experiment runtime reported by the artifact was `{runtime if runtime is not None else "unknown"}` seconds.
-
-The selected configuration for the final artifact was sweep `{selected_sweep}` evaluated over `{seed_count}` seeds. This run therefore reports aggregated metrics instead of a single execution trace, and retains the full seed-level evidence inside the result artifact.
-
-Aggregate reporting includes mean, standard deviation, and two-sided 95% confidence intervals over the selected sweep's seed-level scores.
-
-The statistical analysis also records paired sign-flip significance comparisons with Holm correction, preserves failed seed/sweep configurations, and keeps explicit negative-result summaries rather than only the winning configuration.
-
-Evaluation uses {metrics}. The purpose of the benchmark is not to claim state of the art performance, but to verify that the system can carry out a complete research loop with a real result table and a grounded discussion.
-
-The figure plan promoted the following artifact-backed visuals into the paper workflow:
-{figure_plan_block}
-
-The search and repair trace for this run was:
-{attempt_block}
-
-## 5. Results
-{comparison_sentence} {learned_sentence} {majority_sentence} {ablation_sentence}
-
-{results_table}
-
-Key findings recorded directly in the artifact are:
-{findings}
-
-Paired significance comparisons for the selected configuration were:
-{significance_block}
-
-Negative results retained in the artifact were:
-{negative_results_block}
-
-Failure analysis for seeds and sweeps was:
-{failure_block}
-
-Anomalous trials flagged for manual inspection were:
-{anomaly_block}
-
-Acceptance checks for the selected configuration were:
-{acceptance_block}
-
-## 6. Discussion
-The results show that the pipeline can now produce a paper-shaped artifact with concrete experimental content instead of a generic short essay. The differences among the compared systems matter because they provide evidence that the method choice changes measurable outcomes. Recording significance comparisons, failed configurations, and negative outcomes raises the artifact above a single best-number report and closer to a real experimental logbook.
-
-At the same time, the benchmark remains intentionally small. The value of this v0 system is not that it solves an open scientific problem, but that it demonstrates the operational scaffolding required for future automated research runs: a planner, a structured experiment specification, executable code generation, artifact preservation, and grounded writing.
-
-{discussion_context_sentence}
-
-The persisted narrative report remained available during drafting to keep each section tied to explicit claims:
-`{narrative_report_markdown.splitlines()[0] if narrative_report_markdown else 'Narrative report unavailable.'}`
-
-## 7. Limitations
-{chr(10).join(f"- {item}" for item in plan.scope_limits)}
-- The benchmark is built into the repository, so data collection and large scale reproducibility are out of scope.
-- The learned methods are lightweight toy models rather than competitive research systems.
-- The writing stage is grounded by construction, which avoids fabricated experiments but also limits rhetorical flexibility.
-
-Outstanding revision issues recorded for the next paper-improvement round were:
-{revision_issue_block}
-
-## 8. Conclusion
-`CS AutoResearch v0` completes a narrow but real research loop for `{plan.topic}`. The system planned the study, executed the benchmark, preserved a structured result artifact, and produced a paper whose claims are anchored to the recorded experiment outputs. This establishes the minimum backend skeleton needed to push ScholarFlow toward an automated computer science research system rather than a generic writing assistant.
-
-{conclusion_context_sentence}
-{f"{chr(10)}## 9. References{chr(10)}{references_block}" if references_block else ""}
-"""
+        section_bodies = {
+            "abstract": (
+                "This paper presents `CS AutoResearch v0`, a minimal computer science research loop that maps a topic "
+                "into a research plan, generates executable experiment code, runs the experiment in a sandbox-oriented "
+                "environment, and writes a paper only from the resulting evidence. The concrete topic for this run is "
+                f"**{plan.topic}**, instantiated as a `{spec.task_family}` benchmark named `{benchmark_display}`.\n\n"
+                f"The experimental study follows the hypothesis that {spec.hypothesis.lower()} {comparison_sentence} "
+                f"The run reports {metrics}, preserves logs and environment metadata, and exports a structured artifact "
+                "that can be inspected independently from the paper text. The writing pipeline first materialized a "
+                f"narrative report, claim-evidence matrix, paper plan, and figure plan; {narrative_summary.lower()}"
+            ),
+            "introduction": (
+                f"{plan.problem_statement}\n\n"
+                "The motivation for this run is practical rather than purely stylistic. ScholarFlow should not stop at "
+                "generating generic prose. It should be able to define a tractable problem, select an executable "
+                "benchmark, compare baselines, and report measurable outcomes. In this version, the scope is "
+                "intentionally restricted to small classification tasks that can be executed quickly without external "
+                "dependencies. This restriction makes the pipeline reproducible while still forcing the system to "
+                f"reason about hypotheses, baselines, ablations, and result interpretation.\n\n"
+                f"{literature_context_sentence}\n\n"
+                "The central research questions are:\n"
+                + "\n".join(f"- {item}" for item in plan.research_questions)
+            ),
+            "related_work_and_research_plan": (
+                "The planning stage was conditioned on the following literature cues:\n"
+                f"{literature_block}\n\n"
+                "The persisted narrative report summarized the drafting target as:\n"
+                f"{narrative_summary}\n\n"
+                "The planning stage produced the following working hypothesis set:\n"
+                + "\n".join(f"- {item}" for item in plan.hypotheses)
+                + "\n\nPlanned contributions for the run were:\n"
+                + "\n".join(f"- {item}" for item in plan.planned_contributions)
+                + "\n\nThe portfolio manager currently reports:\n"
+                + portfolio_block
+                + "\n\nOperationally, the run followed this outline:\n"
+                + "\n".join(f"1. {item}" for item in plan.experiment_outline)
+                + "\n\nThe paper plan locked the manuscript into these sections before prose rendering:\n"
+                + f"- {plan_section_titles}\n\n"
+                + "Claim-evidence commitments carried into manuscript drafting were:\n"
+                + claim_commitments
+            ),
+            "method": (
+                f"The proposed method in the plan is summarized as {plan.proposed_method.lower()} "
+                "The executable experiment specification narrows that idea into a benchmark with fixed train and test "
+                f"partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is "
+                f"`{benchmark_display}`, described as: {spec.benchmark_description}\n\n"
+                f"{dataset_sentence} The compared baselines are {', '.join(item.name for item in spec.baselines)}. "
+                f"The ablation suite contains {', '.join(item.name for item in spec.ablations) if spec.ablations else 'no ablations'}.\n\n"
+                "Implementation constraints were also explicit:\n"
+                + "\n".join(f"- {item}" for item in spec.implementation_notes)
+            ),
+            "experimental_setup": (
+                "All experiments were executed from generated Python code inside the existing ScholarFlow sandbox "
+                f"runner. The observed execution mode for this run was `{executor_mode}`. The recorded environment "
+                f"reports Python `{environment.get('python_version') or environment.get('host_python') or 'unknown'}` "
+                f"on `{environment.get('platform') or environment.get('host_platform') or 'unknown'}`. The experiment "
+                f"runtime reported by the artifact was `{runtime if runtime is not None else 'unknown'}` seconds.\n\n"
+                f"The selected configuration for the final artifact was sweep `{selected_sweep}` evaluated over "
+                f"`{seed_count}` seeds. This run therefore reports aggregated metrics instead of a single execution "
+                "trace, and retains the full seed-level evidence inside the result artifact.\n\n"
+                "Aggregate reporting includes mean, standard deviation, and two-sided 95% confidence intervals over "
+                "the selected sweep's seed-level scores.\n\n"
+                "The statistical analysis also records paired sign-flip significance comparisons with Holm correction, "
+                "preserves failed seed/sweep configurations, and keeps explicit negative-result summaries rather than "
+                "only the winning configuration.\n\n"
+                f"Evaluation uses {metrics}. The purpose of the benchmark is not to claim state of the art "
+                "performance, but to verify that the system can carry out a complete research loop with a real result "
+                "table and a grounded discussion.\n\n"
+                "The figure plan promoted the following artifact-backed visuals into the paper workflow:\n"
+                f"{figure_plan_block}\n\n"
+                "The search and repair trace for this run was:\n"
+                f"{attempt_block}"
+            ),
+            "results": (
+                f"{comparison_sentence} {learned_sentence} {majority_sentence} {ablation_sentence}\n\n"
+                f"{results_table}\n\n"
+                "Key findings recorded directly in the artifact are:\n"
+                f"{findings}\n\n"
+                "Paired significance comparisons for the selected configuration were:\n"
+                f"{significance_block}\n\n"
+                "Negative results retained in the artifact were:\n"
+                f"{negative_results_block}\n\n"
+                "Failure analysis for seeds and sweeps was:\n"
+                f"{failure_block}\n\n"
+                "Anomalous trials flagged for manual inspection were:\n"
+                f"{anomaly_block}\n\n"
+                "Acceptance checks for the selected configuration were:\n"
+                f"{acceptance_block}"
+            ),
+            "discussion": (
+                "The results show that the pipeline can now produce a paper-shaped artifact with concrete "
+                "experimental content instead of a generic short essay. The differences among the compared systems "
+                "matter because they provide evidence that the method choice changes measurable outcomes. Recording "
+                "significance comparisons, failed configurations, and negative outcomes raises the artifact above a "
+                "single best-number report and closer to a real experimental logbook.\n\n"
+                "At the same time, the benchmark remains intentionally small. The value of this v0 system is not that "
+                "it solves an open scientific problem, but that it demonstrates the operational scaffolding required "
+                "for future automated research runs: a planner, a structured experiment specification, executable code "
+                f"generation, artifact preservation, and grounded writing.\n\n"
+                f"{discussion_context_sentence}\n\n"
+                "The persisted narrative report remained available during drafting to keep each section tied to "
+                "explicit claims:\n"
+                f"`{narrative_report_markdown.splitlines()[0] if narrative_report_markdown else 'Narrative report unavailable.'}`"
+            ),
+            "limitations": (
+                "\n".join(f"- {item}" for item in plan.scope_limits)
+                + "\n- The benchmark is built into the repository, so data collection and large scale reproducibility are out of scope."
+                + "\n- The learned methods are lightweight toy models rather than competitive research systems."
+                + "\n- The writing stage is grounded by construction, which avoids fabricated experiments but also limits rhetorical flexibility."
+                + "\n\nOutstanding revision issues recorded for the next paper-improvement round were:\n"
+                + revision_issue_block
+            ),
+            "conclusion": (
+                f"`CS AutoResearch v0` completes a narrow but real research loop for `{plan.topic}`. The system planned "
+                "the study, executed the benchmark, preserved a structured result artifact, and produced a paper whose "
+                "claims are anchored to the recorded experiment outputs. This establishes the minimum backend skeleton "
+                "needed to push ScholarFlow toward an automated computer science research system rather than a generic "
+                f"writing assistant.\n\n{conclusion_context_sentence}"
+            ),
+        }
+        return self._render_section_sequence(
+            title=plan.title,
+            paper_plan=paper_plan,
+            section_bodies=section_bodies,
+            references_block=references_block,
+        )

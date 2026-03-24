@@ -26,6 +26,7 @@ import services.autoresearch.repair as autoresearch_repair
 import services.autoresearch.repository as autoresearch_repository
 from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark
 from services.autoresearch.runner import AutoExperimentRunner
+from services.autoresearch.writer import PaperWriter
 import services.llm.client as llm_client
 from config import db as db_module
 from config import deps as deps_module
@@ -1072,6 +1073,86 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
         review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
         assert review["citation_coverage"]["cited_literature_count"] >= 1
         assert review["citation_coverage"]["citation_marker_count"] >= 1
+    finally:
+        client.close()
+
+
+def test_paper_writer_renders_sections_in_paper_plan_order(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Paper Plan Order Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.plan is not None
+        assert run.spec is not None
+        assert run.artifact is not None
+        assert run.program is not None
+        assert run.portfolio is not None
+        assert run.paper_plan is not None
+        selected_candidate = next(
+            item for item in run.candidates if item.id == run.portfolio.selected_candidate_id
+        )
+        sections_by_title = {item.title: item for item in run.paper_plan.sections}
+        custom_order = [
+            "Abstract",
+            "Introduction",
+            "Related Work and Research Plan",
+            "Method",
+            "Results",
+            "Experimental Setup",
+            "Discussion",
+            "Limitations",
+            "Conclusion",
+        ]
+        custom_paper_plan = run.paper_plan.model_copy(
+            update={"sections": [sections_by_title[title] for title in custom_order]}
+        )
+
+        paper = PaperWriter().write(
+            run.plan,
+            run.spec,
+            run.artifact,
+            literature=run.literature,
+            attempts=selected_candidate.attempts,
+            benchmark_name=run.program.benchmark_name,
+            program=run.program,
+            portfolio=run.portfolio,
+            candidates=run.candidates,
+            narrative_report_markdown=run.narrative_report_markdown,
+            claim_evidence_matrix=run.claim_evidence_matrix,
+            paper_plan=custom_paper_plan,
+            figure_plan=run.figure_plan,
+            paper_revision_state=run.paper_revision_state,
+        )
+
+        expected_headings = [
+            "## Abstract",
+            "## 1. Introduction",
+            "## 2. Related Work and Research Plan",
+            "## 3. Method",
+            "## 4. Results",
+            "## 5. Experimental Setup",
+            "## 6. Discussion",
+            "## 7. Limitations",
+            "## 8. Conclusion",
+        ]
+        heading_positions = [paper.index(heading) for heading in expected_headings]
+        assert heading_positions == sorted(heading_positions)
+        assert paper.index("## 4. Results") < paper.index("## 5. Experimental Setup")
     finally:
         client.close()
 

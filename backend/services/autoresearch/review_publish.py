@@ -18,6 +18,7 @@ from schemas.autoresearch import (
     AutoResearchRelatedWorkMatchRead,
     AutoResearchReviewEvidenceRead,
     AutoResearchReviewFindingRead,
+    AutoResearchReviewLoopActionRead,
     AutoResearchReviewLoopIssueRead,
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopRoundRead,
@@ -835,6 +836,13 @@ def _loop_issue_id(category: str, summary: str) -> str:
     return f"review_issue_{slug[:80]}"
 
 
+def _loop_action_id(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+    if not slug:
+        slug = "action"
+    return f"review_action_{slug[:80]}"
+
+
 def _load_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRead | None:
     path = _review_loop_path(project_id, run_id)
     if not path.is_file():
@@ -855,19 +863,12 @@ def _build_review_loop(
     existing = _load_review_loop(project_id, run_id)
     fingerprint = _review_fingerprint(review)
     latest_path = review.persisted_path
-
-    if existing is not None and existing.latest_review_fingerprint == fingerprint:
-        refreshed = existing.model_copy(
-            update={
-                "generated_at": _utcnow(),
-                "persisted_path": persisted_path,
-                "latest_review_path": latest_path,
-            }
-        )
-        _write_json(_review_loop_path(project_id, run_id), refreshed.model_dump(mode="json"))
-        return refreshed
-
-    current_round = (existing.current_round + 1) if existing is not None else 1
+    same_fingerprint = existing is not None and existing.latest_review_fingerprint == fingerprint
+    current_round = (
+        existing.current_round
+        if same_fingerprint and existing is not None
+        else (existing.current_round + 1) if existing is not None else 1
+    )
     action_titles_by_finding: dict[str, list[str]] = {}
     for action in review.revision_plan:
         for finding_id in action.finding_ids:
@@ -878,6 +879,10 @@ def _build_review_loop(
         for item in review.findings
     }
     current_issue_ids = set(current_findings)
+    current_issue_ids_by_finding_id = {
+        finding.id: issue_id
+        for issue_id, finding in current_findings.items()
+    }
     issues_by_id = {
         item.issue_id: item.model_copy(deep=True)
         for item in (existing.issues if existing is not None else [])
@@ -918,6 +923,8 @@ def _build_review_loop(
     for issue_id, issue in list(issues_by_id.items()):
         if issue_id in current_issue_ids:
             continue
+        if same_fingerprint:
+            continue
         issues_by_id[issue_id] = issue.model_copy(
             update={
                 "status": "resolved",
@@ -925,27 +932,98 @@ def _build_review_loop(
             }
         )
 
-    rounds = list(existing.rounds) if existing is not None else []
-    rounds.append(
-        AutoResearchReviewLoopRoundRead(
-            round_index=current_round,
-            generated_at=review.generated_at,
-            fingerprint=fingerprint,
-            overall_status=review.overall_status,
-            unsupported_claim_risk=review.unsupported_claim_risk,
-            summary=review.summary,
-            review_path=review.persisted_path,
-            finding_ids=[item.id for item in review.findings],
-            revision_action_titles=[item.title for item in review.revision_plan],
-            blocker_count=sum(1 for item in review.findings if item.severity == "error"),
+    current_actions = {
+        _loop_action_id(item.title): item
+        for item in review.revision_plan
+    }
+    actions_by_id = {
+        item.action_id: item.model_copy(deep=True)
+        for item in (existing.actions if existing is not None else [])
+    }
+    for action_id, action in current_actions.items():
+        issue_ids = sorted(
+            {
+                current_issue_ids_by_finding_id[finding_id]
+                for finding_id in action.finding_ids
+                if finding_id in current_issue_ids_by_finding_id
+            }
         )
-    )
+        existing_action = actions_by_id.get(action_id)
+        actions_by_id[action_id] = AutoResearchReviewLoopActionRead(
+            action_id=action_id,
+            priority=action.priority,
+            title=action.title,
+            detail=action.detail,
+            status="pending",
+            first_seen_round=existing_action.first_seen_round if existing_action is not None else current_round,
+            last_seen_round=current_round,
+            completed_round=None,
+            finding_ids=list(action.finding_ids),
+            issue_ids=issue_ids,
+        )
+
+    for action_id, action in list(actions_by_id.items()):
+        if action_id in current_actions:
+            continue
+        if same_fingerprint:
+            continue
+        actions_by_id[action_id] = action.model_copy(
+            update={
+                "status": "completed",
+                "last_seen_round": current_round,
+                "completed_round": action.completed_round or current_round,
+            }
+        )
+
+    rounds = list(existing.rounds) if existing is not None else []
+    if not same_fingerprint:
+        rounds.append(
+            AutoResearchReviewLoopRoundRead(
+                round_index=current_round,
+                generated_at=review.generated_at,
+                fingerprint=fingerprint,
+                overall_status=review.overall_status,
+                unsupported_claim_risk=review.unsupported_claim_risk,
+                summary=review.summary,
+                review_path=review.persisted_path,
+                finding_ids=[item.id for item in review.findings],
+                revision_action_ids=list(current_actions),
+                revision_action_titles=[item.title for item in review.revision_plan],
+                blocker_count=sum(1 for item in review.findings if item.severity == "error"),
+            )
+        )
+    elif not rounds:
+        rounds.append(
+            AutoResearchReviewLoopRoundRead(
+                round_index=current_round,
+                generated_at=review.generated_at,
+                fingerprint=fingerprint,
+                overall_status=review.overall_status,
+                unsupported_claim_risk=review.unsupported_claim_risk,
+                summary=review.summary,
+                review_path=review.persisted_path,
+                finding_ids=[item.id for item in review.findings],
+                revision_action_ids=list(current_actions),
+                revision_action_titles=[item.title for item in review.revision_plan],
+                blocker_count=sum(1 for item in review.findings if item.severity == "error"),
+            )
+        )
     issues = sorted(
         issues_by_id.values(),
         key=lambda item: (
             item.status != "open",
             -item.last_seen_round,
             item.issue_id,
+        ),
+    )
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    actions = sorted(
+        actions_by_id.values(),
+        key=lambda item: (
+            item.status != "pending",
+            priority_order.get(item.priority, 3),
+            item.title.lower(),
+            item.action_id,
         ),
     )
     loop = AutoResearchReviewLoopRead(
@@ -960,9 +1038,12 @@ def _build_review_loop(
         latest_review_fingerprint=fingerprint,
         rounds=rounds,
         issues=issues,
+        actions=actions,
         open_issue_count=sum(1 for item in issues if item.status == "open"),
         resolved_issue_count=sum(1 for item in issues if item.status == "resolved"),
-        pending_revision_actions=[item.title for item in review.revision_plan],
+        pending_action_count=sum(1 for item in actions if item.status == "pending"),
+        completed_action_count=sum(1 for item in actions if item.status == "completed"),
+        pending_revision_actions=[item.title for item in actions if item.status == "pending"],
     )
     _write_json(_review_loop_path(project_id, run_id), loop.model_dump(mode="json"))
     return loop

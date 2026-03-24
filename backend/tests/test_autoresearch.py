@@ -755,8 +755,15 @@ def test_autoresearch_review_report_is_grounded_in_persisted_run_state(
         assert len(loop["rounds"]) == 1
         assert loop["rounds"][0]["round_index"] == 1
         assert loop["rounds"][0]["finding_ids"]
+        assert loop["rounds"][0]["revision_action_ids"]
         assert loop["issues"]
+        assert loop["actions"]
         assert any(item["status"] == "open" for item in loop["issues"])
+        assert loop["pending_action_count"] == len(loop["pending_revision_actions"])
+        assert loop["completed_action_count"] == 0
+        assert all(item["action_id"] for item in loop["actions"])
+        assert all(item["issue_ids"] for item in loop["actions"])
+        assert any(item["status"] == "pending" for item in loop["actions"])
         assert Path(loop["persisted_path"]).is_file()
     finally:
         client.close()
@@ -787,11 +794,16 @@ def test_autoresearch_review_loop_tracks_rounds_and_resolved_issues(
         first_fingerprint = loop["latest_review_fingerprint"]
         assert first_fingerprint
         assert loop["pending_revision_actions"] == [item["title"] for item in review["revision_plan"]]
+        assert loop["pending_action_count"] == len(loop["actions"])
+        assert loop["completed_action_count"] == 0
+        assert all(item["status"] == "pending" for item in loop["actions"])
 
         repeat_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
         assert repeat_loop["current_round"] == 1
         assert len(repeat_loop["rounds"]) == 1
         assert repeat_loop["latest_review_fingerprint"] == first_fingerprint
+        assert repeat_loop["pending_action_count"] == loop["pending_action_count"]
+        assert repeat_loop["completed_action_count"] == 0
 
         run = autoresearch_repository.load_run(project_id, run_id)
         assert run is not None
@@ -852,7 +864,11 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         assert updated_loop["latest_review_fingerprint"] != first_fingerprint
         assert updated_loop["overall_status"] == updated_review["overall_status"]
         assert updated_loop["resolved_issue_count"] >= 1
+        assert updated_loop["completed_action_count"] >= 1
         assert any(item["status"] == "resolved" for item in updated_loop["issues"])
+        assert any(item["status"] == "completed" for item in updated_loop["actions"])
+        assert all(item["issue_ids"] for item in updated_loop["actions"] if item["status"] == "pending")
+        assert any(item["completed_round"] == 2 for item in updated_loop["actions"] if item["status"] == "completed")
         assert all(item["issue_id"] for item in updated_loop["issues"])
     finally:
         client.close()

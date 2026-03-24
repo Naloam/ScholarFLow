@@ -819,6 +819,7 @@ export type AutoResearchReviewLoopRound = {
   summary: string;
   review_path?: string | null;
   finding_ids: string[];
+  revision_action_ids: string[];
   revision_action_titles: string[];
   blocker_count: number;
 };
@@ -837,6 +838,19 @@ export type AutoResearchReviewLoopIssue = {
   supporting_asset_ids: string[];
 };
 
+export type AutoResearchReviewLoopAction = {
+  action_id: string;
+  priority: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  status: "pending" | "completed";
+  first_seen_round: number;
+  last_seen_round: number;
+  completed_round?: number | null;
+  finding_ids: string[];
+  issue_ids: string[];
+};
+
 export type AutoResearchReviewLoop = {
   project_id: string;
   run_id: string;
@@ -849,8 +863,11 @@ export type AutoResearchReviewLoop = {
   latest_review_fingerprint?: string | null;
   rounds: AutoResearchReviewLoopRound[];
   issues: AutoResearchReviewLoopIssue[];
+  actions: AutoResearchReviewLoopAction[];
   open_issue_count: number;
   resolved_issue_count: number;
+  pending_action_count: number;
+  completed_action_count: number;
   pending_revision_actions: string[];
 };
 

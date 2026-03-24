@@ -97,6 +97,7 @@ AutoResearchReviewStatus = Literal["ready", "needs_revision", "blocked"]
 AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
 AutoResearchRevisionPriority = Literal["high", "medium", "low"]
 AutoResearchReviewLoopIssueStatus = Literal["open", "resolved"]
+AutoResearchReviewLoopActionStatus = Literal["pending", "completed"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
@@ -1079,6 +1080,7 @@ class AutoResearchReviewLoopRoundRead(BaseModel):
     summary: str
     review_path: str | None = None
     finding_ids: list[str] = Field(default_factory=list)
+    revision_action_ids: list[str] = Field(default_factory=list)
     revision_action_titles: list[str] = Field(default_factory=list)
     blocker_count: int = 0
 
@@ -1097,6 +1099,19 @@ class AutoResearchReviewLoopIssueRead(BaseModel):
     supporting_asset_ids: list[str] = Field(default_factory=list)
 
 
+class AutoResearchReviewLoopActionRead(BaseModel):
+    action_id: str
+    priority: AutoResearchRevisionPriority = "medium"
+    title: str
+    detail: str
+    status: AutoResearchReviewLoopActionStatus = "pending"
+    first_seen_round: int = 1
+    last_seen_round: int = 1
+    completed_round: int | None = None
+    finding_ids: list[str] = Field(default_factory=list)
+    issue_ids: list[str] = Field(default_factory=list)
+
+
 class AutoResearchReviewLoopRead(BaseModel):
     project_id: str
     run_id: str
@@ -1109,8 +1124,11 @@ class AutoResearchReviewLoopRead(BaseModel):
     latest_review_fingerprint: str | None = None
     rounds: list[AutoResearchReviewLoopRoundRead] = Field(default_factory=list)
     issues: list[AutoResearchReviewLoopIssueRead] = Field(default_factory=list)
+    actions: list[AutoResearchReviewLoopActionRead] = Field(default_factory=list)
     open_issue_count: int = 0
     resolved_issue_count: int = 0
+    pending_action_count: int = 0
+    completed_action_count: int = 0
     pending_revision_actions: list[str] = Field(default_factory=list)
 
 

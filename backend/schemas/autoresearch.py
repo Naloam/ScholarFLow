@@ -96,6 +96,7 @@ AutoResearchReviewCategory = Literal[
 AutoResearchReviewStatus = Literal["ready", "needs_revision", "blocked"]
 AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
 AutoResearchRevisionPriority = Literal["high", "medium", "low"]
+AutoResearchReviewLoopIssueStatus = Literal["open", "resolved"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
@@ -1067,6 +1068,50 @@ class AutoResearchRunReviewRead(BaseModel):
     scores: AutoResearchReviewScoresRead
     findings: list[AutoResearchReviewFindingRead] = Field(default_factory=list)
     revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)
+
+
+class AutoResearchReviewLoopRoundRead(BaseModel):
+    round_index: int = 0
+    generated_at: datetime
+    fingerprint: str
+    overall_status: AutoResearchReviewStatus = "needs_revision"
+    unsupported_claim_risk: AutoResearchUnsupportedClaimRisk = "medium"
+    summary: str
+    review_path: str | None = None
+    finding_ids: list[str] = Field(default_factory=list)
+    revision_action_titles: list[str] = Field(default_factory=list)
+    blocker_count: int = 0
+
+
+class AutoResearchReviewLoopIssueRead(BaseModel):
+    issue_id: str
+    category: AutoResearchReviewCategory
+    severity: AutoResearchReviewSeverity
+    summary: str
+    detail: str
+    status: AutoResearchReviewLoopIssueStatus = "open"
+    first_seen_round: int = 1
+    last_seen_round: int = 1
+    finding_ids: list[str] = Field(default_factory=list)
+    action_titles: list[str] = Field(default_factory=list)
+    supporting_asset_ids: list[str] = Field(default_factory=list)
+
+
+class AutoResearchReviewLoopRead(BaseModel):
+    project_id: str
+    run_id: str
+    generated_at: datetime
+    persisted_path: str | None = None
+    current_round: int = 0
+    overall_status: AutoResearchReviewStatus = "needs_revision"
+    unsupported_claim_risk: AutoResearchUnsupportedClaimRisk = "medium"
+    latest_review_path: str | None = None
+    latest_review_fingerprint: str | None = None
+    rounds: list[AutoResearchReviewLoopRoundRead] = Field(default_factory=list)
+    issues: list[AutoResearchReviewLoopIssueRead] = Field(default_factory=list)
+    open_issue_count: int = 0
+    resolved_issue_count: int = 0
+    pending_revision_actions: list[str] = Field(default_factory=list)
 
 
 class AutoResearchPublishPackageRead(BaseModel):

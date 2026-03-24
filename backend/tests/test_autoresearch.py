@@ -741,6 +741,119 @@ def test_autoresearch_review_report_is_grounded_in_persisted_run_state(
         assert any(item["category"] == "context" for item in review["findings"])
         assert any(item["title"] == "Add citation support to contextual and related-work claims" for item in review["revision_plan"])
         assert Path(review["persisted_path"]).is_file()
+
+        loop_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop")
+        assert loop_response.status_code == 200
+        loop = loop_response.json()
+        assert loop["project_id"] == project_id
+        assert loop["run_id"] == run_id
+        assert loop["current_round"] == 1
+        assert loop["overall_status"] == review["overall_status"]
+        assert loop["unsupported_claim_risk"] == review["unsupported_claim_risk"]
+        assert loop["open_issue_count"] >= 1
+        assert loop["resolved_issue_count"] == 0
+        assert len(loop["rounds"]) == 1
+        assert loop["rounds"][0]["round_index"] == 1
+        assert loop["rounds"][0]["finding_ids"]
+        assert loop["issues"]
+        assert any(item["status"] == "open" for item in loop["issues"])
+        assert Path(loop["persisted_path"]).is_file()
+    finally:
+        client.close()
+
+
+def test_autoresearch_review_loop_tracks_rounds_and_resolved_issues(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Review Loop Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        assert loop["current_round"] == 1
+        assert len(loop["rounds"]) == 1
+        first_fingerprint = loop["latest_review_fingerprint"]
+        assert first_fingerprint
+        assert loop["pending_revision_actions"] == [item["title"] for item in review["revision_plan"]]
+
+        repeat_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        assert repeat_loop["current_round"] == 1
+        assert len(repeat_loop["rounds"]) == 1
+        assert repeat_loop["latest_review_fingerprint"] == first_fingerprint
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.plan is not None
+        updated_run = run.model_copy(
+            update={
+                "literature": [
+                    LiteratureInsight(
+                        paper_id="paper-loop-1",
+                        title="Compact Classification Signals for CS Abstracts",
+                        year=2024,
+                        source="semantic_scholar",
+                        insight="Provides grounded related-work context for compact abstract classification systems.",
+                        method_hint="Use compact lexical and probabilistic signals for topic classification.",
+                        gap_hint="Preserve explicit artifact-grounded reporting while adding citations.",
+                    )
+                ],
+                "paper_markdown": f"""# {run.plan.title}
+
+## Abstract
+This grounded summary ties the selected artifact to preserved related work [1].
+
+## 1. Introduction
+Prior work informs the task framing and benchmark choice for this run [1].
+
+## 2. Related Work and Research Plan
+Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
+
+## 3. Method
+The method remains grounded in the persisted run plan and artifact.
+
+## 4. Experimental Setup
+The experimental setup remains unchanged and artifact-backed.
+
+## 5. Results
+The results are still grounded in the persisted artifact table and acceptance checks.
+
+## 6. Discussion
+The discussion connects the run outcome back to prior work and preserved context [1].
+
+## 7. Limitations
+The limitations remain explicit and literature-aware [1].
+
+## 8. Conclusion
+The conclusion revisits the strongest supported claim in light of prior work [1].
+
+## 9. References
+[1] Compact Classification Signals for CS Abstracts. semantic scholar, 2024.
+""",
+            }
+        )
+        autoresearch_repository.save_run(updated_run)
+
+        updated_review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        updated_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        assert updated_loop["current_round"] == 2
+        assert len(updated_loop["rounds"]) == 2
+        assert updated_loop["latest_review_fingerprint"] != first_fingerprint
+        assert updated_loop["overall_status"] == updated_review["overall_status"]
+        assert updated_loop["resolved_issue_count"] >= 1
+        assert any(item["status"] == "resolved" for item in updated_loop["issues"])
+        assert all(item["issue_id"] for item in updated_loop["issues"])
     finally:
         client.close()
 
@@ -960,6 +1073,7 @@ def test_autoresearch_publish_export_materializes_archive(
             names = set(archive.namelist())
             archive_manifest = json.loads(archive.read("archive_manifest.json").decode("utf-8"))
         assert "review.json" in names
+        assert "review_loop.json" in names
         assert "publish_package.json" in names
         assert "archive_manifest.json" in names
         assert "run.json" in names
@@ -971,6 +1085,7 @@ def test_autoresearch_publish_export_materializes_archive(
         assert archive_manifest["included_asset_count"] == export_body["included_asset_count"]
         assert archive_manifest["omitted_asset_count"] == export_body["omitted_asset_count"]
         assert "archive_manifest.json" in archive_manifest["generated_files"]
+        assert "review_loop.json" in archive_manifest["generated_files"]
 
         download_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
         assert download_response.status_code == 200

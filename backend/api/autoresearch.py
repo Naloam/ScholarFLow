@@ -24,6 +24,7 @@ from schemas.autoresearch import (
     AutoResearchRunRead,
     AutoResearchRunStatus,
     AutoResearchRunReviewRead,
+    AutoResearchReviewLoopRead,
     AutoResearchRunRegistryRead,
     AutoResearchRunRegistryViewsRead,
     AutoResearchRunRequest,
@@ -35,6 +36,7 @@ from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.review_publish import (
     build_publish_package,
+    build_review_loop,
     build_run_review,
     export_publish_package,
     get_publish_archive_path,
@@ -235,6 +237,19 @@ def get_auto_research_run_review(
     if review is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return review
+
+
+@router.get("/{run_id}/review-loop", response_model=AutoResearchReviewLoopRead)
+def get_auto_research_review_loop(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchReviewLoopRead:
+    del db
+    loop = build_review_loop(project_id, run_id)
+    if loop is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return loop
 
 
 @router.get("/{run_id}/publish", response_model=AutoResearchPublishPackageRead)

@@ -810,6 +810,50 @@ export type AutoResearchRunReview = {
   revision_plan: AutoResearchRevisionAction[];
 };
 
+export type AutoResearchReviewLoopRound = {
+  round_index: number;
+  generated_at: string;
+  fingerprint: string;
+  overall_status: "ready" | "needs_revision" | "blocked";
+  unsupported_claim_risk: "low" | "medium" | "high";
+  summary: string;
+  review_path?: string | null;
+  finding_ids: string[];
+  revision_action_titles: string[];
+  blocker_count: number;
+};
+
+export type AutoResearchReviewLoopIssue = {
+  issue_id: string;
+  category: "artifact" | "statistics" | "citation" | "context" | "provenance" | "publish";
+  severity: "info" | "warning" | "error";
+  summary: string;
+  detail: string;
+  status: "open" | "resolved";
+  first_seen_round: number;
+  last_seen_round: number;
+  finding_ids: string[];
+  action_titles: string[];
+  supporting_asset_ids: string[];
+};
+
+export type AutoResearchReviewLoop = {
+  project_id: string;
+  run_id: string;
+  generated_at: string;
+  persisted_path?: string | null;
+  current_round: number;
+  overall_status: "ready" | "needs_revision" | "blocked";
+  unsupported_claim_risk: "low" | "medium" | "high";
+  latest_review_path?: string | null;
+  latest_review_fingerprint?: string | null;
+  rounds: AutoResearchReviewLoopRound[];
+  issues: AutoResearchReviewLoopIssue[];
+  open_issue_count: number;
+  resolved_issue_count: number;
+  pending_revision_actions: string[];
+};
+
 export type AutoResearchPublishPackage = {
   project_id: string;
   run_id: string;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -17,6 +18,9 @@ from schemas.autoresearch import (
     AutoResearchRelatedWorkMatchRead,
     AutoResearchReviewEvidenceRead,
     AutoResearchReviewFindingRead,
+    AutoResearchReviewLoopIssueRead,
+    AutoResearchReviewLoopRead,
+    AutoResearchReviewLoopRoundRead,
     AutoResearchReviewScoresRead,
     AutoResearchRevisionActionRead,
     AutoResearchRunRead,
@@ -32,6 +36,7 @@ from services.autoresearch.repository import (
 
 
 REVIEW_FILENAME = "review.json"
+REVIEW_LOOP_FILENAME = "review_loop.json"
 PUBLISH_PACKAGE_FILENAME = "publish_package.json"
 PUBLISH_ARCHIVE_FILENAME = "publish_bundle.zip"
 PUBLISH_ARCHIVE_MANIFEST_FILENAME = "archive_manifest.json"
@@ -140,6 +145,10 @@ def _write_json(path: Path, payload: object) -> None:
 
 def _review_path(project_id: str, run_id: str) -> Path:
     return run_dir(project_id, run_id) / REVIEW_FILENAME
+
+
+def _review_loop_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / REVIEW_LOOP_FILENAME
 
 
 def _publish_manifest_path(project_id: str, run_id: str) -> Path:
@@ -800,6 +809,165 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
     return actions
 
 
+def _review_fingerprint(review: AutoResearchRunReviewRead) -> str:
+    payload = {
+        "selected_candidate_id": review.selected_candidate_id,
+        "overall_status": review.overall_status,
+        "unsupported_claim_risk": review.unsupported_claim_risk,
+        "findings": [item.model_dump(mode="json") for item in review.findings],
+        "revision_plan": [item.model_dump(mode="json") for item in review.revision_plan],
+        "scores": review.scores.model_dump(mode="json"),
+        "citation_coverage": review.citation_coverage.model_dump(mode="json"),
+        "novelty_assessment": (
+            review.novelty_assessment.model_dump(mode="json")
+            if review.novelty_assessment is not None
+            else None
+        ),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _loop_issue_id(category: str, summary: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", f"{category}_{summary}".lower()).strip("_")
+    if not slug:
+        slug = "issue"
+    return f"review_issue_{slug[:80]}"
+
+
+def _load_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRead | None:
+    path = _review_loop_path(project_id, run_id)
+    if not path.is_file():
+        return None
+    try:
+        return AutoResearchReviewLoopRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _build_review_loop(
+    *,
+    project_id: str,
+    run_id: str,
+    review: AutoResearchRunReviewRead,
+) -> AutoResearchReviewLoopRead:
+    persisted_path = str(_review_loop_path(project_id, run_id))
+    existing = _load_review_loop(project_id, run_id)
+    fingerprint = _review_fingerprint(review)
+    latest_path = review.persisted_path
+
+    if existing is not None and existing.latest_review_fingerprint == fingerprint:
+        refreshed = existing.model_copy(
+            update={
+                "generated_at": _utcnow(),
+                "persisted_path": persisted_path,
+                "latest_review_path": latest_path,
+            }
+        )
+        _write_json(_review_loop_path(project_id, run_id), refreshed.model_dump(mode="json"))
+        return refreshed
+
+    current_round = (existing.current_round + 1) if existing is not None else 1
+    action_titles_by_finding: dict[str, list[str]] = {}
+    for action in review.revision_plan:
+        for finding_id in action.finding_ids:
+            action_titles_by_finding.setdefault(finding_id, []).append(action.title)
+
+    current_findings: dict[str, AutoResearchReviewFindingRead] = {
+        _loop_issue_id(item.category, item.summary): item
+        for item in review.findings
+    }
+    current_issue_ids = set(current_findings)
+    issues_by_id = {
+        item.issue_id: item.model_copy(deep=True)
+        for item in (existing.issues if existing is not None else [])
+    }
+
+    for issue_id, finding in current_findings.items():
+        action_titles = action_titles_by_finding.get(finding.id, [])
+        existing_issue = issues_by_id.get(issue_id)
+        if existing_issue is None:
+            issues_by_id[issue_id] = AutoResearchReviewLoopIssueRead(
+                issue_id=issue_id,
+                category=finding.category,
+                severity=finding.severity,
+                summary=finding.summary,
+                detail=finding.detail,
+                status="open",
+                first_seen_round=current_round,
+                last_seen_round=current_round,
+                finding_ids=[finding.id],
+                action_titles=action_titles,
+                supporting_asset_ids=list(finding.supporting_asset_ids),
+            )
+            continue
+        issues_by_id[issue_id] = existing_issue.model_copy(
+            update={
+                "category": finding.category,
+                "severity": finding.severity,
+                "summary": finding.summary,
+                "detail": finding.detail,
+                "status": "open",
+                "last_seen_round": current_round,
+                "finding_ids": [finding.id],
+                "action_titles": action_titles,
+                "supporting_asset_ids": list(finding.supporting_asset_ids),
+            }
+        )
+
+    for issue_id, issue in list(issues_by_id.items()):
+        if issue_id in current_issue_ids:
+            continue
+        issues_by_id[issue_id] = issue.model_copy(
+            update={
+                "status": "resolved",
+                "last_seen_round": current_round,
+            }
+        )
+
+    rounds = list(existing.rounds) if existing is not None else []
+    rounds.append(
+        AutoResearchReviewLoopRoundRead(
+            round_index=current_round,
+            generated_at=review.generated_at,
+            fingerprint=fingerprint,
+            overall_status=review.overall_status,
+            unsupported_claim_risk=review.unsupported_claim_risk,
+            summary=review.summary,
+            review_path=review.persisted_path,
+            finding_ids=[item.id for item in review.findings],
+            revision_action_titles=[item.title for item in review.revision_plan],
+            blocker_count=sum(1 for item in review.findings if item.severity == "error"),
+        )
+    )
+    issues = sorted(
+        issues_by_id.values(),
+        key=lambda item: (
+            item.status != "open",
+            -item.last_seen_round,
+            item.issue_id,
+        ),
+    )
+    loop = AutoResearchReviewLoopRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=_utcnow(),
+        persisted_path=persisted_path,
+        current_round=current_round,
+        overall_status=review.overall_status,
+        unsupported_claim_risk=review.unsupported_claim_risk,
+        latest_review_path=latest_path,
+        latest_review_fingerprint=fingerprint,
+        rounds=rounds,
+        issues=issues,
+        open_issue_count=sum(1 for item in issues if item.status == "open"),
+        resolved_issue_count=sum(1 for item in issues if item.status == "resolved"),
+        pending_revision_actions=[item.title for item in review.revision_plan],
+    )
+    _write_json(_review_loop_path(project_id, run_id), loop.model_dump(mode="json"))
+    return loop
+
+
 def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead | None:
     run = load_run(project_id, run_id)
     registry = load_run_registry(project_id, run_id)
@@ -868,7 +1036,15 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
         revision_plan=revision_plan,
     )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
+    _build_review_loop(project_id=project_id, run_id=run_id, review=review)
     return review
+
+
+def build_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRead | None:
+    review = build_run_review(project_id, run_id)
+    if review is None:
+        return None
+    return _build_review_loop(project_id=project_id, run_id=run_id, review=review)
 
 
 def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPackageRead | None:
@@ -1000,6 +1176,7 @@ def _archive_manifest(
         "archive_file_name": PUBLISH_ARCHIVE_FILENAME,
         "generated_files": [
             REVIEW_FILENAME,
+            REVIEW_LOOP_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,
         ],
@@ -1038,6 +1215,7 @@ def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishE
     with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
         for generated_path in (
             _review_path(project_id, run_id),
+            _review_loop_path(project_id, run_id),
             _publish_manifest_path(project_id, run_id),
             archive_manifest_path,
         ):

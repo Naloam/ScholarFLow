@@ -34,6 +34,7 @@ from schemas.autoresearch import (
 from schemas.common import IdResponse
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.orchestrator import AutoResearchOrchestrator
 from services.autoresearch.review_publish import (
     build_publish_package,
     build_review_loop,
@@ -250,6 +251,24 @@ def get_auto_research_review_loop(
     if loop is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return loop
+
+
+@router.post("/{run_id}/paper/rebuild", response_model=AutoResearchRunRead)
+def rebuild_auto_research_paper_pipeline(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchRunRead:
+    try:
+        return AutoResearchOrchestrator().rebuild_paper_pipeline(
+            db=db,
+            project_id=project_id,
+            run_id=run_id,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.get("/{run_id}/publish", response_model=AutoResearchPublishPackageRead)

@@ -991,6 +991,77 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         client.close()
 
 
+def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Paper Rebuild Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.plan is not None
+        assert run.paper_draft_version is not None
+        original_draft_version = run.paper_draft_version
+        updated_run = run.model_copy(
+            update={
+                "literature": [
+                    LiteratureInsight(
+                        paper_id="paper-rebuild-1",
+                        title="Compact Classification Signals for CS Abstracts",
+                        year=2024,
+                        source="semantic_scholar",
+                        insight="Provides grounded related-work context for compact abstract classification systems.",
+                        method_hint="Use compact lexical and probabilistic signals for topic classification.",
+                        gap_hint="Preserve explicit artifact-grounded reporting while adding citations.",
+                    )
+                ],
+                "paper_markdown": "# stale paper\n\n## Abstract\nStale manual draft.",
+                "paper_latex_source": "% stale latex\n",
+                "paper_bibliography_bib": "% stale bibliography\n",
+            }
+        )
+        autoresearch_repository.save_run(updated_run)
+
+        rebuild_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/paper/rebuild")
+        assert rebuild_response.status_code == 200
+        rebuilt = rebuild_response.json()
+        assert rebuilt["id"] == run_id
+        assert rebuilt["status"] == "done"
+        assert rebuilt["paper_draft_version"] == original_draft_version + 1
+        assert rebuilt["paper_markdown"].startswith(f"# {run.plan.title}")
+        assert "Stale manual draft." not in rebuilt["paper_markdown"]
+        assert "[1]" in rebuilt["paper_markdown"]
+        assert rebuilt["paper_bibliography_bib"]
+        assert "@misc{ref1" in rebuilt["paper_bibliography_bib"]
+        assert "\\bibliography{references}" in rebuilt["paper_latex_source"]
+        assert rebuilt["paper_sources_manifest"]["compiler_hint"] == "pdflatex + bibtex"
+        assert Path(rebuilt["paper_path"]).read_text(encoding="utf-8") == rebuilt["paper_markdown"]
+        assert Path(rebuilt["paper_latex_path"]).read_text(encoding="utf-8") == rebuilt["paper_latex_source"]
+        assert Path(rebuilt["paper_bibliography_path"]).read_text(encoding="utf-8") == rebuilt["paper_bibliography_bib"]
+        selected_candidate = next(
+            item for item in rebuilt["candidates"] if item["id"] == rebuilt["portfolio"]["selected_candidate_id"]
+        )
+        assert Path(selected_candidate["paper_path"]).read_text(encoding="utf-8") == rebuilt["paper_markdown"]
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["citation_coverage"]["cited_literature_count"] >= 1
+        assert review["citation_coverage"]["citation_marker_count"] >= 1
+    finally:
+        client.close()
+
+
 def test_autoresearch_publish_package_is_derived_from_selected_bundle(
     monkeypatch,
     tmp_path: Path,

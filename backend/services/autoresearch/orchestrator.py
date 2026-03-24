@@ -667,6 +667,114 @@ class AutoResearchOrchestrator:
             )
         )
 
+    def rebuild_paper_pipeline(
+        self,
+        *,
+        db: Session,
+        project_id: str,
+        run_id: str,
+    ) -> AutoResearchRunRead:
+        run = load_run(project_id, run_id)
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if run.status != "done":
+            raise ValueError("Paper pipeline rebuild requires a completed auto research run")
+        if run.program is None or run.plan is None or run.spec is None or run.portfolio is None or run.artifact is None:
+            raise ValueError("Run is missing persisted planning or artifact state required for paper rebuild")
+        selected_candidate_id = run.portfolio.selected_candidate_id
+        if not selected_candidate_id:
+            raise ValueError("Run does not have a selected candidate for paper rebuild")
+        selected_candidate = self._candidate_by_id(run.candidates, selected_candidate_id)
+        if selected_candidate is None or selected_candidate.artifact is None:
+            raise ValueError("Selected candidate is missing the persisted artifact required for paper rebuild")
+
+        set_project_status(db, project_id, "write")
+        paper_pipeline = self.writer.build_pipeline(
+            run.plan,
+            run.spec,
+            selected_candidate.artifact,
+            literature=run.literature,
+            attempts=selected_candidate.attempts or run.attempts,
+            benchmark_name=run.program.benchmark_name or run.spec.benchmark_name,
+            program=run.program,
+            portfolio=run.portfolio,
+            candidates=run.candidates,
+        )
+        paper_path = paper_file_path(project_id, run_id)
+        candidate_paper_path = candidate_paper_file_path(project_id, run_id, selected_candidate.id)
+        narrative_report_path = narrative_report_file_path(project_id, run_id)
+        claim_evidence_matrix_path = claim_evidence_matrix_file_path(project_id, run_id)
+        paper_plan_path = paper_plan_file_path(project_id, run_id)
+        figure_plan_path = figure_plan_file_path(project_id, run_id)
+        paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
+        paper_sources_dir = paper_sources_dir_path(project_id, run_id)
+        paper_latex_path = paper_latex_file_path(project_id, run_id)
+        paper_bibliography_path = paper_bibliography_file_path(project_id, run_id)
+        paper_sources_manifest_path = paper_sources_manifest_file_path(project_id, run_id)
+
+        rebuilt_candidate = save_candidate_snapshot(
+            project_id,
+            run_id,
+            selected_candidate.model_copy(
+                update={
+                    "paper_markdown": paper_pipeline.paper_markdown,
+                    "paper_path": candidate_paper_path,
+                }
+            ),
+            plan=run.plan,
+            spec=run.spec,
+        )
+        decision = next(
+            (item for item in run.portfolio.decisions if item.candidate_id == selected_candidate.id),
+            None,
+        )
+        rebuilt_candidate = save_candidate_manifest(
+            project_id,
+            run_id,
+            rebuilt_candidate,
+            decision=decision,
+        )
+        updated_candidates = self._replace_candidate(run.candidates, rebuilt_candidate)
+        draft = create_draft(
+            db,
+            project_id,
+            paper_pipeline.paper_markdown,
+            claims=[],
+            section="autorresearch_v0",
+        )
+        rebuilt_run = save_run(
+            run.model_copy(
+                update={
+                    "narrative_report_markdown": paper_pipeline.narrative_report_markdown,
+                    "narrative_report_path": narrative_report_path,
+                    "claim_evidence_matrix": paper_pipeline.claim_evidence_matrix,
+                    "claim_evidence_matrix_path": claim_evidence_matrix_path,
+                    "paper_plan": paper_pipeline.paper_plan,
+                    "paper_plan_path": paper_plan_path,
+                    "figure_plan": paper_pipeline.figure_plan,
+                    "figure_plan_path": figure_plan_path,
+                    "paper_revision_state": paper_pipeline.paper_revision_state,
+                    "paper_revision_state_path": paper_revision_state_path,
+                    "paper_sources_dir": paper_sources_dir,
+                    "paper_latex_source": paper_pipeline.paper_latex_source,
+                    "paper_latex_path": paper_latex_path,
+                    "paper_bibliography_bib": paper_pipeline.paper_bibliography_bib,
+                    "paper_bibliography_path": paper_bibliography_path,
+                    "paper_sources_manifest": paper_pipeline.paper_sources_manifest,
+                    "paper_sources_manifest_path": paper_sources_manifest_path,
+                    "paper_markdown": paper_pipeline.paper_markdown,
+                    "paper_path": paper_path,
+                    "paper_draft_version": draft.version,
+                    "candidates": updated_candidates,
+                }
+            )
+        )
+        set_project_status(db, project_id, "edit")
+        from services.autoresearch.review_publish import build_run_review
+
+        build_run_review(project_id, run_id)
+        return load_run(project_id, run_id) or rebuilt_run
+
     def execute(
         self,
         *,

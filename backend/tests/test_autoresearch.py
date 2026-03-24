@@ -199,6 +199,9 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert any(item["claim_id"] == "claim_result_summary" for item in run["claim_evidence_matrix"]["entries"])
         assert run["paper_plan"]["title"] == run["plan"]["title"]
         assert len(run["paper_plan"]["sections"]) >= 6
+        paper_plan_titles = [item["title"] for item in run["paper_plan"]["sections"]]
+        assert "Experimental Setup" in paper_plan_titles
+        assert "Discussion" in paper_plan_titles
         assert run["figure_plan"]["items"]
         assert any(item["kind"] == "table" for item in run["figure_plan"]["items"])
         assert run["paper_revision_state"]["status"] == "needs_review"

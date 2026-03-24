@@ -856,11 +856,25 @@ Program objective:
                 evidence_focus=["plan.proposed_method", "spec"],
             ),
             AutoResearchPaperPlanSectionRead(
+                section_id="experimental_setup",
+                title="Experimental Setup",
+                objective="Document runtime conditions, sweep selection, seed coverage, and the promoted figure/table inventory.",
+                claim_ids=["claim_statistical_grounding"],
+                evidence_focus=["artifact.environment", "artifact.acceptance_checks", "figure_plan"],
+            ),
+            AutoResearchPaperPlanSectionRead(
                 section_id="results",
                 title="Results",
                 objective="Present the selected configuration, aggregate metrics, and statistical grounding.",
                 claim_ids=["claim_result_summary", "claim_statistical_grounding"],
                 evidence_focus=["artifact.tables", "artifact.significance_tests", "artifact.acceptance_checks"],
+            ),
+            AutoResearchPaperPlanSectionRead(
+                section_id="discussion",
+                title="Discussion",
+                objective="Interpret the bounded contribution, artifact-backed evidence trail, and remaining scientific limits.",
+                claim_ids=["claim_result_summary", "claim_context_grounding", "claim_limitations"],
+                evidence_focus=["claim_evidence_matrix", "artifact.negative_results", "literature"],
             ),
             AutoResearchPaperPlanSectionRead(
                 section_id="limitations",

@@ -1077,6 +1077,71 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
         client.close()
 
 
+def test_autoresearch_paper_rebuild_respects_persisted_paper_plan_order(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Persisted Paper Plan Rebuild Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.paper_plan is not None
+        sections_by_title = {item.title: item for item in run.paper_plan.sections}
+        custom_order = [
+            "Abstract",
+            "Introduction",
+            "Related Work and Research Plan",
+            "Method",
+            "Results",
+            "Experimental Setup",
+            "Discussion",
+            "Limitations",
+            "Conclusion",
+        ]
+        updated_run = run.model_copy(
+            update={
+                "paper_plan": run.paper_plan.model_copy(
+                    update={"sections": [sections_by_title[title] for title in custom_order]}
+                )
+            }
+        )
+        autoresearch_repository.save_run(updated_run)
+
+        rebuild_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/paper/rebuild")
+        assert rebuild_response.status_code == 200
+        rebuilt = rebuild_response.json()
+        assert [item["title"] for item in rebuilt["paper_plan"]["sections"]] == custom_order
+        paper = rebuilt["paper_markdown"]
+        expected_headings = [
+            "## Abstract",
+            "## 1. Introduction",
+            "## 2. Related Work and Research Plan",
+            "## 3. Method",
+            "## 4. Results",
+            "## 5. Experimental Setup",
+            "## 6. Discussion",
+            "## 7. Limitations",
+            "## 8. Conclusion",
+        ]
+        heading_positions = [paper.index(heading) for heading in expected_headings]
+        assert heading_positions == sorted(heading_positions)
+        assert paper.index("## 4. Results") < paper.index("## 5. Experimental Setup")
+    finally:
+        client.close()
+
+
 def test_paper_writer_renders_sections_in_paper_plan_order(
     monkeypatch,
     tmp_path: Path,

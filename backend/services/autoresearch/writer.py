@@ -1256,6 +1256,8 @@ Program objective:
         program: ResearchProgram | None = None,
         portfolio: PortfolioSummary | None = None,
         candidates: list[HypothesisCandidate] | None = None,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+        figure_plan: AutoResearchFigurePlanRead | None = None,
     ) -> AutoResearchPaperPipelineArtifactsRead:
         literature = literature or []
         attempts = attempts or []
@@ -1281,8 +1283,8 @@ Program objective:
             portfolio=portfolio,
             candidates=candidates,
         )
-        paper_plan = self.build_paper_plan(plan, claim_evidence_matrix)
-        figure_plan = self.build_figure_plan(artifact, portfolio=portfolio)
+        paper_plan = paper_plan or self.build_paper_plan(plan, claim_evidence_matrix)
+        figure_plan = figure_plan or self.build_figure_plan(artifact, portfolio=portfolio)
         paper_revision_state = self.build_paper_revision_state(
             claim_evidence_matrix,
             paper_plan=paper_plan,

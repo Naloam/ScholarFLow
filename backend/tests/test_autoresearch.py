@@ -1412,6 +1412,7 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert current["actions"]["resume"] is False
         assert current["actions"]["retry"] is True
         assert current["actions"]["cancel"] is False
+        assert current["actions"]["rebuild_paper"] is True
         assert current["actions"]["export_publish"] is True
         assert current["actions"]["download_publish"] is True
         assert current["actions"]["update_controls"] is True
@@ -1454,6 +1455,7 @@ def test_autoresearch_operator_console_exposes_cancel_for_queued_run(
         assert current["actions"]["resume"] is True
         assert current["actions"]["retry"] is False
         assert current["actions"]["cancel"] is True
+        assert current["actions"]["rebuild_paper"] is False
         assert current["actions"]["export_publish"] is False
         assert current["actions"]["download_publish"] is False
     finally:

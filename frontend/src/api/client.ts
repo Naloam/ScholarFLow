@@ -395,6 +395,12 @@ export const api = {
     return request(`/api/projects/${projectId}/auto-research/${runId}/review-loop`);
   },
 
+  rebuildAutoResearchPaper(projectId: string, runId: string): Promise<AutoResearchRun> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/paper/rebuild`, {
+      method: "POST",
+    });
+  },
+
   getAutoResearchPublishPackage(projectId: string, runId: string): Promise<AutoResearchPublishPackage> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/publish`);
   },

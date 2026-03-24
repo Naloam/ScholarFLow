@@ -34,6 +34,7 @@ def _run_actions(
         resume=run.status != "done",
         retry=run.status in {"done", "failed", "canceled"},
         cancel=active_or_queued and not execution.cancel_requested,
+        rebuild_paper=run.status == "done",
         export_publish=run.status == "done",
         download_publish=has_publish_archive,
         update_controls=True,

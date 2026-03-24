@@ -57,6 +57,7 @@ export function WorkspacePage() {
   const resumeAutoResearch = useWorkspaceStore((state) => state.resumeAutoResearch);
   const retryAutoResearch = useWorkspaceStore((state) => state.retryAutoResearch);
   const cancelAutoResearch = useWorkspaceStore((state) => state.cancelAutoResearch);
+  const rebuildAutoResearchPaper = useWorkspaceStore((state) => state.rebuildAutoResearchPaper);
   const updateAutoResearchRunControls = useWorkspaceStore((state) => state.updateAutoResearchRunControls);
   const exportAutoResearchPublish = useWorkspaceStore((state) => state.exportAutoResearchPublish);
   const downloadAutoResearchPublish = useWorkspaceStore((state) => state.downloadAutoResearchPublish);
@@ -159,6 +160,7 @@ export function WorkspacePage() {
             onResume={resumeAutoResearch}
             onRetry={retryAutoResearch}
             onCancel={cancelAutoResearch}
+            onRebuildPaper={rebuildAutoResearchPaper}
             onExportPublish={exportAutoResearchPublish}
             onDownloadPublish={downloadAutoResearchPublish}
             onUpdateControls={updateAutoResearchRunControls}

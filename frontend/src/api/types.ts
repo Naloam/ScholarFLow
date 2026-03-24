@@ -937,6 +937,7 @@ export type AutoResearchOperatorRunActions = {
   resume: boolean;
   retry: boolean;
   cancel: boolean;
+  rebuild_paper: boolean;
   export_publish: boolean;
   download_publish: boolean;
   update_controls: boolean;

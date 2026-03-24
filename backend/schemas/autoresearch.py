@@ -1198,6 +1198,7 @@ class AutoResearchOperatorRunActionsRead(BaseModel):
     resume: bool = False
     retry: bool = False
     cancel: bool = False
+    rebuild_paper: bool = False
     export_publish: bool = False
     download_publish: bool = False
     update_controls: bool = False

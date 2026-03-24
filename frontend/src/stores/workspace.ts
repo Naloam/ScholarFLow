@@ -149,6 +149,7 @@ type WorkspaceState = {
   resumeAutoResearch: () => Promise<void>;
   retryAutoResearch: () => Promise<void>;
   cancelAutoResearch: () => Promise<void>;
+  rebuildAutoResearchPaper: () => Promise<void>;
   exportAutoResearchPublish: () => Promise<void>;
   downloadAutoResearchPublish: () => Promise<void>;
   runReview: () => Promise<void>;
@@ -736,6 +737,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `Cancel requested for ${runId}` });
       } catch (error) {
         handleActionError(error, "Cancel auto-research failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async rebuildAutoResearchPaper() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before rebuilding paper assets" });
+        return;
+      }
+
+      set({ working: true, notice: `Rebuilding paper pipeline for ${runId}...` });
+      try {
+        await api.rebuildAutoResearchPaper(currentProjectId, runId);
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Paper pipeline rebuilt for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Rebuild paper pipeline failed");
       } finally {
         set({ working: false });
       }

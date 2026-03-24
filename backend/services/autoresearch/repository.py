@@ -631,8 +631,8 @@ def create_run(
     return run
 
 
-def save_run(run: AutoResearchRunRead) -> AutoResearchRunRead:
-    payload = run.model_copy(update={"updated_at": _utcnow()})
+def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> AutoResearchRunRead:
+    payload = run.model_copy(update={"updated_at": _utcnow()}) if touch_updated_at else run.model_copy()
     base = run_dir(payload.project_id, payload.id)
     _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
     if payload.program is not None:

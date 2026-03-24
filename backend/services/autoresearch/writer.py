@@ -17,6 +17,9 @@ from schemas.autoresearch import (
     AutoResearchPaperRevisionStateRead,
     AutoResearchPaperSourceFileRead,
     AutoResearchPaperSourcesManifestRead,
+    AutoResearchReviewLoopActionRead,
+    AutoResearchReviewLoopRead,
+    AutoResearchRunReviewRead,
     ConfidenceIntervalSummary,
     ExperimentAttempt,
     ExperimentSpec,
@@ -130,7 +133,167 @@ def _latex_table_block(rows: list[list[str]]) -> list[str]:
     return rendered
 
 
+def _dedupe_preserving_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in items:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
 class PaperWriter:
+    def _paper_plan_title(
+        self,
+        paper_plan: AutoResearchPaperPlanRead | None,
+        *candidates: str,
+        fallback: str,
+    ) -> str:
+        if paper_plan is None:
+            return fallback
+        plan_titles = {section.title.lower(): section.title for section in paper_plan.sections}
+        for candidate in candidates:
+            matched = plan_titles.get(candidate.lower())
+            if matched is not None:
+                return matched
+        return fallback
+
+    def _review_action_section_title(
+        self,
+        action: AutoResearchReviewLoopActionRead,
+        *,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+    ) -> str:
+        lowered = f"{action.title} {action.detail}".lower()
+        if any(token in lowered for token in ("citation", "references", "related-work", "related work", "literature", "novelty", "context")):
+            return self._paper_plan_title(
+                paper_plan,
+                "Related Work and Research Plan",
+                "Introduction",
+                fallback="Related Work and Research Plan",
+            )
+        if any(token in lowered for token in ("statistical", "significance", "seed", "sweep", "artifact", "results", "acceptance")):
+            return self._paper_plan_title(
+                paper_plan,
+                "Results",
+                fallback="Results",
+            )
+        if any(token in lowered for token in ("publish", "provenance", "manifest", "bundle", "restore")):
+            return self._paper_plan_title(
+                paper_plan,
+                "Method",
+                "Results",
+                fallback="Method",
+            )
+        return self._paper_plan_title(
+            paper_plan,
+            "Results",
+            "Method",
+            fallback="Results",
+        )
+
+    def sync_paper_revision_state(
+        self,
+        existing_state: AutoResearchPaperRevisionStateRead | None,
+        *,
+        review: AutoResearchRunReviewRead,
+        review_loop: AutoResearchReviewLoopRead,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+        figure_plan: AutoResearchFigurePlanRead | None = None,
+    ) -> AutoResearchPaperRevisionStateRead:
+        existing_checkpoints = list(existing_state.checkpoints) if existing_state is not None else []
+        checkpoint_by_round = {
+            item.revision_round: item.model_copy(deep=True)
+            for item in existing_checkpoints
+        }
+        initial_completed = list(existing_state.completed_actions) if existing_state is not None else []
+        open_issues = [item.summary for item in review_loop.issues if item.status == "open"]
+        pending_actions = [item for item in review_loop.actions if item.status == "pending"]
+        completed_actions = _dedupe_preserving_order(
+            initial_completed
+            + [item.title for item in review_loop.actions if item.status == "completed"]
+        )
+        next_actions = [
+            AutoResearchPaperRevisionActionRead(
+                action_id=item.action_id,
+                priority=item.priority,
+                section_title=self._review_action_section_title(item, paper_plan=paper_plan),
+                detail=item.detail,
+                status="open",
+            )
+            for item in pending_actions
+        ]
+        focus_sections = _dedupe_preserving_order(
+            [item.section_title for item in next_actions]
+            or (list(existing_state.focus_sections) if existing_state is not None else [])
+            or ([section.title for section in paper_plan.sections[:3]] if paper_plan is not None else [])
+        )
+        status = (
+            "ready_for_publish"
+            if review.overall_status == "ready"
+            else "revising"
+            if pending_actions or review_loop.current_round > 0
+            else "needs_review"
+        )
+        for round_state in review_loop.rounds:
+            round_status = (
+                "ready_for_publish"
+                if round_state.overall_status == "ready"
+                else "revising"
+                if round_state.round_index == review_loop.current_round and pending_actions
+                else "needs_review"
+            )
+            checkpoint_by_round[round_state.round_index] = AutoResearchPaperRevisionCheckpointRead(
+                revision_round=round_state.round_index,
+                generated_at=round_state.generated_at,
+                status=round_status,
+                summary=(
+                    "Review round "
+                    f"{round_state.round_index} cleared the paper for publish-ready packaging."
+                    if round_state.overall_status == "ready"
+                    else "Review round "
+                    f"{round_state.round_index} captured persisted review findings and revision actions."
+                ),
+                open_issue_count=(
+                    len(open_issues)
+                    if round_state.round_index == review_loop.current_round
+                    else len(round_state.finding_ids)
+                ),
+                relative_assets=_dedupe_preserving_order(
+                    [
+                        "paper.md",
+                        "narrative_report.md",
+                        "claim_evidence_matrix.json",
+                        "paper_plan.json",
+                        "figure_plan.json",
+                        "paper_revision_state.json",
+                        "review.json",
+                        "review_loop.json",
+                        "paper_sources/main.tex",
+                        "paper_sources/references.bib",
+                        "paper_sources/manifest.json",
+                    ]
+                ),
+            )
+        if figure_plan is not None and any(item.status != "ready" for item in figure_plan.items) and "Results" not in focus_sections:
+            focus_sections.append("Results")
+        return AutoResearchPaperRevisionStateRead(
+            generated_at=_utcnow(),
+            revision_round=max(review_loop.current_round, existing_state.revision_round if existing_state is not None else 0),
+            status=status,
+            open_issues=open_issues,
+            completed_actions=completed_actions,
+            focus_sections=focus_sections,
+            next_actions=next_actions,
+            checkpoints=[
+                checkpoint_by_round[key]
+                for key in sorted(checkpoint_by_round)
+            ],
+        )
+
     def _literature_citation_span(self, literature: list[LiteratureInsight], *, limit: int = 2) -> str:
         if not literature:
             return ""

@@ -33,7 +33,9 @@ from services.autoresearch.repository import (
     load_run_bundle_index,
     load_run_registry,
     run_dir,
+    save_run,
 )
+from services.autoresearch.writer import PaperWriter
 
 
 REVIEW_FILENAME = "review.json"
@@ -853,6 +855,37 @@ def _load_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRea
         return None
 
 
+def _sync_paper_revision_state(
+    *,
+    run: AutoResearchRunRead,
+    review: AutoResearchRunReviewRead,
+    review_loop: AutoResearchReviewLoopRead,
+) -> None:
+    writer = PaperWriter()
+    existing_state = run.paper_revision_state
+    if existing_state is None and run.claim_evidence_matrix is not None:
+        existing_state = writer.build_paper_revision_state(
+            run.claim_evidence_matrix,
+            paper_plan=run.paper_plan,
+            figure_plan=run.figure_plan,
+        )
+    if existing_state is None:
+        return
+    synced_state = writer.sync_paper_revision_state(
+        existing_state,
+        review=review,
+        review_loop=review_loop,
+        paper_plan=run.paper_plan,
+        figure_plan=run.figure_plan,
+    )
+    if existing_state.model_dump(mode="json") == synced_state.model_dump(mode="json"):
+        return
+    save_run(
+        run.model_copy(update={"paper_revision_state": synced_state}),
+        touch_updated_at=False,
+    )
+
+
 def _build_review_loop(
     *,
     project_id: str,
@@ -1117,7 +1150,12 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
         revision_plan=revision_plan,
     )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
-    _build_review_loop(project_id=project_id, run_id=run_id, review=review)
+    review_loop = _build_review_loop(project_id=project_id, run_id=run_id, review=review)
+    _sync_paper_revision_state(
+        run=run,
+        review=review,
+        review_loop=review_loop,
+    )
     return review
 
 

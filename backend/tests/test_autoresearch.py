@@ -874,6 +874,123 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         client.close()
 
 
+def test_autoresearch_paper_revision_state_tracks_review_loop_progress(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Paper Revision State Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        first_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        synced_run = autoresearch_repository.load_run(project_id, run_id)
+        assert synced_run is not None
+        assert synced_run.paper_revision_state is not None
+        assert synced_run.paper_revision_state.revision_round == 1
+        assert synced_run.paper_revision_state.status == "revising"
+        assert synced_run.paper_revision_state.open_issues
+        assert len(synced_run.paper_revision_state.open_issues) == first_loop["open_issue_count"]
+        assert [item.action_id for item in synced_run.paper_revision_state.next_actions] == [
+            item["action_id"] for item in first_loop["actions"] if item["status"] == "pending"
+        ]
+        assert all(item.status == "open" for item in synced_run.paper_revision_state.next_actions)
+        checkpoint_rounds = [item.revision_round for item in synced_run.paper_revision_state.checkpoints]
+        assert checkpoint_rounds == [0, 1]
+        assert "review.json" in synced_run.paper_revision_state.checkpoints[-1].relative_assets
+        assert "review_loop.json" in synced_run.paper_revision_state.checkpoints[-1].relative_assets
+
+        repeat_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        repeated_run = autoresearch_repository.load_run(project_id, run_id)
+        assert repeated_run is not None
+        assert repeated_run.paper_revision_state is not None
+        assert repeat_loop["current_round"] == 1
+        assert [item.revision_round for item in repeated_run.paper_revision_state.checkpoints] == [0, 1]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.plan is not None
+        updated_run = run.model_copy(
+            update={
+                "literature": [
+                    LiteratureInsight(
+                        paper_id="paper-revision-1",
+                        title="Compact Classification Signals for CS Abstracts",
+                        year=2024,
+                        source="semantic_scholar",
+                        insight="Provides grounded related-work context for compact abstract classification systems.",
+                        method_hint="Use compact lexical and probabilistic signals for topic classification.",
+                        gap_hint="Preserve explicit artifact-grounded reporting while adding citations.",
+                    )
+                ],
+                "paper_markdown": f"""# {run.plan.title}
+
+## Abstract
+This grounded summary ties the selected artifact to preserved related work [1].
+
+## 1. Introduction
+Prior work informs the task framing and benchmark choice for this run [1].
+
+## 2. Related Work and Research Plan
+Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
+
+## 3. Method
+The method remains grounded in the persisted run plan and artifact.
+
+## 4. Experimental Setup
+The experimental setup remains unchanged and artifact-backed.
+
+## 5. Results
+The results are still grounded in the persisted artifact table and acceptance checks.
+
+## 6. Discussion
+The discussion connects the run outcome back to prior work and preserved context [1].
+
+## 7. Limitations
+The limitations remain explicit and literature-aware [1].
+
+## 8. Conclusion
+The conclusion revisits the strongest supported claim in light of prior work [1].
+
+## 9. References
+[1] Compact Classification Signals for CS Abstracts. semantic scholar, 2024.
+""",
+            }
+        )
+        autoresearch_repository.save_run(updated_run)
+
+        resolved_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        resolved_run = autoresearch_repository.load_run(project_id, run_id)
+        assert resolved_run is not None
+        assert resolved_run.paper_revision_state is not None
+        assert resolved_run.paper_revision_state.revision_round == 2
+        assert [item.revision_round for item in resolved_run.paper_revision_state.checkpoints] == [0, 1, 2]
+        assert resolved_run.paper_revision_state.checkpoints[-1].revision_round == 2
+        assert resolved_run.paper_revision_state.status == (
+            "ready_for_publish" if resolved_loop["overall_status"] == "ready" else "revising"
+        )
+        assert resolved_run.paper_revision_state.open_issues == [
+            item["summary"] for item in resolved_loop["issues"] if item["status"] == "open"
+        ]
+        assert [item.action_id for item in resolved_run.paper_revision_state.next_actions] == [
+            item["action_id"] for item in resolved_loop["actions"] if item["status"] == "pending"
+        ]
+        assert all(item.status == "open" for item in resolved_run.paper_revision_state.next_actions)
+        completed_titles = {item["title"] for item in resolved_loop["actions"] if item["status"] == "completed"}
+        assert completed_titles.issubset(set(resolved_run.paper_revision_state.completed_actions))
+    finally:
+        client.close()
+
+
 def test_autoresearch_publish_package_is_derived_from_selected_bundle(
     monkeypatch,
     tmp_path: Path,

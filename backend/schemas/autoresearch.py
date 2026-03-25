@@ -43,7 +43,9 @@ AutoResearchBundleAssetRole = Literal[
     "run_paper_revision_brief_markdown",
     "run_paper_revision_state_json",
     "run_paper_compile_report_json",
+    "run_paper_section_rewrite_index_json",
     "run_paper_sources_dir",
+    "run_paper_section_rewrite_packets_dir",
     "run_paper_build_script",
     "run_paper_checkpoint_index_json",
     "run_paper_latex_source",
@@ -80,8 +82,10 @@ AutoResearchLineageNodeKind = Literal[
     "paper_revision_history",
     "paper_revision_state",
     "paper_compile_report",
+    "paper_section_rewrite_index",
     "paper_revision_brief",
     "paper_sources",
+    "paper_section_rewrite_packets",
     "paper_build_script",
     "paper_checkpoint_index",
     "paper_latex",
@@ -653,6 +657,29 @@ class AutoResearchPaperRevisionCheckpointRead(BaseModel):
     relative_assets: list[str] = Field(default_factory=list)
 
 
+class AutoResearchPaperSectionRewritePacketRead(BaseModel):
+    section_id: str
+    section_title: str
+    revision_round: int = 0
+    focus: bool = False
+    objective: str
+    claim_ids: list[str] = Field(default_factory=list)
+    evidence_focus: list[str] = Field(default_factory=list)
+    action_ids: list[str] = Field(default_factory=list)
+    open_issues: list[str] = Field(default_factory=list)
+    current_word_count: int = 0
+    relative_path: str
+    source_asset_paths: list[str] = Field(default_factory=list)
+
+
+class AutoResearchPaperSectionRewriteIndexRead(BaseModel):
+    generated_at: datetime
+    revision_round: int = 0
+    packet_count: int = 0
+    focus_packet_count: int = 0
+    packets: list[AutoResearchPaperSectionRewritePacketRead] = Field(default_factory=list)
+
+
 class AutoResearchPaperSourceFileRead(BaseModel):
     relative_path: str
     kind: AutoResearchPaperSourceKind
@@ -689,6 +716,7 @@ class AutoResearchPaperPipelineArtifactsRead(BaseModel):
     figure_plan: AutoResearchFigurePlanRead
     paper_revision_state: AutoResearchPaperRevisionStateRead
     paper_compile_report: AutoResearchPaperCompileReportRead
+    paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead
     paper_latex_source: str
     paper_bibliography_bib: str
     paper_sources_manifest: AutoResearchPaperSourcesManifestRead
@@ -800,7 +828,10 @@ class AutoResearchRunRead(BaseModel):
     paper_revision_state_path: str | None = None
     paper_compile_report: AutoResearchPaperCompileReportRead | None = None
     paper_compile_report_path: str | None = None
+    paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead | None = None
+    paper_section_rewrite_index_path: str | None = None
     paper_sources_dir: str | None = None
+    paper_section_rewrite_packets_dir: str | None = None
     paper_latex_source: str | None = None
     paper_latex_path: str | None = None
     paper_bibliography_bib: str | None = None
@@ -862,8 +893,10 @@ class AutoResearchRunRegistryFiles(BaseModel):
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None
     paper_revision_state_json: AutoResearchRegistryAssetRef | None = None
     paper_compile_report_json: AutoResearchRegistryAssetRef | None = None
+    paper_section_rewrite_index_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_brief_markdown: AutoResearchRegistryAssetRef | None = None
     paper_sources_dir: AutoResearchRegistryAssetRef | None = None
+    paper_section_rewrite_packets_dir: AutoResearchRegistryAssetRef | None = None
     paper_build_script: AutoResearchRegistryAssetRef | None = None
     paper_checkpoint_index_json: AutoResearchRegistryAssetRef | None = None
     paper_latex_source: AutoResearchRegistryAssetRef | None = None

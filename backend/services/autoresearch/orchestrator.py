@@ -35,6 +35,8 @@ from services.autoresearch.repository import (
     paper_latex_file_path,
     paper_plan_file_path,
     paper_revision_state_file_path,
+    paper_section_rewrite_index_file_path,
+    paper_section_rewrite_packets_dir_path,
     paper_sources_dir_path,
     paper_sources_manifest_file_path,
     paper_file_path,
@@ -712,7 +714,9 @@ class AutoResearchOrchestrator:
         figure_plan_path = figure_plan_file_path(project_id, run_id)
         paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
         paper_compile_report_path = paper_compile_report_file_path(project_id, run_id)
+        paper_section_rewrite_index_path = paper_section_rewrite_index_file_path(project_id, run_id)
         paper_sources_dir = paper_sources_dir_path(project_id, run_id)
+        paper_section_rewrite_packets_dir = paper_section_rewrite_packets_dir_path(project_id, run_id)
         paper_latex_path = paper_latex_file_path(project_id, run_id)
         paper_bibliography_path = paper_bibliography_file_path(project_id, run_id)
         paper_sources_manifest_path = paper_sources_manifest_file_path(project_id, run_id)
@@ -762,7 +766,10 @@ class AutoResearchOrchestrator:
                     "paper_revision_state_path": paper_revision_state_path,
                     "paper_compile_report": paper_pipeline.paper_compile_report,
                     "paper_compile_report_path": paper_compile_report_path,
+                    "paper_section_rewrite_index": paper_pipeline.paper_section_rewrite_index,
+                    "paper_section_rewrite_index_path": paper_section_rewrite_index_path,
                     "paper_sources_dir": paper_sources_dir,
+                    "paper_section_rewrite_packets_dir": paper_section_rewrite_packets_dir,
                     "paper_latex_source": paper_pipeline.paper_latex_source,
                     "paper_latex_path": paper_latex_path,
                     "paper_bibliography_bib": paper_pipeline.paper_bibliography_bib,
@@ -987,7 +994,10 @@ class AutoResearchOrchestrator:
                         "paper_revision_state_path": None,
                         "paper_compile_report": None,
                         "paper_compile_report_path": None,
+                        "paper_section_rewrite_index": None,
+                        "paper_section_rewrite_index_path": None,
                         "paper_sources_dir": None,
+                        "paper_section_rewrite_packets_dir": None,
                         "paper_latex_source": None,
                         "paper_latex_path": None,
                         "paper_bibliography_bib": None,
@@ -1382,7 +1392,9 @@ class AutoResearchOrchestrator:
             figure_plan_path = figure_plan_file_path(project_id, run_id)
             paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
             paper_compile_report_path = paper_compile_report_file_path(project_id, run_id)
+            paper_section_rewrite_index_path = paper_section_rewrite_index_file_path(project_id, run_id)
             paper_sources_dir = paper_sources_dir_path(project_id, run_id)
+            paper_section_rewrite_packets_dir = paper_section_rewrite_packets_dir_path(project_id, run_id)
             paper_latex_path = paper_latex_file_path(project_id, run_id)
             paper_bibliography_path = paper_bibliography_file_path(project_id, run_id)
             paper_sources_manifest_path = paper_sources_manifest_file_path(project_id, run_id)
@@ -1449,7 +1461,10 @@ class AutoResearchOrchestrator:
                         "paper_revision_state_path": paper_revision_state_path,
                         "paper_compile_report": paper_pipeline.paper_compile_report,
                         "paper_compile_report_path": paper_compile_report_path,
+                        "paper_section_rewrite_index": paper_pipeline.paper_section_rewrite_index,
+                        "paper_section_rewrite_index_path": paper_section_rewrite_index_path,
                         "paper_sources_dir": paper_sources_dir,
+                        "paper_section_rewrite_packets_dir": paper_section_rewrite_packets_dir,
                         "paper_latex_source": paper_pipeline.paper_latex_source,
                         "paper_latex_path": paper_latex_path,
                         "paper_bibliography_bib": paper_pipeline.paper_bibliography_bib,

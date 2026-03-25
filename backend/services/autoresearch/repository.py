@@ -49,11 +49,14 @@ NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
+PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
 PAPER_REVISION_HISTORY_FILENAME = "revision_history.md"
 PAPER_REVISION_BRIEF_FILENAME = "revision_brief.md"
 PAPER_REVISION_STATE_FILENAME = "paper_revision_state.json"
 PAPER_COMPILE_REPORT_FILENAME = "paper_compile_report.json"
 PAPER_SOURCES_DIRNAME = "paper_sources"
+PAPER_REWRITE_PACKETS_DIRNAME = "rewrite_packets"
+PAPER_REWRITE_PACKET_INDEX_FILENAME = "index.json"
 PAPER_CHECKPOINTS_DIRNAME = "checkpoints"
 PAPER_CHECKPOINT_INDEX_FILENAME = "index.json"
 PAPER_CHECKPOINT_SUMMARY_FILENAME = "checkpoint.json"
@@ -151,6 +154,29 @@ def _paper_build_script(run: AutoResearchRunRead) -> str | None:
     )
 
 
+def _paper_section_rewrite_packets(run: AutoResearchRunRead) -> tuple[object | None, dict[str, str]]:
+    if (
+        run.paper_section_rewrite_index is None
+        or run.paper_plan is None
+        or run.claim_evidence_matrix is None
+        or run.paper_revision_state is None
+        or run.paper_markdown is None
+    ):
+        return None, {}
+    writer = PaperWriter()
+    packets = {
+        item.relative_path: writer.build_section_rewrite_packet(
+            item,
+            paper_plan=run.paper_plan,
+            claim_evidence_matrix=run.claim_evidence_matrix,
+            paper_revision_state=run.paper_revision_state,
+            paper_markdown=run.paper_markdown,
+        )
+        for item in run.paper_section_rewrite_index.packets
+    }
+    return run.paper_section_rewrite_index, packets
+
+
 def _paper_checkpoint_dir(paper_sources_dir: Path, revision_round: int) -> Path:
     return paper_sources_dir / PAPER_CHECKPOINTS_DIRNAME / f"round_{revision_round:04d}"
 
@@ -167,6 +193,7 @@ def _write_paper_revision_checkpoints(
     if payload.paper_revision_state is None:
         return
 
+    section_rewrite_index, section_rewrite_packets = _paper_section_rewrite_packets(payload)
     checkpoints_dir = paper_sources_dir / PAPER_CHECKPOINTS_DIRNAME
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     _write_json(
@@ -242,6 +269,17 @@ def _write_paper_revision_checkpoints(
                 checkpoint_dir / PAPER_SOURCES_MANIFEST_FILENAME,
                 payload.paper_sources_manifest.model_dump(mode="json"),
             )
+        if section_rewrite_index is not None:
+            checkpoint_packets_dir = checkpoint_dir / PAPER_REWRITE_PACKETS_DIRNAME
+            checkpoint_packets_dir.mkdir(parents=True, exist_ok=True)
+            _write_json(
+                checkpoint_packets_dir / PAPER_REWRITE_PACKET_INDEX_FILENAME,
+                section_rewrite_index.model_dump(mode="json"),
+            )
+            for relative_path, content in section_rewrite_packets.items():
+                packet_path = checkpoint_dir / relative_path
+                packet_path.parent.mkdir(parents=True, exist_ok=True)
+                packet_path.write_text(content, encoding="utf-8")
         if review_path.is_file():
             (checkpoint_dir / "review.json").write_text(review_path.read_text(encoding="utf-8"), encoding="utf-8")
         if review_loop_path.is_file():
@@ -405,8 +443,10 @@ def _candidate_lineage_edges(
             ("paper_revision_history_markdown", "paper_revision_history"),
             ("paper_revision_state_json", "paper_revision_state"),
             ("paper_compile_report_json", "paper_compile_report"),
+            ("paper_section_rewrite_index_json", "paper_section_rewrite_index"),
             ("paper_revision_brief_markdown", "paper_revision_brief"),
             ("paper_sources_dir", "paper_sources"),
+            ("paper_section_rewrite_packets_dir", "paper_section_rewrite_packets"),
             ("paper_build_script", "paper_build_script"),
             ("paper_checkpoint_index_json", "paper_checkpoint_index"),
             ("paper_latex_source", "paper_latex"),
@@ -476,8 +516,10 @@ def _run_lineage_edges(
         ("paper_revision_history_markdown", "paper_revision_history"),
         ("paper_revision_state_json", "paper_revision_state"),
         ("paper_compile_report_json", "paper_compile_report"),
+        ("paper_section_rewrite_index_json", "paper_section_rewrite_index"),
         ("paper_revision_brief_markdown", "paper_revision_brief"),
         ("paper_sources_dir", "paper_sources"),
+        ("paper_section_rewrite_packets_dir", "paper_section_rewrite_packets"),
         ("paper_build_script", "paper_build_script"),
         ("paper_checkpoint_index_json", "paper_checkpoint_index"),
         ("paper_latex_source", "paper_latex"),
@@ -650,10 +692,24 @@ def _run_bundle_assets(
             required=False,
         ),
         _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_section_rewrite_index_json",
+            label="Selected run paper section rewrite index",
+            role="run_paper_section_rewrite_index_json",
+            ref=files.paper_section_rewrite_index_json,
+            required=False,
+        ),
+        _bundle_asset(
             asset_id=f"{run_registry.run_id}:run_paper_sources_dir",
             label="Selected run paper sources directory",
             role="run_paper_sources_dir",
             ref=files.paper_sources_dir,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_section_rewrite_packets_dir",
+            label="Selected run paper section rewrite packets",
+            role="run_paper_section_rewrite_packets_dir",
+            ref=files.paper_section_rewrite_packets_dir,
             required=False,
         ),
         _bundle_asset(
@@ -860,8 +916,30 @@ def _refresh_paper_compile_report(
     )
 
 
+def _refresh_paper_section_rewrite_index(payload: AutoResearchRunRead) -> AutoResearchRunRead:
+    if (
+        payload.paper_plan is None
+        or payload.claim_evidence_matrix is None
+        or payload.paper_revision_state is None
+        or payload.paper_markdown is None
+    ):
+        return payload
+    index = PaperWriter().build_section_rewrite_packet_index(
+        paper_plan=payload.paper_plan,
+        claim_evidence_matrix=payload.claim_evidence_matrix,
+        paper_revision_state=payload.paper_revision_state,
+        paper_markdown=payload.paper_markdown,
+    )
+    if payload.paper_section_rewrite_index is not None and (
+        payload.paper_section_rewrite_index.model_dump(mode="json") == index.model_dump(mode="json")
+    ):
+        return payload
+    return payload.model_copy(update={"paper_section_rewrite_index": index})
+
+
 def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> AutoResearchRunRead:
     payload = run.model_copy(update={"updated_at": _utcnow()}) if touch_updated_at else run.model_copy()
+    payload = _refresh_paper_section_rewrite_index(payload)
     base = run_dir(payload.project_id, payload.id)
     payload = _refresh_paper_compile_report(payload, base=base)
     _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
@@ -894,9 +972,15 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
     if payload.paper_compile_report is not None:
         _write_json(base / PAPER_COMPILE_REPORT_FILENAME, payload.paper_compile_report.model_dump(mode="json"))
+    if payload.paper_section_rewrite_index is not None:
+        _write_json(
+            base / PAPER_SECTION_REWRITE_INDEX_FILENAME,
+            payload.paper_section_rewrite_index.model_dump(mode="json"),
+        )
     if (
         payload.paper_markdown is not None
         or payload.paper_compile_report is not None
+        or payload.paper_section_rewrite_index is not None
         or payload.paper_latex_source is not None
         or payload.paper_bibliography_bib is not None
         or payload.paper_sources_manifest is not None
@@ -906,6 +990,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         revision_history = _paper_revision_history(payload)
         revision_brief = _paper_revision_brief(payload)
         paper_build_script = _paper_build_script(payload)
+        section_rewrite_index, section_rewrite_packets = _paper_section_rewrite_packets(payload)
         if payload.paper_markdown is not None:
             (paper_sources_dir / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
         if payload.narrative_report_markdown:
@@ -942,6 +1027,17 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 paper_sources_dir / PAPER_COMPILE_REPORT_FILENAME,
                 payload.paper_compile_report.model_dump(mode="json"),
             )
+        if section_rewrite_index is not None:
+            rewrite_packets_dir = paper_sources_dir / PAPER_REWRITE_PACKETS_DIRNAME
+            rewrite_packets_dir.mkdir(parents=True, exist_ok=True)
+            _write_json(
+                rewrite_packets_dir / PAPER_REWRITE_PACKET_INDEX_FILENAME,
+                section_rewrite_index.model_dump(mode="json"),
+            )
+            for relative_path, content in section_rewrite_packets.items():
+                packet_path = paper_sources_dir / relative_path
+                packet_path.parent.mkdir(parents=True, exist_ok=True)
+                packet_path.write_text(content, encoding="utf-8")
         if paper_build_script is not None:
             build_script_path = paper_sources_dir / PAPER_BUILD_SCRIPT_FILENAME
             build_script_path.write_text(paper_build_script, encoding="utf-8")
@@ -1029,8 +1125,16 @@ def paper_compile_report_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_COMPILE_REPORT_FILENAME)
 
 
+def paper_section_rewrite_index_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PAPER_SECTION_REWRITE_INDEX_FILENAME)
+
+
 def paper_sources_dir_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_SOURCES_DIRNAME)
+
+
+def paper_section_rewrite_packets_dir_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PAPER_SOURCES_DIRNAME / PAPER_REWRITE_PACKETS_DIRNAME)
 
 
 def paper_latex_file_path(project_id: str, run_id: str) -> str:
@@ -1163,11 +1267,19 @@ def load_candidate_registry(
             paper_compile_report_json=_asset_ref(
                 current_run.paper_compile_report_path or (run_base / PAPER_COMPILE_REPORT_FILENAME)
             ),
+            paper_section_rewrite_index_json=_asset_ref(
+                current_run.paper_section_rewrite_index_path or (run_base / PAPER_SECTION_REWRITE_INDEX_FILENAME)
+            ),
             paper_revision_brief_markdown=_asset_ref(
                 run_base / PAPER_SOURCES_DIRNAME / PAPER_REVISION_BRIEF_FILENAME
             ),
             paper_sources_dir=_asset_ref(
                 current_run.paper_sources_dir or (run_base / PAPER_SOURCES_DIRNAME),
+                kind="directory",
+            ),
+            paper_section_rewrite_packets_dir=_asset_ref(
+                current_run.paper_section_rewrite_packets_dir
+                or (run_base / PAPER_SOURCES_DIRNAME / PAPER_REWRITE_PACKETS_DIRNAME),
                 kind="directory",
             ),
             paper_build_script=_asset_ref(
@@ -1293,11 +1405,18 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         paper_compile_report_json=_asset_ref(
             run.paper_compile_report_path or (base / PAPER_COMPILE_REPORT_FILENAME)
         ),
+        paper_section_rewrite_index_json=_asset_ref(
+            run.paper_section_rewrite_index_path or (base / PAPER_SECTION_REWRITE_INDEX_FILENAME)
+        ),
         paper_revision_brief_markdown=_asset_ref(
             base / PAPER_SOURCES_DIRNAME / PAPER_REVISION_BRIEF_FILENAME
         ),
         paper_sources_dir=_asset_ref(
             run.paper_sources_dir or (base / PAPER_SOURCES_DIRNAME),
+            kind="directory",
+        ),
+        paper_section_rewrite_packets_dir=_asset_ref(
+            run.paper_section_rewrite_packets_dir or (base / PAPER_SOURCES_DIRNAME / PAPER_REWRITE_PACKETS_DIRNAME),
             kind="directory",
         ),
         paper_build_script=_asset_ref(

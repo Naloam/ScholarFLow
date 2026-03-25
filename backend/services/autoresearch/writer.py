@@ -15,6 +15,8 @@ from schemas.autoresearch import (
     AutoResearchPaperPlanSectionRead,
     AutoResearchPaperRevisionActionRead,
     AutoResearchPaperRevisionCheckpointRead,
+    AutoResearchPaperSectionRewriteIndexRead,
+    AutoResearchPaperSectionRewritePacketRead,
     AutoResearchPaperRevisionStateRead,
     AutoResearchPaperSourceFileRead,
     AutoResearchPaperSourcesManifestRead,
@@ -151,6 +153,11 @@ def _section_slug(title: str) -> str:
     return slug or "section"
 
 
+def _section_heading_slug(title: str) -> str:
+    normalized = re.sub(r"^\d+\.\s+", "", title.strip())
+    return _section_slug(normalized)
+
+
 class PaperWriter:
     def _fallback_section_body(self, section: AutoResearchPaperPlanSectionRead) -> str:
         claim_block = "\n".join(f"- `{item}`" for item in section.claim_ids) or "- No explicit claim ids were attached."
@@ -201,10 +208,98 @@ class PaperWriter:
                 return matched
         return fallback
 
+    def _section_rewrite_packet_relative_path(self, section: AutoResearchPaperPlanSectionRead) -> str:
+        packet_id = section.section_id.strip() or _section_slug(section.title)
+        return f"rewrite_packets/{packet_id}.md"
+
+    def _paper_section_bodies(self, paper_markdown: str) -> dict[str, str]:
+        sections: dict[str, list[str]] = {}
+        current_slug: str | None = None
+        for raw_line in paper_markdown.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                current_slug = _section_heading_slug(stripped[3:])
+                sections.setdefault(current_slug, [])
+                continue
+            if current_slug is not None:
+                sections[current_slug].append(line)
+        return {
+            slug: "\n".join(lines).strip()
+            for slug, lines in sections.items()
+        }
+
+    def _section_claim_entries(
+        self,
+        *,
+        section: AutoResearchPaperPlanSectionRead,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+    ) -> list[AutoResearchClaimEvidenceEntryRead]:
+        selected: dict[str, AutoResearchClaimEvidenceEntryRead] = {}
+        wanted_claim_ids = set(section.claim_ids)
+        for entry in claim_evidence_matrix.entries:
+            if entry.claim_id in wanted_claim_ids or entry.section_hint == section.title:
+                selected.setdefault(entry.claim_id, entry)
+        return list(selected.values())
+
+    def _section_pending_actions(
+        self,
+        *,
+        section: AutoResearchPaperPlanSectionRead,
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+    ) -> list[AutoResearchPaperRevisionActionRead]:
+        return [
+            item
+            for item in paper_revision_state.next_actions
+            if item.status == "open" and item.section_title == section.title
+        ]
+
+    def _section_open_issues(
+        self,
+        *,
+        section: AutoResearchPaperPlanSectionRead,
+        claim_entries: list[AutoResearchClaimEvidenceEntryRead],
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+    ) -> list[str]:
+        issues = _dedupe_preserving_order(
+            [
+                gap
+                for entry in claim_entries
+                for gap in entry.gaps
+            ]
+        )
+        if issues:
+            return issues
+        if section.title not in paper_revision_state.focus_sections:
+            return []
+        lowered_title = section.title.lower()
+        return [
+            item
+            for item in paper_revision_state.open_issues
+            if lowered_title in item.lower()
+        ]
+
+    def _rewrite_packet_asset_paths(
+        self,
+        *,
+        paper_plan: AutoResearchPaperPlanRead | None,
+        base_dir: str,
+    ) -> list[str]:
+        if paper_plan is None:
+            return []
+        base = base_dir.rstrip("/")
+        assets = [f"{base}/rewrite_packets/index.json"]
+        assets.extend(
+            f"{base}/{self._section_rewrite_packet_relative_path(section)}"
+            for section in paper_plan.sections
+        )
+        return assets
+
     def _checkpoint_snapshot_assets(
         self,
         revision_round: int,
         *,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
         include_review_assets: bool = False,
     ) -> list[str]:
         round_dir = f"paper_sources/checkpoints/round_{revision_round:04d}"
@@ -225,6 +320,12 @@ class PaperWriter:
             f"{round_dir}/references.bib",
             f"{round_dir}/manifest.json",
         ]
+        assets.extend(
+            self._rewrite_packet_asset_paths(
+                paper_plan=paper_plan,
+                base_dir=round_dir,
+            )
+        )
         if include_review_assets:
             assets.extend(
                 [
@@ -389,9 +490,14 @@ class PaperWriter:
                         "paper_sources/main.tex",
                         "paper_sources/references.bib",
                         "paper_sources/manifest.json",
+                        *self._rewrite_packet_asset_paths(
+                            paper_plan=paper_plan,
+                            base_dir="paper_sources",
+                        ),
                         "paper_sources/checkpoints/index.json",
                         *self._checkpoint_snapshot_assets(
                             round_state.round_index,
+                            paper_plan=paper_plan,
                             include_review_assets=True,
                         ),
                     ]
@@ -1141,8 +1247,12 @@ Program objective:
                     "paper_sources/main.tex",
                     "paper_sources/references.bib",
                     "paper_sources/manifest.json",
+                    *self._rewrite_packet_asset_paths(
+                        paper_plan=paper_plan,
+                        base_dir="paper_sources",
+                    ),
                     "paper_sources/checkpoints/index.json",
-                    *self._checkpoint_snapshot_assets(0),
+                    *self._checkpoint_snapshot_assets(0, paper_plan=paper_plan),
                 ],
             )
         ]
@@ -1295,6 +1405,148 @@ Program objective:
             lines.extend(f"- {item}" for item in checkpoint.open_issue_summaries)
         return "\n".join(lines).strip() + "\n"
 
+    def build_section_rewrite_packet_index(
+        self,
+        *,
+        paper_plan: AutoResearchPaperPlanRead,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+        paper_markdown: str,
+    ) -> AutoResearchPaperSectionRewriteIndexRead:
+        section_bodies = self._paper_section_bodies(paper_markdown)
+        packets: list[AutoResearchPaperSectionRewritePacketRead] = []
+        for section in paper_plan.sections:
+            claim_entries = self._section_claim_entries(
+                section=section,
+                claim_evidence_matrix=claim_evidence_matrix,
+            )
+            actions = self._section_pending_actions(
+                section=section,
+                paper_revision_state=paper_revision_state,
+            )
+            open_issues = self._section_open_issues(
+                section=section,
+                claim_entries=claim_entries,
+                paper_revision_state=paper_revision_state,
+            )
+            current_body = section_bodies.get(_section_slug(section.title), "")
+            packets.append(
+                AutoResearchPaperSectionRewritePacketRead(
+                    section_id=section.section_id,
+                    section_title=section.title,
+                    revision_round=paper_revision_state.revision_round,
+                    focus=section.title in paper_revision_state.focus_sections or bool(actions),
+                    objective=section.objective,
+                    claim_ids=[item.claim_id for item in claim_entries],
+                    evidence_focus=list(section.evidence_focus),
+                    action_ids=[item.action_id for item in actions],
+                    open_issues=open_issues,
+                    current_word_count=len(current_body.split()),
+                    relative_path=self._section_rewrite_packet_relative_path(section),
+                    source_asset_paths=[
+                        "paper.md",
+                        "narrative_report.md",
+                        "claim_evidence_matrix.json",
+                        "paper_plan.json",
+                        "paper_revision_state.json",
+                        "revision_brief.md",
+                        "revision_history.md",
+                    ],
+                )
+            )
+        return AutoResearchPaperSectionRewriteIndexRead(
+            generated_at=_utcnow(),
+            revision_round=paper_revision_state.revision_round,
+            packet_count=len(packets),
+            focus_packet_count=sum(1 for item in packets if item.focus),
+            packets=packets,
+        )
+
+    def build_section_rewrite_packet(
+        self,
+        packet: AutoResearchPaperSectionRewritePacketRead,
+        *,
+        paper_plan: AutoResearchPaperPlanRead,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+        paper_markdown: str,
+    ) -> str:
+        section = next(
+            (item for item in paper_plan.sections if item.section_id == packet.section_id),
+            None,
+        )
+        if section is None:
+            raise ValueError(f"Unknown paper plan section for rewrite packet: {packet.section_id}")
+        claim_entries = self._section_claim_entries(
+            section=section,
+            claim_evidence_matrix=claim_evidence_matrix,
+        )
+        actions = self._section_pending_actions(
+            section=section,
+            paper_revision_state=paper_revision_state,
+        )
+        current_body = self._paper_section_bodies(paper_markdown).get(_section_slug(section.title), "")
+        claim_block: list[str] = []
+        for entry in claim_entries:
+            evidence_lines = [
+                f"  - [{item.source_kind}] {item.label}: {item.detail}"
+                for item in entry.evidence
+            ] or ["  - No evidence anchors were recorded."]
+            claim_block.extend(
+                [
+                    f"- `{entry.claim_id}` ({entry.support_status}): {entry.claim}",
+                    "  - Evidence:",
+                    *evidence_lines,
+                ]
+            )
+            if entry.gaps:
+                claim_block.append("  - Gaps:")
+                claim_block.extend(f"    - {item}" for item in entry.gaps)
+        action_block = [
+            f"- [{item.priority}] `{item.action_id}`: {item.detail}"
+            for item in actions
+        ] or ["- No open revision actions are currently mapped to this section."]
+        open_issue_block = [f"- {item}" for item in packet.open_issues] or ["- None."]
+        evidence_focus_block = [f"- {item}" for item in packet.evidence_focus] or ["- None."]
+        source_assets_block = [f"- `{item}`" for item in packet.source_asset_paths] or ["- None."]
+        current_body_block = current_body.strip() or "_No current manuscript body was available for this section._"
+        return "\n".join(
+            [
+                f"# Section Rewrite Packet: {packet.section_title}",
+                "",
+                f"- Revision round: {packet.revision_round}",
+                f"- Focus section: {'yes' if packet.focus else 'no'}",
+                f"- Current word count: {packet.current_word_count}",
+                f"- Packet path: `{packet.relative_path}`",
+                "",
+                "## Objective",
+                packet.objective,
+                "",
+                "## Current Draft",
+                current_body_block,
+                "",
+                "## Claim Commitments",
+                *(
+                    claim_block
+                    if claim_block
+                    else ["- No claim-evidence commitments were attached to this section."]
+                ),
+                "",
+                "## Pending Revision Actions",
+                *action_block,
+                "",
+                "## Open Issues",
+                *open_issue_block,
+                "",
+                "## Evidence Focus",
+                *evidence_focus_block,
+                "",
+                "## Source Assets",
+                *source_assets_block,
+                "",
+            ]
+        )
+
     def build_paper_bibliography(
         self,
         literature: list[LiteratureInsight] | None = None,
@@ -1441,6 +1693,7 @@ Program objective:
         *,
         has_bibliography: bool,
         include_revision_checkpoints: bool = False,
+        paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead | None = None,
     ) -> AutoResearchPaperSourcesManifestRead:
         compile_commands = ["./build.sh", "pdflatex main.tex"]
         if has_bibliography:
@@ -1502,6 +1755,28 @@ Program objective:
                     relative_path="paper_compile_report.json",
                     kind="json",
                     description="Compile-readiness snapshot for the paper workspace, including expected outputs and missing-input checks.",
+                ),
+                *(
+                    [
+                        AutoResearchPaperSourceFileRead(
+                            relative_path="rewrite_packets/index.json",
+                            kind="json",
+                            description="Index of section-level rewrite packets materialized from the current paper plan and revision state.",
+                        ),
+                        *[
+                            AutoResearchPaperSourceFileRead(
+                                relative_path=item.relative_path,
+                                kind="markdown",
+                                description=(
+                                    f"Section rewrite packet for `{item.section_title}` with current draft content, "
+                                    "claim-evidence commitments, and mapped revision actions."
+                                ),
+                            )
+                            for item in paper_section_rewrite_index.packets
+                        ],
+                    ]
+                    if paper_section_rewrite_index is not None
+                    else []
                 ),
                 AutoResearchPaperSourceFileRead(
                     relative_path="build.sh",
@@ -1629,6 +1904,12 @@ Program objective:
             figure_plan=figure_plan,
             paper_revision_state=paper_revision_state,
         )
+        paper_section_rewrite_index = self.build_section_rewrite_packet_index(
+            paper_plan=paper_plan,
+            claim_evidence_matrix=claim_evidence_matrix,
+            paper_revision_state=paper_revision_state,
+            paper_markdown=paper_markdown,
+        )
         paper_bibliography_bib = self.build_paper_bibliography(literature)
         paper_latex_source = self.build_paper_latex_source(
             paper_markdown,
@@ -1637,6 +1918,7 @@ Program objective:
         paper_sources_manifest = self.build_paper_sources_manifest(
             has_bibliography=bool(literature),
             include_revision_checkpoints=paper_revision_state is not None,
+            paper_section_rewrite_index=paper_section_rewrite_index,
         )
         paper_compile_report = self.build_paper_compile_report(
             paper_sources_manifest=paper_sources_manifest,
@@ -1648,6 +1930,7 @@ Program objective:
             figure_plan=figure_plan,
             paper_revision_state=paper_revision_state,
             paper_compile_report=paper_compile_report,
+            paper_section_rewrite_index=paper_section_rewrite_index,
             paper_latex_source=paper_latex_source,
             paper_bibliography_bib=paper_bibliography_bib,
             paper_sources_manifest=paper_sources_manifest,

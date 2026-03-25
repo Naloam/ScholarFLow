@@ -383,6 +383,7 @@ export type AutoResearchPaperSourcesManifest = {
   bibliography?: string | null;
   compiler_hint: string;
   compile_commands: string[];
+  expected_outputs: string[];
   files: AutoResearchPaperSourceFile[];
 };
 

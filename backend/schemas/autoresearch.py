@@ -651,6 +651,7 @@ class AutoResearchPaperSourcesManifestRead(BaseModel):
     bibliography: str | None = None
     compiler_hint: str
     compile_commands: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
     files: list[AutoResearchPaperSourceFileRead] = Field(default_factory=list)
 
 

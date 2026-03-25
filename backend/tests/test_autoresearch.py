@@ -216,6 +216,11 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["paper_sources_manifest"]["entrypoint"] == "main.tex"
         assert "pdflatex main.tex" in run["paper_sources_manifest"]["compile_commands"]
         assert run["paper_sources_manifest"]["compiler_hint"] in {"pdflatex", "pdflatex + bibtex"}
+        assert "main.pdf" in run["paper_sources_manifest"]["expected_outputs"]
+        if run["paper_sources_manifest"]["compiler_hint"] == "pdflatex + bibtex":
+            assert "main.bbl" in run["paper_sources_manifest"]["expected_outputs"]
+        else:
+            assert "main.bbl" not in run["paper_sources_manifest"]["expected_outputs"]
         paper_sources_files = {item["relative_path"] for item in run["paper_sources_manifest"]["files"]}
         assert "paper.md" in paper_sources_files
         assert "narrative_report.md" in paper_sources_files
@@ -1067,6 +1072,7 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
         assert "@misc{ref1" in rebuilt["paper_bibliography_bib"]
         assert "\\bibliography{references}" in rebuilt["paper_latex_source"]
         assert rebuilt["paper_sources_manifest"]["compiler_hint"] == "pdflatex + bibtex"
+        assert rebuilt["paper_sources_manifest"]["expected_outputs"] == ["main.pdf", "main.bbl"]
         assert Path(rebuilt["paper_path"]).read_text(encoding="utf-8") == rebuilt["paper_markdown"]
         assert Path(rebuilt["paper_latex_path"]).read_text(encoding="utf-8") == rebuilt["paper_latex_source"]
         assert Path(rebuilt["paper_bibliography_path"]).read_text(encoding="utf-8") == rebuilt["paper_bibliography_bib"]

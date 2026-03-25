@@ -1195,6 +1195,9 @@ Program objective:
         if has_bibliography:
             compile_commands.append("bibtex main")
         compile_commands.extend(["pdflatex main.tex", "pdflatex main.tex"])
+        expected_outputs = ["main.pdf"]
+        if has_bibliography:
+            expected_outputs.append("main.bbl")
         compiler_hint = "pdflatex + bibtex" if has_bibliography else "pdflatex"
         return AutoResearchPaperSourcesManifestRead(
             generated_at=_utcnow(),
@@ -1202,6 +1205,7 @@ Program objective:
             bibliography="references.bib",
             compiler_hint=compiler_hint,
             compile_commands=compile_commands,
+            expected_outputs=expected_outputs,
             files=[
                 AutoResearchPaperSourceFileRead(
                     relative_path="paper.md",

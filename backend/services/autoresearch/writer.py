@@ -210,11 +210,13 @@ class PaperWriter:
         round_dir = f"paper_sources/checkpoints/round_{revision_round:04d}"
         assets = [
             f"{round_dir}/checkpoint.json",
+            f"{round_dir}/checkpoint_note.md",
             f"{round_dir}/paper.md",
             f"{round_dir}/narrative_report.md",
             f"{round_dir}/claim_evidence_matrix.json",
             f"{round_dir}/paper_plan.json",
             f"{round_dir}/figure_plan.json",
+            f"{round_dir}/revision_history.md",
             f"{round_dir}/revision_brief.md",
             f"{round_dir}/paper_revision_state.json",
             f"{round_dir}/paper_compile_report.json",
@@ -333,6 +335,42 @@ class PaperWriter:
                     if round_state.round_index == review_loop.current_round
                     else len(round_state.finding_ids)
                 ),
+                open_issue_summaries=(
+                    list(open_issues)
+                    if round_state.round_index == review_loop.current_round
+                    else (
+                        list(checkpoint_by_round[round_state.round_index].open_issue_summaries)
+                        if round_state.round_index in checkpoint_by_round
+                        else []
+                    )
+                ),
+                focus_sections=(
+                    list(focus_sections)
+                    if round_state.round_index == review_loop.current_round
+                    else (
+                        list(checkpoint_by_round[round_state.round_index].focus_sections)
+                        if round_state.round_index in checkpoint_by_round
+                        else []
+                    )
+                ),
+                next_action_ids=(
+                    [item.action_id for item in next_actions]
+                    if round_state.round_index == review_loop.current_round
+                    else (
+                        list(checkpoint_by_round[round_state.round_index].next_action_ids)
+                        if round_state.round_index in checkpoint_by_round
+                        else []
+                    )
+                ),
+                completed_action_titles=(
+                    list(completed_actions)
+                    if round_state.round_index == review_loop.current_round
+                    else (
+                        list(checkpoint_by_round[round_state.round_index].completed_action_titles)
+                        if round_state.round_index in checkpoint_by_round
+                        else []
+                    )
+                ),
                 relative_assets=_dedupe_preserving_order(
                     [
                         "paper.md",
@@ -340,6 +378,7 @@ class PaperWriter:
                         "claim_evidence_matrix.json",
                         "paper_plan.json",
                         "figure_plan.json",
+                        "revision_history.md",
                         "paper_revision_state.json",
                         "paper_compile_report.json",
                         "review.json",
@@ -1075,12 +1114,25 @@ Program objective:
                     "and compile-oriented paper sources."
                 ),
                 open_issue_count=len(open_issues),
+                open_issue_summaries=list(open_issues),
+                focus_sections=list(focus_sections),
+                next_action_ids=[item.action_id for item in next_actions],
+                completed_action_titles=[
+                    "Persisted narrative report",
+                    "Persisted claim-evidence matrix",
+                    "Persisted paper plan",
+                    "Persisted figure plan",
+                    "Persisted paper compile report",
+                    "Persisted compile-ready paper sources",
+                    "Rendered grounded manuscript draft",
+                ],
                 relative_assets=[
                     "paper.md",
                     "narrative_report.md",
                     "claim_evidence_matrix.json",
                     "paper_plan.json",
                     "figure_plan.json",
+                    "revision_history.md",
                     "paper_revision_state.json",
                     "paper_compile_report.json",
                     "paper_sources/paper_compile_report.json",
@@ -1159,6 +1211,88 @@ Program objective:
                     f"- Round {item.revision_round} `{item.status}` with {item.open_issue_count} open issues: "
                     f"{item.summary}"
                 )
+        return "\n".join(lines).strip() + "\n"
+
+    def build_revision_history(
+        self,
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+        *,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+    ) -> str:
+        section_objectives = {
+            section.title: section.objective
+            for section in (paper_plan.sections if paper_plan is not None else [])
+        }
+        lines = [
+            "# Revision History",
+            "",
+            f"- Current revision round: {paper_revision_state.revision_round}",
+            f"- Current status: `{paper_revision_state.status}`",
+            f"- Total checkpoints: {len(paper_revision_state.checkpoints)}",
+        ]
+        for checkpoint in paper_revision_state.checkpoints:
+            lines.extend(
+                [
+                    "",
+                    f"## Round {checkpoint.revision_round}",
+                    f"- Status: `{checkpoint.status}`",
+                    f"- Open issues: {checkpoint.open_issue_count}",
+                    f"- Summary: {checkpoint.summary}",
+                ]
+            )
+            if checkpoint.focus_sections:
+                lines.append("- Focus sections:")
+                for title in checkpoint.focus_sections:
+                    objective = section_objectives.get(title)
+                    if objective:
+                        lines.append(f"  - `{title}`: {objective}")
+                    else:
+                        lines.append(f"  - `{title}`")
+            if checkpoint.next_action_ids:
+                lines.append("- Pending action ids:")
+                lines.extend(f"  - `{item}`" for item in checkpoint.next_action_ids)
+            if checkpoint.completed_action_titles:
+                lines.append("- Completed actions:")
+                lines.extend(f"  - {item}" for item in checkpoint.completed_action_titles)
+            if checkpoint.open_issue_summaries:
+                lines.append("- Open issue summaries:")
+                lines.extend(f"  - {item}" for item in checkpoint.open_issue_summaries)
+        return "\n".join(lines).strip() + "\n"
+
+    def build_revision_checkpoint_note(
+        self,
+        checkpoint: AutoResearchPaperRevisionCheckpointRead,
+        *,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+    ) -> str:
+        section_objectives = {
+            section.title: section.objective
+            for section in (paper_plan.sections if paper_plan is not None else [])
+        }
+        lines = [
+            f"# Revision Checkpoint: Round {checkpoint.revision_round}",
+            "",
+            f"- Status: `{checkpoint.status}`",
+            f"- Open issues: {checkpoint.open_issue_count}",
+            f"- Summary: {checkpoint.summary}",
+        ]
+        if checkpoint.focus_sections:
+            lines.extend(["", "## Focus Sections"])
+            for title in checkpoint.focus_sections:
+                objective = section_objectives.get(title)
+                if objective:
+                    lines.append(f"- `{title}`: {objective}")
+                else:
+                    lines.append(f"- `{title}`")
+        if checkpoint.next_action_ids:
+            lines.extend(["", "## Pending Action Ids"])
+            lines.extend(f"- `{item}`" for item in checkpoint.next_action_ids)
+        if checkpoint.completed_action_titles:
+            lines.extend(["", "## Completed Actions"])
+            lines.extend(f"- {item}" for item in checkpoint.completed_action_titles)
+        if checkpoint.open_issue_summaries:
+            lines.extend(["", "## Open Issue Summaries"])
+            lines.extend(f"- {item}" for item in checkpoint.open_issue_summaries)
         return "\n".join(lines).strip() + "\n"
 
     def build_paper_bibliography(
@@ -1348,6 +1482,11 @@ Program objective:
                     relative_path="figure_plan.json",
                     kind="json",
                     description="Figure-plan snapshot for the promoted artifact-backed visuals.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="revision_history.md",
+                    kind="markdown",
+                    description="Human-readable history of persisted revision checkpoints and paper-improvement rounds.",
                 ),
                 AutoResearchPaperSourceFileRead(
                     relative_path="revision_brief.md",

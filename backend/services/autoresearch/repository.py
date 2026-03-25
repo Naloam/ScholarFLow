@@ -49,6 +49,7 @@ NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
+PAPER_REVISION_HISTORY_FILENAME = "revision_history.md"
 PAPER_REVISION_BRIEF_FILENAME = "revision_brief.md"
 PAPER_REVISION_STATE_FILENAME = "paper_revision_state.json"
 PAPER_COMPILE_REPORT_FILENAME = "paper_compile_report.json"
@@ -56,6 +57,7 @@ PAPER_SOURCES_DIRNAME = "paper_sources"
 PAPER_CHECKPOINTS_DIRNAME = "checkpoints"
 PAPER_CHECKPOINT_INDEX_FILENAME = "index.json"
 PAPER_CHECKPOINT_SUMMARY_FILENAME = "checkpoint.json"
+PAPER_CHECKPOINT_NOTE_FILENAME = "checkpoint_note.md"
 PAPER_BUILD_SCRIPT_FILENAME = "build.sh"
 PAPER_LATEX_FILENAME = "main.tex"
 PAPER_BIB_FILENAME = "references.bib"
@@ -132,6 +134,15 @@ def _paper_revision_brief(run: AutoResearchRunRead) -> str | None:
     )
 
 
+def _paper_revision_history(run: AutoResearchRunRead) -> str | None:
+    if run.paper_revision_state is None:
+        return None
+    return PaperWriter().build_revision_history(
+        run.paper_revision_state,
+        paper_plan=run.paper_plan,
+    )
+
+
 def _paper_build_script(run: AutoResearchRunRead) -> str | None:
     if run.paper_sources_manifest is None:
         return None
@@ -150,6 +161,7 @@ def _write_paper_revision_checkpoints(
     base: Path,
     paper_sources_dir: Path,
     revision_brief: str | None,
+    revision_history: str | None,
     paper_build_script: str | None,
 ) -> None:
     if payload.paper_revision_state is None:
@@ -177,6 +189,11 @@ def _write_paper_revision_checkpoints(
             continue
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         _write_json(checkpoint_summary_path, checkpoint.model_dump(mode="json"))
+        checkpoint_note = PaperWriter().build_revision_checkpoint_note(
+            checkpoint,
+            paper_plan=payload.paper_plan,
+        )
+        (checkpoint_dir / PAPER_CHECKPOINT_NOTE_FILENAME).write_text(checkpoint_note, encoding="utf-8")
         if payload.paper_markdown is not None:
             (checkpoint_dir / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
         if payload.narrative_report_markdown:
@@ -199,6 +216,8 @@ def _write_paper_revision_checkpoints(
                 checkpoint_dir / FIGURE_PLAN_FILENAME,
                 payload.figure_plan.model_dump(mode="json"),
             )
+        if revision_history is not None:
+            (checkpoint_dir / PAPER_REVISION_HISTORY_FILENAME).write_text(revision_history, encoding="utf-8")
         if revision_brief is not None:
             (checkpoint_dir / PAPER_REVISION_BRIEF_FILENAME).write_text(revision_brief, encoding="utf-8")
         _write_json(
@@ -854,6 +873,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
     ):
         paper_sources_dir = base / PAPER_SOURCES_DIRNAME
         paper_sources_dir.mkdir(parents=True, exist_ok=True)
+        revision_history = _paper_revision_history(payload)
         revision_brief = _paper_revision_brief(payload)
         paper_build_script = _paper_build_script(payload)
         if payload.paper_markdown is not None:
@@ -878,6 +898,8 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 paper_sources_dir / FIGURE_PLAN_FILENAME,
                 payload.figure_plan.model_dump(mode="json"),
             )
+        if revision_history is not None:
+            (paper_sources_dir / PAPER_REVISION_HISTORY_FILENAME).write_text(revision_history, encoding="utf-8")
         if revision_brief is not None:
             (paper_sources_dir / PAPER_REVISION_BRIEF_FILENAME).write_text(revision_brief, encoding="utf-8")
         if payload.paper_revision_state is not None:
@@ -908,6 +930,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
             base=base,
             paper_sources_dir=paper_sources_dir,
             revision_brief=revision_brief,
+            revision_history=revision_history,
             paper_build_script=paper_build_script,
         )
     return payload

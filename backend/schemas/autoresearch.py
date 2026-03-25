@@ -641,6 +641,10 @@ class AutoResearchPaperRevisionCheckpointRead(BaseModel):
     status: AutoResearchPaperRevisionStatus = "drafted"
     summary: str
     open_issue_count: int = 0
+    open_issue_summaries: list[str] = Field(default_factory=list)
+    focus_sections: list[str] = Field(default_factory=list)
+    next_action_ids: list[str] = Field(default_factory=list)
+    completed_action_titles: list[str] = Field(default_factory=list)
     relative_assets: list[str] = Field(default_factory=list)
 
 

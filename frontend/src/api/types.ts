@@ -374,6 +374,10 @@ export type AutoResearchPaperRevisionCheckpoint = {
   status: "drafted" | "needs_review" | "revising" | "ready_for_publish";
   summary: string;
   open_issue_count: number;
+  open_issue_summaries: string[];
+  focus_sections: string[];
+  next_action_ids: string[];
+  completed_action_titles: string[];
   relative_assets: string[];
 };
 

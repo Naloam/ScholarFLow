@@ -53,6 +53,9 @@ PAPER_REVISION_BRIEF_FILENAME = "revision_brief.md"
 PAPER_REVISION_STATE_FILENAME = "paper_revision_state.json"
 PAPER_COMPILE_REPORT_FILENAME = "paper_compile_report.json"
 PAPER_SOURCES_DIRNAME = "paper_sources"
+PAPER_CHECKPOINTS_DIRNAME = "checkpoints"
+PAPER_CHECKPOINT_INDEX_FILENAME = "index.json"
+PAPER_CHECKPOINT_SUMMARY_FILENAME = "checkpoint.json"
 PAPER_LATEX_FILENAME = "main.tex"
 PAPER_BIB_FILENAME = "references.bib"
 PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
@@ -126,6 +129,93 @@ def _paper_revision_brief(run: AutoResearchRunRead) -> str | None:
         run.paper_revision_state,
         paper_plan=run.paper_plan,
     )
+
+
+def _paper_checkpoint_dir(paper_sources_dir: Path, revision_round: int) -> Path:
+    return paper_sources_dir / PAPER_CHECKPOINTS_DIRNAME / f"round_{revision_round:04d}"
+
+
+def _write_paper_revision_checkpoints(
+    payload: AutoResearchRunRead,
+    *,
+    base: Path,
+    paper_sources_dir: Path,
+    revision_brief: str | None,
+) -> None:
+    if payload.paper_revision_state is None:
+        return
+
+    checkpoints_dir = paper_sources_dir / PAPER_CHECKPOINTS_DIRNAME
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        checkpoints_dir / PAPER_CHECKPOINT_INDEX_FILENAME,
+        {
+            "generated_at": _utcnow().isoformat(),
+            "current_revision_round": payload.paper_revision_state.revision_round,
+            "checkpoints": payload.paper_revision_state.model_dump(mode="json")["checkpoints"],
+        },
+    )
+    current_round = payload.paper_revision_state.revision_round
+    review_path = base / "review.json"
+    review_loop_path = base / "review_loop.json"
+
+    for checkpoint in payload.paper_revision_state.checkpoints:
+        checkpoint_dir = _paper_checkpoint_dir(paper_sources_dir, checkpoint.revision_round)
+        checkpoint_summary_path = checkpoint_dir / PAPER_CHECKPOINT_SUMMARY_FILENAME
+        should_refresh = checkpoint.revision_round == current_round or not checkpoint_summary_path.exists()
+        if not should_refresh:
+            continue
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(checkpoint_summary_path, checkpoint.model_dump(mode="json"))
+        if payload.paper_markdown is not None:
+            (checkpoint_dir / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
+        if payload.narrative_report_markdown:
+            (checkpoint_dir / NARRATIVE_REPORT_FILENAME).write_text(
+                payload.narrative_report_markdown,
+                encoding="utf-8",
+            )
+        if payload.claim_evidence_matrix is not None:
+            _write_json(
+                checkpoint_dir / CLAIM_EVIDENCE_MATRIX_FILENAME,
+                payload.claim_evidence_matrix.model_dump(mode="json"),
+            )
+        if payload.paper_plan is not None:
+            _write_json(
+                checkpoint_dir / PAPER_PLAN_FILENAME,
+                payload.paper_plan.model_dump(mode="json"),
+            )
+        if payload.figure_plan is not None:
+            _write_json(
+                checkpoint_dir / FIGURE_PLAN_FILENAME,
+                payload.figure_plan.model_dump(mode="json"),
+            )
+        if revision_brief is not None:
+            (checkpoint_dir / PAPER_REVISION_BRIEF_FILENAME).write_text(revision_brief, encoding="utf-8")
+        _write_json(
+            checkpoint_dir / PAPER_REVISION_STATE_FILENAME,
+            payload.paper_revision_state.model_dump(mode="json"),
+        )
+        if payload.paper_compile_report is not None:
+            _write_json(
+                checkpoint_dir / PAPER_COMPILE_REPORT_FILENAME,
+                payload.paper_compile_report.model_dump(mode="json"),
+            )
+        if payload.paper_latex_source is not None:
+            (checkpoint_dir / PAPER_LATEX_FILENAME).write_text(payload.paper_latex_source, encoding="utf-8")
+        if payload.paper_bibliography_bib is not None:
+            (checkpoint_dir / PAPER_BIB_FILENAME).write_text(payload.paper_bibliography_bib, encoding="utf-8")
+        if payload.paper_sources_manifest is not None:
+            _write_json(
+                checkpoint_dir / PAPER_SOURCES_MANIFEST_FILENAME,
+                payload.paper_sources_manifest.model_dump(mode="json"),
+            )
+        if review_path.is_file():
+            (checkpoint_dir / "review.json").write_text(review_path.read_text(encoding="utf-8"), encoding="utf-8")
+        if review_loop_path.is_file():
+            (checkpoint_dir / "review_loop.json").write_text(
+                review_loop_path.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
 
 
 def _asset_ref(path: Path | str | None, *, kind: str = "file") -> AutoResearchRegistryAssetRef | None:
@@ -788,6 +878,12 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 paper_sources_dir / PAPER_SOURCES_MANIFEST_FILENAME,
                 payload.paper_sources_manifest.model_dump(mode="json"),
             )
+        _write_paper_revision_checkpoints(
+            payload,
+            base=base,
+            paper_sources_dir=paper_sources_dir,
+            revision_brief=revision_brief,
+        )
     return payload
 
 

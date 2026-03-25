@@ -201,6 +201,36 @@ class PaperWriter:
                 return matched
         return fallback
 
+    def _checkpoint_snapshot_assets(
+        self,
+        revision_round: int,
+        *,
+        include_review_assets: bool = False,
+    ) -> list[str]:
+        round_dir = f"paper_sources/checkpoints/round_{revision_round:04d}"
+        assets = [
+            f"{round_dir}/checkpoint.json",
+            f"{round_dir}/paper.md",
+            f"{round_dir}/narrative_report.md",
+            f"{round_dir}/claim_evidence_matrix.json",
+            f"{round_dir}/paper_plan.json",
+            f"{round_dir}/figure_plan.json",
+            f"{round_dir}/revision_brief.md",
+            f"{round_dir}/paper_revision_state.json",
+            f"{round_dir}/paper_compile_report.json",
+            f"{round_dir}/main.tex",
+            f"{round_dir}/references.bib",
+            f"{round_dir}/manifest.json",
+        ]
+        if include_review_assets:
+            assets.extend(
+                [
+                    f"{round_dir}/review.json",
+                    f"{round_dir}/review_loop.json",
+                ]
+            )
+        return assets
+
     def _review_action_section_title(
         self,
         action: AutoResearchReviewLoopActionRead,
@@ -318,6 +348,11 @@ class PaperWriter:
                         "paper_sources/main.tex",
                         "paper_sources/references.bib",
                         "paper_sources/manifest.json",
+                        "paper_sources/checkpoints/index.json",
+                        *self._checkpoint_snapshot_assets(
+                            round_state.round_index,
+                            include_review_assets=True,
+                        ),
                     ]
                 ),
             )
@@ -1051,6 +1086,8 @@ Program objective:
                     "paper_sources/main.tex",
                     "paper_sources/references.bib",
                     "paper_sources/manifest.json",
+                    "paper_sources/checkpoints/index.json",
+                    *self._checkpoint_snapshot_assets(0),
                 ],
             )
         ]
@@ -1244,6 +1281,7 @@ Program objective:
         self,
         *,
         has_bibliography: bool,
+        include_revision_checkpoints: bool = False,
     ) -> AutoResearchPaperSourcesManifestRead:
         compile_commands = ["pdflatex main.tex"]
         if has_bibliography:
@@ -1300,6 +1338,17 @@ Program objective:
                     relative_path="paper_compile_report.json",
                     kind="json",
                     description="Compile-readiness snapshot for the paper workspace, including expected outputs and missing-input checks.",
+                ),
+                *(
+                    [
+                        AutoResearchPaperSourceFileRead(
+                            relative_path="checkpoints/index.json",
+                            kind="json",
+                            description="Revision checkpoint index for the persisted paper-improvement history.",
+                        )
+                    ]
+                    if include_revision_checkpoints
+                    else []
                 ),
                 AutoResearchPaperSourceFileRead(
                     relative_path="main.tex",
@@ -1418,6 +1467,7 @@ Program objective:
         )
         paper_sources_manifest = self.build_paper_sources_manifest(
             has_bibliography=bool(literature),
+            include_revision_checkpoints=paper_revision_state is not None,
         )
         paper_compile_report = self.build_paper_compile_report(
             paper_sources_manifest=paper_sources_manifest,

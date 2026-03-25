@@ -211,6 +211,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["paper_revision_state"]["focus_sections"]
         assert run["paper_revision_state"]["next_actions"]
         assert run["paper_revision_state"]["checkpoints"][0]["revision_round"] == 0
+        assert "paper_sources/paper.md" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/main.tex" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert run["paper_sources_manifest"]["entrypoint"] == "main.tex"
         assert "pdflatex main.tex" in run["paper_sources_manifest"]["compile_commands"]
@@ -923,6 +924,7 @@ def test_autoresearch_paper_revision_state_tracks_review_loop_progress(
         assert all(item.status == "open" for item in synced_run.paper_revision_state.next_actions)
         checkpoint_rounds = [item.revision_round for item in synced_run.paper_revision_state.checkpoints]
         assert checkpoint_rounds == [0, 1]
+        assert "paper_sources/paper.md" in synced_run.paper_revision_state.checkpoints[-1].relative_assets
         assert "review.json" in synced_run.paper_revision_state.checkpoints[-1].relative_assets
         assert "review_loop.json" in synced_run.paper_revision_state.checkpoints[-1].relative_assets
 
@@ -998,6 +1000,7 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         assert resolved_run.paper_revision_state.open_issues == [
             item["summary"] for item in resolved_loop["issues"] if item["status"] == "open"
         ]
+        assert "paper_sources/paper.md" in resolved_run.paper_revision_state.checkpoints[-1].relative_assets
         assert [item.action_id for item in resolved_run.paper_revision_state.next_actions] == [
             item["action_id"] for item in resolved_loop["actions"] if item["status"] == "pending"
         ]

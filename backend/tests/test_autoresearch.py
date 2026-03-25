@@ -234,6 +234,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "claim_evidence_matrix.json" in paper_sources_files
         assert "paper_plan.json" in paper_sources_files
         assert "figure_plan.json" in paper_sources_files
+        assert "revision_brief.md" in paper_sources_files
         assert "paper_revision_state.json" in paper_sources_files
         assert "paper_compile_report.json" in paper_sources_files
         assert any(item["relative_path"] == "references.bib" for item in run["paper_sources_manifest"]["files"])
@@ -248,6 +249,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert (Path(run["paper_sources_dir"]) / "claim_evidence_matrix.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_plan.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "figure_plan.json").is_file()
+        assert (Path(run["paper_sources_dir"]) / "revision_brief.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_revision_state.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_compile_report.json").is_file()
         compile_report_payload = json.loads(Path(run["paper_compile_report_path"]).read_text(encoding="utf-8"))
@@ -1112,6 +1114,50 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
         review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
         assert review["citation_coverage"]["cited_literature_count"] >= 1
         assert review["citation_coverage"]["citation_marker_count"] >= 1
+    finally:
+        client.close()
+
+
+def test_autoresearch_paper_rebuild_preserves_revision_brief_from_review_loop(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Revision Brief Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        persisted_run = autoresearch_repository.load_run(project_id, run_id)
+        assert persisted_run is not None
+        assert persisted_run.paper_revision_state is not None
+        assert persisted_run.paper_revision_state.revision_round == loop["current_round"]
+        assert persisted_run.paper_revision_state.open_issues
+        assert persisted_run.paper_revision_state.next_actions
+        first_issue = persisted_run.paper_revision_state.open_issues[0]
+        first_action = persisted_run.paper_revision_state.next_actions[0]
+
+        rebuild_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/paper/rebuild")
+        assert rebuild_response.status_code == 200
+        rebuilt = rebuild_response.json()
+        revision_brief = Path(rebuilt["paper_sources_dir"], "revision_brief.md").read_text(encoding="utf-8")
+        assert f"- Revision round: {loop['current_round']}" in revision_brief
+        assert "## Next Actions" in revision_brief
+        assert first_issue in revision_brief
+        assert first_action.action_id in revision_brief
+        assert first_action.detail in revision_brief
+        assert "revision_brief.md" in {
+            item["relative_path"] for item in rebuilt["paper_sources_manifest"]["files"]
+        }
     finally:
         client.close()
 

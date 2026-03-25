@@ -702,6 +702,7 @@ class AutoResearchOrchestrator:
             candidates=run.candidates,
             paper_plan=run.paper_plan,
             figure_plan=run.figure_plan,
+            paper_revision_state=run.paper_revision_state,
         )
         paper_path = paper_file_path(project_id, run_id)
         candidate_paper_path = candidate_paper_file_path(project_id, run_id, selected_candidate.id)

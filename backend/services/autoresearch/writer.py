@@ -1073,6 +1073,54 @@ Program objective:
             checkpoints=checkpoints,
         )
 
+    def build_revision_brief(
+        self,
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+        *,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+    ) -> str:
+        section_objectives = {
+            section.title: section.objective
+            for section in (paper_plan.sections if paper_plan is not None else [])
+        }
+        pending_actions = [item for item in paper_revision_state.next_actions if item.status == "open"]
+        lines = [
+            "# Revision Brief",
+            "",
+            f"- Revision round: {paper_revision_state.revision_round}",
+            f"- Status: `{paper_revision_state.status}`",
+            f"- Open issues: {len(paper_revision_state.open_issues)}",
+            f"- Pending actions: {len(pending_actions)}",
+        ]
+        if paper_revision_state.focus_sections:
+            lines.extend(["", "## Focus Sections"])
+            for title in paper_revision_state.focus_sections:
+                objective = section_objectives.get(title)
+                if objective:
+                    lines.append(f"- `{title}`: {objective}")
+                else:
+                    lines.append(f"- `{title}`")
+        if paper_revision_state.open_issues:
+            lines.extend(["", "## Open Issues"])
+            lines.extend(f"- {item}" for item in paper_revision_state.open_issues)
+        if pending_actions:
+            lines.extend(["", "## Next Actions"])
+            for item in pending_actions:
+                lines.append(
+                    f"- [{item.priority}] `{item.section_title}` ({item.action_id}): {item.detail}"
+                )
+        if paper_revision_state.completed_actions:
+            lines.extend(["", "## Completed Actions"])
+            lines.extend(f"- {item}" for item in paper_revision_state.completed_actions)
+        if paper_revision_state.checkpoints:
+            lines.extend(["", "## Checkpoints"])
+            for item in paper_revision_state.checkpoints:
+                lines.append(
+                    f"- Round {item.revision_round} `{item.status}` with {item.open_issue_count} open issues: "
+                    f"{item.summary}"
+                )
+        return "\n".join(lines).strip() + "\n"
+
     def build_paper_bibliography(
         self,
         literature: list[LiteratureInsight] | None = None,
@@ -1239,6 +1287,11 @@ Program objective:
                     description="Figure-plan snapshot for the promoted artifact-backed visuals.",
                 ),
                 AutoResearchPaperSourceFileRead(
+                    relative_path="revision_brief.md",
+                    kind="markdown",
+                    description="Human-readable paper-improvement brief derived from the latest paper revision state.",
+                ),
+                AutoResearchPaperSourceFileRead(
                     relative_path="paper_revision_state.json",
                     kind="json",
                     description="Latest paper revision state copied into the paper source package for resume workflows.",
@@ -1309,6 +1362,7 @@ Program objective:
         candidates: list[HypothesisCandidate] | None = None,
         paper_plan: AutoResearchPaperPlanRead | None = None,
         figure_plan: AutoResearchFigurePlanRead | None = None,
+        paper_revision_state: AutoResearchPaperRevisionStateRead | None = None,
     ) -> AutoResearchPaperPipelineArtifactsRead:
         literature = literature or []
         attempts = attempts or []
@@ -1336,7 +1390,7 @@ Program objective:
         )
         paper_plan = paper_plan or self.build_paper_plan(plan, claim_evidence_matrix)
         figure_plan = figure_plan or self.build_figure_plan(artifact, portfolio=portfolio)
-        paper_revision_state = self.build_paper_revision_state(
+        paper_revision_state = paper_revision_state or self.build_paper_revision_state(
             claim_evidence_matrix,
             paper_plan=paper_plan,
             figure_plan=figure_plan,

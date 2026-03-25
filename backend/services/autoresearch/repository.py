@@ -33,6 +33,7 @@ from schemas.autoresearch import (
     PortfolioDecisionRecord,
     ResearchPlan,
 )
+from services.autoresearch.writer import PaperWriter
 from services.workspace import autoresearch_dir
 
 
@@ -48,6 +49,7 @@ NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
+PAPER_REVISION_BRIEF_FILENAME = "revision_brief.md"
 PAPER_REVISION_STATE_FILENAME = "paper_revision_state.json"
 PAPER_COMPILE_REPORT_FILENAME = "paper_compile_report.json"
 PAPER_SOURCES_DIRNAME = "paper_sources"
@@ -115,6 +117,15 @@ def _sha256_file(path: Path) -> str | None:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _paper_revision_brief(run: AutoResearchRunRead) -> str | None:
+    if run.paper_revision_state is None:
+        return None
+    return PaperWriter().build_revision_brief(
+        run.paper_revision_state,
+        paper_plan=run.paper_plan,
+    )
 
 
 def _asset_ref(path: Path | str | None, *, kind: str = "file") -> AutoResearchRegistryAssetRef | None:
@@ -733,6 +744,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
     ):
         paper_sources_dir = base / PAPER_SOURCES_DIRNAME
         paper_sources_dir.mkdir(parents=True, exist_ok=True)
+        revision_brief = _paper_revision_brief(payload)
         if payload.paper_markdown is not None:
             (paper_sources_dir / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
         if payload.narrative_report_markdown:
@@ -755,6 +767,8 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 paper_sources_dir / FIGURE_PLAN_FILENAME,
                 payload.figure_plan.model_dump(mode="json"),
             )
+        if revision_brief is not None:
+            (paper_sources_dir / PAPER_REVISION_BRIEF_FILENAME).write_text(revision_brief, encoding="utf-8")
         if payload.paper_revision_state is not None:
             _write_json(
                 paper_sources_dir / PAPER_REVISION_STATE_FILENAME,

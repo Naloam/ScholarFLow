@@ -385,7 +385,10 @@ def _candidate_lineage_edges(
             ("figure_plan_json", "figure_plan"),
             ("paper_revision_state_json", "paper_revision_state"),
             ("paper_compile_report_json", "paper_compile_report"),
+            ("paper_revision_brief_markdown", "paper_revision_brief"),
             ("paper_sources_dir", "paper_sources"),
+            ("paper_build_script", "paper_build_script"),
+            ("paper_checkpoint_index_json", "paper_checkpoint_index"),
             ("paper_latex_source", "paper_latex"),
             ("paper_bibliography_bib", "paper_bibliography"),
             ("paper_sources_manifest_json", "paper_sources_manifest"),
@@ -452,7 +455,10 @@ def _run_lineage_edges(
         ("figure_plan_json", "figure_plan"),
         ("paper_revision_state_json", "paper_revision_state"),
         ("paper_compile_report_json", "paper_compile_report"),
+        ("paper_revision_brief_markdown", "paper_revision_brief"),
         ("paper_sources_dir", "paper_sources"),
+        ("paper_build_script", "paper_build_script"),
+        ("paper_checkpoint_index_json", "paper_checkpoint_index"),
         ("paper_latex_source", "paper_latex"),
         ("paper_bibliography_bib", "paper_bibliography"),
         ("paper_sources_manifest_json", "paper_sources_manifest"),
@@ -1101,9 +1107,18 @@ def load_candidate_registry(
             paper_compile_report_json=_asset_ref(
                 current_run.paper_compile_report_path or (run_base / PAPER_COMPILE_REPORT_FILENAME)
             ),
+            paper_revision_brief_markdown=_asset_ref(
+                run_base / PAPER_SOURCES_DIRNAME / PAPER_REVISION_BRIEF_FILENAME
+            ),
             paper_sources_dir=_asset_ref(
                 current_run.paper_sources_dir or (run_base / PAPER_SOURCES_DIRNAME),
                 kind="directory",
+            ),
+            paper_build_script=_asset_ref(
+                run_base / PAPER_SOURCES_DIRNAME / PAPER_BUILD_SCRIPT_FILENAME
+            ),
+            paper_checkpoint_index_json=_asset_ref(
+                run_base / PAPER_SOURCES_DIRNAME / PAPER_CHECKPOINTS_DIRNAME / PAPER_CHECKPOINT_INDEX_FILENAME
             ),
             paper_latex_source=_asset_ref(
                 current_run.paper_latex_path or (run_base / PAPER_SOURCES_DIRNAME / PAPER_LATEX_FILENAME)
@@ -1219,9 +1234,18 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         paper_compile_report_json=_asset_ref(
             run.paper_compile_report_path or (base / PAPER_COMPILE_REPORT_FILENAME)
         ),
+        paper_revision_brief_markdown=_asset_ref(
+            base / PAPER_SOURCES_DIRNAME / PAPER_REVISION_BRIEF_FILENAME
+        ),
         paper_sources_dir=_asset_ref(
             run.paper_sources_dir or (base / PAPER_SOURCES_DIRNAME),
             kind="directory",
+        ),
+        paper_build_script=_asset_ref(
+            base / PAPER_SOURCES_DIRNAME / PAPER_BUILD_SCRIPT_FILENAME
+        ),
+        paper_checkpoint_index_json=_asset_ref(
+            base / PAPER_SOURCES_DIRNAME / PAPER_CHECKPOINTS_DIRNAME / PAPER_CHECKPOINT_INDEX_FILENAME
         ),
         paper_latex_source=_asset_ref(
             run.paper_latex_path or (base / PAPER_SOURCES_DIRNAME / PAPER_LATEX_FILENAME)

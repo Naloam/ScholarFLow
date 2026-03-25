@@ -508,7 +508,10 @@ export type AutoResearchLineageEdge = {
     | "figure_plan"
     | "paper_revision_state"
     | "paper_compile_report"
+    | "paper_revision_brief"
     | "paper_sources"
+    | "paper_build_script"
+    | "paper_checkpoint_index"
     | "paper_latex"
     | "paper_bibliography"
     | "paper_sources_manifest";
@@ -533,7 +536,11 @@ export type AutoResearchLineageEdge = {
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_state"
+    | "paper_compile_report"
+    | "paper_revision_brief"
     | "paper_sources"
+    | "paper_build_script"
+    | "paper_checkpoint_index"
     | "paper_latex"
     | "paper_bibliography"
     | "paper_sources_manifest";
@@ -559,7 +566,10 @@ export type AutoResearchRunRegistryFiles = {
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_state_json?: AutoResearchRegistryAssetRef | null;
   paper_compile_report_json?: AutoResearchRegistryAssetRef | null;
+  paper_revision_brief_markdown?: AutoResearchRegistryAssetRef | null;
   paper_sources_dir?: AutoResearchRegistryAssetRef | null;
+  paper_build_script?: AutoResearchRegistryAssetRef | null;
+  paper_checkpoint_index_json?: AutoResearchRegistryAssetRef | null;
   paper_latex_source?: AutoResearchRegistryAssetRef | null;
   paper_bibliography_bib?: AutoResearchRegistryAssetRef | null;
   paper_sources_manifest_json?: AutoResearchRegistryAssetRef | null;

@@ -395,8 +395,11 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         assert registry["files"]["figure_plan_json"]["exists"] is True
         assert registry["files"]["paper_revision_state_json"]["exists"] is True
         assert registry["files"]["paper_compile_report_json"]["exists"] is True
+        assert registry["files"]["paper_revision_brief_markdown"]["exists"] is True
         assert registry["files"]["paper_sources_dir"]["exists"] is True
         assert registry["files"]["paper_sources_dir"]["kind"] == "directory"
+        assert registry["files"]["paper_build_script"]["exists"] is True
+        assert registry["files"]["paper_checkpoint_index_json"]["exists"] is True
         assert registry["files"]["paper_latex_source"]["exists"] is True
         assert registry["files"]["paper_bibliography_bib"]["exists"] is True
         assert registry["files"]["paper_sources_manifest_json"]["exists"] is True
@@ -410,11 +413,23 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
             for edge in registry["lineage"]["edges"]
         )
         assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_revision_brief"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "paper_latex"
             for edge in registry["lineage"]["edges"]
         )
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "paper_compile_report"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_build_script"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_checkpoint_index"
             for edge in registry["lineage"]["edges"]
         )
         assert len(registry["candidates"]) == 3
@@ -458,7 +473,15 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
             for edge in candidate_registry["lineage"]["edges"]
         )
         assert any(
+            edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_revision_brief"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+        assert any(
             edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_sources"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_build_script"
             for edge in candidate_registry["lineage"]["edges"]
         )
     finally:

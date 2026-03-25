@@ -75,7 +75,10 @@ AutoResearchLineageNodeKind = Literal[
     "figure_plan",
     "paper_revision_state",
     "paper_compile_report",
+    "paper_revision_brief",
     "paper_sources",
+    "paper_build_script",
+    "paper_checkpoint_index",
     "paper_latex",
     "paper_bibliography",
     "paper_sources_manifest",
@@ -849,7 +852,10 @@ class AutoResearchRunRegistryFiles(BaseModel):
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_state_json: AutoResearchRegistryAssetRef | None = None
     paper_compile_report_json: AutoResearchRegistryAssetRef | None = None
+    paper_revision_brief_markdown: AutoResearchRegistryAssetRef | None = None
     paper_sources_dir: AutoResearchRegistryAssetRef | None = None
+    paper_build_script: AutoResearchRegistryAssetRef | None = None
+    paper_checkpoint_index_json: AutoResearchRegistryAssetRef | None = None
     paper_latex_source: AutoResearchRegistryAssetRef | None = None
     paper_bibliography_bib: AutoResearchRegistryAssetRef | None = None
     paper_sources_manifest_json: AutoResearchRegistryAssetRef | None = None

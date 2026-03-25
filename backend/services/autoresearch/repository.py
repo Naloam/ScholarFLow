@@ -641,9 +641,59 @@ def create_run(
     return run
 
 
+def _refresh_paper_compile_report(
+    payload: AutoResearchRunRead,
+    *,
+    base: Path,
+) -> AutoResearchRunRead:
+    report = payload.paper_compile_report
+    if report is None:
+        return payload
+
+    paper_sources_dir = Path(payload.paper_sources_dir) if payload.paper_sources_dir else (base / PAPER_SOURCES_DIRNAME)
+
+    def _input_present(relative_path: str) -> bool:
+        if relative_path == report.entrypoint:
+            return payload.paper_latex_source is not None or (paper_sources_dir / relative_path).is_file()
+        if report.bibliography is not None and relative_path == report.bibliography:
+            return payload.paper_bibliography_bib is not None or (paper_sources_dir / relative_path).is_file()
+        return (paper_sources_dir / relative_path).exists()
+
+    missing_required_inputs = [
+        item
+        for item in report.required_inputs
+        if not _input_present(item)
+    ]
+    materialized_outputs = [
+        item
+        for item in report.expected_outputs
+        if (paper_sources_dir / item).exists()
+    ]
+    ready_for_compile = not missing_required_inputs
+    if (
+        report.missing_required_inputs == missing_required_inputs
+        and report.materialized_outputs == materialized_outputs
+        and report.ready_for_compile == ready_for_compile
+    ):
+        return payload
+    return payload.model_copy(
+        update={
+            "paper_compile_report": report.model_copy(
+                update={
+                    "generated_at": _utcnow(),
+                    "missing_required_inputs": missing_required_inputs,
+                    "materialized_outputs": materialized_outputs,
+                    "ready_for_compile": ready_for_compile,
+                }
+            )
+        }
+    )
+
+
 def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> AutoResearchRunRead:
     payload = run.model_copy(update={"updated_at": _utcnow()}) if touch_updated_at else run.model_copy()
     base = run_dir(payload.project_id, payload.id)
+    payload = _refresh_paper_compile_report(payload, base=base)
     _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
     if payload.program is not None:
         _write_json(base / PROGRAM_FILENAME, payload.program.model_dump(mode="json"))

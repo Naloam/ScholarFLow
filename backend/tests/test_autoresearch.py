@@ -1076,6 +1076,9 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
             }
         )
         autoresearch_repository.save_run(updated_run)
+        paper_sources_dir = Path(run.paper_sources_dir or "")
+        (paper_sources_dir / "main.pdf").write_bytes(b"%PDF-1.4\n% persisted manual compile\n")
+        (paper_sources_dir / "main.bbl").write_text("% persisted bibliography pass\n", encoding="utf-8")
 
         rebuild_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/paper/rebuild")
         assert rebuild_response.status_code == 200
@@ -1091,12 +1094,14 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
         assert "\\bibliography{references}" in rebuilt["paper_latex_source"]
         assert rebuilt["paper_compile_report"]["ready_for_compile"] is True
         assert rebuilt["paper_compile_report"]["missing_required_inputs"] == []
-        assert rebuilt["paper_compile_report"]["materialized_outputs"] == []
+        assert rebuilt["paper_compile_report"]["materialized_outputs"] == ["main.pdf", "main.bbl"]
         assert rebuilt["paper_sources_manifest"]["compiler_hint"] == "pdflatex + bibtex"
         assert rebuilt["paper_sources_manifest"]["expected_outputs"] == ["main.pdf", "main.bbl"]
         assert rebuilt["paper_compile_report"]["expected_outputs"] == ["main.pdf", "main.bbl"]
         assert Path(rebuilt["paper_path"]).read_text(encoding="utf-8") == rebuilt["paper_markdown"]
         assert json.loads(Path(rebuilt["paper_compile_report_path"]).read_text(encoding="utf-8"))["ready_for_compile"] is True
+        assert Path(rebuilt["paper_sources_dir"], "main.pdf").is_file()
+        assert Path(rebuilt["paper_sources_dir"], "main.bbl").is_file()
         assert Path(rebuilt["paper_latex_path"]).read_text(encoding="utf-8") == rebuilt["paper_latex_source"]
         assert Path(rebuilt["paper_bibliography_path"]).read_text(encoding="utf-8") == rebuilt["paper_bibliography_bib"]
         selected_candidate = next(

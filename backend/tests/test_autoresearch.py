@@ -408,6 +408,7 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         assert registry["files"]["claim_evidence_matrix_json"]["exists"] is True
         assert registry["files"]["paper_plan_json"]["exists"] is True
         assert registry["files"]["figure_plan_json"]["exists"] is True
+        assert registry["files"]["paper_revision_history_markdown"]["exists"] is True
         assert registry["files"]["paper_revision_state_json"]["exists"] is True
         assert registry["files"]["paper_compile_report_json"]["exists"] is True
         assert registry["files"]["paper_revision_brief_markdown"]["exists"] is True
@@ -425,6 +426,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "narrative_report"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_revision_history"
             for edge in registry["lineage"]["edges"]
         )
         assert any(
@@ -485,6 +490,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_plan"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_revision_history"
             for edge in candidate_registry["lineage"]["edges"]
         )
         assert any(
@@ -608,9 +617,13 @@ def test_autoresearch_bundle_index_exposes_selected_and_portfolio_assets(
         assert any(item["role"] == "run_claim_evidence_matrix_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_plan_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_figure_plan_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_revision_history_markdown" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_revision_brief_markdown" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_revision_state_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_compile_report_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_sources_dir" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_build_script" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_checkpoint_index_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_latex_source" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_bibliography_bib" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_sources_manifest_json" for item in selected_bundle["assets"])
@@ -1454,6 +1467,10 @@ def test_autoresearch_publish_package_is_derived_from_selected_bundle(
         assert "attempts_json" in final_required_roles
         assert "artifact_json" in final_required_roles
         assert "run_artifact_json" in optional_roles
+        assert "run_paper_revision_history_markdown" in optional_roles
+        assert "run_paper_revision_brief_markdown" in optional_roles
+        assert "run_paper_build_script" in optional_roles
+        assert "run_paper_checkpoint_index_json" in optional_roles
         assert "generated_code" in optional_roles
         assert Path(package["review_path"]).is_file()
         assert Path(package["manifest_path"]).is_file()
@@ -1629,6 +1646,10 @@ def test_autoresearch_publish_export_materializes_archive(
         assert "run.json" in names
         assert any(name.endswith("/manifest.json") for name in names)
         assert any(name.endswith("/artifact.json") for name in names)
+        assert "paper_sources/revision_history.md" in names
+        assert "paper_sources/revision_brief.md" in names
+        assert "paper_sources/build.sh" in names
+        assert "paper_sources/checkpoints/index.json" in names
         assert archive_manifest["bundle_kind"] == "review_bundle"
         assert archive_manifest["review_bundle_ready"] is True
         assert archive_manifest["final_publish_ready"] is False

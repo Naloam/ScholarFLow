@@ -510,6 +510,7 @@ export type AutoResearchLineageEdge = {
     | "claim_evidence_matrix"
     | "paper_plan"
     | "figure_plan"
+    | "paper_revision_history"
     | "paper_revision_state"
     | "paper_compile_report"
     | "paper_revision_brief"
@@ -539,6 +540,7 @@ export type AutoResearchLineageEdge = {
     | "claim_evidence_matrix"
     | "paper_plan"
     | "figure_plan"
+    | "paper_revision_history"
     | "paper_revision_state"
     | "paper_compile_report"
     | "paper_revision_brief"
@@ -568,6 +570,7 @@ export type AutoResearchRunRegistryFiles = {
   claim_evidence_matrix_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
+  paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
   paper_revision_state_json?: AutoResearchRegistryAssetRef | null;
   paper_compile_report_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_brief_markdown?: AutoResearchRegistryAssetRef | null;
@@ -686,9 +689,13 @@ export type AutoResearchBundleAssetRead = {
     | "run_claim_evidence_matrix_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
+    | "run_paper_revision_history_markdown"
+    | "run_paper_revision_brief_markdown"
     | "run_paper_revision_state_json"
     | "run_paper_compile_report_json"
     | "run_paper_sources_dir"
+    | "run_paper_build_script"
+    | "run_paper_checkpoint_index_json"
     | "run_paper_latex_source"
     | "run_paper_bibliography_bib"
     | "run_paper_sources_manifest_json"

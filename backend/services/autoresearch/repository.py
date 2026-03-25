@@ -402,6 +402,7 @@ def _candidate_lineage_edges(
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
+            ("paper_revision_history_markdown", "paper_revision_history"),
             ("paper_revision_state_json", "paper_revision_state"),
             ("paper_compile_report_json", "paper_compile_report"),
             ("paper_revision_brief_markdown", "paper_revision_brief"),
@@ -472,6 +473,7 @@ def _run_lineage_edges(
         ("claim_evidence_matrix_json", "claim_evidence_matrix"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
+        ("paper_revision_history_markdown", "paper_revision_history"),
         ("paper_revision_state_json", "paper_revision_state"),
         ("paper_compile_report_json", "paper_compile_report"),
         ("paper_revision_brief_markdown", "paper_revision_brief"),
@@ -620,6 +622,20 @@ def _run_bundle_assets(
             required=False,
         ),
         _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_revision_history_markdown",
+            label="Selected run paper revision history",
+            role="run_paper_revision_history_markdown",
+            ref=files.paper_revision_history_markdown,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_revision_brief_markdown",
+            label="Selected run paper revision brief",
+            role="run_paper_revision_brief_markdown",
+            ref=files.paper_revision_brief_markdown,
+            required=False,
+        ),
+        _bundle_asset(
             asset_id=f"{run_registry.run_id}:run_paper_revision_state_json",
             label="Selected run paper revision state",
             role="run_paper_revision_state_json",
@@ -638,6 +654,20 @@ def _run_bundle_assets(
             label="Selected run paper sources directory",
             role="run_paper_sources_dir",
             ref=files.paper_sources_dir,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_build_script",
+            label="Selected run paper build script",
+            role="run_paper_build_script",
+            ref=files.paper_build_script,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_checkpoint_index_json",
+            label="Selected run paper checkpoint index",
+            role="run_paper_checkpoint_index_json",
+            ref=files.paper_checkpoint_index_json,
             required=False,
         ),
         _bundle_asset(
@@ -1124,6 +1154,9 @@ def load_candidate_registry(
             figure_plan_json=_asset_ref(
                 current_run.figure_plan_path or (run_base / FIGURE_PLAN_FILENAME)
             ),
+            paper_revision_history_markdown=_asset_ref(
+                run_base / PAPER_SOURCES_DIRNAME / PAPER_REVISION_HISTORY_FILENAME
+            ),
             paper_revision_state_json=_asset_ref(
                 current_run.paper_revision_state_path or (run_base / PAPER_REVISION_STATE_FILENAME)
             ),
@@ -1250,6 +1283,9 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         ),
         figure_plan_json=_asset_ref(
             run.figure_plan_path or (base / FIGURE_PLAN_FILENAME)
+        ),
+        paper_revision_history_markdown=_asset_ref(
+            base / PAPER_SOURCES_DIRNAME / PAPER_REVISION_HISTORY_FILENAME
         ),
         paper_revision_state_json=_asset_ref(
             run.paper_revision_state_path or (base / PAPER_REVISION_STATE_FILENAME)

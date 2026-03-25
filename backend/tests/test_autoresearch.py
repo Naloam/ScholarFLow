@@ -216,6 +216,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "pdflatex main.tex" in run["paper_sources_manifest"]["compile_commands"]
         assert run["paper_sources_manifest"]["compiler_hint"] in {"pdflatex", "pdflatex + bibtex"}
         paper_sources_files = {item["relative_path"] for item in run["paper_sources_manifest"]["files"]}
+        assert "paper.md" in paper_sources_files
         assert "narrative_report.md" in paper_sources_files
         assert "claim_evidence_matrix.json" in paper_sources_files
         assert "paper_plan.json" in paper_sources_files
@@ -228,6 +229,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
             or "% No bibliography pass is required for this run." in run["paper_latex_source"]
         )
         assert run["paper_bibliography_bib"]
+        assert (Path(run["paper_sources_dir"]) / "paper.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "narrative_report.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "claim_evidence_matrix.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_plan.json").is_file()

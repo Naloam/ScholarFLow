@@ -1202,6 +1202,11 @@ Program objective:
             compile_commands=compile_commands,
             files=[
                 AutoResearchPaperSourceFileRead(
+                    relative_path="paper.md",
+                    kind="markdown",
+                    description="Grounded Markdown manuscript snapshot carried with the paper workspace for offline revision work.",
+                ),
+                AutoResearchPaperSourceFileRead(
                     relative_path="narrative_report.md",
                     kind="markdown",
                     description="Persisted narrative report copied into the paper source package for offline revision work.",

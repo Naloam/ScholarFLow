@@ -663,12 +663,15 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
     if payload.paper_revision_state is not None:
         _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
     if (
-        payload.paper_latex_source is not None
+        payload.paper_markdown is not None
+        or payload.paper_latex_source is not None
         or payload.paper_bibliography_bib is not None
         or payload.paper_sources_manifest is not None
     ):
         paper_sources_dir = base / PAPER_SOURCES_DIRNAME
         paper_sources_dir.mkdir(parents=True, exist_ok=True)
+        if payload.paper_markdown is not None:
+            (paper_sources_dir / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
         if payload.narrative_report_markdown:
             (paper_sources_dir / NARRATIVE_REPORT_FILENAME).write_text(
                 payload.narrative_report_markdown,

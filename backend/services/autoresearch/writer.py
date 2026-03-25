@@ -218,6 +218,7 @@ class PaperWriter:
             f"{round_dir}/revision_brief.md",
             f"{round_dir}/paper_revision_state.json",
             f"{round_dir}/paper_compile_report.json",
+            f"{round_dir}/build.sh",
             f"{round_dir}/main.tex",
             f"{round_dir}/references.bib",
             f"{round_dir}/manifest.json",
@@ -345,6 +346,7 @@ class PaperWriter:
                         "review_loop.json",
                         "paper_sources/paper_compile_report.json",
                         "paper_sources/paper.md",
+                        "paper_sources/build.sh",
                         "paper_sources/main.tex",
                         "paper_sources/references.bib",
                         "paper_sources/manifest.json",
@@ -1083,6 +1085,7 @@ Program objective:
                     "paper_compile_report.json",
                     "paper_sources/paper_compile_report.json",
                     "paper_sources/paper.md",
+                    "paper_sources/build.sh",
                     "paper_sources/main.tex",
                     "paper_sources/references.bib",
                     "paper_sources/manifest.json",
@@ -1188,6 +1191,28 @@ Program objective:
             entries.append("@misc{ref" + str(index) + ",\n" + ",\n".join(fields) + "\n}")
         return "\n\n".join(entries) + "\n"
 
+    def build_paper_build_script(
+        self,
+        *,
+        paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+    ) -> str:
+        commands = [
+            item
+            for item in paper_sources_manifest.compile_commands
+            if not item.strip().startswith("./")
+        ]
+        body = "\n".join(commands) if commands else ":"
+        return "\n".join(
+            [
+                "#!/bin/sh",
+                "set -eu",
+                "",
+                'cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+                body,
+                "",
+            ]
+        )
+
     def build_paper_latex_source(
         self,
         paper_markdown: str,
@@ -1283,7 +1308,7 @@ Program objective:
         has_bibliography: bool,
         include_revision_checkpoints: bool = False,
     ) -> AutoResearchPaperSourcesManifestRead:
-        compile_commands = ["pdflatex main.tex"]
+        compile_commands = ["./build.sh", "pdflatex main.tex"]
         if has_bibliography:
             compile_commands.append("bibtex main")
         compile_commands.extend(["pdflatex main.tex", "pdflatex main.tex"])
@@ -1338,6 +1363,11 @@ Program objective:
                     relative_path="paper_compile_report.json",
                     kind="json",
                     description="Compile-readiness snapshot for the paper workspace, including expected outputs and missing-input checks.",
+                ),
+                AutoResearchPaperSourceFileRead(
+                    relative_path="build.sh",
+                    kind="shell",
+                    description="Portable shell entrypoint that runs the persisted compile commands for the paper workspace.",
                 ),
                 *(
                     [

@@ -215,6 +215,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "paper_compile_report.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/paper_compile_report.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/paper.md" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
+        assert "paper_sources/build.sh" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/main.tex" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/checkpoints/index.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert (
@@ -242,6 +243,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "revision_brief.md" in paper_sources_files
         assert "paper_revision_state.json" in paper_sources_files
         assert "paper_compile_report.json" in paper_sources_files
+        assert "build.sh" in paper_sources_files
         assert "checkpoints/index.json" in paper_sources_files
         assert any(item["relative_path"] == "references.bib" for item in run["paper_sources_manifest"]["files"])
         assert "\\documentclass{article}" in run["paper_latex_source"]
@@ -258,10 +260,15 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert (Path(run["paper_sources_dir"]) / "revision_brief.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_revision_state.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_compile_report.json").is_file()
+        build_script = Path(run["paper_sources_dir"]) / "build.sh"
+        assert build_script.is_file()
+        assert build_script.read_text(encoding="utf-8").startswith("#!/bin/sh")
+        assert "pdflatex main.tex" in build_script.read_text(encoding="utf-8")
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "index.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "checkpoint.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "paper.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "revision_brief.md").is_file()
+        assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "build.sh").is_file()
         compile_report_payload = json.loads(Path(run["paper_compile_report_path"]).read_text(encoding="utf-8"))
         assert compile_report_payload["ready_for_compile"] is True
         assert compile_report_payload["expected_outputs"] == run["paper_sources_manifest"]["expected_outputs"]
@@ -965,9 +972,14 @@ def test_autoresearch_paper_revision_state_tracks_review_loop_progress(
             "paper_sources/checkpoints/round_0001/checkpoint.json"
             in synced_run.paper_revision_state.checkpoints[-1].relative_assets
         )
+        assert (
+            "paper_sources/checkpoints/round_0001/build.sh"
+            in synced_run.paper_revision_state.checkpoints[-1].relative_assets
+        )
         assert "review.json" in synced_run.paper_revision_state.checkpoints[-1].relative_assets
         assert "review_loop.json" in synced_run.paper_revision_state.checkpoints[-1].relative_assets
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "checkpoint.json").is_file()
+        assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "build.sh").is_file()
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "review.json").is_file()
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "review_loop.json").is_file()
 
@@ -1060,6 +1072,7 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         assert checkpoint_index["current_revision_round"] == 2
         assert [item["revision_round"] for item in checkpoint_index["checkpoints"]] == [0, 1, 2]
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "checkpoint.json").is_file()
+        assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "build.sh").is_file()
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "paper.md").is_file()
     finally:
         client.close()

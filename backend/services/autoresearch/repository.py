@@ -56,6 +56,7 @@ PAPER_SOURCES_DIRNAME = "paper_sources"
 PAPER_CHECKPOINTS_DIRNAME = "checkpoints"
 PAPER_CHECKPOINT_INDEX_FILENAME = "index.json"
 PAPER_CHECKPOINT_SUMMARY_FILENAME = "checkpoint.json"
+PAPER_BUILD_SCRIPT_FILENAME = "build.sh"
 PAPER_LATEX_FILENAME = "main.tex"
 PAPER_BIB_FILENAME = "references.bib"
 PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
@@ -131,6 +132,14 @@ def _paper_revision_brief(run: AutoResearchRunRead) -> str | None:
     )
 
 
+def _paper_build_script(run: AutoResearchRunRead) -> str | None:
+    if run.paper_sources_manifest is None:
+        return None
+    return PaperWriter().build_paper_build_script(
+        paper_sources_manifest=run.paper_sources_manifest,
+    )
+
+
 def _paper_checkpoint_dir(paper_sources_dir: Path, revision_round: int) -> Path:
     return paper_sources_dir / PAPER_CHECKPOINTS_DIRNAME / f"round_{revision_round:04d}"
 
@@ -141,6 +150,7 @@ def _write_paper_revision_checkpoints(
     base: Path,
     paper_sources_dir: Path,
     revision_brief: str | None,
+    paper_build_script: str | None,
 ) -> None:
     if payload.paper_revision_state is None:
         return
@@ -200,6 +210,10 @@ def _write_paper_revision_checkpoints(
                 checkpoint_dir / PAPER_COMPILE_REPORT_FILENAME,
                 payload.paper_compile_report.model_dump(mode="json"),
             )
+        if paper_build_script is not None:
+            build_script_path = checkpoint_dir / PAPER_BUILD_SCRIPT_FILENAME
+            build_script_path.write_text(paper_build_script, encoding="utf-8")
+            build_script_path.chmod(0o755)
         if payload.paper_latex_source is not None:
             (checkpoint_dir / PAPER_LATEX_FILENAME).write_text(payload.paper_latex_source, encoding="utf-8")
         if payload.paper_bibliography_bib is not None:
@@ -835,6 +849,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         paper_sources_dir = base / PAPER_SOURCES_DIRNAME
         paper_sources_dir.mkdir(parents=True, exist_ok=True)
         revision_brief = _paper_revision_brief(payload)
+        paper_build_script = _paper_build_script(payload)
         if payload.paper_markdown is not None:
             (paper_sources_dir / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
         if payload.narrative_report_markdown:
@@ -869,6 +884,10 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 paper_sources_dir / PAPER_COMPILE_REPORT_FILENAME,
                 payload.paper_compile_report.model_dump(mode="json"),
             )
+        if paper_build_script is not None:
+            build_script_path = paper_sources_dir / PAPER_BUILD_SCRIPT_FILENAME
+            build_script_path.write_text(paper_build_script, encoding="utf-8")
+            build_script_path.chmod(0o755)
         if payload.paper_latex_source is not None:
             (paper_sources_dir / PAPER_LATEX_FILENAME).write_text(payload.paper_latex_source, encoding="utf-8")
         if payload.paper_bibliography_bib is not None:
@@ -883,6 +902,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
             base=base,
             paper_sources_dir=paper_sources_dir,
             revision_brief=revision_brief,
+            paper_build_script=paper_build_script,
         )
     return payload
 

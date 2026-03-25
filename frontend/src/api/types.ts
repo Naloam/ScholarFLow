@@ -387,6 +387,19 @@ export type AutoResearchPaperSourcesManifest = {
   files: AutoResearchPaperSourceFile[];
 };
 
+export type AutoResearchPaperCompileReport = {
+  generated_at: string;
+  entrypoint: string;
+  bibliography?: string | null;
+  compiler_hint: string;
+  compile_commands: string[];
+  required_inputs: string[];
+  missing_required_inputs: string[];
+  expected_outputs: string[];
+  materialized_outputs: string[];
+  ready_for_compile: boolean;
+};
+
 export type AutoResearchRun = {
   id: string;
   project_id: string;
@@ -403,6 +416,8 @@ export type AutoResearchRun = {
   figure_plan_path?: string | null;
   paper_revision_state?: AutoResearchPaperRevisionState | null;
   paper_revision_state_path?: string | null;
+  paper_compile_report?: AutoResearchPaperCompileReport | null;
+  paper_compile_report_path?: string | null;
   paper_sources_dir?: string | null;
   paper_latex_source?: string | null;
   paper_latex_path?: string | null;
@@ -492,6 +507,7 @@ export type AutoResearchLineageEdge = {
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_state"
+    | "paper_compile_report"
     | "paper_sources"
     | "paper_latex"
     | "paper_bibliography"
@@ -542,6 +558,7 @@ export type AutoResearchRunRegistryFiles = {
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_state_json?: AutoResearchRegistryAssetRef | null;
+  paper_compile_report_json?: AutoResearchRegistryAssetRef | null;
   paper_sources_dir?: AutoResearchRegistryAssetRef | null;
   paper_latex_source?: AutoResearchRegistryAssetRef | null;
   paper_bibliography_bib?: AutoResearchRegistryAssetRef | null;
@@ -656,6 +673,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_plan_json"
     | "run_figure_plan_json"
     | "run_paper_revision_state_json"
+    | "run_paper_compile_report_json"
     | "run_paper_sources_dir"
     | "run_paper_latex_source"
     | "run_paper_bibliography_bib"

@@ -31,6 +31,7 @@ from services.autoresearch.repository import (
     load_run,
     load_benchmark_snapshot,
     narrative_report_file_path,
+    paper_compile_report_file_path,
     paper_latex_file_path,
     paper_plan_file_path,
     paper_revision_state_file_path,
@@ -709,6 +710,7 @@ class AutoResearchOrchestrator:
         paper_plan_path = paper_plan_file_path(project_id, run_id)
         figure_plan_path = figure_plan_file_path(project_id, run_id)
         paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
+        paper_compile_report_path = paper_compile_report_file_path(project_id, run_id)
         paper_sources_dir = paper_sources_dir_path(project_id, run_id)
         paper_latex_path = paper_latex_file_path(project_id, run_id)
         paper_bibliography_path = paper_bibliography_file_path(project_id, run_id)
@@ -757,6 +759,8 @@ class AutoResearchOrchestrator:
                     "figure_plan_path": figure_plan_path,
                     "paper_revision_state": paper_pipeline.paper_revision_state,
                     "paper_revision_state_path": paper_revision_state_path,
+                    "paper_compile_report": paper_pipeline.paper_compile_report,
+                    "paper_compile_report_path": paper_compile_report_path,
                     "paper_sources_dir": paper_sources_dir,
                     "paper_latex_source": paper_pipeline.paper_latex_source,
                     "paper_latex_path": paper_latex_path,
@@ -980,6 +984,8 @@ class AutoResearchOrchestrator:
                         "figure_plan_path": None,
                         "paper_revision_state": None,
                         "paper_revision_state_path": None,
+                        "paper_compile_report": None,
+                        "paper_compile_report_path": None,
                         "paper_sources_dir": None,
                         "paper_latex_source": None,
                         "paper_latex_path": None,
@@ -1374,6 +1380,7 @@ class AutoResearchOrchestrator:
             paper_plan_path = paper_plan_file_path(project_id, run_id)
             figure_plan_path = figure_plan_file_path(project_id, run_id)
             paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
+            paper_compile_report_path = paper_compile_report_file_path(project_id, run_id)
             paper_sources_dir = paper_sources_dir_path(project_id, run_id)
             paper_latex_path = paper_latex_file_path(project_id, run_id)
             paper_bibliography_path = paper_bibliography_file_path(project_id, run_id)
@@ -1439,6 +1446,8 @@ class AutoResearchOrchestrator:
                         "figure_plan_path": figure_plan_path,
                         "paper_revision_state": paper_pipeline.paper_revision_state,
                         "paper_revision_state_path": paper_revision_state_path,
+                        "paper_compile_report": paper_pipeline.paper_compile_report,
+                        "paper_compile_report_path": paper_compile_report_path,
                         "paper_sources_dir": paper_sources_dir,
                         "paper_latex_source": paper_pipeline.paper_latex_source,
                         "paper_latex_path": paper_latex_path,

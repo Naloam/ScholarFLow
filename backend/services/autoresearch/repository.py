@@ -49,6 +49,7 @@ CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
 PAPER_REVISION_STATE_FILENAME = "paper_revision_state.json"
+PAPER_COMPILE_REPORT_FILENAME = "paper_compile_report.json"
 PAPER_SOURCES_DIRNAME = "paper_sources"
 PAPER_LATEX_FILENAME = "main.tex"
 PAPER_BIB_FILENAME = "references.bib"
@@ -268,6 +269,7 @@ def _candidate_lineage_edges(
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
             ("paper_revision_state_json", "paper_revision_state"),
+            ("paper_compile_report_json", "paper_compile_report"),
             ("paper_sources_dir", "paper_sources"),
             ("paper_latex_source", "paper_latex"),
             ("paper_bibliography_bib", "paper_bibliography"),
@@ -334,6 +336,7 @@ def _run_lineage_edges(
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
         ("paper_revision_state_json", "paper_revision_state"),
+        ("paper_compile_report_json", "paper_compile_report"),
         ("paper_sources_dir", "paper_sources"),
         ("paper_latex_source", "paper_latex"),
         ("paper_bibliography_bib", "paper_bibliography"),
@@ -481,6 +484,13 @@ def _run_bundle_assets(
             label="Selected run paper revision state",
             role="run_paper_revision_state_json",
             ref=files.paper_revision_state_json,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_compile_report_json",
+            label="Selected run paper compile report",
+            role="run_paper_compile_report_json",
+            ref=files.paper_compile_report_json,
             required=False,
         ),
         _bundle_asset(
@@ -662,8 +672,11 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         _write_json(base / FIGURE_PLAN_FILENAME, payload.figure_plan.model_dump(mode="json"))
     if payload.paper_revision_state is not None:
         _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
+    if payload.paper_compile_report is not None:
+        _write_json(base / PAPER_COMPILE_REPORT_FILENAME, payload.paper_compile_report.model_dump(mode="json"))
     if (
         payload.paper_markdown is not None
+        or payload.paper_compile_report is not None
         or payload.paper_latex_source is not None
         or payload.paper_bibliography_bib is not None
         or payload.paper_sources_manifest is not None
@@ -696,6 +709,11 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
             _write_json(
                 paper_sources_dir / PAPER_REVISION_STATE_FILENAME,
                 payload.paper_revision_state.model_dump(mode="json"),
+            )
+        if payload.paper_compile_report is not None:
+            _write_json(
+                paper_sources_dir / PAPER_COMPILE_REPORT_FILENAME,
+                payload.paper_compile_report.model_dump(mode="json"),
             )
         if payload.paper_latex_source is not None:
             (paper_sources_dir / PAPER_LATEX_FILENAME).write_text(payload.paper_latex_source, encoding="utf-8")
@@ -766,6 +784,10 @@ def figure_plan_file_path(project_id: str, run_id: str) -> str:
 
 def paper_revision_state_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_REVISION_STATE_FILENAME)
+
+
+def paper_compile_report_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PAPER_COMPILE_REPORT_FILENAME)
 
 
 def paper_sources_dir_path(project_id: str, run_id: str) -> str:
@@ -896,6 +918,9 @@ def load_candidate_registry(
             paper_revision_state_json=_asset_ref(
                 current_run.paper_revision_state_path or (run_base / PAPER_REVISION_STATE_FILENAME)
             ),
+            paper_compile_report_json=_asset_ref(
+                current_run.paper_compile_report_path or (run_base / PAPER_COMPILE_REPORT_FILENAME)
+            ),
             paper_sources_dir=_asset_ref(
                 current_run.paper_sources_dir or (run_base / PAPER_SOURCES_DIRNAME),
                 kind="directory",
@@ -1010,6 +1035,9 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         ),
         paper_revision_state_json=_asset_ref(
             run.paper_revision_state_path or (base / PAPER_REVISION_STATE_FILENAME)
+        ),
+        paper_compile_report_json=_asset_ref(
+            run.paper_compile_report_path or (base / PAPER_COMPILE_REPORT_FILENAME)
         ),
         paper_sources_dir=_asset_ref(
             run.paper_sources_dir or (base / PAPER_SOURCES_DIRNAME),

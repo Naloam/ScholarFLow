@@ -10,6 +10,7 @@ from schemas.autoresearch import (
     AutoResearchFigurePlanItemRead,
     AutoResearchFigurePlanRead,
     AutoResearchPaperPipelineArtifactsRead,
+    AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchPaperRevisionActionRead,
@@ -309,8 +310,10 @@ class PaperWriter:
                         "paper_plan.json",
                         "figure_plan.json",
                         "paper_revision_state.json",
+                        "paper_compile_report.json",
                         "review.json",
                         "review_loop.json",
+                        "paper_sources/paper_compile_report.json",
                         "paper_sources/paper.md",
                         "paper_sources/main.tex",
                         "paper_sources/references.bib",
@@ -1042,6 +1045,8 @@ Program objective:
                     "paper_plan.json",
                     "figure_plan.json",
                     "paper_revision_state.json",
+                    "paper_compile_report.json",
+                    "paper_sources/paper_compile_report.json",
                     "paper_sources/paper.md",
                     "paper_sources/main.tex",
                     "paper_sources/references.bib",
@@ -1059,6 +1064,7 @@ Program objective:
                 "Persisted claim-evidence matrix",
                 "Persisted paper plan",
                 "Persisted figure plan",
+                "Persisted paper compile report",
                 "Persisted compile-ready paper sources",
                 "Rendered grounded manuscript draft",
             ],
@@ -1238,6 +1244,11 @@ Program objective:
                     description="Latest paper revision state copied into the paper source package for resume workflows.",
                 ),
                 AutoResearchPaperSourceFileRead(
+                    relative_path="paper_compile_report.json",
+                    kind="json",
+                    description="Compile-readiness snapshot for the paper workspace, including expected outputs and missing-input checks.",
+                ),
+                AutoResearchPaperSourceFileRead(
                     relative_path="main.tex",
                     kind="latex",
                     description="Compile-oriented LaTeX manuscript generated from the grounded paper draft.",
@@ -1253,6 +1264,35 @@ Program objective:
                     description="Paper source package manifest with compile commands and file inventory.",
                 ),
             ],
+        )
+
+    def build_paper_compile_report(
+        self,
+        *,
+        paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+    ) -> AutoResearchPaperCompileReportRead:
+        workspace_files = {item.relative_path for item in paper_sources_manifest.files}
+        required_inputs = [paper_sources_manifest.entrypoint]
+        if (
+            paper_sources_manifest.bibliography is not None
+            and any(command.startswith("bibtex ") for command in paper_sources_manifest.compile_commands)
+        ):
+            required_inputs.append(paper_sources_manifest.bibliography)
+        required_inputs = _dedupe_preserving_order(required_inputs)
+        expected_outputs = list(paper_sources_manifest.expected_outputs)
+        missing_required_inputs = [item for item in required_inputs if item not in workspace_files]
+        materialized_outputs = [item for item in expected_outputs if item in workspace_files]
+        return AutoResearchPaperCompileReportRead(
+            generated_at=_utcnow(),
+            entrypoint=paper_sources_manifest.entrypoint,
+            bibliography=paper_sources_manifest.bibliography,
+            compiler_hint=paper_sources_manifest.compiler_hint,
+            compile_commands=list(paper_sources_manifest.compile_commands),
+            required_inputs=required_inputs,
+            missing_required_inputs=missing_required_inputs,
+            expected_outputs=expected_outputs,
+            materialized_outputs=materialized_outputs,
+            ready_for_compile=not missing_required_inputs,
         )
 
     def build_pipeline(
@@ -1325,12 +1365,16 @@ Program objective:
         paper_sources_manifest = self.build_paper_sources_manifest(
             has_bibliography=bool(literature),
         )
+        paper_compile_report = self.build_paper_compile_report(
+            paper_sources_manifest=paper_sources_manifest,
+        )
         return AutoResearchPaperPipelineArtifactsRead(
             narrative_report_markdown=narrative_report_markdown,
             claim_evidence_matrix=claim_evidence_matrix,
             paper_plan=paper_plan,
             figure_plan=figure_plan,
             paper_revision_state=paper_revision_state,
+            paper_compile_report=paper_compile_report,
             paper_latex_source=paper_latex_source,
             paper_bibliography_bib=paper_bibliography_bib,
             paper_sources_manifest=paper_sources_manifest,

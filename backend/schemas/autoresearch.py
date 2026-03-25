@@ -40,6 +40,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_state_json",
+    "run_paper_compile_report_json",
     "run_paper_sources_dir",
     "run_paper_latex_source",
     "run_paper_bibliography_bib",
@@ -73,6 +74,7 @@ AutoResearchLineageNodeKind = Literal[
     "paper_plan",
     "figure_plan",
     "paper_revision_state",
+    "paper_compile_report",
     "paper_sources",
     "paper_latex",
     "paper_bibliography",
@@ -655,12 +657,26 @@ class AutoResearchPaperSourcesManifestRead(BaseModel):
     files: list[AutoResearchPaperSourceFileRead] = Field(default_factory=list)
 
 
+class AutoResearchPaperCompileReportRead(BaseModel):
+    generated_at: datetime
+    entrypoint: str
+    bibliography: str | None = None
+    compiler_hint: str
+    compile_commands: list[str] = Field(default_factory=list)
+    required_inputs: list[str] = Field(default_factory=list)
+    missing_required_inputs: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    materialized_outputs: list[str] = Field(default_factory=list)
+    ready_for_compile: bool = False
+
+
 class AutoResearchPaperPipelineArtifactsRead(BaseModel):
     narrative_report_markdown: str
     claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead
     paper_plan: AutoResearchPaperPlanRead
     figure_plan: AutoResearchFigurePlanRead
     paper_revision_state: AutoResearchPaperRevisionStateRead
+    paper_compile_report: AutoResearchPaperCompileReportRead
     paper_latex_source: str
     paper_bibliography_bib: str
     paper_sources_manifest: AutoResearchPaperSourcesManifestRead
@@ -770,6 +786,8 @@ class AutoResearchRunRead(BaseModel):
     figure_plan_path: str | None = None
     paper_revision_state: AutoResearchPaperRevisionStateRead | None = None
     paper_revision_state_path: str | None = None
+    paper_compile_report: AutoResearchPaperCompileReportRead | None = None
+    paper_compile_report_path: str | None = None
     paper_sources_dir: str | None = None
     paper_latex_source: str | None = None
     paper_latex_path: str | None = None
@@ -830,6 +848,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_state_json: AutoResearchRegistryAssetRef | None = None
+    paper_compile_report_json: AutoResearchRegistryAssetRef | None = None
     paper_sources_dir: AutoResearchRegistryAssetRef | None = None
     paper_latex_source: AutoResearchRegistryAssetRef | None = None
     paper_bibliography_bib: AutoResearchRegistryAssetRef | None = None

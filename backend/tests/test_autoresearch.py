@@ -137,6 +137,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert Path(run["paper_plan_path"]).is_file()
         assert Path(run["figure_plan_path"]).is_file()
         assert Path(run["paper_revision_state_path"]).is_file()
+        assert Path(run["paper_compile_report_path"]).is_file()
         assert Path(run["paper_sources_dir"]).is_dir()
         assert Path(run["paper_latex_path"]).is_file()
         assert Path(run["paper_bibliography_path"]).is_file()
@@ -211,8 +212,14 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["paper_revision_state"]["focus_sections"]
         assert run["paper_revision_state"]["next_actions"]
         assert run["paper_revision_state"]["checkpoints"][0]["revision_round"] == 0
+        assert "paper_compile_report.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
+        assert "paper_sources/paper_compile_report.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/paper.md" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/main.tex" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
+        assert run["paper_compile_report"]["ready_for_compile"] is True
+        assert run["paper_compile_report"]["missing_required_inputs"] == []
+        assert run["paper_compile_report"]["materialized_outputs"] == []
+        assert run["paper_compile_report"]["expected_outputs"] == run["paper_sources_manifest"]["expected_outputs"]
         assert run["paper_sources_manifest"]["entrypoint"] == "main.tex"
         assert "pdflatex main.tex" in run["paper_sources_manifest"]["compile_commands"]
         assert run["paper_sources_manifest"]["compiler_hint"] in {"pdflatex", "pdflatex + bibtex"}
@@ -228,6 +235,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "paper_plan.json" in paper_sources_files
         assert "figure_plan.json" in paper_sources_files
         assert "paper_revision_state.json" in paper_sources_files
+        assert "paper_compile_report.json" in paper_sources_files
         assert any(item["relative_path"] == "references.bib" for item in run["paper_sources_manifest"]["files"])
         assert "\\documentclass{article}" in run["paper_latex_source"]
         assert (
@@ -241,6 +249,10 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert (Path(run["paper_sources_dir"]) / "paper_plan.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "figure_plan.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_revision_state.json").is_file()
+        assert (Path(run["paper_sources_dir"]) / "paper_compile_report.json").is_file()
+        compile_report_payload = json.loads(Path(run["paper_compile_report_path"]).read_text(encoding="utf-8"))
+        assert compile_report_payload["ready_for_compile"] is True
+        assert compile_report_payload["expected_outputs"] == run["paper_sources_manifest"]["expected_outputs"]
         assert "## 2. Related Work and Research Plan" in paper
         assert "Claim-evidence commitments carried into manuscript drafting were" in paper
         assert "Portfolio planning generated 3 ranked candidates" in paper
@@ -363,6 +375,7 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         assert registry["files"]["paper_plan_json"]["exists"] is True
         assert registry["files"]["figure_plan_json"]["exists"] is True
         assert registry["files"]["paper_revision_state_json"]["exists"] is True
+        assert registry["files"]["paper_compile_report_json"]["exists"] is True
         assert registry["files"]["paper_sources_dir"]["exists"] is True
         assert registry["files"]["paper_sources_dir"]["kind"] == "directory"
         assert registry["files"]["paper_latex_source"]["exists"] is True
@@ -379,6 +392,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "paper_latex"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_compile_report"
             for edge in registry["lineage"]["edges"]
         )
         assert len(registry["candidates"]) == 3
@@ -535,6 +552,7 @@ def test_autoresearch_bundle_index_exposes_selected_and_portfolio_assets(
         assert any(item["role"] == "run_paper_plan_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_figure_plan_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_revision_state_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_compile_report_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_sources_dir" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_latex_source" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_bibliography_bib" for item in selected_bundle["assets"])
@@ -1071,9 +1089,14 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
         assert rebuilt["paper_bibliography_bib"]
         assert "@misc{ref1" in rebuilt["paper_bibliography_bib"]
         assert "\\bibliography{references}" in rebuilt["paper_latex_source"]
+        assert rebuilt["paper_compile_report"]["ready_for_compile"] is True
+        assert rebuilt["paper_compile_report"]["missing_required_inputs"] == []
+        assert rebuilt["paper_compile_report"]["materialized_outputs"] == []
         assert rebuilt["paper_sources_manifest"]["compiler_hint"] == "pdflatex + bibtex"
         assert rebuilt["paper_sources_manifest"]["expected_outputs"] == ["main.pdf", "main.bbl"]
+        assert rebuilt["paper_compile_report"]["expected_outputs"] == ["main.pdf", "main.bbl"]
         assert Path(rebuilt["paper_path"]).read_text(encoding="utf-8") == rebuilt["paper_markdown"]
+        assert json.loads(Path(rebuilt["paper_compile_report_path"]).read_text(encoding="utf-8"))["ready_for_compile"] is True
         assert Path(rebuilt["paper_latex_path"]).read_text(encoding="utf-8") == rebuilt["paper_latex_source"]
         assert Path(rebuilt["paper_bibliography_path"]).read_text(encoding="utf-8") == rebuilt["paper_bibliography_bib"]
         selected_candidate = next(

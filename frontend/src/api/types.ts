@@ -431,6 +431,40 @@ export type AutoResearchPaperRevisionDiff = {
   sections: AutoResearchPaperRevisionDiffSection[];
 };
 
+export type AutoResearchPaperRevisionActionEntry = {
+  action_id: string;
+  title?: string | null;
+  detail: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "completed";
+  section_id?: string | null;
+  section_title: string;
+  first_seen_round: number;
+  last_seen_round: number;
+  completed_round?: number | null;
+  issue_ids: string[];
+  claim_ids: string[];
+  evidence_focus: string[];
+  packet_relative_path?: string | null;
+  diff_status: "initial" | "updated" | "unchanged";
+  current_word_count: number;
+  word_delta: number;
+  open_issue_summaries: string[];
+  resolved_issue_summaries: string[];
+  current_excerpt?: string | null;
+};
+
+export type AutoResearchPaperRevisionActionIndex = {
+  generated_at: string;
+  revision_round: number;
+  total_action_count: number;
+  pending_action_count: number;
+  completed_action_count: number;
+  materialized_action_count: number;
+  summary: string;
+  actions: AutoResearchPaperRevisionActionEntry[];
+};
+
 export type AutoResearchPaperSourcesManifest = {
   generated_at: string;
   entrypoint: string;
@@ -472,6 +506,8 @@ export type AutoResearchRun = {
   paper_revision_state_path?: string | null;
   paper_compile_report?: AutoResearchPaperCompileReport | null;
   paper_compile_report_path?: string | null;
+  paper_revision_action_index?: AutoResearchPaperRevisionActionIndex | null;
+  paper_revision_action_index_path?: string | null;
   paper_revision_diff?: AutoResearchPaperRevisionDiff | null;
   paper_revision_diff_path?: string | null;
   paper_section_rewrite_index?: AutoResearchPaperSectionRewriteIndex | null;
@@ -568,6 +604,7 @@ export type AutoResearchLineageEdge = {
     | "paper_revision_history"
     | "paper_revision_state"
     | "paper_compile_report"
+    | "paper_revision_action_index"
     | "paper_revision_diff"
     | "paper_section_rewrite_index"
     | "paper_revision_brief"
@@ -601,6 +638,7 @@ export type AutoResearchLineageEdge = {
     | "paper_revision_history"
     | "paper_revision_state"
     | "paper_compile_report"
+    | "paper_revision_action_index"
     | "paper_revision_diff"
     | "paper_section_rewrite_index"
     | "paper_revision_brief"
@@ -634,6 +672,7 @@ export type AutoResearchRunRegistryFiles = {
   paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
   paper_revision_state_json?: AutoResearchRegistryAssetRef | null;
   paper_compile_report_json?: AutoResearchRegistryAssetRef | null;
+  paper_revision_action_index_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_diff_json?: AutoResearchRegistryAssetRef | null;
   paper_section_rewrite_index_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_brief_markdown?: AutoResearchRegistryAssetRef | null;
@@ -757,6 +796,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_revision_brief_markdown"
     | "run_paper_revision_state_json"
     | "run_paper_compile_report_json"
+    | "run_paper_revision_action_index_json"
     | "run_paper_revision_diff_json"
     | "run_paper_section_rewrite_index_json"
     | "run_paper_sources_dir"

@@ -32,6 +32,7 @@ from services.autoresearch.repository import (
     load_benchmark_snapshot,
     narrative_report_file_path,
     paper_compile_report_file_path,
+    paper_revision_action_index_file_path,
     paper_revision_diff_file_path,
     paper_latex_file_path,
     paper_plan_file_path,
@@ -715,6 +716,7 @@ class AutoResearchOrchestrator:
         figure_plan_path = figure_plan_file_path(project_id, run_id)
         paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
         paper_compile_report_path = paper_compile_report_file_path(project_id, run_id)
+        paper_revision_action_index_path = paper_revision_action_index_file_path(project_id, run_id)
         paper_revision_diff_path = paper_revision_diff_file_path(project_id, run_id)
         paper_section_rewrite_index_path = paper_section_rewrite_index_file_path(project_id, run_id)
         paper_sources_dir = paper_sources_dir_path(project_id, run_id)
@@ -768,6 +770,8 @@ class AutoResearchOrchestrator:
                     "paper_revision_state_path": paper_revision_state_path,
                     "paper_compile_report": paper_pipeline.paper_compile_report,
                     "paper_compile_report_path": paper_compile_report_path,
+                    "paper_revision_action_index": paper_pipeline.paper_revision_action_index,
+                    "paper_revision_action_index_path": paper_revision_action_index_path,
                     "paper_revision_diff": paper_pipeline.paper_revision_diff,
                     "paper_revision_diff_path": paper_revision_diff_path,
                     "paper_section_rewrite_index": paper_pipeline.paper_section_rewrite_index,
@@ -998,6 +1002,8 @@ class AutoResearchOrchestrator:
                         "paper_revision_state_path": None,
                         "paper_compile_report": None,
                         "paper_compile_report_path": None,
+                        "paper_revision_action_index": None,
+                        "paper_revision_action_index_path": None,
                         "paper_revision_diff": None,
                         "paper_revision_diff_path": None,
                         "paper_section_rewrite_index": None,
@@ -1398,6 +1404,7 @@ class AutoResearchOrchestrator:
             figure_plan_path = figure_plan_file_path(project_id, run_id)
             paper_revision_state_path = paper_revision_state_file_path(project_id, run_id)
             paper_compile_report_path = paper_compile_report_file_path(project_id, run_id)
+            paper_revision_action_index_path = paper_revision_action_index_file_path(project_id, run_id)
             paper_revision_diff_path = paper_revision_diff_file_path(project_id, run_id)
             paper_section_rewrite_index_path = paper_section_rewrite_index_file_path(project_id, run_id)
             paper_sources_dir = paper_sources_dir_path(project_id, run_id)
@@ -1468,6 +1475,8 @@ class AutoResearchOrchestrator:
                         "paper_revision_state_path": paper_revision_state_path,
                         "paper_compile_report": paper_pipeline.paper_compile_report,
                         "paper_compile_report_path": paper_compile_report_path,
+                        "paper_revision_action_index": paper_pipeline.paper_revision_action_index,
+                        "paper_revision_action_index_path": paper_revision_action_index_path,
                         "paper_revision_diff": paper_pipeline.paper_revision_diff,
                         "paper_revision_diff_path": paper_revision_diff_path,
                         "paper_section_rewrite_index": paper_pipeline.paper_section_rewrite_index,

@@ -13,6 +13,8 @@ from schemas.autoresearch import (
     AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
+    AutoResearchPaperRevisionActionEntryRead,
+    AutoResearchPaperRevisionActionIndexRead,
     AutoResearchPaperRevisionActionRead,
     AutoResearchPaperRevisionCheckpointRead,
     AutoResearchPaperRevisionDiffRead,
@@ -68,6 +70,15 @@ def _latex_escape(text: str) -> str:
         "^": r"\textasciicircum{}",
     }
     return "".join(replacements.get(character, character) for character in text)
+
+
+def _excerpt(text: str, *, limit: int = 280) -> str | None:
+    collapsed = " ".join(part for part in text.split())
+    if not collapsed:
+        return None
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: max(0, limit - 3)].rstrip() + "..."
 
 
 def _render_inline_latex(text: str) -> str:
@@ -315,10 +326,12 @@ class PaperWriter:
             f"{round_dir}/figure_plan.json",
             f"{round_dir}/revision_history.md",
             f"{round_dir}/revision_diff.md",
+            f"{round_dir}/revision_actions.md",
             f"{round_dir}/revision_brief.md",
             f"{round_dir}/paper_revision_state.json",
             f"{round_dir}/paper_compile_report.json",
             f"{round_dir}/paper_revision_diff.json",
+            f"{round_dir}/paper_revision_action_index.json",
             f"{round_dir}/build.sh",
             f"{round_dir}/main.tex",
             f"{round_dir}/references.bib",
@@ -485,15 +498,19 @@ class PaperWriter:
                         "figure_plan.json",
                         "revision_history.md",
                         "revision_diff.md",
+                        "revision_actions.md",
                         "paper_revision_state.json",
                         "paper_compile_report.json",
                         "paper_revision_diff.json",
+                        "paper_revision_action_index.json",
                         "review.json",
                         "review_loop.json",
                         "paper_sources/paper_compile_report.json",
                         "paper_sources/paper_revision_diff.json",
+                        "paper_sources/paper_revision_action_index.json",
                         "paper_sources/paper.md",
                         "paper_sources/revision_diff.md",
+                        "paper_sources/revision_actions.md",
                         "paper_sources/build.sh",
                         "paper_sources/main.tex",
                         "paper_sources/references.bib",
@@ -1248,13 +1265,17 @@ Program objective:
                     "figure_plan.json",
                     "revision_history.md",
                     "revision_diff.md",
+                    "revision_actions.md",
                     "paper_revision_state.json",
                     "paper_compile_report.json",
                     "paper_revision_diff.json",
+                    "paper_revision_action_index.json",
                     "paper_sources/paper_compile_report.json",
                     "paper_sources/paper_revision_diff.json",
+                    "paper_sources/paper_revision_action_index.json",
                     "paper_sources/paper.md",
                     "paper_sources/revision_diff.md",
+                    "paper_sources/revision_actions.md",
                     "paper_sources/build.sh",
                     "paper_sources/main.tex",
                     "paper_sources/references.bib",
@@ -1704,6 +1725,191 @@ Program objective:
                 lines.extend(f"  - {item}" for item in section.resolved_issue_summaries)
         return "\n".join(lines).strip() + "\n"
 
+    def build_paper_revision_action_index(
+        self,
+        *,
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+        paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead,
+        paper_revision_diff: AutoResearchPaperRevisionDiffRead,
+        paper_markdown: str,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+        review_loop: AutoResearchReviewLoopRead | None = None,
+    ) -> AutoResearchPaperRevisionActionIndexRead:
+        packets_by_title = {
+            item.section_title: item
+            for item in paper_section_rewrite_index.packets
+        }
+        diff_by_title = {
+            item.section_title: item
+            for item in paper_revision_diff.sections
+        }
+        section_ids_by_title = {
+            item.title: item.section_id
+            for item in (paper_plan.sections if paper_plan is not None else [])
+        }
+        section_bodies = self._paper_section_bodies(paper_markdown)
+        actions: list[AutoResearchPaperRevisionActionEntryRead] = []
+
+        if review_loop is not None:
+            for action in review_loop.actions:
+                section_title = self._review_action_section_title(action, paper_plan=paper_plan)
+                packet = packets_by_title.get(section_title)
+                diff_section = diff_by_title.get(section_title)
+                current_body = section_bodies.get(_section_slug(section_title), "")
+                actions.append(
+                    AutoResearchPaperRevisionActionEntryRead(
+                        action_id=action.action_id,
+                        title=action.title,
+                        detail=action.detail,
+                        priority=action.priority,
+                        status=action.status,
+                        section_id=packet.section_id if packet is not None else section_ids_by_title.get(section_title),
+                        section_title=section_title,
+                        first_seen_round=action.first_seen_round,
+                        last_seen_round=action.last_seen_round,
+                        completed_round=action.completed_round,
+                        issue_ids=list(action.issue_ids),
+                        claim_ids=list(packet.claim_ids) if packet is not None else [],
+                        evidence_focus=list(packet.evidence_focus) if packet is not None else [],
+                        packet_relative_path=packet.relative_path if packet is not None else None,
+                        diff_status=(
+                            diff_section.status
+                            if diff_section is not None
+                            else ("initial" if paper_revision_diff.base_revision_round is None else "unchanged")
+                        ),
+                        current_word_count=(
+                            diff_section.current_word_count
+                            if diff_section is not None
+                            else len(current_body.split())
+                        ),
+                        word_delta=diff_section.word_delta if diff_section is not None else 0,
+                        open_issue_summaries=list(packet.open_issues) if packet is not None else [],
+                        resolved_issue_summaries=(
+                            list(diff_section.resolved_issue_summaries) if diff_section is not None else []
+                        ),
+                        current_excerpt=_excerpt(current_body),
+                    )
+                )
+        else:
+            for action in paper_revision_state.next_actions:
+                section_title = action.section_title
+                packet = packets_by_title.get(section_title)
+                diff_section = diff_by_title.get(section_title)
+                current_body = section_bodies.get(_section_slug(section_title), "")
+                actions.append(
+                    AutoResearchPaperRevisionActionEntryRead(
+                        action_id=action.action_id,
+                        detail=action.detail,
+                        priority=action.priority,
+                        status="pending",
+                        section_id=packet.section_id if packet is not None else section_ids_by_title.get(section_title),
+                        section_title=section_title,
+                        first_seen_round=paper_revision_state.revision_round,
+                        last_seen_round=paper_revision_state.revision_round,
+                        issue_ids=[],
+                        claim_ids=list(packet.claim_ids) if packet is not None else [],
+                        evidence_focus=list(packet.evidence_focus) if packet is not None else [],
+                        packet_relative_path=packet.relative_path if packet is not None else None,
+                        diff_status=(
+                            diff_section.status
+                            if diff_section is not None
+                            else ("initial" if paper_revision_diff.base_revision_round is None else "unchanged")
+                        ),
+                        current_word_count=(
+                            diff_section.current_word_count
+                            if diff_section is not None
+                            else len(current_body.split())
+                        ),
+                        word_delta=diff_section.word_delta if diff_section is not None else 0,
+                        open_issue_summaries=list(packet.open_issues) if packet is not None else [],
+                        resolved_issue_summaries=(
+                            list(diff_section.resolved_issue_summaries) if diff_section is not None else []
+                        ),
+                        current_excerpt=_excerpt(current_body),
+                    )
+                )
+
+        pending_action_count = sum(1 for item in actions if item.status == "pending")
+        completed_action_count = sum(1 for item in actions if item.status == "completed")
+        materialized_action_count = sum(1 for item in actions if item.packet_relative_path is not None)
+        section_count = len({item.section_title for item in actions})
+        summary = (
+            f"Initial manuscript materialization tracked {pending_action_count} pending revision actions across "
+            f"{section_count} sections."
+            if review_loop is None
+            else f"Revision round {paper_revision_state.revision_round} tracked {len(actions)} persisted revision "
+            f"actions across {section_count} sections, with {pending_action_count} pending and "
+            f"{completed_action_count} completed."
+        )
+        return AutoResearchPaperRevisionActionIndexRead(
+            generated_at=_utcnow(),
+            revision_round=paper_revision_state.revision_round,
+            total_action_count=len(actions),
+            pending_action_count=pending_action_count,
+            completed_action_count=completed_action_count,
+            materialized_action_count=materialized_action_count,
+            summary=summary,
+            actions=actions,
+        )
+
+    def build_paper_revision_action_note(
+        self,
+        paper_revision_action_index: AutoResearchPaperRevisionActionIndexRead,
+        *,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+    ) -> str:
+        section_objectives = {
+            section.title: section.objective
+            for section in (paper_plan.sections if paper_plan is not None else [])
+        }
+        lines = [
+            "# Revision Actions",
+            "",
+            f"- Revision round: {paper_revision_action_index.revision_round}",
+            f"- Total actions: {paper_revision_action_index.total_action_count}",
+            f"- Pending actions: {paper_revision_action_index.pending_action_count}",
+            f"- Completed actions: {paper_revision_action_index.completed_action_count}",
+            f"- Materialized actions: {paper_revision_action_index.materialized_action_count}",
+            f"- Summary: {paper_revision_action_index.summary}",
+        ]
+        current_section: str | None = None
+        for action in paper_revision_action_index.actions:
+            if action.section_title != current_section:
+                current_section = action.section_title
+                lines.extend(["", f"## {current_section}"])
+                objective = section_objectives.get(current_section)
+                if objective:
+                    lines.append(f"- Objective: {objective}")
+            title = action.title or action.detail
+            lines.append(
+                f"- [`{action.status}`] `{action.action_id}` ({action.priority}): {title}"
+            )
+            if action.title is not None and action.title != action.detail:
+                lines.append(f"  - Detail: {action.detail}")
+            if action.completed_round is not None:
+                lines.append(f"  - Completed round: {action.completed_round}")
+            if action.packet_relative_path is not None:
+                lines.append(f"  - Packet: `{action.packet_relative_path}`")
+            lines.append(
+                f"  - Diff status: `{action.diff_status}`, current words: {action.current_word_count}, "
+                f"word delta: {action.word_delta:+d}"
+            )
+            if action.issue_ids:
+                lines.append(f"  - Issue ids: {', '.join(f'`{item}`' for item in action.issue_ids)}")
+            if action.claim_ids:
+                lines.append(f"  - Claim ids: {', '.join(f'`{item}`' for item in action.claim_ids)}")
+            if action.evidence_focus:
+                lines.append(f"  - Evidence focus: {', '.join(action.evidence_focus)}")
+            if action.open_issue_summaries:
+                lines.append("  - Open issues:")
+                lines.extend(f"    - {item}" for item in action.open_issue_summaries)
+            if action.resolved_issue_summaries:
+                lines.append("  - Resolved issues:")
+                lines.extend(f"    - {item}" for item in action.resolved_issue_summaries)
+            if action.current_excerpt:
+                lines.append(f"  - Current excerpt: {action.current_excerpt}")
+        return "\n".join(lines).strip() + "\n"
+
     def build_paper_bibliography(
         self,
         literature: list[LiteratureInsight] | None = None,
@@ -1851,6 +2057,7 @@ Program objective:
         has_bibliography: bool,
         include_revision_checkpoints: bool = False,
         include_revision_diff: bool = False,
+        include_revision_action_index: bool = False,
         paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead | None = None,
     ) -> AutoResearchPaperSourcesManifestRead:
         compile_commands = ["./build.sh", "pdflatex main.tex"]
@@ -1913,6 +2120,22 @@ Program objective:
                     relative_path="paper_compile_report.json",
                     kind="json",
                     description="Compile-readiness snapshot for the paper workspace, including expected outputs and missing-input checks.",
+                ),
+                *(
+                    [
+                        AutoResearchPaperSourceFileRead(
+                            relative_path="paper_revision_action_index.json",
+                            kind="json",
+                            description="Structured action-to-section ledger for the current paper-improvement round.",
+                        ),
+                        AutoResearchPaperSourceFileRead(
+                            relative_path="revision_actions.md",
+                            kind="markdown",
+                            description="Human-readable action ledger derived from persisted review actions, section packets, and revision diffs.",
+                        ),
+                    ]
+                    if include_revision_action_index
+                    else []
                 ),
                 *(
                     [
@@ -2090,6 +2313,13 @@ Program objective:
             paper_section_rewrite_index=paper_section_rewrite_index,
             paper_markdown=paper_markdown,
         )
+        paper_revision_action_index = self.build_paper_revision_action_index(
+            paper_revision_state=paper_revision_state,
+            paper_section_rewrite_index=paper_section_rewrite_index,
+            paper_revision_diff=paper_revision_diff,
+            paper_markdown=paper_markdown,
+            paper_plan=paper_plan,
+        )
         paper_bibliography_bib = self.build_paper_bibliography(literature)
         paper_latex_source = self.build_paper_latex_source(
             paper_markdown,
@@ -2099,6 +2329,7 @@ Program objective:
             has_bibliography=bool(literature),
             include_revision_checkpoints=paper_revision_state is not None,
             include_revision_diff=True,
+            include_revision_action_index=True,
             paper_section_rewrite_index=paper_section_rewrite_index,
         )
         paper_compile_report = self.build_paper_compile_report(
@@ -2112,6 +2343,7 @@ Program objective:
             paper_revision_state=paper_revision_state,
             paper_compile_report=paper_compile_report,
             paper_revision_diff=paper_revision_diff,
+            paper_revision_action_index=paper_revision_action_index,
             paper_section_rewrite_index=paper_section_rewrite_index,
             paper_latex_source=paper_latex_source,
             paper_bibliography_bib=paper_bibliography_bib,

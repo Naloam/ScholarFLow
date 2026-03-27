@@ -43,6 +43,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_paper_revision_brief_markdown",
     "run_paper_revision_state_json",
     "run_paper_compile_report_json",
+    "run_paper_revision_diff_json",
     "run_paper_section_rewrite_index_json",
     "run_paper_sources_dir",
     "run_paper_section_rewrite_packets_dir",
@@ -82,6 +83,7 @@ AutoResearchLineageNodeKind = Literal[
     "paper_revision_history",
     "paper_revision_state",
     "paper_compile_report",
+    "paper_revision_diff",
     "paper_section_rewrite_index",
     "paper_revision_brief",
     "paper_sources",
@@ -123,6 +125,7 @@ AutoResearchEvidenceSourceKind = Literal["plan", "portfolio", "artifact", "liter
 AutoResearchFigureAssetKind = Literal["table", "chart", "diagram"]
 AutoResearchFigureStatus = Literal["planned", "ready", "not_available"]
 AutoResearchPaperRevisionStatus = Literal["drafted", "needs_review", "revising", "ready_for_publish"]
+AutoResearchPaperRevisionDiffStatus = Literal["initial", "updated", "unchanged"]
 AutoResearchPaperSourceKind = Literal["latex", "bibtex", "json", "markdown", "shell"]
 AutoResearchPaperRevisionActionStatus = Literal["open", "done"]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
@@ -680,6 +683,33 @@ class AutoResearchPaperSectionRewriteIndexRead(BaseModel):
     packets: list[AutoResearchPaperSectionRewritePacketRead] = Field(default_factory=list)
 
 
+class AutoResearchPaperRevisionDiffSectionRead(BaseModel):
+    section_id: str
+    section_title: str
+    status: AutoResearchPaperRevisionDiffStatus = "unchanged"
+    previous_word_count: int = 0
+    current_word_count: int = 0
+    word_delta: int = 0
+    previous_action_ids: list[str] = Field(default_factory=list)
+    current_action_ids: list[str] = Field(default_factory=list)
+    resolved_action_ids: list[str] = Field(default_factory=list)
+    previous_open_issue_count: int = 0
+    current_open_issue_count: int = 0
+    resolved_issue_summaries: list[str] = Field(default_factory=list)
+
+
+class AutoResearchPaperRevisionDiffRead(BaseModel):
+    generated_at: datetime
+    revision_round: int = 0
+    base_revision_round: int | None = None
+    summary: str
+    changed_section_count: int = 0
+    unchanged_section_count: int = 0
+    resolved_action_count: int = 0
+    resolved_issue_count: int = 0
+    sections: list[AutoResearchPaperRevisionDiffSectionRead] = Field(default_factory=list)
+
+
 class AutoResearchPaperSourceFileRead(BaseModel):
     relative_path: str
     kind: AutoResearchPaperSourceKind
@@ -716,6 +746,7 @@ class AutoResearchPaperPipelineArtifactsRead(BaseModel):
     figure_plan: AutoResearchFigurePlanRead
     paper_revision_state: AutoResearchPaperRevisionStateRead
     paper_compile_report: AutoResearchPaperCompileReportRead
+    paper_revision_diff: AutoResearchPaperRevisionDiffRead
     paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead
     paper_latex_source: str
     paper_bibliography_bib: str
@@ -828,6 +859,8 @@ class AutoResearchRunRead(BaseModel):
     paper_revision_state_path: str | None = None
     paper_compile_report: AutoResearchPaperCompileReportRead | None = None
     paper_compile_report_path: str | None = None
+    paper_revision_diff: AutoResearchPaperRevisionDiffRead | None = None
+    paper_revision_diff_path: str | None = None
     paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead | None = None
     paper_section_rewrite_index_path: str | None = None
     paper_sources_dir: str | None = None
@@ -893,6 +926,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None
     paper_revision_state_json: AutoResearchRegistryAssetRef | None = None
     paper_compile_report_json: AutoResearchRegistryAssetRef | None = None
+    paper_revision_diff_json: AutoResearchRegistryAssetRef | None = None
     paper_section_rewrite_index_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_brief_markdown: AutoResearchRegistryAssetRef | None = None
     paper_sources_dir: AutoResearchRegistryAssetRef | None = None

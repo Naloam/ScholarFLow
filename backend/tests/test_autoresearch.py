@@ -138,6 +138,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert Path(run["figure_plan_path"]).is_file()
         assert Path(run["paper_revision_state_path"]).is_file()
         assert Path(run["paper_compile_report_path"]).is_file()
+        assert Path(run["paper_revision_diff_path"]).is_file()
         assert Path(run["paper_section_rewrite_index_path"]).is_file()
         assert Path(run["paper_sources_dir"]).is_dir()
         assert Path(run["paper_section_rewrite_packets_dir"]).is_dir()
@@ -216,6 +217,12 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["paper_section_rewrite_index"]["packet_count"] == len(run["paper_plan"]["sections"])
         assert run["paper_section_rewrite_index"]["focus_packet_count"] >= 1
         assert run["paper_section_rewrite_index"]["revision_round"] == run["paper_revision_state"]["revision_round"]
+        assert run["paper_revision_diff"]["revision_round"] == run["paper_revision_state"]["revision_round"]
+        assert run["paper_revision_diff"]["base_revision_round"] is None
+        assert run["paper_revision_diff"]["changed_section_count"] == len(run["paper_plan"]["sections"])
+        assert run["paper_revision_diff"]["resolved_action_count"] == 0
+        assert run["paper_revision_diff"]["resolved_issue_count"] == 0
+        assert any(item["status"] == "initial" for item in run["paper_revision_diff"]["sections"])
         rewrite_packets = {
             item["section_title"]: item
             for item in run["paper_section_rewrite_index"]["packets"]
@@ -236,12 +243,15 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["paper_revision_state"]["checkpoints"][0]["next_action_ids"]
         assert run["paper_revision_state"]["checkpoints"][0]["completed_action_titles"]
         assert "paper_compile_report.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
+        assert "paper_revision_diff.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/paper_compile_report.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
+        assert "paper_sources/paper_revision_diff.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/paper.md" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/build.sh" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/rewrite_packets/index.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/rewrite_packets/results.md" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "revision_history.md" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
+        assert "revision_diff.md" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/main.tex" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert "paper_sources/checkpoints/index.json" in run["paper_revision_state"]["checkpoints"][0]["relative_assets"]
         assert (
@@ -274,6 +284,8 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "revision_brief.md" in paper_sources_files
         assert "paper_revision_state.json" in paper_sources_files
         assert "paper_compile_report.json" in paper_sources_files
+        assert "paper_revision_diff.json" in paper_sources_files
+        assert "revision_diff.md" in paper_sources_files
         assert "rewrite_packets/index.json" in paper_sources_files
         assert "rewrite_packets/results.md" in paper_sources_files
         assert "build.sh" in paper_sources_files
@@ -294,6 +306,8 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert (Path(run["paper_sources_dir"]) / "revision_brief.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_revision_state.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "paper_compile_report.json").is_file()
+        assert (Path(run["paper_sources_dir"]) / "paper_revision_diff.json").is_file()
+        assert (Path(run["paper_sources_dir"]) / "revision_diff.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "rewrite_packets" / "index.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "rewrite_packets" / "results.md").is_file()
         results_packet = (Path(run["paper_sources_dir"]) / "rewrite_packets" / "results.md").read_text(encoding="utf-8")
@@ -307,12 +321,17 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         revision_history = Path(run["paper_sources_dir"]) / "revision_history.md"
         assert revision_history.is_file()
         assert "# Revision History" in revision_history.read_text(encoding="utf-8")
+        revision_diff = Path(run["paper_sources_dir"]) / "revision_diff.md"
+        assert revision_diff.is_file()
+        assert "# Revision Diff" in revision_diff.read_text(encoding="utf-8")
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "index.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "checkpoint.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "checkpoint_note.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "paper.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "revision_history.md").is_file()
+        assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "revision_diff.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "revision_brief.md").is_file()
+        assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "paper_revision_diff.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "rewrite_packets" / "index.json").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "rewrite_packets" / "results.md").is_file()
         assert (Path(run["paper_sources_dir"]) / "checkpoints" / "round_0000" / "build.sh").is_file()
@@ -443,6 +462,7 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         assert registry["files"]["paper_revision_history_markdown"]["exists"] is True
         assert registry["files"]["paper_revision_state_json"]["exists"] is True
         assert registry["files"]["paper_compile_report_json"]["exists"] is True
+        assert registry["files"]["paper_revision_diff_json"]["exists"] is True
         assert registry["files"]["paper_section_rewrite_index_json"]["exists"] is True
         assert registry["files"]["paper_revision_brief_markdown"]["exists"] is True
         assert registry["files"]["paper_sources_dir"]["exists"] is True
@@ -477,6 +497,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "paper_compile_report"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_revision_diff"
             for edge in registry["lineage"]["edges"]
         )
         assert any(
@@ -541,6 +565,10 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_revision_brief"
+            for edge in candidate_registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "materialized_to_run_asset" and edge["target_kind"] == "paper_revision_diff"
             for edge in candidate_registry["lineage"]["edges"]
         )
         assert any(
@@ -672,6 +700,7 @@ def test_autoresearch_bundle_index_exposes_selected_and_portfolio_assets(
         assert any(item["role"] == "run_paper_revision_brief_markdown" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_revision_state_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_compile_report_json" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_revision_diff_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_section_rewrite_index_json" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_sources_dir" for item in selected_bundle["assets"])
         assert any(item["role"] == "run_paper_section_rewrite_packets_dir" for item in selected_bundle["assets"])
@@ -1064,6 +1093,10 @@ def test_autoresearch_paper_revision_state_tracks_review_loop_progress(
         assert synced_run.paper_revision_state.status == "revising"
         assert synced_run.paper_revision_state.open_issues
         assert len(synced_run.paper_revision_state.open_issues) == first_loop["open_issue_count"]
+        assert synced_run.paper_revision_diff is not None
+        assert synced_run.paper_revision_diff.revision_round == 1
+        assert synced_run.paper_revision_diff.base_revision_round == 0
+        assert synced_run.paper_revision_diff.changed_section_count >= 1
         assert synced_run.paper_section_rewrite_index is not None
         assert synced_run.paper_section_rewrite_index.revision_round == 1
         assert synced_run.paper_section_rewrite_index.packet_count == len(synced_run.paper_plan.sections)
@@ -1094,6 +1127,14 @@ def test_autoresearch_paper_revision_state_tracks_review_loop_progress(
             in synced_run.paper_revision_state.checkpoints[-1].relative_assets
         )
         assert (
+            "paper_sources/checkpoints/round_0001/paper_revision_diff.json"
+            in synced_run.paper_revision_state.checkpoints[-1].relative_assets
+        )
+        assert (
+            "paper_sources/checkpoints/round_0001/revision_diff.md"
+            in synced_run.paper_revision_state.checkpoints[-1].relative_assets
+        )
+        assert (
             "paper_sources/rewrite_packets/index.json"
             in synced_run.paper_revision_state.checkpoints[-1].relative_assets
         )
@@ -1106,6 +1147,8 @@ def test_autoresearch_paper_revision_state_tracks_review_loop_progress(
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "checkpoint.json").is_file()
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "checkpoint_note.md").is_file()
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "revision_history.md").is_file()
+        assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "revision_diff.md").is_file()
+        assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "paper_revision_diff.json").is_file()
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "rewrite_packets", "index.json").is_file()
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "rewrite_packets", "results.md").is_file()
         assert Path(synced_run.paper_sources_dir or "", "checkpoints", "round_0001", "build.sh").is_file()
@@ -1186,6 +1229,10 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         assert resolved_run is not None
         assert resolved_run.paper_revision_state is not None
         assert resolved_run.paper_revision_state.revision_round == 2
+        assert resolved_run.paper_revision_diff is not None
+        assert resolved_run.paper_revision_diff.revision_round == 2
+        assert resolved_run.paper_revision_diff.base_revision_round == 1
+        assert resolved_run.paper_revision_diff.resolved_action_count >= 1
         assert resolved_run.paper_section_rewrite_index is not None
         assert resolved_run.paper_section_rewrite_index.revision_round == 2
         assert [item.revision_round for item in resolved_run.paper_revision_state.checkpoints] == [0, 1, 2]
@@ -1210,6 +1257,14 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
             "paper_sources/checkpoints/round_0002/rewrite_packets/results.md"
             in resolved_run.paper_revision_state.checkpoints[-1].relative_assets
         )
+        assert (
+            "paper_sources/checkpoints/round_0002/paper_revision_diff.json"
+            in resolved_run.paper_revision_state.checkpoints[-1].relative_assets
+        )
+        assert (
+            "paper_sources/checkpoints/round_0002/revision_diff.md"
+            in resolved_run.paper_revision_state.checkpoints[-1].relative_assets
+        )
         assert [item.action_id for item in resolved_run.paper_revision_state.next_actions] == [
             item["action_id"] for item in resolved_loop["actions"] if item["status"] == "pending"
         ]
@@ -1224,12 +1279,17 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "checkpoint.json").is_file()
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "checkpoint_note.md").is_file()
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "revision_history.md").is_file()
+        assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "revision_diff.md").is_file()
+        assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "paper_revision_diff.json").is_file()
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "rewrite_packets", "index.json").is_file()
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "rewrite_packets", "results.md").is_file()
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "build.sh").is_file()
         assert Path(resolved_run.paper_sources_dir or "", "checkpoints", "round_0002", "paper.md").is_file()
         assert "# Revision History" in Path(
             resolved_run.paper_sources_dir or "", "revision_history.md"
+        ).read_text(encoding="utf-8")
+        assert "# Revision Diff" in Path(
+            resolved_run.paper_sources_dir or "", "revision_diff.md"
         ).read_text(encoding="utf-8")
     finally:
         client.close()
@@ -1349,10 +1409,14 @@ def test_autoresearch_paper_rebuild_preserves_revision_brief_from_review_loop(
         assert rebuild_response.status_code == 200
         rebuilt = rebuild_response.json()
         revision_brief = Path(rebuilt["paper_sources_dir"], "revision_brief.md").read_text(encoding="utf-8")
+        revision_diff = Path(rebuilt["paper_sources_dir"], "revision_diff.md").read_text(encoding="utf-8")
+        assert rebuilt["paper_revision_diff"]["revision_round"] == loop["current_round"]
+        assert Path(rebuilt["paper_revision_diff_path"]).is_file()
         assert rebuilt["paper_section_rewrite_index"]["revision_round"] == loop["current_round"]
         assert Path(rebuilt["paper_section_rewrite_index_path"]).is_file()
         assert Path(rebuilt["paper_section_rewrite_packets_dir"], "results.md").is_file()
         assert f"- Revision round: {loop['current_round']}" in revision_brief
+        assert f"- Revision round: {loop['current_round']}" in revision_diff
         assert "## Next Actions" in revision_brief
         assert first_issue in revision_brief
         assert first_action.action_id in revision_brief
@@ -1361,6 +1425,12 @@ def test_autoresearch_paper_rebuild_preserves_revision_brief_from_review_loop(
         assert "# Section Rewrite Packet: Results" in results_packet
         assert "## Open Issues" in results_packet
         assert "revision_brief.md" in {
+            item["relative_path"] for item in rebuilt["paper_sources_manifest"]["files"]
+        }
+        assert "paper_revision_diff.json" in {
+            item["relative_path"] for item in rebuilt["paper_sources_manifest"]["files"]
+        }
+        assert "revision_diff.md" in {
             item["relative_path"] for item in rebuilt["paper_sources_manifest"]["files"]
         }
         assert "rewrite_packets/index.json" in {
@@ -1563,6 +1633,7 @@ def test_autoresearch_publish_package_is_derived_from_selected_bundle(
         assert "run_artifact_json" in optional_roles
         assert "run_paper_revision_history_markdown" in optional_roles
         assert "run_paper_revision_brief_markdown" in optional_roles
+        assert "run_paper_revision_diff_json" in optional_roles
         assert "run_paper_section_rewrite_index_json" in optional_roles
         assert "run_paper_section_rewrite_packets_dir" in optional_roles
         assert "run_paper_build_script" in optional_roles
@@ -1743,6 +1814,8 @@ def test_autoresearch_publish_export_materializes_archive(
         assert any(name.endswith("/manifest.json") for name in names)
         assert any(name.endswith("/artifact.json") for name in names)
         assert "paper_sources/revision_history.md" in names
+        assert "paper_sources/revision_diff.md" in names
+        assert "paper_sources/paper_revision_diff.json" in names
         assert "paper_sources/revision_brief.md" in names
         assert "paper_sources/rewrite_packets/index.json" in names
         assert "paper_sources/rewrite_packets/results.md" in names

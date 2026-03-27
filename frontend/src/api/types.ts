@@ -381,6 +381,56 @@ export type AutoResearchPaperRevisionCheckpoint = {
   relative_assets: string[];
 };
 
+export type AutoResearchPaperSectionRewritePacket = {
+  section_id: string;
+  section_title: string;
+  revision_round: number;
+  focus: boolean;
+  objective: string;
+  claim_ids: string[];
+  evidence_focus: string[];
+  action_ids: string[];
+  open_issues: string[];
+  current_word_count: number;
+  relative_path: string;
+  source_asset_paths: string[];
+};
+
+export type AutoResearchPaperSectionRewriteIndex = {
+  generated_at: string;
+  revision_round: number;
+  packet_count: number;
+  focus_packet_count: number;
+  packets: AutoResearchPaperSectionRewritePacket[];
+};
+
+export type AutoResearchPaperRevisionDiffSection = {
+  section_id: string;
+  section_title: string;
+  status: "initial" | "updated" | "unchanged";
+  previous_word_count: number;
+  current_word_count: number;
+  word_delta: number;
+  previous_action_ids: string[];
+  current_action_ids: string[];
+  resolved_action_ids: string[];
+  previous_open_issue_count: number;
+  current_open_issue_count: number;
+  resolved_issue_summaries: string[];
+};
+
+export type AutoResearchPaperRevisionDiff = {
+  generated_at: string;
+  revision_round: number;
+  base_revision_round?: number | null;
+  summary: string;
+  changed_section_count: number;
+  unchanged_section_count: number;
+  resolved_action_count: number;
+  resolved_issue_count: number;
+  sections: AutoResearchPaperRevisionDiffSection[];
+};
+
 export type AutoResearchPaperSourcesManifest = {
   generated_at: string;
   entrypoint: string;
@@ -422,7 +472,12 @@ export type AutoResearchRun = {
   paper_revision_state_path?: string | null;
   paper_compile_report?: AutoResearchPaperCompileReport | null;
   paper_compile_report_path?: string | null;
+  paper_revision_diff?: AutoResearchPaperRevisionDiff | null;
+  paper_revision_diff_path?: string | null;
+  paper_section_rewrite_index?: AutoResearchPaperSectionRewriteIndex | null;
+  paper_section_rewrite_index_path?: string | null;
   paper_sources_dir?: string | null;
+  paper_section_rewrite_packets_dir?: string | null;
   paper_latex_source?: string | null;
   paper_latex_path?: string | null;
   paper_bibliography_bib?: string | null;
@@ -513,8 +568,11 @@ export type AutoResearchLineageEdge = {
     | "paper_revision_history"
     | "paper_revision_state"
     | "paper_compile_report"
+    | "paper_revision_diff"
+    | "paper_section_rewrite_index"
     | "paper_revision_brief"
     | "paper_sources"
+    | "paper_section_rewrite_packets"
     | "paper_build_script"
     | "paper_checkpoint_index"
     | "paper_latex"
@@ -543,8 +601,11 @@ export type AutoResearchLineageEdge = {
     | "paper_revision_history"
     | "paper_revision_state"
     | "paper_compile_report"
+    | "paper_revision_diff"
+    | "paper_section_rewrite_index"
     | "paper_revision_brief"
     | "paper_sources"
+    | "paper_section_rewrite_packets"
     | "paper_build_script"
     | "paper_checkpoint_index"
     | "paper_latex"
@@ -573,8 +634,11 @@ export type AutoResearchRunRegistryFiles = {
   paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
   paper_revision_state_json?: AutoResearchRegistryAssetRef | null;
   paper_compile_report_json?: AutoResearchRegistryAssetRef | null;
+  paper_revision_diff_json?: AutoResearchRegistryAssetRef | null;
+  paper_section_rewrite_index_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_brief_markdown?: AutoResearchRegistryAssetRef | null;
   paper_sources_dir?: AutoResearchRegistryAssetRef | null;
+  paper_section_rewrite_packets_dir?: AutoResearchRegistryAssetRef | null;
   paper_build_script?: AutoResearchRegistryAssetRef | null;
   paper_checkpoint_index_json?: AutoResearchRegistryAssetRef | null;
   paper_latex_source?: AutoResearchRegistryAssetRef | null;
@@ -693,7 +757,10 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_revision_brief_markdown"
     | "run_paper_revision_state_json"
     | "run_paper_compile_report_json"
+    | "run_paper_revision_diff_json"
+    | "run_paper_section_rewrite_index_json"
     | "run_paper_sources_dir"
+    | "run_paper_section_rewrite_packets_dir"
     | "run_paper_build_script"
     | "run_paper_checkpoint_index_json"
     | "run_paper_latex_source"

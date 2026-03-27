@@ -17,6 +17,8 @@ from schemas.autoresearch import (
     AutoResearchCandidateRegistryFiles,
     AutoResearchCandidateRegistryRead,
     AutoResearchLineageEdgeRead,
+    AutoResearchPaperRevisionDiffRead,
+    AutoResearchPaperSectionRewriteIndexRead,
     AutoResearchRegistryAssetRef,
     AutoResearchRegistryViewCounts,
     AutoResearchRegistryViewRead,
@@ -50,7 +52,9 @@ CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
 PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
+PAPER_REVISION_DIFF_FILENAME = "paper_revision_diff.json"
 PAPER_REVISION_HISTORY_FILENAME = "revision_history.md"
+PAPER_REVISION_DIFF_NOTE_FILENAME = "revision_diff.md"
 PAPER_REVISION_BRIEF_FILENAME = "revision_brief.md"
 PAPER_REVISION_STATE_FILENAME = "paper_revision_state.json"
 PAPER_COMPILE_REPORT_FILENAME = "paper_compile_report.json"
@@ -154,7 +158,18 @@ def _paper_build_script(run: AutoResearchRunRead) -> str | None:
     )
 
 
-def _paper_section_rewrite_packets(run: AutoResearchRunRead) -> tuple[object | None, dict[str, str]]:
+def _paper_revision_diff_note(run: AutoResearchRunRead) -> str | None:
+    if run.paper_revision_diff is None:
+        return None
+    return PaperWriter().build_paper_revision_diff_note(
+        run.paper_revision_diff,
+        paper_plan=run.paper_plan,
+    )
+
+
+def _paper_section_rewrite_packets(
+    run: AutoResearchRunRead,
+) -> tuple[AutoResearchPaperSectionRewriteIndexRead | None, dict[str, str]]:
     if (
         run.paper_section_rewrite_index is None
         or run.paper_plan is None
@@ -177,6 +192,40 @@ def _paper_section_rewrite_packets(run: AutoResearchRunRead) -> tuple[object | N
     return run.paper_section_rewrite_index, packets
 
 
+def _load_previous_revision_checkpoint_snapshot(
+    payload: AutoResearchRunRead,
+    *,
+    base: Path,
+) -> tuple[int | None, str | None, AutoResearchPaperSectionRewriteIndexRead | None]:
+    if payload.paper_revision_state is None or payload.paper_revision_state.revision_round <= 0:
+        return None, None, None
+    paper_sources_dir = Path(payload.paper_sources_dir) if payload.paper_sources_dir else (base / PAPER_SOURCES_DIRNAME)
+    current_round = payload.paper_revision_state.revision_round
+    prior_rounds = sorted(
+        {
+            item.revision_round
+            for item in payload.paper_revision_state.checkpoints
+            if item.revision_round < current_round
+        },
+        reverse=True,
+    )
+    for revision_round in prior_rounds:
+        checkpoint_dir = _paper_checkpoint_dir(paper_sources_dir, revision_round)
+        paper_path = checkpoint_dir / PAPER_FILENAME
+        rewrite_index_path = checkpoint_dir / PAPER_REWRITE_PACKETS_DIRNAME / PAPER_REWRITE_PACKET_INDEX_FILENAME
+        previous_paper_markdown = paper_path.read_text(encoding="utf-8") if paper_path.is_file() else None
+        previous_section_rewrite_index = (
+            AutoResearchPaperSectionRewriteIndexRead.model_validate_json(
+                rewrite_index_path.read_text(encoding="utf-8")
+            )
+            if rewrite_index_path.is_file()
+            else None
+        )
+        if previous_paper_markdown is not None or previous_section_rewrite_index is not None:
+            return revision_round, previous_paper_markdown, previous_section_rewrite_index
+    return None, None, None
+
+
 def _paper_checkpoint_dir(paper_sources_dir: Path, revision_round: int) -> Path:
     return paper_sources_dir / PAPER_CHECKPOINTS_DIRNAME / f"round_{revision_round:04d}"
 
@@ -187,6 +236,7 @@ def _write_paper_revision_checkpoints(
     base: Path,
     paper_sources_dir: Path,
     revision_brief: str | None,
+    revision_diff_note: str | None,
     revision_history: str | None,
     paper_build_script: str | None,
 ) -> None:
@@ -256,6 +306,13 @@ def _write_paper_revision_checkpoints(
                 checkpoint_dir / PAPER_COMPILE_REPORT_FILENAME,
                 payload.paper_compile_report.model_dump(mode="json"),
             )
+        if payload.paper_revision_diff is not None:
+            _write_json(
+                checkpoint_dir / PAPER_REVISION_DIFF_FILENAME,
+                payload.paper_revision_diff.model_dump(mode="json"),
+            )
+        if revision_diff_note is not None:
+            (checkpoint_dir / PAPER_REVISION_DIFF_NOTE_FILENAME).write_text(revision_diff_note, encoding="utf-8")
         if paper_build_script is not None:
             build_script_path = checkpoint_dir / PAPER_BUILD_SCRIPT_FILENAME
             build_script_path.write_text(paper_build_script, encoding="utf-8")
@@ -443,6 +500,7 @@ def _candidate_lineage_edges(
             ("paper_revision_history_markdown", "paper_revision_history"),
             ("paper_revision_state_json", "paper_revision_state"),
             ("paper_compile_report_json", "paper_compile_report"),
+            ("paper_revision_diff_json", "paper_revision_diff"),
             ("paper_section_rewrite_index_json", "paper_section_rewrite_index"),
             ("paper_revision_brief_markdown", "paper_revision_brief"),
             ("paper_sources_dir", "paper_sources"),
@@ -516,6 +574,7 @@ def _run_lineage_edges(
         ("paper_revision_history_markdown", "paper_revision_history"),
         ("paper_revision_state_json", "paper_revision_state"),
         ("paper_compile_report_json", "paper_compile_report"),
+        ("paper_revision_diff_json", "paper_revision_diff"),
         ("paper_section_rewrite_index_json", "paper_section_rewrite_index"),
         ("paper_revision_brief_markdown", "paper_revision_brief"),
         ("paper_sources_dir", "paper_sources"),
@@ -689,6 +748,13 @@ def _run_bundle_assets(
             label="Selected run paper compile report",
             role="run_paper_compile_report_json",
             ref=files.paper_compile_report_json,
+            required=False,
+        ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_revision_diff_json",
+            label="Selected run paper revision diff",
+            role="run_paper_revision_diff_json",
+            ref=files.paper_revision_diff_json,
             required=False,
         ),
         _bundle_asset(
@@ -937,10 +1003,44 @@ def _refresh_paper_section_rewrite_index(payload: AutoResearchRunRead) -> AutoRe
     return payload.model_copy(update={"paper_section_rewrite_index": index})
 
 
+def _refresh_paper_revision_diff(
+    payload: AutoResearchRunRead,
+    *,
+    base: Path,
+) -> AutoResearchRunRead:
+    if (
+        payload.paper_plan is None
+        or payload.paper_revision_state is None
+        or payload.paper_section_rewrite_index is None
+        or payload.paper_markdown is None
+    ):
+        return payload
+    (
+        base_revision_round,
+        previous_paper_markdown,
+        previous_section_rewrite_index,
+    ) = _load_previous_revision_checkpoint_snapshot(payload, base=base)
+    diff = PaperWriter().build_paper_revision_diff(
+        paper_plan=payload.paper_plan,
+        paper_revision_state=payload.paper_revision_state,
+        paper_section_rewrite_index=payload.paper_section_rewrite_index,
+        paper_markdown=payload.paper_markdown,
+        previous_paper_markdown=previous_paper_markdown,
+        previous_section_rewrite_index=previous_section_rewrite_index,
+        base_revision_round=base_revision_round,
+    )
+    if payload.paper_revision_diff is not None and (
+        payload.paper_revision_diff.model_dump(mode="json") == diff.model_dump(mode="json")
+    ):
+        return payload
+    return payload.model_copy(update={"paper_revision_diff": diff})
+
+
 def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> AutoResearchRunRead:
     payload = run.model_copy(update={"updated_at": _utcnow()}) if touch_updated_at else run.model_copy()
     payload = _refresh_paper_section_rewrite_index(payload)
     base = run_dir(payload.project_id, payload.id)
+    payload = _refresh_paper_revision_diff(payload, base=base)
     payload = _refresh_paper_compile_report(payload, base=base)
     _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
     if payload.program is not None:
@@ -972,6 +1072,8 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
     if payload.paper_compile_report is not None:
         _write_json(base / PAPER_COMPILE_REPORT_FILENAME, payload.paper_compile_report.model_dump(mode="json"))
+    if payload.paper_revision_diff is not None:
+        _write_json(base / PAPER_REVISION_DIFF_FILENAME, payload.paper_revision_diff.model_dump(mode="json"))
     if payload.paper_section_rewrite_index is not None:
         _write_json(
             base / PAPER_SECTION_REWRITE_INDEX_FILENAME,
@@ -980,6 +1082,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
     if (
         payload.paper_markdown is not None
         or payload.paper_compile_report is not None
+        or payload.paper_revision_diff is not None
         or payload.paper_section_rewrite_index is not None
         or payload.paper_latex_source is not None
         or payload.paper_bibliography_bib is not None
@@ -988,6 +1091,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         paper_sources_dir = base / PAPER_SOURCES_DIRNAME
         paper_sources_dir.mkdir(parents=True, exist_ok=True)
         revision_history = _paper_revision_history(payload)
+        revision_diff_note = _paper_revision_diff_note(payload)
         revision_brief = _paper_revision_brief(payload)
         paper_build_script = _paper_build_script(payload)
         section_rewrite_index, section_rewrite_packets = _paper_section_rewrite_packets(payload)
@@ -1027,6 +1131,13 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 paper_sources_dir / PAPER_COMPILE_REPORT_FILENAME,
                 payload.paper_compile_report.model_dump(mode="json"),
             )
+        if payload.paper_revision_diff is not None:
+            _write_json(
+                paper_sources_dir / PAPER_REVISION_DIFF_FILENAME,
+                payload.paper_revision_diff.model_dump(mode="json"),
+            )
+        if revision_diff_note is not None:
+            (paper_sources_dir / PAPER_REVISION_DIFF_NOTE_FILENAME).write_text(revision_diff_note, encoding="utf-8")
         if section_rewrite_index is not None:
             rewrite_packets_dir = paper_sources_dir / PAPER_REWRITE_PACKETS_DIRNAME
             rewrite_packets_dir.mkdir(parents=True, exist_ok=True)
@@ -1056,6 +1167,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
             base=base,
             paper_sources_dir=paper_sources_dir,
             revision_brief=revision_brief,
+            revision_diff_note=revision_diff_note,
             revision_history=revision_history,
             paper_build_script=paper_build_script,
         )
@@ -1123,6 +1235,10 @@ def paper_revision_state_file_path(project_id: str, run_id: str) -> str:
 
 def paper_compile_report_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_COMPILE_REPORT_FILENAME)
+
+
+def paper_revision_diff_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PAPER_REVISION_DIFF_FILENAME)
 
 
 def paper_section_rewrite_index_file_path(project_id: str, run_id: str) -> str:
@@ -1267,6 +1383,9 @@ def load_candidate_registry(
             paper_compile_report_json=_asset_ref(
                 current_run.paper_compile_report_path or (run_base / PAPER_COMPILE_REPORT_FILENAME)
             ),
+            paper_revision_diff_json=_asset_ref(
+                current_run.paper_revision_diff_path or (run_base / PAPER_REVISION_DIFF_FILENAME)
+            ),
             paper_section_rewrite_index_json=_asset_ref(
                 current_run.paper_section_rewrite_index_path or (run_base / PAPER_SECTION_REWRITE_INDEX_FILENAME)
             ),
@@ -1404,6 +1523,9 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         ),
         paper_compile_report_json=_asset_ref(
             run.paper_compile_report_path or (base / PAPER_COMPILE_REPORT_FILENAME)
+        ),
+        paper_revision_diff_json=_asset_ref(
+            run.paper_revision_diff_path or (base / PAPER_REVISION_DIFF_FILENAME)
         ),
         paper_section_rewrite_index_json=_asset_ref(
             run.paper_section_rewrite_index_path or (base / PAPER_SECTION_REWRITE_INDEX_FILENAME)

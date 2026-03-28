@@ -349,12 +349,20 @@ def download_auto_research_publish_package(
     db: Session = Depends(get_db),
 ) -> FileResponse:
     del db
-    archive_path = get_publish_archive_path(project_id, run_id).resolve()
     run = load_run(project_id, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
-    if not archive_path.is_file():
+    package = build_publish_package(project_id, run_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    archive_path = get_publish_archive_path(project_id, run_id).resolve()
+    if not package.archive_ready or not archive_path.is_file():
         raise HTTPException(status_code=409, detail="Publish package has not been exported yet")
+    if not package.archive_current:
+        raise HTTPException(
+            status_code=409,
+            detail="Publish package export is stale; export again for the current review state",
+        )
     return FileResponse(
         path=archive_path,
         filename=archive_path.name,

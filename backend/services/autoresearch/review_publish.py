@@ -1366,6 +1366,88 @@ def _review_loop_revision_requirements(review_loop: AutoResearchReviewLoopRead |
     return messages
 
 
+def _publish_asset_fingerprint_payload(
+    assets: list[AutoResearchBundleAssetRead],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "asset_id": asset.asset_id,
+            "role": asset.role,
+            "required": asset.required,
+            "path": asset.ref.path,
+            "exists": asset.ref.exists,
+        }
+        for asset in assets
+    ]
+
+
+def _publish_package_fingerprint(
+    *,
+    review: AutoResearchRunReviewRead,
+    review_loop: AutoResearchReviewLoopRead | None,
+    bundle: AutoResearchBundleRead,
+    required_assets: list[AutoResearchBundleAssetRead],
+    final_required_assets: list[AutoResearchBundleAssetRead],
+    optional_assets: list[AutoResearchBundleAssetRead],
+    blockers: list[str],
+    final_blockers: list[str],
+    revision_actions: list[str],
+    review_bundle_ready: bool,
+    final_publish_ready: bool,
+    completeness_status: str,
+    status: str,
+) -> str:
+    payload = {
+        "selected_candidate_id": review.selected_candidate_id,
+        "review_status": review.overall_status,
+        "review_path": review.persisted_path,
+        "review_round": review_loop.current_round if review_loop is not None else 0,
+        "review_fingerprint": (
+            review_loop.latest_review_fingerprint
+            if review_loop is not None
+            else None
+        ),
+        "source_bundle_id": bundle.id,
+        "status": status,
+        "review_bundle_ready": review_bundle_ready,
+        "final_publish_ready": final_publish_ready,
+        "completeness_status": completeness_status,
+        "blockers": blockers,
+        "final_blockers": final_blockers,
+        "revision_actions": revision_actions,
+        "required_assets": _publish_asset_fingerprint_payload(required_assets),
+        "final_required_asset_ids": [asset.asset_id for asset in final_required_assets],
+        "optional_assets": _publish_asset_fingerprint_payload(optional_assets),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _load_publish_archive_manifest(project_id: str, run_id: str) -> dict[str, object] | None:
+    path = _publish_archive_manifest_path(project_id, run_id)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _archive_manifest_generated_at(archive_manifest: dict[str, object] | None) -> datetime | None:
+    if archive_manifest is None:
+        return None
+    value = archive_manifest.get("generated_at")
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPackageRead | None:
     review = build_run_review(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
@@ -1433,14 +1515,62 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         revision_count=review_loop.pending_action_count if review_loop is not None else len(review.revision_plan),
         blockers=blockers,
         final_blockers=final_blockers,
-        revision_actions=(
-            list(review_loop.pending_revision_actions)
-            if review_loop is not None
-            else [item.title for item in review.revision_plan]
-        ),
+        revision_actions=[],
         required_assets=required_assets,
         final_required_assets=final_required_assets,
         optional_assets=optional_assets,
+    )
+    revision_actions = (
+        list(review_loop.pending_revision_actions)
+        if review_loop is not None
+        else [item.title for item in review.revision_plan]
+    )
+    package_fingerprint = _publish_package_fingerprint(
+        review=review,
+        review_loop=review_loop,
+        bundle=bundle,
+        required_assets=required_assets,
+        final_required_assets=final_required_assets,
+        optional_assets=optional_assets,
+        blockers=blockers,
+        final_blockers=final_blockers,
+        revision_actions=revision_actions,
+        review_bundle_ready=review_bundle_ready,
+        final_publish_ready=final_publish_ready,
+        completeness_status=completeness_status,
+        status=status,
+    )
+    archive_manifest = _load_publish_archive_manifest(project_id, run_id)
+    archive_path = _publish_archive_path(project_id, run_id)
+    archive_ready = archive_manifest is not None and archive_path.is_file()
+    archive_current = (
+        archive_ready
+        and archive_manifest.get("package_fingerprint") == package_fingerprint
+    )
+    archive_status = "current" if archive_current else "stale" if archive_ready else "missing"
+    package = package.model_copy(
+        update={
+            "archive_manifest_path": str(_publish_archive_manifest_path(project_id, run_id)),
+            "package_fingerprint": package_fingerprint,
+            "review_round": review_loop.current_round if review_loop is not None else 0,
+            "review_fingerprint": (
+                review_loop.latest_review_fingerprint
+                if review_loop is not None
+                else None
+            ),
+            "archive_status": archive_status,
+            "archive_ready": archive_ready,
+            "archive_current": archive_current,
+            "archive_generated_at": _archive_manifest_generated_at(archive_manifest),
+            "archive_bundle_kind": archive_manifest.get("bundle_kind") if archive_manifest is not None else None,
+            "archive_review_round": archive_manifest.get("review_round") if archive_manifest is not None else None,
+            "archive_review_fingerprint": (
+                archive_manifest.get("review_fingerprint")
+                if archive_manifest is not None
+                else None
+            ),
+            "revision_actions": revision_actions,
+        }
     )
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
     return package
@@ -1504,6 +1634,9 @@ def _archive_manifest(
         "package_id": package.package_id,
         "generated_at": _utcnow().isoformat(),
         "bundle_kind": _archive_bundle_kind(package),
+        "package_fingerprint": package.package_fingerprint,
+        "review_round": package.review_round,
+        "review_fingerprint": package.review_fingerprint,
         "review_bundle_ready": package.review_bundle_ready,
         "final_publish_ready": package.final_publish_ready,
         "completeness_status": package.completeness_status,
@@ -1564,6 +1697,18 @@ def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishE
             _add_path_to_zip(handle, run_root=run_root, path=Path(asset.ref.path), added=added)
 
     package = package.model_copy(update={"archive_path": str(archive_path)})
+    package = package.model_copy(
+        update={
+            "archive_manifest_path": str(archive_manifest_path),
+            "archive_status": "current",
+            "archive_ready": archive_path.is_file() and archive_manifest_path.is_file(),
+            "archive_current": archive_path.is_file() and archive_manifest_path.is_file(),
+            "archive_generated_at": _archive_manifest_generated_at(archive_manifest),
+            "archive_bundle_kind": archive_manifest["bundle_kind"],
+            "archive_review_round": archive_manifest["review_round"],
+            "archive_review_fingerprint": archive_manifest["review_fingerprint"],
+        }
+    )
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
     return AutoResearchPublishExportRead(
         project_id=project_id,
@@ -1576,6 +1721,9 @@ def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishE
         file_name=archive_path.name,
         archive_path=str(archive_path),
         archive_manifest_path=str(archive_manifest_path),
+        package_fingerprint=package.package_fingerprint,
+        review_round=package.review_round,
+        review_fingerprint=package.review_fingerprint,
         download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/download",
         asset_count=package.asset_count,
         included_asset_count=int(archive_manifest["included_asset_count"]),

@@ -21,12 +21,7 @@ from schemas.autoresearch import (
 )
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.repository import list_runs, load_run, load_run_registry, load_run_registry_views
-from services.autoresearch.review_publish import (
-    build_publish_package,
-    build_review_loop,
-    build_run_review,
-    get_publish_archive_path,
-)
+from services.autoresearch.review_publish import build_publish_package, build_review_loop, build_run_review
 
 
 def _benchmark_name(run: AutoResearchRunRead) -> str | None:
@@ -42,7 +37,7 @@ def _run_actions(
     run: AutoResearchRunRead,
     execution: AutoResearchRunExecutionRead,
     review_loop: AutoResearchReviewLoopRead | None,
-    has_publish_archive: bool,
+    publish: AutoResearchPublishPackageRead | None,
 ) -> AutoResearchOperatorRunActionsRead:
     active_or_queued = any(job.status in {"queued", "leased", "running"} for job in execution.jobs)
     return AutoResearchOperatorRunActionsRead(
@@ -57,7 +52,11 @@ def _run_actions(
         ),
         rebuild_paper=run.status == "done",
         export_publish=run.status == "done",
-        download_publish=has_publish_archive,
+        download_publish=bool(
+            publish is not None
+            and publish.archive_ready
+            and publish.archive_current
+        ),
         update_controls=True,
     )
 
@@ -244,7 +243,6 @@ def build_operator_console(
             review = review_by_run[selected_run.id]
             review_loop = review_loop_by_run[selected_run.id]
             publish = publish_by_run[selected_run.id]
-            has_publish_archive = get_publish_archive_path(project_id, selected_run.id).is_file()
             current_run = AutoResearchOperatorRunDetailRead(
                 run=selected_run,
                 execution=execution,
@@ -257,7 +255,7 @@ def build_operator_console(
                     run=selected_run,
                     execution=execution,
                     review_loop=review_loop,
-                    has_publish_archive=has_publish_archive,
+                    publish=publish,
                 ),
             )
 

@@ -2379,6 +2379,9 @@ def test_autoresearch_publish_export_materializes_archive(
         assert export_body["bundle_kind"] == "review_bundle"
         assert export_body["review_bundle_ready"] is True
         assert export_body["final_publish_ready"] is False
+        assert export_body["package_fingerprint"]
+        assert export_body["review_round"] == 1
+        assert export_body["review_fingerprint"]
         assert export_body["download_ready"] is True
         archive_path = Path(export_body["archive_path"])
         assert archive_path.is_file()
@@ -2408,6 +2411,9 @@ def test_autoresearch_publish_export_materializes_archive(
         assert "paper_sources/build.sh" in names
         assert "paper_sources/checkpoints/index.json" in names
         assert archive_manifest["bundle_kind"] == "review_bundle"
+        assert archive_manifest["package_fingerprint"] == export_body["package_fingerprint"]
+        assert archive_manifest["review_round"] == export_body["review_round"]
+        assert archive_manifest["review_fingerprint"] == export_body["review_fingerprint"]
         assert archive_manifest["review_bundle_ready"] is True
         assert archive_manifest["final_publish_ready"] is False
         assert archive_manifest["included_asset_count"] == export_body["included_asset_count"]
@@ -2415,9 +2421,140 @@ def test_autoresearch_publish_export_materializes_archive(
         assert "archive_manifest.json" in archive_manifest["generated_files"]
         assert "review_loop.json" in archive_manifest["generated_files"]
 
+        package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert package["archive_status"] == "current"
+        assert package["archive_ready"] is True
+        assert package["archive_current"] is True
+        assert package["package_fingerprint"] == export_body["package_fingerprint"]
+        assert package["review_round"] == export_body["review_round"]
+        assert package["archive_review_round"] == export_body["review_round"]
+        assert package["archive_review_fingerprint"] == export_body["review_fingerprint"]
+
         download_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
         assert download_response.status_code == 200
         assert download_response.headers["content-disposition"].endswith('publish_bundle.zip"')
+    finally:
+        client.close()
+
+
+def test_autoresearch_publish_archive_turns_stale_after_review_loop_changes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Stale Publish Archive Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        initial_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        initial_export = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/export"
+        ).json()
+        assert initial_export["review_round"] == initial_loop["current_round"]
+        assert initial_export["review_fingerprint"] == initial_loop["latest_review_fingerprint"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.plan is not None
+        autoresearch_repository.save_run(
+            run.model_copy(
+                update={
+                    "literature": [
+                        LiteratureInsight(
+                            paper_id="paper-publish-stale-1",
+                            title="Compact Classification Signals for CS Abstracts",
+                            year=2024,
+                            source="semantic_scholar",
+                            insight="Provides grounded related-work context for compact abstract classification systems.",
+                            method_hint="Use compact lexical and probabilistic signals for topic classification.",
+                            gap_hint="Preserve explicit artifact-grounded reporting while adding citations.",
+                        )
+                    ],
+                    "paper_markdown": f"""# {run.plan.title}
+
+## Abstract
+This grounded summary ties the selected artifact to preserved related work [1].
+
+## 1. Introduction
+Prior work informs the task framing and benchmark choice for this run [1].
+
+## 2. Related Work and Research Plan
+Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
+
+## 3. Method
+The method remains grounded in the persisted run plan and artifact.
+
+## 4. Experimental Setup
+The experimental setup remains unchanged and artifact-backed.
+
+## 5. Results
+The results are still grounded in the persisted artifact table and acceptance checks.
+
+## 6. Discussion
+The discussion connects the run outcome back to prior work and preserved context [1].
+
+## 7. Limitations
+The limitations remain explicit and literature-aware [1].
+
+## 8. Conclusion
+The conclusion revisits the strongest supported claim in light of prior work [1].
+
+## 9. References
+[1] Compact Classification Signals for CS Abstracts. semantic scholar, 2024.
+""",
+                }
+            )
+        )
+
+        updated_loop = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/review-loop/refresh"
+        ).json()
+        assert updated_loop["current_round"] == initial_loop["current_round"] + 1
+
+        stale_package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert stale_package["archive_ready"] is True
+        assert stale_package["archive_current"] is False
+        assert stale_package["archive_status"] == "stale"
+        assert stale_package["review_round"] == updated_loop["current_round"]
+        assert stale_package["review_fingerprint"] == updated_loop["latest_review_fingerprint"]
+        assert stale_package["archive_review_round"] == initial_loop["current_round"]
+        assert stale_package["archive_review_fingerprint"] == initial_loop["latest_review_fingerprint"]
+        assert stale_package["package_fingerprint"] != initial_export["package_fingerprint"]
+
+        stale_download = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
+        assert stale_download.status_code == 409
+        assert "stale" in stale_download.json()["detail"].lower()
+
+        console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"run_id": run_id},
+        ).json()
+        assert console["current_run"]["publish"]["archive_status"] == "stale"
+        assert console["current_run"]["actions"]["download_publish"] is False
+
+        refreshed_export = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/export"
+        ).json()
+        assert refreshed_export["review_round"] == updated_loop["current_round"]
+        assert refreshed_export["review_fingerprint"] == updated_loop["latest_review_fingerprint"]
+
+        refreshed_package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert refreshed_package["archive_status"] == "current"
+        assert refreshed_package["archive_current"] is True
+        assert refreshed_package["archive_review_round"] == updated_loop["current_round"]
+        assert refreshed_package["archive_review_fingerprint"] == updated_loop["latest_review_fingerprint"]
+
+        refreshed_download = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
+        assert refreshed_download.status_code == 200
     finally:
         client.close()
 
@@ -2541,6 +2678,8 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert current["review_loop"]["open_issue_count"] >= 1
         assert current["review_loop"]["pending_action_count"] >= 1
         assert current["publish"]["status"] == "blocked"
+        assert current["publish"]["archive_status"] == "current"
+        assert current["publish"]["archive_current"] is True
         assert current["actions"]["resume"] is False
         assert current["actions"]["retry"] is True
         assert current["actions"]["cancel"] is False

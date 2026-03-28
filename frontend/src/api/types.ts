@@ -1045,6 +1045,17 @@ export type AutoResearchPublishPackage = {
   review_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;
+  archive_manifest_path?: string | null;
+  package_fingerprint?: string | null;
+  review_round: number;
+  review_fingerprint?: string | null;
+  archive_status: "missing" | "stale" | "current";
+  archive_ready: boolean;
+  archive_current: boolean;
+  archive_generated_at?: string | null;
+  archive_bundle_kind?: "review_bundle" | "final_publish_bundle" | null;
+  archive_review_round?: number | null;
+  archive_review_fingerprint?: string | null;
   asset_count: number;
   existing_asset_count: number;
   missing_required_asset_count: number;
@@ -1071,6 +1082,9 @@ export type AutoResearchPublishExport = {
   file_name: string;
   archive_path: string;
   archive_manifest_path?: string | null;
+  package_fingerprint?: string | null;
+  review_round: number;
+  review_fingerprint?: string | null;
   download_path: string;
   asset_count: number;
   included_asset_count: number;

@@ -119,6 +119,7 @@ AutoResearchReviewLoopActionStatus = Literal["pending", "completed"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
+AutoResearchPublishArchiveStatus = Literal["missing", "stale", "current"]
 AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
 AutoResearchBudgetStatus = Literal["default", "constrained"]
 AutoResearchClaimSupportStatus = Literal["supported", "partial", "unsupported"]
@@ -1291,6 +1292,17 @@ class AutoResearchPublishPackageRead(BaseModel):
     review_path: str | None = None
     manifest_path: str | None = None
     archive_path: str | None = None
+    archive_manifest_path: str | None = None
+    package_fingerprint: str | None = None
+    review_round: int = 0
+    review_fingerprint: str | None = None
+    archive_status: AutoResearchPublishArchiveStatus = "missing"
+    archive_ready: bool = False
+    archive_current: bool = False
+    archive_generated_at: datetime | None = None
+    archive_bundle_kind: AutoResearchPublishBundleKind | None = None
+    archive_review_round: int | None = None
+    archive_review_fingerprint: str | None = None
     asset_count: int = 0
     existing_asset_count: int = 0
     missing_required_asset_count: int = 0
@@ -1317,6 +1329,9 @@ class AutoResearchPublishExportRead(BaseModel):
     file_name: str
     archive_path: str
     archive_manifest_path: str | None = None
+    package_fingerprint: str | None = None
+    review_round: int = 0
+    review_fingerprint: str | None = None
     download_path: str
     asset_count: int = 0
     included_asset_count: int = 0

@@ -532,6 +532,19 @@ export function OperatorConsolePanel({
                   <span className="meta-label">Publish</span>
                   <strong>{publish?.status ?? "not built"}</strong>
                 </div>
+                <div>
+                  <span className="meta-label">Archive</span>
+                  <strong data-testid="operator-publish-archive-detail">
+                    {publish
+                      ? `${publish.archive_status} / review r${publish.review_round}${
+                          publish.archive_review_round !== null &&
+                          publish.archive_review_round !== undefined
+                            ? ` / export r${publish.archive_review_round}`
+                            : ""
+                        }`
+                      : "n/a"}
+                  </strong>
+                </div>
               </div>
 
               <div className="summary-banner operator-summary-grid">

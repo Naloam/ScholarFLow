@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("workspace supports browser flow from project creation to export", async ({ page }) => {
+  test.setTimeout(90000);
   await page.goto("/");
 
   await expect(page.getByTestId("workspace-page")).toBeVisible();

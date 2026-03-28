@@ -114,6 +114,17 @@ def list_projects_for_user(
     )
 
 
+def list_open_projects(db: Session) -> list[ProjectListItem]:
+    rows = list(
+        db.execute(
+            select(Project)
+            .where(Project.user_id.is_(None))
+            .order_by(Project.updated_at.desc(), Project.created_at.desc())
+        ).scalars()
+    )
+    return [_to_project_list_item(row, "anonymous") for row in rows]
+
+
 def get_project_owner_id(db: Session, project_id: str) -> str | None:
     row = db.get(Project, project_id)
     if row is None:

@@ -150,6 +150,77 @@ def test_owned_project_requires_matching_session_even_when_auth_is_optional(monk
         engine.dispose()
 
 
+def test_open_workspace_lists_anonymous_projects_without_auth(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings, "api_token", None)
+    monkeypatch.setattr(settings, "auth_secret", "phase6-secret")
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "audit_enabled", False)
+    monkeypatch.setattr(settings, "rate_limit_requests_per_minute", 0)
+    client, _session_local, engine = make_client(monkeypatch, tmp_path)
+
+    try:
+        anonymous_project = client.post(
+            "/api/projects",
+            json={"title": "Open Project", "topic": "Anonymous workspace", "status": "init"},
+        )
+        assert anonymous_project.status_code == 200
+        anonymous_project_id = anonymous_project.json()["id"]
+
+        alice_session = client.post(
+            "/api/auth/session",
+            json={"email": "alice@example.com", "name": "Alice"},
+        )
+        assert alice_session.status_code == 200
+        alice_token = alice_session.json()["access_token"]
+
+        owned_project = client.post(
+            "/api/projects",
+            json={"title": "Private Project", "topic": "Owned workspace", "status": "init"},
+            headers={"Authorization": f"Bearer {alice_token}"},
+        )
+        assert owned_project.status_code == 200
+
+        listed = client.get("/api/projects")
+        assert listed.status_code == 200
+        assert listed.json() == [
+            {
+                "access_mode": "anonymous",
+                "created_at": listed.json()[0]["created_at"],
+                "id": anonymous_project_id,
+                "status": "init",
+                "template_id": None,
+                "title": "Open Project",
+                "topic": "Anonymous workspace",
+                "updated_at": listed.json()[0]["updated_at"],
+                "user_id": None,
+            }
+        ]
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_auth_config_reports_api_token_protection(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings, "api_token", "service-token")
+    monkeypatch.setattr(settings, "auth_secret", None)
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "audit_enabled", False)
+    monkeypatch.setattr(settings, "rate_limit_requests_per_minute", 0)
+    client, _session_local, engine = make_client(monkeypatch, tmp_path)
+
+    try:
+        response = client.get("/api/auth/config")
+        assert response.status_code == 200
+        assert response.json() == {
+            "auth_required": False,
+            "api_protected": True,
+            "session_enabled": False,
+        }
+    finally:
+        client.close()
+        engine.dispose()
+
+
 def test_project_scoped_review_and_export_resources_do_not_leak(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "api_token", None)
     monkeypatch.setattr(settings, "auth_secret", "phase6-secret")

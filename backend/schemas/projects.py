@@ -30,7 +30,7 @@ class ProjectRead(ProjectBase):
 
 
 class ProjectListItem(ProjectRead):
-    access_mode: Literal["owner", "mentor"]
+    access_mode: Literal["owner", "mentor", "anonymous"]
 
 
 class ProjectStatus(BaseModel):

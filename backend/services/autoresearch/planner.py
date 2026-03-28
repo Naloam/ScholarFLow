@@ -16,9 +16,10 @@ from schemas.autoresearch import (
 from services.autoresearch.benchmarks import infer_task_family
 from services.llm.client import chat
 from services.llm.prompting import load_prompt
+from services.llm.response_utils import get_message_content
 
 
-PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.1.0.md"
+PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.1.1.md"
 
 
 class ResearchPlanner:
@@ -47,7 +48,7 @@ class ResearchPlanner:
     ) -> ResearchPlan:
         literature_phrase = self._literature_method_phrase(literature)
         if task_family == "ir_reranking":
-            title = f"AutoResearch v0: Lightweight Reranking for {topic}"
+            title = f"Executable Proxy Study of Retrieval Signals for {topic}"
             method = "a lexical rarity-aware reranker backed by overlap baselines"
             questions = [
                 "Can a lightweight lexical reranker recover the relevant document in short candidate lists?",
@@ -63,7 +64,7 @@ class ResearchPlanner:
                 "A grounded paper generated only from executed ranking artifacts.",
             ]
         elif task_family == "tabular_classification":
-            title = f"AutoResearch v0: Lightweight Stability Prediction for {topic}"
+            title = f"Executable Proxy Study of Stability Signals for {topic}"
             method = "a scaled linear classifier backed by simple rule based baselines"
             questions = [
                 "Can a small scaled linear model separate stable and unstable training runs?",
@@ -79,7 +80,7 @@ class ResearchPlanner:
                 "A grounded paper generated only from executed experiment artifacts.",
             ]
         else:
-            title = f"AutoResearch v0: Lightweight Topic Classification for {topic}"
+            title = f"Executable Proxy Study of {topic}"
             method = "a lexical probabilistic classifier backed by majority and keyword baselines"
             questions = [
                 "Can lightweight lexical modeling classify short CS abstracts without external libraries?",
@@ -100,13 +101,14 @@ class ResearchPlanner:
             title=title,
             task_family=task_family,
             problem_statement=(
-                f"This run studies {topic} through a deliberately small but executable "
-                f"{task_family.replace('_', ' ')} benchmark so ScholarFlow can complete an "
-                "end to end computer science research loop from planning to paper writing."
+                f"This study investigates {topic} through a deliberately small but executable "
+                f"{task_family.replace('_', ' ')} proxy benchmark so the system can preserve a "
+                "fully auditable loop from planning and execution to artifact-grounded writing."
             ),
             motivation=(
-                "The system needs a benchmark that is cheap enough to execute in a sandbox yet "
-                "structured enough to support hypotheses, baselines, ablations, and a result table."
+                "The topic needs an executable proxy benchmark that is cheap enough to run in a "
+                "sandbox yet structured enough to support hypotheses, baselines, ablations, and "
+                "a result table."
             ),
             proposed_method=(
                 f"We evaluate {method}."
@@ -126,7 +128,7 @@ class ResearchPlanner:
                 "Use project literature to justify the chosen benchmark and method family.",
             ],
             scope_limits=[
-                "v0 only supports built in text and tabular classification benchmarks.",
+                "v0 only supports built in proxy benchmarks for text classification, tabular classification, and IR reranking.",
                 "The benchmark is intentionally small and does not claim broad external validity.",
                 "No external datasets or large scale training jobs are attempted in this version.",
             ],
@@ -330,7 +332,7 @@ class ResearchPlanner:
                     },
                 ]
             )
-            content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = get_message_content(response)
             parsed = self._parse_json(content)
             if not parsed:
                 return fallback

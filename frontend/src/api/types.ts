@@ -4,6 +4,7 @@ export type HealthResponse = {
 
 export type AuthConfig = {
   auth_required: boolean;
+  api_protected: boolean;
   session_enabled: boolean;
 };
 
@@ -125,7 +126,7 @@ export type Project = {
 };
 
 export type ProjectListItem = Project & {
-  access_mode: "owner" | "mentor";
+  access_mode: "owner" | "mentor" | "anonymous";
 };
 
 export type ProjectStatus = {

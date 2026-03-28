@@ -161,13 +161,16 @@ type WorkspaceState = {
 };
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
+  const workspaceRequiresToken = (authConfig: AuthConfig | null): boolean =>
+    Boolean(authConfig?.api_protected);
+
   const expireSession = (message: string) => {
     clearAuthToken();
     const nextAuthState: AuthState = getAuthToken() ? "service" : "anonymous";
     set((state) => ({
       ...emptyWorkspaceSlice,
       templates:
-        state.authConfig?.auth_required && nextAuthState === "anonymous"
+        workspaceRequiresToken(state.authConfig) && nextAuthState === "anonymous"
           ? []
           : state.templates,
       authUser: null,
@@ -238,12 +241,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         healthResult.status === "fulfilled"
           ? "Backend reachable"
           : `Backend unavailable: ${getErrorMessage(healthResult.reason)}`;
-      const requiresAuth = authConfig?.auth_required ?? false;
+      const requiresAuth = workspaceRequiresToken(authConfig);
 
       if (healthResult.status === "fulfilled" && (!requiresAuth || Boolean(getAuthToken()))) {
         const [templateResult, projectListResult] = await Promise.allSettled([
           api.listTemplates(),
-          authState === "user" ? api.listProjects() : Promise.resolve([] as ProjectListItem[]),
+          api.listProjects(),
         ]);
         if (templateResult.status === "fulfilled") {
           templates = templateResult.value.items;
@@ -266,7 +269,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } else if (requiresAuth) {
         notice = authConfig?.session_enabled
           ? "Sign in to access the workspace"
-          : "Workspace access is locked until an API token is configured";
+          : "Workspace access is locked until a bearer token is configured in the frontend";
       }
 
       set({
@@ -347,7 +350,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const nextNotice =
         get().authState === "service"
           ? "User session cleared. Service token remains active"
-          : get().authConfig?.auth_required
+          : workspaceRequiresToken(get().authConfig)
             ? "Signed out. Sign in to continue."
             : "Signed out";
       set({
@@ -389,7 +392,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             api.getBetaSummary(projectId),
             api.listMentorAccess(projectId),
             api.listMentorFeedback(projectId),
-            get().authState === "user" ? api.listProjects() : Promise.resolve([] as ProjectListItem[]),
+            !workspaceRequiresToken(get().authConfig) || Boolean(getAuthToken())
+              ? api.listProjects()
+              : Promise.resolve([] as ProjectListItem[]),
           ]);
 
         if (projectResult.status !== "fulfilled") {

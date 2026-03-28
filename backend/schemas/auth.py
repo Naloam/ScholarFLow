@@ -27,4 +27,5 @@ class AuthSessionResponse(BaseModel):
 
 class AuthConfigResponse(BaseModel):
     auth_required: bool
+    api_protected: bool
     session_enabled: bool

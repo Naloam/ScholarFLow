@@ -67,17 +67,19 @@ export function WorkspacePage() {
   const inviteMentor = useWorkspaceStore((state) => state.inviteMentor);
   const submitMentorFeedback = useWorkspaceStore((state) => state.submitMentorFeedback);
   const submitFeedback = useWorkspaceStore((state) => state.submitFeedback);
-  const authLocked = Boolean(authConfig?.auth_required) && authState === "anonymous";
+  const authLocked = Boolean(authConfig?.api_protected) && authState === "anonymous";
   const projectReadOnly = Boolean(project?.user_id && authUser?.id && project.user_id !== authUser.id);
   const workspaceBusy = initializing || authBusy || working;
   const betaBusy = workspaceBusy || !currentProjectId || authLocked || projectReadOnly;
   const authLabel =
     authUser?.email
-      ? `Auth: ${authUser.email}`
+        ? `Auth: ${authUser.email}`
       : authState === "service"
         ? "Auth: service token"
         : authLocked
-          ? "Auth: sign-in required"
+          ? authConfig?.session_enabled
+            ? "Auth: sign-in required"
+            : "Auth: bearer token required"
           : authState === "checking"
             ? "Auth: checking"
             : "Auth: anonymous";

@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 def get_auth_config() -> AuthConfigResponse:
     return AuthConfigResponse(
         auth_required=settings.auth_required,
+        api_protected=bool(settings.auth_required or settings.api_token),
         session_enabled=bool(settings.auth_secret),
     )
 

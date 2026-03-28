@@ -25,8 +25,8 @@ function getStatusLabel(authState: AuthState, authConfig: AuthConfig | null): st
   if (authState === "service") {
     return "Service token";
   }
-  if (authConfig?.auth_required) {
-    return "Sign-in required";
+  if (authConfig?.api_protected) {
+    return authConfig.session_enabled ? "Sign-in required" : "Token required";
   }
   return "Anonymous";
 }
@@ -44,7 +44,8 @@ export function SessionPanel({
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState<"student" | "tutor">("student");
-  const locked = Boolean(authConfig?.auth_required) && authState === "anonymous";
+  const openWorkspace = !authConfig?.api_protected;
+  const locked = Boolean(authConfig?.api_protected) && authState === "anonymous";
   const canSubmit =
     !authBusy && !workspaceBusy && Boolean(email.trim()) && Boolean(authConfig?.session_enabled);
 
@@ -63,7 +64,7 @@ export function SessionPanel({
       <div className="auth-meta-grid">
         <div className="auth-meta-card">
           <span className="meta-label">Workspace mode</span>
-          <strong>{authConfig?.auth_required ? "Protected API" : "Open API"}</strong>
+          <strong>{authConfig?.api_protected ? "Protected API" : "Open API"}</strong>
         </div>
         <div className="auth-meta-card">
           <span className="meta-label">Session login</span>
@@ -103,12 +104,20 @@ export function SessionPanel({
 
           <div className={locked ? "inline-card auth-locked" : "inline-card"}>
             <p className="inline-title">
-              {locked ? "Sign in to unlock the workspace" : "Create a session"}
+              {locked
+                ? authConfig?.session_enabled
+                  ? "Sign in to unlock the workspace"
+                  : "Provide a bearer token to unlock the workspace"
+                : openWorkspace
+                  ? "Anonymous access active"
+                  : "Create a session"}
             </p>
             <p className="auth-copy">
-              {authConfig?.session_enabled
+              {openWorkspace && !authConfig?.session_enabled
+                ? "This workspace is already open. You can create projects anonymously; configure AUTH_SECRET only if you want user-linked sessions."
+                : authConfig?.session_enabled
                 ? "Use an email-based session so new projects are linked to your user identity."
-                : "This server does not expose session login. Configure AUTH_SECRET or provide a bearer token."}
+                : "This server does not expose session login. Configure AUTH_SECRET or provide a bearer token in the frontend."}
             </p>
 
             <label className="field">

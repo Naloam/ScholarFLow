@@ -22,6 +22,7 @@ os.environ.setdefault("DATA_DIR", str((PROJECT_ROOT / ".tmp" / "e2e" / "data").r
 
 from config.db import engine  # noqa: E402
 from main import app  # noqa: E402
+import models  # noqa: F401, E402
 from models.base import Base  # noqa: E402
 
 

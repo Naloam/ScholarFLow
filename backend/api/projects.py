@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from config.deps import get_db, get_identity, require_identity, require_project_access
+from config.deps import get_db, get_identity, require_project_access
 from fastapi import HTTPException
+from config.settings import settings
 
 from schemas.common import IdResponse
 from schemas.projects import ProjectCreate, ProjectListItem, ProjectRead, ProjectStatus, ProjectUpdate
@@ -10,6 +11,7 @@ from services.security.auth import AuthIdentity
 from services.projects.repository import (
     create_project as create_project_db,
     get_project as get_project_db,
+    list_open_projects,
     list_projects_for_user,
     update_project as update_project_db,
 )
@@ -39,8 +41,12 @@ def create_project(
 @router.get("", response_model=list[ProjectListItem])
 def list_projects(
     db: Session = Depends(get_db),
-    identity: AuthIdentity = Depends(require_identity),
+    identity: AuthIdentity | None = Depends(get_identity),
 ) -> list[ProjectListItem]:
+    if identity is None or identity.user_id is None:
+        if settings.auth_required or settings.api_token:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return list_open_projects(db)
     return list_projects_for_user(
         db,
         user_id=identity.user_id or "",

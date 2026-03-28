@@ -120,15 +120,19 @@ export function ProjectLauncher({
         <p className="inline-title">Accessible projects</p>
         {availableProjects.length === 0 ? (
           <p className="auth-copy">
-            No owned or mentor-linked projects yet. Projects you create or review invitations you
-            receive will appear here.
+            No accessible projects yet. Projects you create, open anonymously, or receive through
+            mentor access will appear here.
           </p>
         ) : (
           <div className="stack">
             {availableProjects.map((project, index) => {
               const isCurrent = project.id === currentProjectId;
               const accessLabel =
-                project.access_mode === "mentor" ? "Mentor read-only" : "Project owner";
+                project.access_mode === "mentor"
+                  ? "Mentor read-only"
+                  : project.access_mode === "anonymous"
+                    ? "Open workspace"
+                    : "Project owner";
               return (
                 <article
                   key={project.id}

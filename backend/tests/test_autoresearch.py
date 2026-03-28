@@ -22,6 +22,7 @@ from services.autoresearch.execution import AutoResearchExecutionPlane
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_pipeline as literature_pipeline
 import services.autoresearch.orchestrator as autoresearch_orchestrator
+import services.autoresearch.planner as autoresearch_planner
 import services.autoresearch.repair as autoresearch_repair
 import services.autoresearch.repository as autoresearch_repository
 from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark
@@ -75,6 +76,65 @@ def _create_project(client: TestClient, title: str, topic: str) -> str:
     project_id = response.json()["id"]
     assert project_id
     return project_id
+
+
+def test_research_planner_accepts_object_style_llm_responses(monkeypatch) -> None:
+    class _Message:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class _Choice:
+        def __init__(self, content: str) -> None:
+            self.message = _Message(content)
+
+    class _Response:
+        def __init__(self, content: str) -> None:
+            self.choices = [_Choice(content)]
+
+    monkeypatch.setattr(
+        autoresearch_planner,
+        "chat",
+        lambda *_args, **_kwargs: _Response(
+            """```json
+            {
+              "title": "Proxy Evaluation of Static Analysis Signals for Program Repair",
+              "problem_statement": "Study program repair through a lightweight reranking proxy.",
+              "motivation": "Keep the run executable while preserving task specificity.",
+              "proposed_method": "Compare overlap, rarity weighting, and bigram cues for ranking repair hints.",
+              "research_questions": ["Do rarity-weighted lexical signals improve proxy ranking quality?"],
+              "hypotheses": ["Rarity weighting improves ranking quality over plain overlap."],
+              "planned_contributions": ["A topic-specific proxy benchmark for program repair ranking."],
+              "experiment_outline": ["Freeze a compact benchmark.", "Compare lexical ranking baselines."],
+              "scope_limits": ["The study is a proxy benchmark rather than a full repair system."]
+            }
+            ```"""
+        ),
+    )
+
+    plan = autoresearch_planner.ResearchPlanner().plan(
+        "Program repair for static analysis alerts",
+        task_family_hint="ir_reranking",
+    )
+
+    assert plan.title == "Proxy Evaluation of Static Analysis Signals for Program Repair"
+    assert plan.problem_statement == "Study program repair through a lightweight reranking proxy."
+    assert plan.task_family == "ir_reranking"
+
+
+def test_research_planner_fallback_scope_limits_include_ir_reranking(monkeypatch) -> None:
+    monkeypatch.setattr(
+        autoresearch_planner,
+        "chat",
+        lambda *_args, **_kwargs: {"choices": [{"message": {"content": "not json"}}]},
+    )
+
+    plan = autoresearch_planner.ResearchPlanner().plan(
+        "Program repair for static analysis alerts",
+        task_family_hint="ir_reranking",
+    )
+
+    assert plan.task_family == "ir_reranking"
+    assert any("IR reranking" in item for item in plan.scope_limits)
 
 
 def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: Path) -> None:
@@ -198,6 +258,8 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert manifest["files"]["paper_path"] == selected_candidate["paper_path"]
 
         paper = run["paper_markdown"]
+        assert "CS AutoResearch v0" not in paper
+        assert "Automatic topic classification for compact CS abstracts" in paper
         assert run["narrative_report_markdown"].startswith("# Narrative Report:")
         assert "## Claim-Evidence Commitments" in run["narrative_report_markdown"]
         assert run["claim_evidence_matrix"]["claim_count"] >= 5

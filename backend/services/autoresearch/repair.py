@@ -14,6 +14,7 @@ from services.autoresearch.runtime_contract import (
 )
 from services.llm.client import chat
 from services.llm.prompting import load_prompt
+from services.llm.response_utils import get_message_content
 
 
 PROMPT_PATH = "backend/prompts/autoresearch/repair/v0.1.0.md"
@@ -407,7 +408,7 @@ class ExperimentRepairEngine:
                     },
                 ]
             )
-            response_text = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            response_text = get_message_content(response)
             llm_candidate = self._llm_patch_candidate(code, response_text)
             if llm_candidate is not None:
                 return llm_candidate

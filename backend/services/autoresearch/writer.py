@@ -2495,10 +2495,9 @@ Program objective:
             )
         section_bodies = {
             "abstract": (
-                "This paper presents `CS AutoResearch v0`, a minimal computer science research loop that maps a topic "
-                "into a research plan, generates executable experiment code, runs the experiment in a sandbox-oriented "
-                "environment, and writes a paper only from the resulting evidence. The concrete topic for this run is "
-                f"**{plan.topic}**, instantiated as a `{spec.task_family}` benchmark named `{benchmark_display}`.\n\n"
+                f"This paper studies **{plan.topic}** through an executable `{spec.task_family}` proxy benchmark "
+                f"named `{benchmark_display}`. The study is implemented inside ScholarFlow, but the manuscript is "
+                "written only from persisted execution artifacts rather than from freeform narration.\n\n"
                 f"The experimental study follows the hypothesis that {spec.hypothesis.lower()} {comparison_sentence} "
                 f"The run reports {metrics}, preserves logs and environment metadata, and exports a structured artifact "
                 "that can be inspected independently from the paper text. The writing pipeline first materialized a "
@@ -2506,12 +2505,11 @@ Program objective:
             ),
             "introduction": (
                 f"{plan.problem_statement}\n\n"
-                "The motivation for this run is practical rather than purely stylistic. ScholarFlow should not stop at "
-                "generating generic prose. It should be able to define a tractable problem, select an executable "
-                "benchmark, compare baselines, and report measurable outcomes. In this version, the scope is "
-                "intentionally restricted to small classification tasks that can be executed quickly without external "
-                "dependencies. This restriction makes the pipeline reproducible while still forcing the system to "
-                f"reason about hypotheses, baselines, ablations, and result interpretation.\n\n"
+                "The motivation for this study is to turn the requested topic into a tractable executable proxy rather "
+                "than a generic essay. In the current runtime, the scope is intentionally restricted to small benchmark "
+                "families that can run quickly without external dependencies. That restriction limits external validity, "
+                "but it still forces the pipeline to reason about hypotheses, baselines, ablations, and result "
+                f"interpretation for the chosen topic.\n\n"
                 f"{literature_context_sentence}\n\n"
                 "The central research questions are:\n"
                 + "\n".join(f"- {item}" for item in plan.research_questions)
@@ -2535,7 +2533,7 @@ Program objective:
                 + claim_commitments
             ),
             "method": (
-                f"The proposed method in the plan is summarized as {plan.proposed_method.lower()} "
+                f"The proposed method in the plan is summarized as {plan.proposed_method.lower()}. "
                 "The executable experiment specification narrows that idea into a benchmark with fixed train and test "
                 f"partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is "
                 f"`{benchmark_display}`, described as: {spec.benchmark_description}\n\n"
@@ -2583,15 +2581,15 @@ Program objective:
                 f"{acceptance_block}"
             ),
             "discussion": (
-                "The results show that the pipeline can now produce a paper-shaped artifact with concrete "
-                "experimental content instead of a generic short essay. The differences among the compared systems "
-                "matter because they provide evidence that the method choice changes measurable outcomes. Recording "
+                "The results show that the topic can be rendered into a paper-shaped artifact with concrete "
+                "experimental content rather than generic prose. The differences among the compared systems matter "
+                "because they provide evidence that the chosen ranking signal changes measurable outcomes. Recording "
                 "significance comparisons, failed configurations, and negative outcomes raises the artifact above a "
                 "single best-number report and closer to a real experimental logbook.\n\n"
-                "At the same time, the benchmark remains intentionally small. The value of this v0 system is not that "
-                "it solves an open scientific problem, but that it demonstrates the operational scaffolding required "
-                "for future automated research runs: a planner, a structured experiment specification, executable code "
-                f"generation, artifact preservation, and grounded writing.\n\n"
+                "At the same time, the benchmark remains intentionally small. The contribution of this run is not a "
+                "claim of field-level closure on the topic, but a reproducible proxy study whose artifacts can be "
+                "inspected, rerun, and revised. ScholarFlow is the execution substrate, not the scientific subject of "
+                f"the paper.\n\n"
                 f"{discussion_context_sentence}\n\n"
                 "The persisted narrative report remained available during drafting to keep each section tied to "
                 "explicit claims:\n"
@@ -2606,11 +2604,10 @@ Program objective:
                 + revision_issue_block
             ),
             "conclusion": (
-                f"`CS AutoResearch v0` completes a narrow but real research loop for `{plan.topic}`. The system planned "
-                "the study, executed the benchmark, preserved a structured result artifact, and produced a paper whose "
-                "claims are anchored to the recorded experiment outputs. This establishes the minimum backend skeleton "
-                "needed to push ScholarFlow toward an automated computer science research system rather than a generic "
-                f"writing assistant.\n\n{conclusion_context_sentence}"
+                f"This run completes a narrow but real executable study for `{plan.topic}`. The system planned the "
+                "study, executed the benchmark, preserved a structured result artifact, and produced a paper whose "
+                "claims are anchored to the recorded experiment outputs. The outcome is best read as a reproducible "
+                f"proxy result for the topic, together with the artifact trail needed for later expansion.\n\n{conclusion_context_sentence}"
             ),
         }
         return self._render_section_sequence(

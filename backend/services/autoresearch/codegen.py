@@ -8,6 +8,7 @@ from schemas.autoresearch import ExperimentAttempt, ExperimentSpec, ResearchPlan
 from services.llm.client import chat
 from services.autoresearch.runtime_contract import missing_runtime_controls, runtime_contract_payload
 from services.llm.prompting import load_prompt
+from services.llm.response_utils import get_message_content
 
 
 PROMPT_PATH = "backend/prompts/autoresearch/codegen/v0.1.0.md"
@@ -71,7 +72,7 @@ class ExperimentCodeGenerator:
                     },
                 ]
             )
-            content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = get_message_content(response)
             return self._extract_code(content)
         except Exception:
             return None

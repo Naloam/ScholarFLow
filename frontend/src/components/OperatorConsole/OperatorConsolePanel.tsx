@@ -28,6 +28,13 @@ function formatScore(value: unknown): string {
   return typeof value === "number" ? value.toFixed(4) : "n/a";
 }
 
+function formatTaskFamily(value: string | null | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  return value.replaceAll("_", " ");
+}
+
 export function OperatorConsolePanel({
   consoleState,
   filters,
@@ -384,6 +391,9 @@ export function OperatorConsolePanel({
                     {run.publish_status ?? "n/a"}
                   </small>
                   <small>
+                    benchmark {run.benchmark_name ?? "n/a"} / family {formatTaskFamily(run.task_family)}
+                  </small>
+                  <small>
                     budget {run.budget_status} / executed {run.executed_candidate_count}
                     {run.candidate_execution_limit ? ` / limit ${run.candidate_execution_limit}` : ""}
                   </small>
@@ -471,6 +481,18 @@ export function OperatorConsolePanel({
                 <div>
                   <span className="meta-label">Run Status</span>
                   <strong>{current.run.status}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">Benchmark</span>
+                  <strong data-testid="operator-current-benchmark">
+                    {currentSummary?.benchmark_name ?? current.registry.benchmark_name ?? "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">Task Family</span>
+                  <strong data-testid="operator-current-task-family">
+                    {formatTaskFamily(currentSummary?.task_family ?? current.registry.task_family)}
+                  </strong>
                 </div>
                 <div>
                   <span className="meta-label">Selected Candidate</span>

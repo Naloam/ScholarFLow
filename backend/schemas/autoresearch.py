@@ -1354,6 +1354,8 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     status: AutoResearchRunStatus
     created_at: datetime
     updated_at: datetime
+    task_family: TaskFamily | None = None
+    benchmark_name: str | None = None
     selected_candidate_id: str | None = None
     candidate_count: int = 0
     selected_count: int = 0

@@ -1097,6 +1097,8 @@ export type AutoResearchOperatorRunSummary = {
   status: AutoResearchRunStatus;
   created_at: string;
   updated_at: string;
+  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+  benchmark_name?: string | null;
   selected_candidate_id?: string | null;
   candidate_count: number;
   selected_count: number;

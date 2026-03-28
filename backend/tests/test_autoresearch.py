@@ -164,6 +164,45 @@ def test_builtin_text_benchmark_routes_across_multiple_cs_topics() -> None:
     assert builtin_benchmark("text_classification", topic="Approximation algorithms for graph optimization").benchmark_name == "toy_algorithms_crypto_software_topic"
 
 
+def test_builtin_ir_benchmark_routes_across_multiple_cs_topics() -> None:
+    default_benchmark = builtin_benchmark("ir_reranking", topic="Compact information retrieval reranking benchmark")
+    code_benchmark = builtin_benchmark("ir_reranking", topic="Program repair for static analysis alerts")
+    paper_benchmark = builtin_benchmark("ir_reranking", topic="Evidence retrieval for related work citations")
+    security_benchmark = builtin_benchmark("ir_reranking", topic="Security incident alert triage reranking")
+
+    assert default_benchmark.benchmark_name == "toy_cs_reranking"
+    assert code_benchmark.benchmark_name == "toy_code_search_reranking"
+    assert paper_benchmark.benchmark_name == "toy_paper_evidence_reranking"
+    assert security_benchmark.benchmark_name == "toy_security_incident_reranking"
+
+    code_spec = build_experiment_spec("ir_reranking", code_benchmark)
+    assert code_spec.benchmark_name == "toy_code_search_reranking"
+    assert "toy_code_search_reranking" in code_spec.hypothesis
+
+
+def test_builtin_tabular_benchmark_routes_across_multiple_cs_topics() -> None:
+    training_benchmark = builtin_benchmark(
+        "tabular_classification",
+        topic="Training run stability prediction from tabular features",
+    )
+    network_benchmark = builtin_benchmark(
+        "tabular_classification",
+        topic="Network telemetry anomaly detection from tabular features",
+    )
+    database_benchmark = builtin_benchmark(
+        "tabular_classification",
+        topic="Database workload regression classification from tabular features",
+    )
+
+    assert training_benchmark.benchmark_name == "toy_training_run_stability"
+    assert network_benchmark.benchmark_name == "toy_network_incident_risk"
+    assert database_benchmark.benchmark_name == "toy_database_workload_regression"
+
+    network_spec = build_experiment_spec("tabular_classification", network_benchmark)
+    assert network_spec.dataset.label_space == ["degraded", "healthy"]
+    assert "toy_network_incident_risk" in network_spec.hypothesis
+
+
 def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: Path) -> None:
     client = _configure_test_client(monkeypatch, tmp_path)
     try:
@@ -2240,6 +2279,8 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert len(console["runs"]) == 1
         assert console["runs"][0]["run_id"] == run_id
         assert console["runs"][0]["status"] == "done"
+        assert console["runs"][0]["task_family"] == "text_classification"
+        assert console["runs"][0]["benchmark_name"] == "toy_cs_abstract_topic"
         assert console["runs"][0]["selected_count"] == 1
         assert console["runs"][0]["failed_count"] == 0
         assert console["runs"][0]["publish_status"] == "blocked"
@@ -2635,6 +2676,7 @@ This paper remains artifact-grounded but should require revision before publicat
         assert grounded_payload["filters"]["publish_status"] == "publish_ready"
         assert grounded_payload["filters"]["novelty_status"] == "grounded"
         assert grounded_payload["runs"][0]["run_id"] == grounded_run_id
+        assert grounded_payload["runs"][0]["benchmark_name"] == "toy_cs_reranking"
         assert grounded_payload["runs"][0]["review_risk"] == "low"
         assert grounded_payload["runs"][0]["novelty_status"] == "grounded"
 
@@ -2662,6 +2704,17 @@ This paper remains artifact-grounded but should require revision before publicat
         assert queued_payload["filters"]["search"] == "queued auto research"
         assert queued_payload["runs"][0]["run_id"] == queued_run.id
         assert queued_payload["runs"][0]["status"] == "queued"
+
+        benchmark_console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"search": "toy_cs_reranking"},
+        )
+        assert benchmark_console.status_code == 200
+        benchmark_payload = benchmark_console.json()
+        assert benchmark_payload["filtered_run_count"] == 1
+        assert benchmark_payload["selected_run_id"] == grounded_run_id
+        assert benchmark_payload["runs"][0]["run_id"] == grounded_run_id
+        assert benchmark_payload["runs"][0]["task_family"] == "ir_reranking"
 
         empty_console = client.get(
             f"/api/projects/{project_id}/auto-research/console",

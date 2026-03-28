@@ -23,6 +23,14 @@ from services.autoresearch.repository import list_runs, load_run_registry, load_
 from services.autoresearch.review_publish import build_publish_package, build_run_review, get_publish_archive_path
 
 
+def _benchmark_name(run: AutoResearchRunRead) -> str | None:
+    if run.spec is not None and run.spec.benchmark_name:
+        return run.spec.benchmark_name
+    if run.program is not None and run.program.benchmark_name:
+        return run.program.benchmark_name
+    return None
+
+
 def _run_actions(
     *,
     run: AutoResearchRunRead,
@@ -68,6 +76,8 @@ def _run_summary(
         status=run.status,
         created_at=run.created_at,
         updated_at=run.updated_at,
+        task_family=run.task_family,
+        benchmark_name=_benchmark_name(run),
         selected_candidate_id=run.portfolio.selected_candidate_id if run.portfolio is not None else None,
         candidate_count=candidate_count,
         selected_count=counts.selected if counts is not None else 0,
@@ -98,7 +108,13 @@ def _matches_search(run: AutoResearchRunRead, query: str | None) -> bool:
     lowered = query.strip().lower()
     if not lowered:
         return True
-    return lowered in run.id.lower() or lowered in run.topic.lower()
+    benchmark_name = _benchmark_name(run)
+    task_family = run.task_family
+    return any(
+        lowered in value.lower()
+        for value in [run.id, run.topic, benchmark_name, task_family]
+        if value
+    )
 
 
 def _matches_filters(

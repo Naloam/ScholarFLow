@@ -16,6 +16,12 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("status-socket")).toHaveText("Progress socket: live");
   await expect(page.getByTestId("header-project-chip")).toHaveText("Browser E2E Workspace");
 
+  await page.getByTestId("start-autoresearch-button").click();
+  await expect(page.getByTestId("operator-current-benchmark")).toHaveText("toy_cs_abstract_topic", {
+    timeout: 15000,
+  });
+  await expect(page.getByTestId("operator-current-task-family")).toHaveText("text classification");
+
   await page.getByTestId("generate-draft-button").click();
 
   await expect(page.getByTestId("draft-item-v1")).toBeVisible();

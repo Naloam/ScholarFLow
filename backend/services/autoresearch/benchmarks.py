@@ -42,6 +42,118 @@ def _text_benchmark(
     }
 
 
+def _tabular_benchmark(
+    *,
+    benchmark_name: str,
+    benchmark_description: str,
+    dataset_name: str,
+    dataset_description: str,
+    feature_names: list[str],
+    train: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    topic_keywords: list[str],
+) -> dict[str, Any]:
+    label_space = sorted(
+        {
+            row["label"]
+            for row in [*train, *test]
+            if isinstance(row, dict) and row.get("label") is not None
+        }
+    )
+    return {
+        "benchmark_name": benchmark_name,
+        "benchmark_description": benchmark_description,
+        "topic_keywords": topic_keywords,
+        "dataset": {
+            "name": dataset_name,
+            "description": dataset_description,
+            "feature_names": feature_names,
+            "train": train,
+            "test": test,
+            "label_space": label_space,
+        },
+    }
+
+
+def _ir_benchmark(
+    *,
+    benchmark_name: str,
+    benchmark_description: str,
+    dataset_name: str,
+    dataset_description: str,
+    train: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    topic_keywords: list[str],
+) -> dict[str, Any]:
+    return {
+        "benchmark_name": benchmark_name,
+        "benchmark_description": benchmark_description,
+        "topic_keywords": topic_keywords,
+        "dataset": {
+            "name": dataset_name,
+            "description": dataset_description,
+            "train": train,
+            "test": test,
+        },
+    }
+
+
+def _tabular_benchmark(
+    *,
+    benchmark_name: str,
+    benchmark_description: str,
+    dataset_name: str,
+    dataset_description: str,
+    feature_names: list[str],
+    train: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    topic_keywords: list[str],
+) -> dict[str, Any]:
+    label_space = sorted(
+        {
+            row["label"]
+            for row in [*train, *test]
+            if isinstance(row, dict) and row.get("label") is not None
+        }
+    )
+    return {
+        "benchmark_name": benchmark_name,
+        "benchmark_description": benchmark_description,
+        "topic_keywords": topic_keywords,
+        "dataset": {
+            "name": dataset_name,
+            "description": dataset_description,
+            "feature_names": feature_names,
+            "train": train,
+            "test": test,
+            "label_space": label_space,
+        },
+    }
+
+
+def _ir_benchmark(
+    *,
+    benchmark_name: str,
+    benchmark_description: str,
+    dataset_name: str,
+    dataset_description: str,
+    train: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    topic_keywords: list[str],
+) -> dict[str, Any]:
+    return {
+        "benchmark_name": benchmark_name,
+        "benchmark_description": benchmark_description,
+        "topic_keywords": topic_keywords,
+        "dataset": {
+            "name": dataset_name,
+            "description": dataset_description,
+            "train": train,
+            "test": test,
+        },
+    }
+
+
 TEXT_BENCHMARK = _text_benchmark(
     benchmark_name="toy_cs_abstract_topic",
     benchmark_description=(
@@ -250,7 +362,6 @@ TEXT_AGENT_BENCHMARK = _text_benchmark(
         "tool use",
         "memory",
         "llm",
-        "workflow",
     ],
 )
 
@@ -460,129 +571,521 @@ TEXT_BENCHMARKS = [
 ]
 
 
-TABULAR_BENCHMARK = {
-    "benchmark_name": "toy_training_run_stability",
-    "benchmark_description": (
+TABULAR_BENCHMARK = _tabular_benchmark(
+    benchmark_name="toy_training_run_stability",
+    benchmark_description=(
         "A small tabular benchmark that predicts whether a model training configuration remains "
         "stable or diverges."
     ),
-    "dataset": {
-        "name": "Toy Training Run Stability",
-        "description": (
-            "Sixteen training runs and eight held out runs with numeric optimization and model "
-            "configuration features."
-        ),
-        "feature_names": [
-            "learning_rate",
-            "batch_size",
-            "dropout",
-            "depth",
-            "residual",
-        ],
-        "train": [
-            {"features": [0.001, 64, 0.10, 8, 1], "label": "stable"},
-            {"features": [0.002, 128, 0.20, 12, 1], "label": "stable"},
-            {"features": [0.0008, 64, 0.15, 10, 1], "label": "stable"},
-            {"features": [0.004, 32, 0.25, 6, 1], "label": "stable"},
-            {"features": [0.003, 64, 0.05, 8, 1], "label": "stable"},
-            {"features": [0.005, 48, 0.10, 7, 1], "label": "stable"},
-            {"features": [0.020, 16, 0.00, 18, 0], "label": "unstable"},
-            {"features": [0.030, 16, 0.05, 20, 0], "label": "unstable"},
-            {"features": [0.015, 8, 0.00, 16, 0], "label": "unstable"},
-            {"features": [0.025, 32, 0.40, 18, 0], "label": "unstable"},
-            {"features": [0.018, 16, 0.35, 14, 0], "label": "unstable"},
-            {"features": [0.012, 8, 0.30, 15, 0], "label": "unstable"},
-            {"features": [0.006, 32, 0.15, 9, 1], "label": "stable"},
-            {"features": [0.007, 32, 0.20, 11, 1], "label": "stable"},
-            {"features": [0.010, 24, 0.30, 13, 0], "label": "unstable"},
-            {"features": [0.0025, 96, 0.10, 9, 1], "label": "stable"},
-        ],
-        "test": [
-            {"features": [0.0015, 64, 0.10, 8, 1], "label": "stable"},
-            {"features": [0.0045, 48, 0.20, 10, 1], "label": "stable"},
-            {"features": [0.019, 16, 0.05, 17, 0], "label": "unstable"},
-            {"features": [0.022, 24, 0.35, 19, 0], "label": "unstable"},
-            {"features": [0.008, 32, 0.25, 12, 1], "label": "stable"},
-            {"features": [0.014, 16, 0.30, 14, 0], "label": "unstable"},
-            {"features": [0.0035, 128, 0.05, 7, 1], "label": "stable"},
-            {"features": [0.011, 24, 0.25, 13, 0], "label": "unstable"},
-        ],
-    },
-}
+    dataset_name="Toy Training Run Stability",
+    dataset_description=(
+        "Sixteen training runs and eight held out runs with numeric optimization and model "
+        "configuration features."
+    ),
+    feature_names=[
+        "learning_rate",
+        "batch_size",
+        "dropout",
+        "depth",
+        "residual",
+    ],
+    train=[
+        {"features": [0.001, 64, 0.10, 8, 1], "label": "stable"},
+        {"features": [0.002, 128, 0.20, 12, 1], "label": "stable"},
+        {"features": [0.0008, 64, 0.15, 10, 1], "label": "stable"},
+        {"features": [0.004, 32, 0.25, 6, 1], "label": "stable"},
+        {"features": [0.003, 64, 0.05, 8, 1], "label": "stable"},
+        {"features": [0.005, 48, 0.10, 7, 1], "label": "stable"},
+        {"features": [0.020, 16, 0.00, 18, 0], "label": "unstable"},
+        {"features": [0.030, 16, 0.05, 20, 0], "label": "unstable"},
+        {"features": [0.015, 8, 0.00, 16, 0], "label": "unstable"},
+        {"features": [0.025, 32, 0.40, 18, 0], "label": "unstable"},
+        {"features": [0.018, 16, 0.35, 14, 0], "label": "unstable"},
+        {"features": [0.012, 8, 0.30, 15, 0], "label": "unstable"},
+        {"features": [0.006, 32, 0.15, 9, 1], "label": "stable"},
+        {"features": [0.007, 32, 0.20, 11, 1], "label": "stable"},
+        {"features": [0.010, 24, 0.30, 13, 0], "label": "unstable"},
+        {"features": [0.0025, 96, 0.10, 9, 1], "label": "stable"},
+    ],
+    test=[
+        {"features": [0.0015, 64, 0.10, 8, 1], "label": "stable"},
+        {"features": [0.0045, 48, 0.20, 10, 1], "label": "stable"},
+        {"features": [0.019, 16, 0.05, 17, 0], "label": "unstable"},
+        {"features": [0.022, 24, 0.35, 19, 0], "label": "unstable"},
+        {"features": [0.008, 32, 0.25, 12, 1], "label": "stable"},
+        {"features": [0.014, 16, 0.30, 14, 0], "label": "unstable"},
+        {"features": [0.0035, 128, 0.05, 7, 1], "label": "stable"},
+        {"features": [0.011, 24, 0.25, 13, 0], "label": "unstable"},
+    ],
+    topic_keywords=[
+        "training",
+        "stability",
+        "optimizer",
+        "hyperparameter",
+        "learning rate",
+        "dropout",
+        "batch size",
+        "model configuration",
+    ],
+)
+
+TABULAR_NETWORK_BENCHMARK = _tabular_benchmark(
+    benchmark_name="toy_network_incident_risk",
+    benchmark_description=(
+        "A small tabular benchmark that predicts whether network telemetry indicates a healthy "
+        "state or a degraded incident condition."
+    ),
+    dataset_name="Toy Network Incident Risk",
+    dataset_description=(
+        "Sixteen training and eight held out telemetry snapshots with packet loss, latency, flow, "
+        "retransmission, and queue-depth features."
+    ),
+    feature_names=[
+        "packet_loss_pct",
+        "p95_latency_ms",
+        "active_flows",
+        "retransmit_rate",
+        "queue_depth",
+    ],
+    train=[
+        {"features": [0.2, 32, 1800, 0.01, 12], "label": "healthy"},
+        {"features": [0.4, 40, 2200, 0.02, 16], "label": "healthy"},
+        {"features": [0.3, 35, 2100, 0.01, 14], "label": "healthy"},
+        {"features": [0.6, 48, 2500, 0.02, 18], "label": "healthy"},
+        {"features": [0.5, 44, 2300, 0.02, 17], "label": "healthy"},
+        {"features": [0.7, 52, 2700, 0.03, 20], "label": "healthy"},
+        {"features": [4.8, 180, 4100, 0.12, 88], "label": "degraded"},
+        {"features": [5.5, 210, 4300, 0.15, 96], "label": "degraded"},
+        {"features": [3.9, 165, 3900, 0.10, 81], "label": "degraded"},
+        {"features": [6.2, 240, 4600, 0.18, 105], "label": "degraded"},
+        {"features": [4.4, 190, 4200, 0.13, 90], "label": "degraded"},
+        {"features": [3.6, 150, 3600, 0.09, 74], "label": "degraded"},
+        {"features": [0.8, 55, 2800, 0.03, 24], "label": "healthy"},
+        {"features": [0.9, 60, 2950, 0.04, 28], "label": "healthy"},
+        {"features": [2.9, 130, 3400, 0.08, 66], "label": "degraded"},
+        {"features": [0.4, 38, 2050, 0.01, 15], "label": "healthy"},
+    ],
+    test=[
+        {"features": [0.3, 34, 2000, 0.01, 13], "label": "healthy"},
+        {"features": [0.9, 58, 2850, 0.03, 25], "label": "healthy"},
+        {"features": [4.2, 185, 4150, 0.12, 87], "label": "degraded"},
+        {"features": [5.8, 225, 4500, 0.16, 101], "label": "degraded"},
+        {"features": [1.1, 62, 3000, 0.04, 30], "label": "healthy"},
+        {"features": [3.4, 145, 3500, 0.09, 70], "label": "degraded"},
+        {"features": [0.5, 42, 2350, 0.02, 18], "label": "healthy"},
+        {"features": [4.9, 205, 4350, 0.14, 94], "label": "degraded"},
+    ],
+    topic_keywords=[
+        "network",
+        "networking",
+        "incident",
+        "latency",
+        "packet",
+        "congestion",
+        "routing",
+        "telemetry",
+        "anomaly",
+    ],
+)
+
+TABULAR_DATABASE_BENCHMARK = _tabular_benchmark(
+    benchmark_name="toy_database_workload_regression",
+    benchmark_description=(
+        "A small tabular benchmark that predicts whether a database workload remains stable or "
+        "regresses under changing query-plan conditions."
+    ),
+    dataset_name="Toy Database Workload Regression",
+    dataset_description=(
+        "Sixteen training and eight held out workload snapshots with join complexity, estimated "
+        "rows, index coverage, cache hit rate, and concurrency features."
+    ),
+    feature_names=[
+        "join_count",
+        "estimated_rows_k",
+        "index_coverage",
+        "cache_hit_rate",
+        "concurrency",
+    ],
+    train=[
+        {"features": [2, 40, 0.92, 0.96, 18], "label": "stable"},
+        {"features": [3, 55, 0.88, 0.94, 24], "label": "stable"},
+        {"features": [2, 35, 0.95, 0.97, 15], "label": "stable"},
+        {"features": [4, 80, 0.84, 0.92, 28], "label": "stable"},
+        {"features": [3, 70, 0.86, 0.93, 26], "label": "stable"},
+        {"features": [5, 95, 0.82, 0.91, 30], "label": "stable"},
+        {"features": [8, 420, 0.38, 0.61, 72], "label": "regressed"},
+        {"features": [9, 510, 0.32, 0.56, 80], "label": "regressed"},
+        {"features": [7, 390, 0.45, 0.64, 68], "label": "regressed"},
+        {"features": [10, 620, 0.28, 0.49, 92], "label": "regressed"},
+        {"features": [8, 470, 0.35, 0.58, 75], "label": "regressed"},
+        {"features": [6, 340, 0.50, 0.69, 60], "label": "regressed"},
+        {"features": [4, 88, 0.83, 0.92, 29], "label": "stable"},
+        {"features": [5, 110, 0.79, 0.89, 34], "label": "stable"},
+        {"features": [7, 300, 0.54, 0.72, 58], "label": "regressed"},
+        {"features": [3, 60, 0.90, 0.95, 22], "label": "stable"},
+    ],
+    test=[
+        {"features": [2, 45, 0.91, 0.96, 19], "label": "stable"},
+        {"features": [5, 120, 0.78, 0.88, 36], "label": "stable"},
+        {"features": [8, 450, 0.36, 0.59, 74], "label": "regressed"},
+        {"features": [9, 560, 0.30, 0.53, 84], "label": "regressed"},
+        {"features": [4, 90, 0.82, 0.91, 31], "label": "stable"},
+        {"features": [6, 320, 0.52, 0.70, 57], "label": "regressed"},
+        {"features": [3, 58, 0.89, 0.95, 23], "label": "stable"},
+        {"features": [8, 480, 0.34, 0.57, 78], "label": "regressed"},
+    ],
+    topic_keywords=[
+        "database",
+        "sql",
+        "query",
+        "workload",
+        "regression",
+        "join",
+        "index",
+        "transaction",
+        "optimizer",
+    ],
+)
+
+TABULAR_BENCHMARKS = [
+    TABULAR_BENCHMARK,
+    TABULAR_NETWORK_BENCHMARK,
+    TABULAR_DATABASE_BENCHMARK,
+]
 
 
-IR_BENCHMARK = {
-    "benchmark_name": "toy_cs_reranking",
-    "benchmark_description": (
+IR_BENCHMARK = _ir_benchmark(
+    benchmark_name="toy_cs_reranking",
+    benchmark_description=(
         "A compact reranking benchmark with computer science queries, candidate passages, and a "
         "single relevant document for each query."
     ),
-    "dataset": {
-        "name": "Toy CS Reranking",
-        "description": (
-            "Three training queries and three held out queries spanning retrieval, systems, and "
-            "program analysis topics."
-        ),
-        "train": [
-            {
-                "query": "dense retrieval with hard negatives",
-                "candidates": [
-                    {"id": "d1", "text": "Dense retrieval encoders use hard negatives to improve passage ranking."},
-                    {"id": "d2", "text": "Pipeline parallelism schedules micro batches across GPUs."},
-                    {"id": "d3", "text": "Static taint analysis reasons about untrusted data."},
-                ],
-                "relevant_ids": ["d1"],
-            },
-            {
-                "query": "gpu serving memory cache compression",
-                "candidates": [
-                    {"id": "d4", "text": "KV cache quantization reduces serving memory footprint and latency."},
-                    {"id": "d5", "text": "Approximate nearest neighbor indices accelerate vector search."},
-                    {"id": "d6", "text": "Symbolic execution enumerates control-flow paths."},
-                ],
-                "relevant_ids": ["d4"],
-            },
-            {
-                "query": "symbolic execution branch coverage",
-                "candidates": [
-                    {"id": "d7", "text": "Symbolic execution generates path constraints for branch coverage."},
-                    {"id": "d8", "text": "Scheduler-aware input pipelines improve accelerator utilization."},
-                    {"id": "d9", "text": "Query expansion improves lexical retrieval recall."},
-                ],
-                "relevant_ids": ["d7"],
-            },
-        ],
-        "test": [
-            {
-                "query": "lexical and vector retrieval ranking",
-                "candidates": [
-                    {"id": "t1", "text": "Cross-encoder rerankers refine top-k search results with token interaction."},
-                    {"id": "t2", "text": "Control-flow graph normalization simplifies compiler passes."},
-                    {"id": "t3", "text": "GPU cache compression reduces serving overhead."},
-                ],
-                "relevant_ids": ["t1"],
-            },
-            {
-                "query": "training throughput in multi-tenant gpu clusters",
-                "candidates": [
-                    {"id": "t4", "text": "Scheduler-aware data loading improves accelerator utilization in clusters."},
-                    {"id": "t5", "text": "Abstract interpretation proves absence of overflow."},
-                    {"id": "t6", "text": "Pseudo relevance feedback improves document recall."},
-                ],
-                "relevant_ids": ["t4"],
-            },
-            {
-                "query": "program analysis for taint propagation",
-                "candidates": [
-                    {"id": "t7", "text": "Static taint analysis tracks untrusted data through dependence graphs."},
-                    {"id": "t8", "text": "CUDA kernel fusion lowers transformer inference latency."},
-                    {"id": "t9", "text": "Approximate nearest neighbor indexing accelerates search."},
-                ],
-                "relevant_ids": ["t7"],
-            },
-        ],
-    },
-}
+    dataset_name="Toy CS Reranking",
+    dataset_description=(
+        "Three training queries and three held out queries spanning retrieval, systems, and "
+        "program analysis topics."
+    ),
+    train=[
+        {
+            "query": "dense retrieval with hard negatives",
+            "candidates": [
+                {"id": "d1", "text": "Dense retrieval encoders use hard negatives to improve passage ranking."},
+                {"id": "d2", "text": "Pipeline parallelism schedules micro batches across GPUs."},
+                {"id": "d3", "text": "Static taint analysis reasons about untrusted data."},
+            ],
+            "relevant_ids": ["d1"],
+        },
+        {
+            "query": "gpu serving memory cache compression",
+            "candidates": [
+                {"id": "d4", "text": "KV cache quantization reduces serving memory footprint and latency."},
+                {"id": "d5", "text": "Approximate nearest neighbor indices accelerate vector search."},
+                {"id": "d6", "text": "Symbolic execution enumerates control-flow paths."},
+            ],
+            "relevant_ids": ["d4"],
+        },
+        {
+            "query": "symbolic execution branch coverage",
+            "candidates": [
+                {"id": "d7", "text": "Symbolic execution generates path constraints for branch coverage."},
+                {"id": "d8", "text": "Scheduler-aware input pipelines improve accelerator utilization."},
+                {"id": "d9", "text": "Query expansion improves lexical retrieval recall."},
+            ],
+            "relevant_ids": ["d7"],
+        },
+    ],
+    test=[
+        {
+            "query": "lexical and vector retrieval ranking",
+            "candidates": [
+                {"id": "t1", "text": "Cross-encoder rerankers refine top-k search results with token interaction."},
+                {"id": "t2", "text": "Control-flow graph normalization simplifies compiler passes."},
+                {"id": "t3", "text": "GPU cache compression reduces serving overhead."},
+            ],
+            "relevant_ids": ["t1"],
+        },
+        {
+            "query": "training throughput in multi-tenant gpu clusters",
+            "candidates": [
+                {"id": "t4", "text": "Scheduler-aware data loading improves accelerator utilization in clusters."},
+                {"id": "t5", "text": "Abstract interpretation proves absence of overflow."},
+                {"id": "t6", "text": "Pseudo relevance feedback improves document recall."},
+            ],
+            "relevant_ids": ["t4"],
+        },
+        {
+            "query": "program analysis for taint propagation",
+            "candidates": [
+                {"id": "t7", "text": "Static taint analysis tracks untrusted data through dependence graphs."},
+                {"id": "t8", "text": "CUDA kernel fusion lowers transformer inference latency."},
+                {"id": "t9", "text": "Approximate nearest neighbor indexing accelerates search."},
+            ],
+            "relevant_ids": ["t7"],
+        },
+    ],
+    topic_keywords=[
+        "retrieval",
+        "search",
+        "ranking",
+        "reranking",
+        "query",
+        "document",
+        "program analysis",
+        "systems",
+    ],
+)
+
+IR_CODE_BENCHMARK = _ir_benchmark(
+    benchmark_name="toy_code_search_reranking",
+    benchmark_description=(
+        "A compact reranking benchmark for code-search and software-maintenance queries over "
+        "short implementation notes."
+    ),
+    dataset_name="Toy Code Search Reranking",
+    dataset_description=(
+        "Three training queries and three held out queries spanning code search, static analysis, "
+        "program repair, and testing workflows."
+    ),
+    train=[
+        {
+            "query": "python detect sql injection in request handler",
+            "candidates": [
+                {"id": "c1", "text": "Prepared statements sanitize SQL parameters inside the request handler."},
+                {"id": "c2", "text": "Breadth-first search visits graph layers in order."},
+                {"id": "c3", "text": "CDN edge caches serve static assets with low latency."},
+            ],
+            "relevant_ids": ["c1"],
+        },
+        {
+            "query": "compiler pass remove dead code",
+            "candidates": [
+                {"id": "c4", "text": "Dead-code elimination removes unused branches after constant propagation."},
+                {"id": "c5", "text": "Token rerankers refine document results with interaction features."},
+                {"id": "c6", "text": "Gradient clipping stabilizes transformer training."},
+            ],
+            "relevant_ids": ["c4"],
+        },
+        {
+            "query": "program repair failing unit test assertion",
+            "candidates": [
+                {"id": "c7", "text": "Patch synthesis compares failing assertions against candidate fixes."},
+                {"id": "c8", "text": "Vector indexes accelerate nearest-neighbor lookups."},
+                {"id": "c9", "text": "KV cache compression lowers inference memory."},
+            ],
+            "relevant_ids": ["c7"],
+        },
+    ],
+    test=[
+        {
+            "query": "static analysis null pointer bug localization",
+            "candidates": [
+                {"id": "u1", "text": "Static analyzers rank null-dereference paths for bug localization."},
+                {"id": "u2", "text": "Instruction tuning aligns assistants to user preferences."},
+                {"id": "u3", "text": "Congestion control adapts sending rates under loss."},
+            ],
+            "relevant_ids": ["u1"],
+        },
+        {
+            "query": "code search refactor duplicated logic",
+            "candidates": [
+                {"id": "u4", "text": "Refactoring tools detect duplicate logic before extracting helpers."},
+                {"id": "u5", "text": "Pseudo relevance feedback boosts ad hoc search recall."},
+                {"id": "u6", "text": "SLAM systems fuse lidar and camera signals."},
+            ],
+            "relevant_ids": ["u4"],
+        },
+        {
+            "query": "regression test flaky retry harness",
+            "candidates": [
+                {"id": "u7", "text": "Flaky-test harnesses isolate retries and report nondeterministic failures."},
+                {"id": "u8", "text": "Approximation algorithms trade exactness for speed."},
+                {"id": "u9", "text": "Database engines pipeline scans and joins."},
+            ],
+            "relevant_ids": ["u7"],
+        },
+    ],
+    topic_keywords=[
+        "code",
+        "code search",
+        "software",
+        "program repair",
+        "static analysis",
+        "compiler",
+        "bug",
+        "testing",
+        "refactor",
+    ],
+)
+
+IR_PAPER_BENCHMARK = _ir_benchmark(
+    benchmark_name="toy_paper_evidence_reranking",
+    benchmark_description=(
+        "A compact reranking benchmark for literature, citation, and evidence retrieval queries "
+        "over short paper-style abstracts."
+    ),
+    dataset_name="Toy Paper Evidence Reranking",
+    dataset_description=(
+        "Three training queries and three held out queries covering related-work lookup, citation "
+        "finding, and evidence retrieval."
+    ),
+    train=[
+        {
+            "query": "survey on retrieval augmented generation",
+            "candidates": [
+                {"id": "p1", "text": "A survey of retrieval-augmented generation compares grounding pipelines and indexing choices."},
+                {"id": "p2", "text": "A compiler optimization pass removes dead stores."},
+                {"id": "p3", "text": "Queue management controls bursty network latency."},
+            ],
+            "relevant_ids": ["p1"],
+        },
+        {
+            "query": "paper on diffusion models for image generation",
+            "candidates": [
+                {"id": "p4", "text": "Diffusion probabilistic models synthesize images through iterative denoising."},
+                {"id": "p5", "text": "Prepared statements mitigate SQL injection."},
+                {"id": "p6", "text": "Threshold rules classify tabular workloads."},
+            ],
+            "relevant_ids": ["p4"],
+        },
+        {
+            "query": "related work on benchmark reproducibility",
+            "candidates": [
+                {"id": "p7", "text": "Reproducibility checklists improve benchmark reporting across seeds and sweeps."},
+                {"id": "p8", "text": "Trajectory optimization smooths robot motion."},
+                {"id": "p9", "text": "Access-control policies constrain private data access."},
+            ],
+            "relevant_ids": ["p7"],
+        },
+    ],
+    test=[
+        {
+            "query": "find evidence for long context evaluation",
+            "candidates": [
+                {"id": "v1", "text": "Long-context evaluation studies measure recall degradation across extended prompts."},
+                {"id": "v2", "text": "Packet traces reveal congestion collapse under overload."},
+                {"id": "v3", "text": "Refactoring reduces duplicate code paths."},
+            ],
+            "relevant_ids": ["v1"],
+        },
+        {
+            "query": "citation on human feedback alignment",
+            "candidates": [
+                {"id": "v4", "text": "Human-feedback alignment papers compare preference optimization and reward modeling."},
+                {"id": "v5", "text": "Shader pipelines implement lighting and texture sampling."},
+                {"id": "v6", "text": "Vector indexes speed database retrieval."},
+            ],
+            "relevant_ids": ["v4"],
+        },
+        {
+            "query": "benchmark paper for agent tool use",
+            "candidates": [
+                {"id": "v7", "text": "Agent benchmark reports evaluate planning, memory, and tool-use execution traces."},
+                {"id": "v8", "text": "Perceptrons separate tabular classes with a linear boundary."},
+                {"id": "v9", "text": "Multipath routing spreads flows across network links."},
+            ],
+            "relevant_ids": ["v7"],
+        },
+    ],
+    topic_keywords=[
+        "paper",
+        "literature",
+        "citation",
+        "evidence",
+        "related work",
+        "survey",
+        "abstract",
+        "benchmark",
+        "research",
+    ],
+)
+
+IR_SECURITY_BENCHMARK = _ir_benchmark(
+    benchmark_name="toy_security_incident_reranking",
+    benchmark_description=(
+        "A compact reranking benchmark for incident-response and security-alert triage queries."
+    ),
+    dataset_name="Toy Security Incident Reranking",
+    dataset_description=(
+        "Three training queries and three held out queries covering phishing, intrusion, malware, "
+        "and host-compromise investigations."
+    ),
+    train=[
+        {
+            "query": "phishing login alert investigation playbook",
+            "candidates": [
+                {"id": "s1", "text": "Investigate suspicious login alerts by checking impossible travel and MFA resets."},
+                {"id": "s2", "text": "Ray tracing simulates realistic reflections and shadows."},
+                {"id": "s3", "text": "Bayesian optimization tunes learning rates efficiently."},
+            ],
+            "relevant_ids": ["s1"],
+        },
+        {
+            "query": "dns tunneling beacon detection",
+            "candidates": [
+                {"id": "s4", "text": "DNS tunneling detection looks for long high-entropy TXT or subdomain queries."},
+                {"id": "s5", "text": "Pseudo relevance feedback expands retrieval queries."},
+                {"id": "s6", "text": "Join reordering reduces relational execution cost."},
+            ],
+            "relevant_ids": ["s4"],
+        },
+        {
+            "query": "linux privilege escalation on host",
+            "candidates": [
+                {"id": "s7", "text": "Privilege-escalation triage checks sudoers changes, new setuid binaries, and suspicious services."},
+                {"id": "s8", "text": "Mesh simplification reduces polygon count."},
+                {"id": "s9", "text": "Long-term memory stores prior agent episodes."},
+            ],
+            "relevant_ids": ["s7"],
+        },
+    ],
+    test=[
+        {
+            "query": "credential stuffing traffic spike",
+            "candidates": [
+                {"id": "w1", "text": "Credential-stuffing investigations correlate login failures, IP rotation, and password spraying."},
+                {"id": "w2", "text": "Differentiable rendering links scenes to image losses."},
+                {"id": "w3", "text": "Compiler passes normalize control-flow graphs."},
+            ],
+            "relevant_ids": ["w1"],
+        },
+        {
+            "query": "lateral movement via remote admin tools",
+            "candidates": [
+                {"id": "w4", "text": "Lateral-movement triage traces remote admin tools, credential reuse, and suspicious east-west sessions."},
+                {"id": "w5", "text": "Gradient boosting improves supervised classification."},
+                {"id": "w6", "text": "Usability studies compare interface task completion."},
+            ],
+            "relevant_ids": ["w4"],
+        },
+        {
+            "query": "malware sandbox escape investigation",
+            "candidates": [
+                {"id": "w7", "text": "Sandbox-escape response reviews kernel exploits, breakout logs, and process-tree anomalies."},
+                {"id": "w8", "text": "Secure multiparty computation protects private inputs."},
+                {"id": "w9", "text": "Vector search relies on nearest-neighbor indexing."},
+            ],
+            "relevant_ids": ["w7"],
+        },
+    ],
+    topic_keywords=[
+        "security",
+        "incident",
+        "alert",
+        "intrusion",
+        "phishing",
+        "malware",
+        "credential",
+        "dns",
+        "lateral movement",
+    ],
+)
+
+IR_BENCHMARKS = [
+    IR_BENCHMARK,
+    IR_CODE_BENCHMARK,
+    IR_PAPER_BENCHMARK,
+    IR_SECURITY_BENCHMARK,
+]
 
 
 @dataclass(frozen=True)
@@ -610,29 +1113,78 @@ def _explicit_builtin_name(source: BenchmarkSource | None) -> str | None:
     return source.name or source.dataset_id
 
 
-def _select_text_benchmark(topic: str | None = None, source: BenchmarkSource | None = None) -> dict[str, Any]:
+def _select_benchmark_from_catalog(
+    benchmarks: list[dict[str, Any]],
+    default_benchmark: dict[str, Any],
+    *,
+    topic: str | None = None,
+    source: BenchmarkSource | None = None,
+) -> dict[str, Any]:
     explicit_name = _explicit_builtin_name(source)
     if explicit_name:
-        for benchmark in TEXT_BENCHMARKS:
-            if explicit_name in {
-                benchmark["benchmark_name"],
-                benchmark["dataset"]["name"],
+        lowered_explicit = explicit_name.lower()
+        for benchmark in benchmarks:
+            if lowered_explicit in {
+                str(benchmark["benchmark_name"]).lower(),
+                str(benchmark["dataset"]["name"]).lower(),
             }:
                 return benchmark
     topic_tokens = _normalize_topic_tokens(topic)
     if not topic_tokens:
-        return TEXT_BENCHMARK
+        return default_benchmark
 
-    best_benchmark = TEXT_BENCHMARK
+    best_benchmark = default_benchmark
     best_score = 0
-    for benchmark in TEXT_BENCHMARKS:
+    for benchmark in benchmarks:
+        dataset = benchmark["dataset"]
         keyword_tokens = _normalize_topic_tokens(" ".join(benchmark.get("topic_keywords", [])))
-        label_tokens = _normalize_topic_tokens(" ".join(benchmark["dataset"].get("label_space", [])))
-        score = len(topic_tokens & keyword_tokens) * 3 + len(topic_tokens & label_tokens)
+        description_tokens = _normalize_topic_tokens(
+            " ".join(
+                [
+                    str(benchmark.get("benchmark_description", "")),
+                    str(dataset.get("description", "")),
+                ]
+            )
+        )
+        aux_tokens = _normalize_topic_tokens(
+            " ".join(dataset.get("label_space", []) + dataset.get("feature_names", []))
+        )
+        score = (
+            len(topic_tokens & keyword_tokens) * 4
+            + len(topic_tokens & aux_tokens) * 2
+            + len(topic_tokens & description_tokens)
+        )
         if score > best_score:
             best_score = score
             best_benchmark = benchmark
     return best_benchmark
+
+
+def _select_text_benchmark(topic: str | None = None, source: BenchmarkSource | None = None) -> dict[str, Any]:
+    return _select_benchmark_from_catalog(
+        TEXT_BENCHMARKS,
+        TEXT_BENCHMARK,
+        topic=topic,
+        source=source,
+    )
+
+
+def _select_tabular_benchmark(topic: str | None = None, source: BenchmarkSource | None = None) -> dict[str, Any]:
+    return _select_benchmark_from_catalog(
+        TABULAR_BENCHMARKS,
+        TABULAR_BENCHMARK,
+        topic=topic,
+        source=source,
+    )
+
+
+def _select_ir_benchmark(topic: str | None = None, source: BenchmarkSource | None = None) -> dict[str, Any]:
+    return _select_benchmark_from_catalog(
+        IR_BENCHMARKS,
+        IR_BENCHMARK,
+        topic=topic,
+        source=source,
+    )
 
 
 def infer_task_family(topic: str, task_family_hint: TaskFamily | None = None) -> TaskFamily:
@@ -654,9 +1206,9 @@ def benchmark_payload_for(
     source: BenchmarkSource | None = None,
 ) -> dict[str, Any]:
     if task_family == "ir_reranking":
-        return IR_BENCHMARK
+        return _select_ir_benchmark(topic=topic, source=source)
     if task_family == "tabular_classification":
-        return TABULAR_BENCHMARK
+        return _select_tabular_benchmark(topic=topic, source=source)
     return _select_text_benchmark(topic=topic, source=source)
 
 
@@ -826,18 +1378,25 @@ def build_experiment_spec(
         ]
         hypothesis = (
             "A lexical reranker with rarity-aware term weighting should outperform the random order "
-            "and simple overlap baselines on a small computer science retrieval benchmark."
+            f"and simple overlap baselines on `{resolved.benchmark_name}`."
         )
         input_fields = []
         label_space = []
         query_fields = ["query"]
         candidate_count = max((len(item.get("candidates", [])) for item in dataset_payload["test"]), default=0)
     elif task_family == "tabular_classification":
+        label_space = dataset_payload.get("label_space") or sorted(
+            {
+                item["label"]
+                for item in [*dataset_payload.get("train", []), *dataset_payload.get("test", [])]
+                if item.get("label")
+            }
+        )
         baselines = [
-            BaselineSpec(name="majority", description="Predict the most frequent stability label."),
+            BaselineSpec(name="majority", description="Predict the most frequent class label."),
             BaselineSpec(
                 name="threshold_rule",
-                description="A hand written rule over learning rate and residual connections.",
+                description="A hand written one-feature threshold rule over the benchmark features.",
             ),
             BaselineSpec(
                 name="perceptron_scaled",
@@ -862,10 +1421,9 @@ def build_experiment_spec(
         ]
         hypothesis = (
             "A simple linear model with feature scaling should outperform majority voting and "
-            "the hand written threshold rule on training run stability prediction."
+            f"the hand written threshold rule on `{resolved.benchmark_name}`."
         )
         input_fields = dataset_payload["feature_names"]
-        label_space = ["stable", "unstable"]
         query_fields = []
         candidate_count = None
     else:

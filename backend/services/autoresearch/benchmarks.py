@@ -16,158 +16,448 @@ from schemas.autoresearch import (
 )
 
 
-TEXT_BENCHMARK = {
-    "benchmark_name": "toy_cs_abstract_topic",
-    "benchmark_description": (
+def _text_benchmark(
+    *,
+    benchmark_name: str,
+    benchmark_description: str,
+    dataset_name: str,
+    dataset_description: str,
+    train: list[dict[str, str]],
+    test: list[dict[str, str]],
+    keyword_map: dict[str, list[str]],
+    topic_keywords: list[str],
+) -> dict[str, Any]:
+    return {
+        "benchmark_name": benchmark_name,
+        "benchmark_description": benchmark_description,
+        "topic_keywords": topic_keywords,
+        "dataset": {
+            "name": dataset_name,
+            "description": dataset_description,
+            "train": train,
+            "test": test,
+            "keyword_map": keyword_map,
+            "label_space": list(keyword_map),
+        },
+    }
+
+
+TEXT_BENCHMARK = _text_benchmark(
+    benchmark_name="toy_cs_abstract_topic",
+    benchmark_description=(
         "A compact benchmark of short computer science abstracts labeled as retrieval, "
         "ml_systems, or program_analysis."
     ),
-    "dataset": {
-        "name": "Toy CS Abstract Topic",
-        "description": (
-            "Fifteen training abstracts and nine test abstracts covering retrieval, systems, "
-            "and program analysis concepts."
-        ),
-        "train": [
-            {
-                "text": "Dense retrieval encoders learn passage representations from query pairs and hard negatives.",
-                "label": "retrieval",
-            },
-            {
-                "text": "BM25 ranking with lexical expansion improves first stage retrieval effectiveness.",
-                "label": "retrieval",
-            },
-            {
-                "text": "Pseudo relevance feedback improves document recall for ad hoc search.",
-                "label": "retrieval",
-            },
-            {
-                "text": "Cross encoder rerankers refine top k search results with token interaction.",
-                "label": "retrieval",
-            },
-            {
-                "text": "Approximate nearest neighbor indexing accelerates vector search in large corpora.",
-                "label": "retrieval",
-            },
-            {
-                "text": "Pipeline parallel training schedules micro batches across GPU stages.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "KV cache quantization reduces memory footprint for large model serving.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "Asynchronous checkpointing lowers tail latency in distributed training systems.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "Scheduler aware data loading improves accelerator utilization in multi tenant clusters.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "CUDA kernel fusion reduces memory bandwidth overhead in transformer inference.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "Static taint analysis tracks untrusted data through program dependence graphs.",
-                "label": "program_analysis",
-            },
-            {
-                "text": "Abstract interpretation proves absence of integer overflow in low level code.",
-                "label": "program_analysis",
-            },
-            {
-                "text": "Symbolic execution generates path constraints for branch coverage improvement.",
-                "label": "program_analysis",
-            },
-            {
-                "text": "Control flow graph normalization simplifies compiler optimization passes.",
-                "label": "program_analysis",
-            },
-            {
-                "text": "Type state analysis detects protocol misuse in event driven software.",
-                "label": "program_analysis",
-            },
-        ],
-        "test": [
-            {
-                "text": "Query expansion improves ranking quality when the retriever misses exact lexical matches.",
-                "label": "retrieval",
-            },
-            {
-                "text": "Dual encoder retrieval can miss token level interactions without reranking.",
-                "label": "retrieval",
-            },
-            {
-                "text": "Vector search latency depends on the quality of the nearest neighbor index.",
-                "label": "retrieval",
-            },
-            {
-                "text": "Serving throughput improves when cache compression reduces GPU memory pressure.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "Cluster schedulers stabilize training jobs by balancing pipeline stages.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "Kernel level optimization shortens inference latency for batched requests.",
-                "label": "ml_systems",
-            },
-            {
-                "text": "Program analysis tools reason about control flow and taint propagation.",
-                "label": "program_analysis",
-            },
-            {
-                "text": "Compiler verification benefits from symbolic paths and abstract domains.",
-                "label": "program_analysis",
-            },
-            {
-                "text": "Static analyzers catch protocol violations before deployment.",
-                "label": "program_analysis",
-            },
-        ],
-        "keyword_map": {
-            "retrieval": [
-                "retrieval",
-                "search",
-                "ranking",
-                "query",
-                "document",
-                "passage",
-                "rerank",
-                "vector",
-                "bm25",
-                "index",
-            ],
-            "ml_systems": [
-                "gpu",
-                "cache",
-                "latency",
-                "throughput",
-                "scheduler",
-                "cluster",
-                "kernel",
-                "memory",
-                "training",
-                "serving",
-            ],
-            "program_analysis": [
-                "static",
-                "symbolic",
-                "control",
-                "compiler",
-                "taint",
-                "abstract",
-                "program",
-                "flow",
-                "type",
-                "path",
-            ],
+    dataset_name="Toy CS Abstract Topic",
+    dataset_description=(
+        "Fifteen training abstracts and nine test abstracts covering retrieval, systems, "
+        "and program analysis concepts."
+    ),
+    train=[
+        {
+            "text": "Dense retrieval encoders learn passage representations from query pairs and hard negatives.",
+            "label": "retrieval",
         },
+        {
+            "text": "BM25 ranking with lexical expansion improves first stage retrieval effectiveness.",
+            "label": "retrieval",
+        },
+        {
+            "text": "Pseudo relevance feedback improves document recall for ad hoc search.",
+            "label": "retrieval",
+        },
+        {
+            "text": "Cross encoder rerankers refine top k search results with token interaction.",
+            "label": "retrieval",
+        },
+        {
+            "text": "Approximate nearest neighbor indexing accelerates vector search in large corpora.",
+            "label": "retrieval",
+        },
+        {
+            "text": "Pipeline parallel training schedules micro batches across GPU stages.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "KV cache quantization reduces memory footprint for large model serving.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "Asynchronous checkpointing lowers tail latency in distributed training systems.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "Scheduler aware data loading improves accelerator utilization in multi tenant clusters.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "CUDA kernel fusion reduces memory bandwidth overhead in transformer inference.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "Static taint analysis tracks untrusted data through program dependence graphs.",
+            "label": "program_analysis",
+        },
+        {
+            "text": "Abstract interpretation proves absence of integer overflow in low level code.",
+            "label": "program_analysis",
+        },
+        {
+            "text": "Symbolic execution generates path constraints for branch coverage improvement.",
+            "label": "program_analysis",
+        },
+        {
+            "text": "Control flow graph normalization simplifies compiler optimization passes.",
+            "label": "program_analysis",
+        },
+        {
+            "text": "Type state analysis detects protocol misuse in event driven software.",
+            "label": "program_analysis",
+        },
+    ],
+    test=[
+        {
+            "text": "Query expansion improves ranking quality when the retriever misses exact lexical matches.",
+            "label": "retrieval",
+        },
+        {
+            "text": "Dual encoder retrieval can miss token level interactions without reranking.",
+            "label": "retrieval",
+        },
+        {
+            "text": "Vector search latency depends on the quality of the nearest neighbor index.",
+            "label": "retrieval",
+        },
+        {
+            "text": "Serving throughput improves when cache compression reduces GPU memory pressure.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "Cluster schedulers stabilize training jobs by balancing pipeline stages.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "Kernel level optimization shortens inference latency for batched requests.",
+            "label": "ml_systems",
+        },
+        {
+            "text": "Program analysis tools reason about control flow and taint propagation.",
+            "label": "program_analysis",
+        },
+        {
+            "text": "Compiler verification benefits from symbolic paths and abstract domains.",
+            "label": "program_analysis",
+        },
+        {
+            "text": "Static analyzers catch protocol violations before deployment.",
+            "label": "program_analysis",
+        },
+    ],
+    keyword_map={
+        "retrieval": [
+            "retrieval",
+            "search",
+            "ranking",
+            "query",
+            "document",
+            "passage",
+            "rerank",
+            "vector",
+            "bm25",
+            "index",
+        ],
+        "ml_systems": [
+            "gpu",
+            "cache",
+            "latency",
+            "throughput",
+            "scheduler",
+            "cluster",
+            "kernel",
+            "memory",
+            "training",
+            "serving",
+        ],
+        "program_analysis": [
+            "static",
+            "symbolic",
+            "control",
+            "compiler",
+            "taint",
+            "abstract",
+            "program",
+            "flow",
+            "type",
+            "path",
+        ],
     },
-}
+    topic_keywords=[
+        "retrieval",
+        "search",
+        "ranking",
+        "gpu",
+        "serving",
+        "systems",
+        "compiler",
+        "program analysis",
+        "static analysis",
+    ],
+)
+
+TEXT_AGENT_BENCHMARK = _text_benchmark(
+    benchmark_name="toy_agent_workflow_topic",
+    benchmark_description=(
+        "A compact benchmark of short agent-systems snippets labeled as planning, memory, or tool_use."
+    ),
+    dataset_name="Toy Agent Workflow Topic",
+    dataset_description=(
+        "Twelve training snippets and six test snippets covering agent planning, memory, and tool-use design."
+    ),
+    train=[
+        {"text": "Task decomposition planners break user goals into executable subgoals for agents.", "label": "planning"},
+        {"text": "Reflection loops let agent planners critique intermediate steps before execution.", "label": "planning"},
+        {"text": "Hierarchical planning coordinates multi-step workflows across cooperating agents.", "label": "planning"},
+        {"text": "Constraint-aware plan repair updates an agent action sequence after a failed step.", "label": "planning"},
+        {"text": "Long-term memory stores past tasks and retrieves episodes for later agent decisions.", "label": "memory"},
+        {"text": "Retrieval-augmented memory lets agents ground responses in prior observations.", "label": "memory"},
+        {"text": "Episodic memory compression keeps important tool traces for future reuse.", "label": "memory"},
+        {"text": "State tracking modules maintain working memory across multi-turn agent sessions.", "label": "memory"},
+        {"text": "Tool selection policies decide when an agent should call search or code execution.", "label": "tool_use"},
+        {"text": "Function calling schemas help agents invoke APIs with structured arguments.", "label": "tool_use"},
+        {"text": "Execution monitors verify browser and shell outputs before the agent continues.", "label": "tool_use"},
+        {"text": "Toolformer-style supervision teaches models to insert calculator and browser calls.", "label": "tool_use"},
+    ],
+    test=[
+        {"text": "Multi-agent planners coordinate subtasks before assigning tools to workers.", "label": "planning"},
+        {"text": "Search-tree planning helps an agent revise its strategy after tool failure.", "label": "planning"},
+        {"text": "Shared memory lets an assistant recover prior observations across long tasks.", "label": "memory"},
+        {"text": "Working-memory updates keep agent state consistent over multi-step conversations.", "label": "memory"},
+        {"text": "API routing policies decide which external tool an agent should invoke next.", "label": "tool_use"},
+        {"text": "Structured tool calls keep agent arguments valid for browser and code actions.", "label": "tool_use"},
+    ],
+    keyword_map={
+        "planning": ["plan", "planning", "subgoal", "workflow", "hierarchical", "reflection", "repair", "coordination"],
+        "memory": ["memory", "episodic", "working", "state", "retrieve", "observation", "context", "history"],
+        "tool_use": ["tool", "function", "api", "browser", "shell", "execution", "call", "invoke"],
+    },
+    topic_keywords=[
+        "agent",
+        "agents",
+        "multi-agent",
+        "planner",
+        "planning",
+        "tool",
+        "tool use",
+        "memory",
+        "llm",
+        "workflow",
+    ],
+)
+
+TEXT_ML_BENCHMARK = _text_benchmark(
+    benchmark_name="toy_ml_nlp_robotics_topic",
+    benchmark_description=(
+        "A compact benchmark of short AI research snippets labeled as machine_learning, nlp, or robotics."
+    ),
+    dataset_name="Toy ML NLP Robotics Topic",
+    dataset_description=(
+        "Twelve training snippets and six test snippets covering machine learning, natural language processing, and robotics."
+    ),
+    train=[
+        {"text": "Gradient boosting combines weak learners to improve supervised classification accuracy.", "label": "machine_learning"},
+        {"text": "Contrastive representation learning aligns embeddings without explicit class labels.", "label": "machine_learning"},
+        {"text": "Bayesian optimization tunes hyperparameters with sample-efficient surrogate models.", "label": "machine_learning"},
+        {"text": "Metric learning shapes embedding space by pulling similar examples together.", "label": "machine_learning"},
+        {"text": "Transformer language models use attention to predict the next token in context.", "label": "nlp"},
+        {"text": "Subword tokenization improves open-vocabulary translation and summarization pipelines.", "label": "nlp"},
+        {"text": "Instruction tuning aligns chat models with conversational language tasks.", "label": "nlp"},
+        {"text": "Named entity recognition tags people, locations, and organizations in text.", "label": "nlp"},
+        {"text": "Model predictive control stabilizes mobile robots under changing dynamics.", "label": "robotics"},
+        {"text": "SLAM systems fuse lidar and camera signals to localize a robot while mapping.", "label": "robotics"},
+        {"text": "Grasp planning chooses end-effector poses for manipulation tasks.", "label": "robotics"},
+        {"text": "Reinforcement learning policies guide robot navigation in cluttered environments.", "label": "robotics"},
+    ],
+    test=[
+        {"text": "Regularized linear models improve generalization when training data is limited.", "label": "machine_learning"},
+        {"text": "Self-supervised pretraining learns useful embeddings before downstream fine-tuning.", "label": "machine_learning"},
+        {"text": "Question answering models ground token predictions in retrieved passages.", "label": "nlp"},
+        {"text": "Sequence labeling pipelines identify syntax and entities in documents.", "label": "nlp"},
+        {"text": "Trajectory optimization generates smooth motions for robotic manipulators.", "label": "robotics"},
+        {"text": "Robot localization uses sensor fusion and control loops during navigation.", "label": "robotics"},
+    ],
+    keyword_map={
+        "machine_learning": ["learning", "embedding", "classification", "optimization", "representation", "model", "hyperparameter", "regularized"],
+        "nlp": ["language", "token", "translation", "summarization", "question", "entity", "text", "sequence"],
+        "robotics": ["robot", "slam", "navigation", "grasp", "trajectory", "sensor", "manipulation", "control"],
+    },
+    topic_keywords=[
+        "machine learning",
+        "ml",
+        "nlp",
+        "language model",
+        "transformer",
+        "chatbot",
+        "robot",
+        "robotics",
+        "reinforcement learning",
+    ],
+)
+
+TEXT_VISION_BENCHMARK = _text_benchmark(
+    benchmark_name="toy_vision_graphics_hci_topic",
+    benchmark_description=(
+        "A compact benchmark of short visual-computing snippets labeled as computer_vision, graphics, or hci."
+    ),
+    dataset_name="Toy Vision Graphics HCI Topic",
+    dataset_description=(
+        "Twelve training snippets and six test snippets covering computer vision, graphics, and human-computer interaction."
+    ),
+    train=[
+        {"text": "Image segmentation predicts a semantic label for every pixel in a scene.", "label": "computer_vision"},
+        {"text": "Object detection pipelines localize cars and pedestrians in street images.", "label": "computer_vision"},
+        {"text": "Visual tracking follows a target across video frames under occlusion.", "label": "computer_vision"},
+        {"text": "Depth estimation recovers scene geometry from monocular camera views.", "label": "computer_vision"},
+        {"text": "Physically based rendering simulates light transport for realistic images.", "label": "graphics"},
+        {"text": "Mesh simplification reduces polygon count while preserving surface detail.", "label": "graphics"},
+        {"text": "Shader pipelines control texture sampling and lighting in real-time graphics.", "label": "graphics"},
+        {"text": "Differentiable rendering links 3D scene parameters to image-space losses.", "label": "graphics"},
+        {"text": "Usability studies measure how quickly people complete tasks in an interface.", "label": "hci"},
+        {"text": "Interaction design explores how menus and gestures affect user performance.", "label": "hci"},
+        {"text": "Eye-tracking helps analyze attention patterns in user interfaces.", "label": "hci"},
+        {"text": "Visualization systems help analysts explore multidimensional data interactively.", "label": "hci"},
+    ],
+    test=[
+        {"text": "Video understanding models detect actions and objects across time.", "label": "computer_vision"},
+        {"text": "Scene recognition uses image features to classify indoor and outdoor environments.", "label": "computer_vision"},
+        {"text": "Ray tracing computes reflections and shadows for realistic 3D rendering.", "label": "graphics"},
+        {"text": "Geometry processing repairs noisy meshes before animation or simulation.", "label": "graphics"},
+        {"text": "Interface evaluation compares user task time across different menu layouts.", "label": "hci"},
+        {"text": "Interactive dashboards support visual exploration and rapid analyst feedback.", "label": "hci"},
+    ],
+    keyword_map={
+        "computer_vision": ["image", "video", "pixel", "detection", "segmentation", "tracking", "depth", "scene"],
+        "graphics": ["rendering", "mesh", "shader", "ray", "geometry", "texture", "lighting", "3d"],
+        "hci": ["user", "interface", "interaction", "usability", "visualization", "gesture", "dashboard", "attention"],
+    },
+    topic_keywords=[
+        "vision",
+        "image",
+        "video",
+        "graphics",
+        "rendering",
+        "3d",
+        "mesh",
+        "hci",
+        "interface",
+        "visualization",
+    ],
+)
+
+TEXT_INFRA_BENCHMARK = _text_benchmark(
+    benchmark_name="toy_security_network_database_topic",
+    benchmark_description=(
+        "A compact benchmark of infrastructure snippets labeled as security, networking, or databases."
+    ),
+    dataset_name="Toy Security Network Database Topic",
+    dataset_description=(
+        "Twelve training snippets and six test snippets covering computer security, networking, and database systems."
+    ),
+    train=[
+        {"text": "Static malware detection flags suspicious binaries before execution.", "label": "security"},
+        {"text": "Sandbox escape mitigation hardens browser processes against exploitation.", "label": "security"},
+        {"text": "Differential privacy limits information leakage from released query results.", "label": "security"},
+        {"text": "Vulnerability scanners identify injection flaws in web applications.", "label": "security"},
+        {"text": "Congestion control adjusts packet sending rates to stabilize network throughput.", "label": "networking"},
+        {"text": "Routing protocols choose paths across distributed network topologies.", "label": "networking"},
+        {"text": "Transport protocols balance latency, loss recovery, and fairness.", "label": "networking"},
+        {"text": "Datacenter fabrics optimize bandwidth for east-west traffic patterns.", "label": "networking"},
+        {"text": "Query optimizers choose join orders to speed up relational execution plans.", "label": "databases"},
+        {"text": "Transaction protocols preserve consistency during concurrent updates.", "label": "databases"},
+        {"text": "LSM-tree storage engines trade write amplification against read latency.", "label": "databases"},
+        {"text": "Vector indexes accelerate nearest-neighbor search in database systems.", "label": "databases"},
+    ],
+    test=[
+        {"text": "Access-control policies restrict which principals can read private data.", "label": "security"},
+        {"text": "Encrypted messaging protocols protect confidentiality and authenticity.", "label": "security"},
+        {"text": "Queue management improves latency under bursty network traffic.", "label": "networking"},
+        {"text": "Multipath routing spreads flows across redundant network links.", "label": "networking"},
+        {"text": "SQL execution engines pipeline scans, filters, and aggregations.", "label": "databases"},
+        {"text": "Index maintenance keeps database lookup latency low after inserts.", "label": "databases"},
+    ],
+    keyword_map={
+        "security": ["security", "privacy", "malware", "vulnerability", "encryption", "access", "attack", "sandbox"],
+        "networking": ["network", "routing", "packet", "congestion", "latency", "transport", "throughput", "bandwidth"],
+        "databases": ["database", "query", "sql", "transaction", "join", "storage", "index", "relational"],
+    },
+    topic_keywords=[
+        "security",
+        "privacy",
+        "network",
+        "routing",
+        "database",
+        "sql",
+        "transaction",
+        "query optimization",
+    ],
+)
+
+TEXT_THEORY_BENCHMARK = _text_benchmark(
+    benchmark_name="toy_algorithms_crypto_software_topic",
+    benchmark_description=(
+        "A compact benchmark of software-and-theory snippets labeled as algorithms, cryptography, or software_engineering."
+    ),
+    dataset_name="Toy Algorithms Crypto Software Topic",
+    dataset_description=(
+        "Twelve training snippets and six test snippets covering algorithms, cryptography, and software engineering."
+    ),
+    train=[
+        {"text": "Approximation algorithms trade exact optimality for bounded solution quality.", "label": "algorithms"},
+        {"text": "Dynamic programming solves overlapping subproblems with memoized recurrences.", "label": "algorithms"},
+        {"text": "Graph algorithms compute shortest paths and minimum spanning trees efficiently.", "label": "algorithms"},
+        {"text": "Streaming algorithms summarize large inputs with compact sketches.", "label": "algorithms"},
+        {"text": "Zero-knowledge proofs let verifiers confirm statements without revealing secrets.", "label": "cryptography"},
+        {"text": "Homomorphic encryption supports computation on encrypted ciphertexts.", "label": "cryptography"},
+        {"text": "Key exchange protocols establish shared secrets over untrusted channels.", "label": "cryptography"},
+        {"text": "Digital signatures authenticate messages and prevent repudiation.", "label": "cryptography"},
+        {"text": "Regression testing checks that code changes do not break existing behavior.", "label": "software_engineering"},
+        {"text": "Continuous integration automates builds and test suites for every commit.", "label": "software_engineering"},
+        {"text": "Refactoring improves code structure without changing observable behavior.", "label": "software_engineering"},
+        {"text": "Fault localization ranks suspicious lines after a test failure.", "label": "software_engineering"},
+    ],
+    test=[
+        {"text": "Greedy algorithms make locally optimal choices under structural constraints.", "label": "algorithms"},
+        {"text": "Submodular optimization selects sets with diminishing marginal gains.", "label": "algorithms"},
+        {"text": "Secure multiparty computation evaluates functions without exposing private inputs.", "label": "cryptography"},
+        {"text": "Authenticated encryption combines confidentiality with integrity checks.", "label": "cryptography"},
+        {"text": "Code review and automated testing help maintain software quality.", "label": "software_engineering"},
+        {"text": "Program repair systems generate candidate patches for failing tests.", "label": "software_engineering"},
+    ],
+    keyword_map={
+        "algorithms": ["algorithm", "graph", "dynamic", "approximation", "streaming", "optimization", "greedy", "submodular"],
+        "cryptography": ["cryptography", "proof", "encryption", "signature", "ciphertext", "secret", "authenticated", "multiparty"],
+        "software_engineering": ["testing", "integration", "refactoring", "fault", "patch", "review", "software", "quality"],
+    },
+    topic_keywords=[
+        "algorithm",
+        "approximation",
+        "graph",
+        "optimization",
+        "cryptography",
+        "encryption",
+        "software engineering",
+        "testing",
+        "program repair",
+    ],
+)
+
+TEXT_BENCHMARKS = [
+    TEXT_BENCHMARK,
+    TEXT_AGENT_BENCHMARK,
+    TEXT_ML_BENCHMARK,
+    TEXT_VISION_BENCHMARK,
+    TEXT_INFRA_BENCHMARK,
+    TEXT_THEORY_BENCHMARK,
+]
 
 
 TABULAR_BENCHMARK = {
@@ -304,6 +594,47 @@ class ResolvedBenchmark:
     benchmark_description: str
 
 
+def _normalize_topic_tokens(topic: str | None) -> set[str]:
+    if not topic:
+        return set()
+    return {
+        token
+        for token in "".join(character.lower() if character.isalnum() else " " for character in topic).split()
+        if len(token) >= 2
+    }
+
+
+def _explicit_builtin_name(source: BenchmarkSource | None) -> str | None:
+    if source is None:
+        return None
+    return source.name or source.dataset_id
+
+
+def _select_text_benchmark(topic: str | None = None, source: BenchmarkSource | None = None) -> dict[str, Any]:
+    explicit_name = _explicit_builtin_name(source)
+    if explicit_name:
+        for benchmark in TEXT_BENCHMARKS:
+            if explicit_name in {
+                benchmark["benchmark_name"],
+                benchmark["dataset"]["name"],
+            }:
+                return benchmark
+    topic_tokens = _normalize_topic_tokens(topic)
+    if not topic_tokens:
+        return TEXT_BENCHMARK
+
+    best_benchmark = TEXT_BENCHMARK
+    best_score = 0
+    for benchmark in TEXT_BENCHMARKS:
+        keyword_tokens = _normalize_topic_tokens(" ".join(benchmark.get("topic_keywords", [])))
+        label_tokens = _normalize_topic_tokens(" ".join(benchmark["dataset"].get("label_space", [])))
+        score = len(topic_tokens & keyword_tokens) * 3 + len(topic_tokens & label_tokens)
+        if score > best_score:
+            best_score = score
+            best_benchmark = benchmark
+    return best_benchmark
+
+
 def infer_task_family(topic: str, task_family_hint: TaskFamily | None = None) -> TaskFamily:
     if task_family_hint:
         return task_family_hint
@@ -317,12 +648,16 @@ def infer_task_family(topic: str, task_family_hint: TaskFamily | None = None) ->
     return "text_classification"
 
 
-def benchmark_payload_for(task_family: TaskFamily) -> dict[str, Any]:
+def benchmark_payload_for(
+    task_family: TaskFamily,
+    topic: str | None = None,
+    source: BenchmarkSource | None = None,
+) -> dict[str, Any]:
     if task_family == "ir_reranking":
         return IR_BENCHMARK
     if task_family == "tabular_classification":
         return TABULAR_BENCHMARK
-    return TEXT_BENCHMARK
+    return _select_text_benchmark(topic=topic, source=source)
 
 
 def default_search_strategies(task_family: TaskFamily) -> list[str]:
@@ -443,15 +778,21 @@ def default_acceptance_criteria(task_family: TaskFamily) -> list[AcceptanceRule]
 def builtin_benchmark(
     task_family: TaskFamily,
     source: BenchmarkSource | None = None,
+    topic: str | None = None,
 ) -> ResolvedBenchmark:
-    payload = benchmark_payload_for(task_family)
-    effective_source = source or BenchmarkSource(kind="builtin", task_family_hint=task_family)
+    selected = benchmark_payload_for(task_family, topic=topic, source=source)
+    effective_source = (source or BenchmarkSource(kind="builtin", task_family_hint=task_family)).model_copy(
+        update={
+            "task_family_hint": task_family,
+            "name": source.name if source and source.name else selected["benchmark_name"],
+        }
+    )
     return ResolvedBenchmark(
         source=effective_source,
         task_family=task_family,
-        payload=payload["dataset"],
-        benchmark_name=payload["benchmark_name"],
-        benchmark_description=payload["benchmark_description"],
+        payload=selected["dataset"],
+        benchmark_name=selected["benchmark_name"],
+        benchmark_description=selected["benchmark_description"],
     )
 
 
@@ -528,6 +869,13 @@ def build_experiment_spec(
         query_fields = []
         candidate_count = None
     else:
+        label_space = dataset_payload.get("label_space") or sorted(
+            {
+                item["label"]
+                for item in [*dataset_payload.get("train", []), *dataset_payload.get("test", [])]
+                if item.get("label")
+            }
+        )
         baselines = [
             BaselineSpec(name="majority", description="Predict the most frequent topic label."),
             BaselineSpec(
@@ -551,16 +899,15 @@ def build_experiment_spec(
         ]
         notes = [
             "Use only Python standard library tokenization and counting.",
-            "Treat each abstract as a short single document example.",
+            "Treat each example as a short single document or snippet classification problem.",
             "Compare probabilistic lexical modeling against rule based retrieval signals.",
             "If the benchmark is remote, snapshot the pulled dataset before execution.",
         ]
         hypothesis = (
             "A lightweight lexical probabilistic model should outperform majority and keyword "
-            "baselines on short computer science abstract classification."
+            f"baselines on `{resolved.benchmark_name}` topic classification."
         )
         input_fields = ["text"]
-        label_space = ["retrieval", "ml_systems", "program_analysis"]
         query_fields = []
         candidate_count = None
 

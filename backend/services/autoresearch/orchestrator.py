@@ -880,7 +880,14 @@ class AutoResearchOrchestrator:
                     benchmark_source=benchmark_source,
                 )
                 self._raise_if_cancelled(should_cancel)
-                plan = self.planner.plan(topic, benchmark.task_family, literature)
+                plan = self.planner.plan(
+                    topic,
+                    benchmark.task_family,
+                    literature,
+                    benchmark_name=benchmark.benchmark_name,
+                    benchmark_description=benchmark.benchmark_description,
+                    benchmark_labels=benchmark.payload.get("label_space"),
+                )
                 if not plan.experiment_outline:
                     plan.experiment_outline = [
                         "Pull or instantiate a benchmark snapshot and freeze train/test partitions.",

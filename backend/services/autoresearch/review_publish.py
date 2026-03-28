@@ -328,7 +328,7 @@ def _topic_proxy_alignment_finding(
     spec = run.spec
     if plan is None or spec is None:
         return None
-    topic_terms = _terms(plan.topic, plan.title)
+    topic_terms = _terms(plan.topic)
     proxy_terms = _terms(
         spec.benchmark_name,
         spec.benchmark_description,

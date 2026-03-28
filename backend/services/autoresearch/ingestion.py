@@ -917,6 +917,8 @@ def resolve_benchmark(
 ) -> ResolvedBenchmark:
     source = benchmark_source or BenchmarkSource(kind="builtin")
     task_family = infer_task_family(topic, source.task_family_hint or task_family_hint)
+    if source.kind == "builtin":
+        return builtin_benchmark(task_family, source, topic=topic)
     adapter = ADAPTERS.get(source.kind)
     if adapter is None:
         raise BenchmarkIngestionError(f"Unsupported benchmark adapter: {source.kind}")

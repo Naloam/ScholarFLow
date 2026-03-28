@@ -19,10 +19,31 @@ from services.llm.prompting import load_prompt
 from services.llm.response_utils import get_message_content
 
 
-PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.1.1.md"
+PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.1.2.md"
 
 
 class ResearchPlanner:
+    def _benchmark_scope_phrase(
+        self,
+        benchmark_name: str | None,
+        benchmark_description: str | None,
+        benchmark_labels: list[str] | None,
+    ) -> str:
+        label_phrase = (
+            f" covering labels {{{', '.join(benchmark_labels)}}}"
+            if benchmark_labels
+            else ""
+        )
+        if benchmark_name and benchmark_description:
+            return f"`{benchmark_name}` ({benchmark_description}){label_phrase}"
+        if benchmark_name:
+            return f"`{benchmark_name}`{label_phrase}"
+        if benchmark_description:
+            return f"the selected benchmark ({benchmark_description}){label_phrase}"
+        if benchmark_labels:
+            return f"the selected benchmark with labels {{{', '.join(benchmark_labels)}}}"
+        return "the selected benchmark"
+
     def _literature_method_phrase(self, literature: list[LiteratureInsight]) -> str:
         method_hints = [item.method_hint for item in literature if item.method_hint]
         if not method_hints:
@@ -45,13 +66,21 @@ class ResearchPlanner:
         topic: str,
         task_family: TaskFamily,
         literature: list[LiteratureInsight],
+        benchmark_name: str | None = None,
+        benchmark_description: str | None = None,
+        benchmark_labels: list[str] | None = None,
     ) -> ResearchPlan:
         literature_phrase = self._literature_method_phrase(literature)
+        benchmark_scope = self._benchmark_scope_phrase(
+            benchmark_name,
+            benchmark_description,
+            benchmark_labels,
+        )
         if task_family == "ir_reranking":
             title = f"Executable Proxy Study of Retrieval Signals for {topic}"
             method = "a lexical rarity-aware reranker backed by overlap baselines"
             questions = [
-                "Can a lightweight lexical reranker recover the relevant document in short candidate lists?",
+                f"Can a lightweight lexical reranker recover the relevant document on {benchmark_scope}?",
                 "Do rarity-aware query terms improve reciprocal rank over plain overlap scoring?",
             ]
             hypothesis = [
@@ -59,7 +88,7 @@ class ResearchPlanner:
                 "Adding bigram agreement will further improve ranking precision on focused CS queries.",
             ]
             contributions = [
-                "A reproducible toy reranking benchmark for CS information retrieval.",
+                f"A reproducible reranking benchmark scoped to {benchmark_scope}.",
                 "A multi-round reranking search trace with overlap, IDF, and bigram lexical variants.",
                 "A grounded paper generated only from executed ranking artifacts.",
             ]
@@ -67,7 +96,7 @@ class ResearchPlanner:
             title = f"Executable Proxy Study of Stability Signals for {topic}"
             method = "a scaled linear classifier backed by simple rule based baselines"
             questions = [
-                "Can a small scaled linear model separate stable and unstable training runs?",
+                f"Can a small scaled linear model separate the labels exposed by {benchmark_scope}?",
                 "How much does feature scaling contribute on a low resource tabular benchmark?",
             ]
             hypothesis = [
@@ -75,7 +104,7 @@ class ResearchPlanner:
                 "A learned linear model will beat majority and threshold heuristics on held out runs.",
             ]
             contributions = [
-                "A reproducible toy benchmark for training run stability classification.",
+                f"A reproducible tabular benchmark scoped to {benchmark_scope}.",
                 "A baseline comparison between majority, threshold, and lightweight linear models.",
                 "A grounded paper generated only from executed experiment artifacts.",
             ]
@@ -83,15 +112,15 @@ class ResearchPlanner:
             title = f"Executable Proxy Study of {topic}"
             method = "a lexical probabilistic classifier backed by majority and keyword baselines"
             questions = [
-                "Can lightweight lexical modeling classify short CS abstracts without external libraries?",
-                "Does a probabilistic model outperform simple keyword rules on a small benchmark?",
+                f"Can lightweight lexical modeling classify short snippets from {benchmark_scope} without external libraries?",
+                f"Does a probabilistic model outperform simple keyword rules on {benchmark_scope}?",
             ]
             hypothesis = [
                 "Naive Bayes style lexical modeling will exceed majority and keyword baselines.",
                 "Reducing the vocabulary will hurt macro F1, showing that broad lexical coverage matters.",
             ]
             contributions = [
-                "A compact benchmark of CS abstract snippets for automated experimentation.",
+                f"A compact benchmark scoped to {benchmark_scope} for automated experimentation.",
                 "A reproducible comparison between majority, keyword, and probabilistic lexical models.",
                 "A grounded paper that reports only executed experimental evidence.",
             ]
@@ -102,7 +131,7 @@ class ResearchPlanner:
             task_family=task_family,
             problem_statement=(
                 f"This study investigates {topic} through a deliberately small but executable "
-                f"{task_family.replace('_', ' ')} proxy benchmark so the system can preserve a "
+                f"{task_family.replace('_', ' ')} proxy benchmark centered on {benchmark_scope} so the system can preserve a "
                 "fully auditable loop from planning and execution to artifact-grounded writing."
             ),
             motivation=(
@@ -311,10 +340,20 @@ class ResearchPlanner:
         topic: str,
         task_family_hint: TaskFamily | None = None,
         literature: list[LiteratureInsight] | None = None,
+        benchmark_name: str | None = None,
+        benchmark_description: str | None = None,
+        benchmark_labels: list[str] | None = None,
     ) -> ResearchPlan:
         literature = literature or []
         task_family = infer_task_family(topic, task_family_hint)
-        fallback = self._fallback_plan(topic, task_family, literature)
+        fallback = self._fallback_plan(
+            topic,
+            task_family,
+            literature,
+            benchmark_name=benchmark_name,
+            benchmark_description=benchmark_description,
+            benchmark_labels=benchmark_labels,
+        )
         try:
             prompt = load_prompt(PROMPT_PATH)
             response = chat(
@@ -325,6 +364,7 @@ class ResearchPlanner:
                         "content": (
                             f"Topic: {topic}\n"
                             f"Task family: {task_family}\n"
+                            f"Benchmark context: {{'name': {benchmark_name!r}, 'description': {benchmark_description!r}, 'labels': {benchmark_labels or []!r}}}\n"
                             f"Literature context: {[item.model_dump(mode='json') for item in literature]}\n"
                             "Return a JSON object for a minimal but realistic computer science "
                             "research plan."

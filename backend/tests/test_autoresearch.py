@@ -137,6 +137,33 @@ def test_research_planner_fallback_scope_limits_include_ir_reranking(monkeypatch
     assert any("IR reranking" in item for item in plan.scope_limits)
 
 
+def test_research_planner_fallback_uses_benchmark_context_for_text_topics(monkeypatch) -> None:
+    monkeypatch.setattr(
+        autoresearch_planner,
+        "chat",
+        lambda *_args, **_kwargs: {"choices": [{"message": {"content": "not json"}}]},
+    )
+
+    plan = autoresearch_planner.ResearchPlanner().plan(
+        "How to Build an Agent",
+        benchmark_name="toy_agent_workflow_topic",
+        benchmark_description="A compact benchmark of short agent-systems snippets labeled as planning, memory, or tool_use.",
+        benchmark_labels=["planning", "memory", "tool_use"],
+    )
+
+    assert "toy_agent_workflow_topic" in plan.problem_statement
+    assert "planning" in " ".join(plan.research_questions).lower()
+    assert "tool_use" in " ".join(plan.research_questions)
+
+
+def test_builtin_text_benchmark_routes_across_multiple_cs_topics() -> None:
+    assert builtin_benchmark("text_classification", topic="How to Build an Agent").benchmark_name == "toy_agent_workflow_topic"
+    assert builtin_benchmark("text_classification", topic="Neural machine translation with transformers").benchmark_name == "toy_ml_nlp_robotics_topic"
+    assert builtin_benchmark("text_classification", topic="Ray tracing for 3D rendering").benchmark_name == "toy_vision_graphics_hci_topic"
+    assert builtin_benchmark("text_classification", topic="SQL query optimization in database systems").benchmark_name == "toy_security_network_database_topic"
+    assert builtin_benchmark("text_classification", topic="Approximation algorithms for graph optimization").benchmark_name == "toy_algorithms_crypto_software_topic"
+
+
 def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: Path) -> None:
     client = _configure_test_client(monkeypatch, tmp_path)
     try:
@@ -1779,7 +1806,7 @@ def test_paper_writer_renders_sections_in_paper_plan_order(
         client.close()
 
 
-def test_autoresearch_blocks_topic_proxy_mismatch_in_review_and_publish(
+def test_autoresearch_routes_agent_topics_to_agent_benchmark(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -1787,7 +1814,7 @@ def test_autoresearch_blocks_topic_proxy_mismatch_in_review_and_publish(
     try:
         project_id = _create_project(
             client,
-            "Topic Proxy Mismatch Project",
+            "Agent Benchmark Project",
             "How to Build an Agent",
         )
         run_response = client.post(
@@ -1799,8 +1826,46 @@ def test_autoresearch_blocks_topic_proxy_mismatch_in_review_and_publish(
 
         run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
         assert run["status"] == "done"
+        assert run["task_family"] == "text_classification"
+        assert run["spec"]["benchmark_name"] == "toy_agent_workflow_topic"
+        assert run["program"]["benchmark_name"] == "toy_agent_workflow_topic"
+        assert run["spec"]["dataset"]["label_space"] == ["planning", "memory", "tool_use"]
+        assert "not as a direct evaluation of `How to Build an Agent`" not in run["paper_markdown"]
+        assert "toy_agent_workflow_topic" in run["paper_markdown"]
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["overall_status"] == "needs_revision"
+        assert not any("not semantically aligned" in item["summary"].lower() for item in review["findings"])
+        assert not any(
+            item["title"] == "Align the paper framing with the executed proxy benchmark"
+            for item in review["revision_plan"]
+        )
+    finally:
+        client.close()
+
+
+def test_autoresearch_blocks_topic_proxy_mismatch_in_review_and_publish(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Topic Proxy Mismatch Project",
+            "Protein folding diffusion priors",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Protein folding diffusion priors"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
         assert run["spec"]["benchmark_name"] == "toy_cs_abstract_topic"
-        assert "not as a direct evaluation of `How to Build an Agent`" in run["paper_markdown"]
+        assert "not as a direct evaluation of `Protein folding diffusion priors`" in run["paper_markdown"]
 
         review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
         assert review["overall_status"] == "blocked"

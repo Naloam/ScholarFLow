@@ -135,6 +135,23 @@ _INFRASTRUCTURE_CLAIM_CUES = (
 )
 
 
+def _normalize_text(text: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+
+def _system_aliases(system_name: str) -> set[str]:
+    normalized = _normalize_text(system_name)
+    aliases = {normalized}
+    if "_" in system_name:
+        aliases.add(_normalize_text(system_name.replace("_", " ")))
+    return {item for item in aliases if item}
+
+
+def _text_mentions_system(text: str | None, system_name: str) -> bool:
+    normalized_text = f" {_normalize_text(text)} "
+    return any(f" {alias} " in normalized_text for alias in _system_aliases(system_name))
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -302,6 +319,136 @@ def _selected_candidate(
     selected_candidate_id: str | None,
 ) -> HypothesisCandidate | None:
     return next((item for item in run.candidates if item.id == selected_candidate_id), None)
+
+
+def _topic_proxy_alignment_finding(
+    run: AutoResearchRunRead,
+) -> tuple[str, str, str] | None:
+    plan = run.plan
+    spec = run.spec
+    if plan is None or spec is None:
+        return None
+    topic_terms = _terms(plan.topic, plan.title)
+    proxy_terms = _terms(
+        spec.benchmark_name,
+        spec.benchmark_description,
+        spec.dataset.name,
+        spec.dataset.description,
+        " ".join(spec.dataset.input_fields),
+        " ".join(spec.dataset.query_fields),
+        " ".join(spec.dataset.label_space),
+    )
+    if not topic_terms or not proxy_terms:
+        return None
+
+    shared_terms = sorted(topic_terms & proxy_terms)
+    if len(shared_terms) >= 2 or (shared_terms and len(topic_terms) <= 2):
+        return None
+    if shared_terms:
+        return (
+            "warning",
+            "Requested topic only weakly overlaps the executed proxy benchmark.",
+            (
+                f"The requested topic `{plan.topic}` was executed through benchmark `{spec.benchmark_name}` "
+                f"(`{spec.dataset.name}`), but the lexical overlap is limited to {', '.join(shared_terms)}. "
+                "Tighten the paper framing so claims are scoped to the proxy benchmark rather than the full topic."
+            ),
+        )
+    severity = "error" if len(topic_terms) >= 2 else "warning"
+    return (
+        severity,
+        "Requested topic and executed proxy benchmark are not semantically aligned.",
+        (
+            f"The requested topic `{plan.topic}` was executed through benchmark `{spec.benchmark_name}` "
+            f"(`{spec.dataset.name}`), but the persisted plan and benchmark share no meaningful topic terms. "
+            "Final publish should either narrow the paper to the actual benchmark task or rerun on a benchmark that "
+            "directly matches the requested topic."
+        ),
+    )
+
+
+def _hypothesis_resolution_finding(
+    run: AutoResearchRunRead,
+) -> tuple[str, str, str] | None:
+    artifact = run.artifact
+    spec = run.spec
+    if artifact is None or artifact.status != "done" or spec is None or not artifact.best_system:
+        return None
+    candidate_names = sorted(
+        {item.name for item in [*spec.baselines, *spec.ablations]},
+        key=len,
+        reverse=True,
+    )
+    mentioned_systems = [
+        item
+        for item in candidate_names
+        if _text_mentions_system(spec.hypothesis, item)
+    ]
+    if not mentioned_systems:
+        return None
+    if artifact.best_system in mentioned_systems:
+        return None
+    mentioned_attempts = sorted(
+        {
+            attempt.strategy.removesuffix("_search")
+            for attempt in run.attempts
+            if any(
+                _text_mentions_system(attempt.strategy, system_name)
+                or _text_mentions_system(attempt.summary, system_name)
+                or (
+                    attempt.artifact is not None
+                    and (
+                        attempt.artifact.best_system == system_name
+                        or any(item.system == system_name for item in attempt.artifact.system_results)
+                        or any(item.system == system_name for item in attempt.artifact.aggregate_system_results)
+                    )
+                )
+                for system_name in mentioned_systems
+            )
+        }
+    )
+    mentioned_label = ", ".join(f"`{item}`" for item in mentioned_systems)
+    attempt_clause = (
+        f" Related execution rounds still tested {', '.join(f'`{item}`' for item in mentioned_attempts)}."
+        if mentioned_attempts
+        else ""
+    )
+    return (
+        "warning",
+        "Paper should state clearly that the original hypothesis was not supported.",
+        (
+            f"The study hypothesis names {mentioned_label}, but the selected artifact ranks `{artifact.best_system}` "
+            f"highest on `{artifact.primary_metric}`.{attempt_clause} The publish-facing paper should explicitly say "
+            "that the initial hypothesis was contradicted or only partially supported."
+        ),
+    )
+
+
+def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[str]:
+    blockers: list[str] = []
+    for finding in review.findings:
+        lowered_summary = finding.summary.lower()
+        if finding.category == "citation":
+            blockers.append(f"Final publish requires citation-grounded paper text: {finding.summary}")
+            continue
+        if finding.category != "context":
+            continue
+        if (
+            "no literature insights were persisted" in lowered_summary
+            or "novelty framing is weakly grounded" in lowered_summary
+            or "lacks an explicit related-work section" in lowered_summary
+            or "requested topic" in lowered_summary
+            or "original hypothesis" in lowered_summary
+        ):
+            blockers.append(f"Final publish requires tighter research framing: {finding.summary}")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in blockers:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
 
 
 def _build_novelty_assessment(
@@ -529,6 +676,26 @@ def _review_findings(
             summary="No grounded paper markdown was found for the run.",
             detail="Phase 5 review requires the persisted paper output produced from the selected artifact.",
             supporting_asset_ids=["run_paper_markdown"],
+        )
+    topic_proxy_alignment = _topic_proxy_alignment_finding(run)
+    if topic_proxy_alignment is not None:
+        severity, summary, detail = topic_proxy_alignment
+        add_finding(
+            severity=severity,
+            category="context",
+            summary=summary,
+            detail=detail,
+            supporting_asset_ids=["run_plan_json", "run_spec_json", "run_paper_markdown"],
+        )
+    hypothesis_resolution = _hypothesis_resolution_finding(run)
+    if hypothesis_resolution is not None:
+        severity, summary, detail = hypothesis_resolution
+        add_finding(
+            severity=severity,
+            category="context",
+            summary=summary,
+            detail=detail,
+            supporting_asset_ids=["run_spec_json", "run_artifact_json", "run_paper_markdown"],
         )
 
     if missing_required_assets:
@@ -785,13 +952,31 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
                 finding_id=finding.id,
             )
         elif finding.category == "context":
-            add_action(
-                key="context",
-                priority="medium",
-                title="Strengthen novelty and related-work framing",
-                detail="Connect the selected run to preserved literature insights and expose that context in the paper.",
-                finding_id=finding.id,
-            )
+            lowered_summary = finding.summary.lower()
+            if "proxy benchmark" in lowered_summary or "requested topic" in lowered_summary:
+                add_action(
+                    key="topic_alignment",
+                    priority="high" if finding.severity == "error" else "medium",
+                    title="Align the paper framing with the executed proxy benchmark",
+                    detail="Either narrow the manuscript to the actual benchmark task or rerun on a benchmark that directly matches the requested topic.",
+                    finding_id=finding.id,
+                )
+            elif "original hypothesis" in lowered_summary:
+                add_action(
+                    key="hypothesis_resolution",
+                    priority="medium",
+                    title="State clearly whether the original hypothesis was supported",
+                    detail="Make the publish-facing paper say whether the planned hypothesis held under the selected artifact and what system actually won.",
+                    finding_id=finding.id,
+                )
+            else:
+                add_action(
+                    key="context",
+                    priority="medium",
+                    title="Strengthen novelty and related-work framing",
+                    detail="Connect the selected run to preserved literature insights and expose that context in the paper.",
+                    finding_id=finding.id,
+                )
         elif finding.category == "provenance":
             if "literature" in finding.summary.lower() or "citation" in finding.summary.lower():
                 add_action(
@@ -1182,16 +1367,21 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     missing_required_assets = [item for item in required_assets if not item.ref.exists]
     missing_final_assets = [item for item in final_required_assets if not item.ref.exists]
     blockers = [item.summary for item in review.findings if item.severity == "error"]
+    semantic_final_blockers = _semantic_final_publish_blockers(review)
     final_blockers = [
-        f"Missing final publish asset: {item.role}"
-        for item in missing_final_assets
+        *semantic_final_blockers,
+        *(f"Missing final publish asset: {item.role}" for item in missing_final_assets),
     ]
     review_bundle_ready = not missing_required_assets
-    final_publish_ready = review.overall_status == "ready" and not missing_final_assets
+    final_publish_ready = (
+        review.overall_status == "ready"
+        and not missing_final_assets
+        and not semantic_final_blockers
+    )
     completeness_status = "complete" if not missing_final_assets else "incomplete"
     status = (
         "blocked"
-        if blockers or not review_bundle_ready
+        if blockers or semantic_final_blockers or not review_bundle_ready
         else "publish_ready"
         if final_publish_ready
         else "revision_required"

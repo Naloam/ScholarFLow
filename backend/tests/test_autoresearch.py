@@ -420,20 +420,26 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert compile_report_payload["ready_for_compile"] is True
         assert compile_report_payload["expected_outputs"] == run["paper_sources_manifest"]["expected_outputs"]
         assert "## 2. Related Work and Research Plan" in paper
-        assert "Claim-evidence commitments carried into manuscript drafting were" in paper
-        assert "Portfolio planning generated 3 ranked candidates" in paper
+        assert "The study was scoped against the following literature cues" in paper
         assert "## 4. Experimental Setup" in paper
-        assert "The figure plan promoted the following artifact-backed visuals" in paper
         assert "## 5. Results" in paper
         assert "| System | Accuracy | Macro F1 |" in paper
         assert "Aggregate Stability" in paper
         assert "Confidence Intervals" in paper
         assert "Significance Tests" in paper
-        assert "Negative results retained in the artifact" in paper
-        assert "95% CI" in paper
+        assert "Substantive negative outcomes retained in the artifact" in paper
         assert "Acceptance checks for the selected configuration" in paper
+        assert "The original hypothesis is not supported on this proxy benchmark" in paper
+        assert "The evidence should therefore be interpreted as a result on `toy_cs_abstract_topic`" in paper
+        assert "Negative Results" not in paper
+        assert "Sweep Summary" not in paper
+        assert "Seed Runs" not in paper
+        assert "Claim-evidence commitments carried into manuscript drafting were" not in paper
+        assert "Portfolio planning generated 3 ranked candidates" not in paper
+        assert "The figure plan promoted the following artifact-backed visuals" not in paper
+        assert "The search and repair trace for this run was" not in paper
         assert "## 7. Limitations" in paper
-        assert "recorded experiment outputs" in paper
+        assert "proxy benchmark rather than the full topic area" in paper
 
         drafts = client.get(f"/api/projects/{project_id}/drafts")
         assert drafts.status_code == 200
@@ -1024,6 +1030,10 @@ def test_autoresearch_review_report_is_grounded_in_persisted_run_state(
         assert any(item["category"] == "citation" for item in review["findings"])
         assert any(item["category"] == "context" for item in review["findings"])
         assert any(item["title"] == "Add citation support to contextual and related-work claims" for item in review["revision_plan"])
+        assert any(
+            item["title"] == "State clearly whether the original hypothesis was supported"
+            for item in review["revision_plan"]
+        )
         assert Path(review["persisted_path"]).is_file()
 
         loop_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop")
@@ -1077,7 +1087,7 @@ def test_autoresearch_review_loop_tracks_rounds_and_resolved_issues(
         assert len(loop["rounds"]) == 1
         first_fingerprint = loop["latest_review_fingerprint"]
         assert first_fingerprint
-        assert loop["pending_revision_actions"] == [item["title"] for item in review["revision_plan"]]
+        assert set(loop["pending_revision_actions"]) == {item["title"] for item in review["revision_plan"]}
         assert loop["pending_action_count"] == len(loop["actions"])
         assert loop["completed_action_count"] == 0
         assert all(item["status"] == "pending" for item in loop["actions"])
@@ -1769,6 +1779,55 @@ def test_paper_writer_renders_sections_in_paper_plan_order(
         client.close()
 
 
+def test_autoresearch_blocks_topic_proxy_mismatch_in_review_and_publish(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Topic Proxy Mismatch Project",
+            "How to Build an Agent",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "How to Build an Agent"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert run["spec"]["benchmark_name"] == "toy_cs_abstract_topic"
+        assert "not as a direct evaluation of `How to Build an Agent`" in run["paper_markdown"]
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["overall_status"] == "blocked"
+        assert review["unsupported_claim_risk"] == "high"
+        assert any(
+            item["category"] == "context"
+            and "not semantically aligned" in item["summary"].lower()
+            for item in review["findings"]
+        )
+        assert any(
+            item["title"] == "Align the paper framing with the executed proxy benchmark"
+            for item in review["revision_plan"]
+        )
+
+        package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert package["status"] == "blocked"
+        assert package["review_bundle_ready"] is True
+        assert package["publish_ready"] is False
+        assert any(
+            "Requested topic and executed proxy benchmark are not semantically aligned."
+            in item
+            for item in package["blockers"]
+        )
+    finally:
+        client.close()
+
+
 def test_autoresearch_publish_package_is_derived_from_selected_bundle(
     monkeypatch,
     tmp_path: Path,
@@ -1794,7 +1853,7 @@ def test_autoresearch_publish_package_is_derived_from_selected_bundle(
         assert package["run_id"] == run_id
         assert package["package_id"] == "publish_ready_bundle"
         assert package["source_bundle_id"] == "selected_candidate_repro"
-        assert package["status"] == "revision_required"
+        assert package["status"] == "blocked"
         assert package["publish_ready"] is False
         assert package["review_bundle_ready"] is True
         assert package["final_publish_ready"] is False
@@ -1802,8 +1861,10 @@ def test_autoresearch_publish_package_is_derived_from_selected_bundle(
         assert package["missing_required_asset_count"] == 0
         assert package["missing_final_asset_count"] == 0
         assert package["blocker_count"] == 0
-        assert package["final_blocker_count"] == 0
+        assert package["final_blocker_count"] >= 2
         assert package["revision_count"] >= 1
+        assert any("citation-grounded paper text" in item for item in package["final_blockers"])
+        assert any("tighter research framing" in item for item in package["final_blockers"])
         required_roles = {item["role"] for item in package["required_assets"]}
         final_required_roles = {item["role"] for item in package["final_required_assets"]}
         optional_roles = {item["role"] for item in package["optional_assets"]}
@@ -2116,7 +2177,7 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert console["runs"][0]["status"] == "done"
         assert console["runs"][0]["selected_count"] == 1
         assert console["runs"][0]["failed_count"] == 0
-        assert console["runs"][0]["publish_status"] == "revision_required"
+        assert console["runs"][0]["publish_status"] == "blocked"
         assert console["runs"][0]["review_risk"] == "medium"
         assert console["runs"][0]["novelty_status"] == "missing_context"
         assert console["runs"][0]["budget_status"] == "default"
@@ -2133,7 +2194,7 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert current["registry"]["lineage"]["edges"]
         assert current["registry_views"]["counts"]["selected"] == 1
         assert current["review"]["overall_status"] == "needs_revision"
-        assert current["publish"]["status"] == "revision_required"
+        assert current["publish"]["status"] == "blocked"
         assert current["actions"]["resume"] is False
         assert current["actions"]["retry"] is True
         assert current["actions"]["cancel"] is False
@@ -2521,7 +2582,7 @@ This paper remains artifact-grounded but should require revision before publicat
         assert medium_payload["filtered_run_count"] == 1
         assert medium_payload["selected_run_id"] == baseline_run_id
         assert medium_payload["runs"][0]["run_id"] == baseline_run_id
-        assert medium_payload["runs"][0]["publish_status"] == "revision_required"
+        assert medium_payload["runs"][0]["publish_status"] == "blocked"
         assert medium_payload["runs"][0]["review_risk"] == "medium"
         assert medium_payload["runs"][0]["novelty_status"] == "missing_context"
 

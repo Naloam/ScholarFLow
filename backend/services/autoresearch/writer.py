@@ -635,11 +635,30 @@ class PaperWriter:
                 return float(value) if value is not None else None
         return None
 
-    def _results_table(self, artifact: ResultArtifact) -> str:
+    def _normalize_prose_text(self, text: str | None) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+    def _text_mentions_system(self, text: str | None, system_name: str) -> bool:
+        normalized_text = f" {self._normalize_prose_text(text)} "
+        aliases = {
+            self._normalize_prose_text(system_name),
+            self._normalize_prose_text(system_name.replace("_", " ")),
+        }
+        return any(alias and f" {alias} " in normalized_text for alias in aliases)
+
+    def _paper_result_tables(self, artifact: ResultArtifact) -> list[ResultTable]:
         if not artifact.tables:
+            return []
+        excluded_titles = {"Negative Results", "Sweep Summary", "Seed Runs"}
+        selected = [table for table in artifact.tables if table.title not in excluded_titles]
+        return selected or artifact.tables[:1]
+
+    def _results_table(self, artifact: ResultArtifact) -> str:
+        tables = self._paper_result_tables(artifact)
+        if not tables:
             return ""
         rendered = []
-        for table in artifact.tables:
+        for table in tables:
             rendered.append(f"### {table.title}\n")
             rendered.append(_markdown_table(table))
             rendered.append("")
@@ -694,9 +713,13 @@ class PaperWriter:
         )
 
     def _negative_results_block(self, artifact: ResultArtifact) -> str:
-        if not artifact.negative_results:
-            return "- No explicit negative results were recorded."
-        return "\n".join(f"- {item.detail}" for item in artifact.negative_results)
+        salient: list[str] = []
+        for item in artifact.negative_results:
+            delta = abs(item.delta) if item.delta is not None else None
+            if item.scope in {"system", "sweep"} and delta is not None and delta < 1e-9:
+                continue
+            salient.append(f"- {item.detail}")
+        return "\n".join(salient[:3])
 
     def _failure_block(self, artifact: ResultArtifact) -> str:
         if not artifact.failed_trials:
@@ -747,6 +770,123 @@ class PaperWriter:
             f"{portfolio.decision_summary}\n"
             + "\n".join(lines)
         )
+
+    def _proxy_scope_sentence(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark_display: str,
+    ) -> str:
+        topic_terms = {
+            token
+            for token in re.findall(r"[a-z][a-z0-9]+", (plan.topic or "").lower())
+            if len(token) >= 4
+        }
+        proxy_blob = " ".join(
+            [
+                benchmark_display,
+                spec.benchmark_description,
+                spec.dataset.name,
+                spec.dataset.description,
+                " ".join(spec.dataset.input_fields),
+                " ".join(spec.dataset.query_fields),
+                " ".join(spec.dataset.label_space),
+            ]
+        ).lower()
+        shared_terms = sorted(token for token in topic_terms if token in proxy_blob)
+        if not shared_terms:
+            return (
+                f"The requested topic is broader than the executed benchmark, so the evidence here should be read "
+                f"strictly as a result on `{benchmark_display}` (`{spec.dataset.name}`), not as a direct evaluation "
+                f"of `{plan.topic}`."
+            )
+        return (
+            f"The evidence should therefore be interpreted as a result on `{benchmark_display}` "
+            f"(`{spec.dataset.name}`), with claims scoped to this proxy benchmark rather than the full topic area."
+        )
+
+    def _hypothesis_target_systems(self, spec: ExperimentSpec) -> list[str]:
+        candidate_names = sorted(
+            {item.name for item in [*spec.baselines, *spec.ablations]},
+            key=len,
+            reverse=True,
+        )
+        return [item for item in candidate_names if self._text_mentions_system(spec.hypothesis, item)]
+
+    def _attempt_labels_for_systems(
+        self,
+        attempts: list[ExperimentAttempt],
+        system_names: list[str],
+    ) -> list[str]:
+        labels = []
+        seen: set[str] = set()
+        for attempt in attempts:
+            matched = any(
+                self._text_mentions_system(attempt.strategy, system_name)
+                or self._text_mentions_system(attempt.summary, system_name)
+                or (
+                    attempt.artifact is not None
+                    and (
+                        attempt.artifact.best_system == system_name
+                        or any(item.system == system_name for item in attempt.artifact.system_results)
+                        or any(item.system == system_name for item in attempt.artifact.aggregate_system_results)
+                    )
+                )
+                for system_name in system_names
+            )
+            if not matched:
+                continue
+            label = attempt.strategy.removesuffix("_search")
+            if label in seen:
+                continue
+            seen.add(label)
+            labels.append(label)
+        return labels
+
+    def _hypothesis_resolution_sentence(
+        self,
+        spec: ExperimentSpec,
+        artifact: ResultArtifact,
+        attempts: list[ExperimentAttempt],
+    ) -> str:
+        target_systems = self._hypothesis_target_systems(spec)
+        best_system = artifact.best_system or artifact.objective_system
+        if not target_systems:
+            return (
+                "The run answers the benchmark question, but the hypothesis text does not name a single target system "
+                "cleanly enough to classify as supported or contradicted."
+            )
+        target_label = ", ".join(f"`{item}`" for item in target_systems)
+        if best_system and best_system in target_systems:
+            return (
+                f"The original hypothesis is supported on this proxy benchmark: {target_label} delivered the "
+                f"strongest observed `{artifact.primary_metric}` result."
+            )
+        attempt_labels = self._attempt_labels_for_systems(attempts, target_systems)
+        attempt_clause = (
+            f" Additional rounds still evaluated {', '.join(f'`{item}`' for item in attempt_labels)}."
+            if attempt_labels
+            else ""
+        )
+        if best_system:
+            return (
+                f"The original hypothesis is not supported on this proxy benchmark. It expected {target_label} to "
+                f"lead, but the selected artifact ranks `{best_system}` highest on `{artifact.primary_metric}`."
+                f"{attempt_clause}"
+            )
+        return (
+            f"The hypothesis names {target_label}, but the final artifact does not expose a best system clearly enough "
+            "to resolve that claim in publish-facing prose."
+        )
+
+    def _compared_systems_sentence(self, artifact: ResultArtifact) -> str:
+        system_names = [
+            item.system for item in (artifact.aggregate_system_results or artifact.system_results)
+        ]
+        if not system_names:
+            return ""
+        rendered = ", ".join(f"`{item}`" for item in system_names)
+        return f"The final artifact reports aggregate results for {rendered}."
 
     def _acceptance_counts(self, artifact: ResultArtifact) -> tuple[int, int]:
         total = len(artifact.acceptance_checks)
@@ -2425,27 +2565,15 @@ Program objective:
         discussion_context_sentence = self._discussion_context_sentence(literature)
         conclusion_context_sentence = self._conclusion_context_sentence(literature)
         references_block = self._references_block(literature)
-        attempt_block = self._attempt_block(attempts)
         acceptance_block = self._acceptance_block(artifact)
         significance_block = self._significance_block(artifact)
         negative_results_block = self._negative_results_block(artifact)
         failure_block = self._failure_block(artifact)
         anomaly_block = self._anomaly_block(artifact)
-        portfolio_block = self._portfolio_block(program, portfolio, candidates)
         benchmark_display = benchmark_name or spec.benchmark_name
-        plan_section_titles = ", ".join(section.title for section in paper_plan.sections)
-        claim_commitments = "\n".join(
-            f"- `{entry.claim_id}` ({entry.section_hint}, {entry.support_status}): {entry.claim}"
-            for entry in claim_evidence_matrix.entries
-        )
-        figure_plan_block = "\n".join(
-            f"- {item.title} [{item.kind}, {item.status}] from {item.source}: {item.caption}"
-            for item in figure_plan.items
-        ) or "- No figure or table promotions were planned."
-        revision_issue_block = "\n".join(
-            f"- {item}" for item in paper_revision_state.open_issues
-        ) or "- No open revision issues were recorded at draft time."
-        narrative_summary = paper_plan.narrative_summary
+        proxy_scope_sentence = self._proxy_scope_sentence(plan, spec, benchmark_display)
+        hypothesis_resolution_sentence = self._hypothesis_resolution_sentence(spec, artifact, attempts)
+        compared_systems_sentence = self._compared_systems_sentence(artifact)
         best_ci_text = self._format_confidence_interval(best_ci)
         best_detail_parts = []
         if best_std is not None:
@@ -2495,42 +2623,31 @@ Program objective:
             )
         section_bodies = {
             "abstract": (
-                f"This paper studies **{plan.topic}** through an executable `{spec.task_family}` proxy benchmark "
-                f"named `{benchmark_display}`. The study is implemented inside ScholarFlow, but the manuscript is "
-                "written only from persisted execution artifacts rather than from freeform narration.\n\n"
-                f"The experimental study follows the hypothesis that {spec.hypothesis.lower()} {comparison_sentence} "
-                f"The run reports {metrics}, preserves logs and environment metadata, and exports a structured artifact "
-                "that can be inspected independently from the paper text. The writing pipeline first materialized a "
-                f"narrative report, claim-evidence matrix, paper plan, and figure plan; {narrative_summary.lower()}"
+                f"This paper reports a bounded executable study related to **{plan.topic}** using the "
+                f"`{benchmark_display}` `{spec.task_family}` benchmark. {comparison_sentence} "
+                f"{hypothesis_resolution_sentence} The run reports {metrics} with persisted execution metadata and "
+                "multi-seed aggregate statistics.\n\n"
+                f"{proxy_scope_sentence}"
             ),
             "introduction": (
                 f"{plan.problem_statement}\n\n"
                 "The motivation for this study is to turn the requested topic into a tractable executable proxy rather "
-                "than a generic essay. In the current runtime, the scope is intentionally restricted to small benchmark "
-                "families that can run quickly without external dependencies. That restriction limits external validity, "
-                "but it still forces the pipeline to reason about hypotheses, baselines, ablations, and result "
-                f"interpretation for the chosen topic.\n\n"
-                f"{literature_context_sentence}\n\n"
-                "The central research questions are:\n"
+                "than a generic essay. In the current runtime, the scope is intentionally restricted to compact "
+                "benchmarks that can run quickly without external dependencies.\n\n"
+                f"{proxy_scope_sentence}\n\n"
+                + (f"{literature_context_sentence}\n\n" if literature_context_sentence else "")
+                + "The central research questions are:\n"
                 + "\n".join(f"- {item}" for item in plan.research_questions)
             ),
             "related_work_and_research_plan": (
-                "The planning stage was conditioned on the following literature cues:\n"
+                "The study was scoped against the following literature cues:\n"
                 f"{literature_block}\n\n"
-                "The persisted narrative report summarized the drafting target as:\n"
-                f"{narrative_summary}\n\n"
                 "The planning stage produced the following working hypothesis set:\n"
                 + "\n".join(f"- {item}" for item in plan.hypotheses)
                 + "\n\nPlanned contributions for the run were:\n"
                 + "\n".join(f"- {item}" for item in plan.planned_contributions)
-                + "\n\nThe portfolio manager currently reports:\n"
-                + portfolio_block
                 + "\n\nOperationally, the run followed this outline:\n"
                 + "\n".join(f"1. {item}" for item in plan.experiment_outline)
-                + "\n\nThe paper plan locked the manuscript into these sections before prose rendering:\n"
-                + f"- {plan_section_titles}\n\n"
-                + "Claim-evidence commitments carried into manuscript drafting were:\n"
-                + claim_commitments
             ),
             "method": (
                 f"The proposed method in the plan is summarized as {plan.proposed_method.lower()}. "
@@ -2554,60 +2671,67 @@ Program objective:
                 "Aggregate reporting includes mean, standard deviation, and two-sided 95% confidence intervals over "
                 "the selected sweep's seed-level scores.\n\n"
                 "The statistical analysis also records paired sign-flip significance comparisons with Holm correction, "
-                "preserves failed seed/sweep configurations, and keeps explicit negative-result summaries rather than "
-                "only the winning configuration.\n\n"
-                f"Evaluation uses {metrics}. The purpose of the benchmark is not to claim state of the art "
-                "performance, but to verify that the system can carry out a complete research loop with a real result "
-                "table and a grounded discussion.\n\n"
-                "The figure plan promoted the following artifact-backed visuals into the paper workflow:\n"
-                f"{figure_plan_block}\n\n"
-                "The search and repair trace for this run was:\n"
-                f"{attempt_block}"
+                "preserves failed seed/sweep configurations, and keeps negative outcomes available for interpretation "
+                "rather than reporting only the winning configuration.\n\n"
+                f"Evaluation uses {metrics}. The purpose of the benchmark is to produce an auditable proxy result, not "
+                "to claim state-of-the-art performance."
             ),
             "results": (
-                f"{comparison_sentence} {learned_sentence} {majority_sentence} {ablation_sentence}\n\n"
+                f"{comparison_sentence} {hypothesis_resolution_sentence} {compared_systems_sentence}\n\n"
                 f"{results_table}\n\n"
-                "Key findings recorded directly in the artifact are:\n"
-                f"{findings}\n\n"
-                "Paired significance comparisons for the selected configuration were:\n"
-                f"{significance_block}\n\n"
-                "Negative results retained in the artifact were:\n"
-                f"{negative_results_block}\n\n"
-                "Failure analysis for seeds and sweeps was:\n"
-                f"{failure_block}\n\n"
-                "Anomalous trials flagged for manual inspection were:\n"
-                f"{anomaly_block}\n\n"
-                "Acceptance checks for the selected configuration were:\n"
-                f"{acceptance_block}"
+                + (
+                    "Paired significance comparisons for the selected configuration were:\n"
+                    f"{significance_block}\n\n"
+                    if significance_block
+                    else ""
+                )
+                + (
+                    "Substantive negative outcomes retained in the artifact were:\n"
+                    f"{negative_results_block}\n\n"
+                    if negative_results_block
+                    else ""
+                )
+                + (
+                    "Failure analysis for seeds and sweeps was:\n"
+                    f"{failure_block}\n\n"
+                    if artifact.failed_trials
+                    else ""
+                )
+                + (
+                    "Anomalous trials flagged for manual inspection were:\n"
+                    f"{anomaly_block}\n\n"
+                    if artifact.anomalous_trials
+                    else ""
+                )
+                + "Acceptance checks for the selected configuration were:\n"
+                + f"{acceptance_block}"
             ),
             "discussion": (
-                "The results show that the topic can be rendered into a paper-shaped artifact with concrete "
-                "experimental content rather than generic prose. The differences among the compared systems matter "
-                "because they provide evidence that the chosen ranking signal changes measurable outcomes. Recording "
-                "significance comparisons, failed configurations, and negative outcomes raises the artifact above a "
-                "single best-number report and closer to a real experimental logbook.\n\n"
-                "At the same time, the benchmark remains intentionally small. The contribution of this run is not a "
-                "claim of field-level closure on the topic, but a reproducible proxy study whose artifacts can be "
-                "inspected, rerun, and revised. ScholarFlow is the execution substrate, not the scientific subject of "
-                f"the paper.\n\n"
-                f"{discussion_context_sentence}\n\n"
-                "The persisted narrative report remained available during drafting to keep each section tied to "
-                "explicit claims:\n"
-                f"`{narrative_report_markdown.splitlines()[0] if narrative_report_markdown else 'Narrative report unavailable.'}`"
+                "The benchmark demonstrates that the compared signals are not interchangeable on this proxy task. "
+                f"{learned_sentence} {majority_sentence} {ablation_sentence}\n\n"
+                f"{hypothesis_resolution_sentence}\n\n"
+                "At the same time, the benchmark remains intentionally small. The contribution of this run is a "
+                "reproducible proxy result whose evidence can be inspected and rerun, not a field-level claim about "
+                f"`{plan.topic}`.\n\n"
+                + (f"{discussion_context_sentence}\n\n" if discussion_context_sentence else "")
+                + f"{proxy_scope_sentence}"
             ),
             "limitations": (
                 "\n".join(f"- {item}" for item in plan.scope_limits)
                 + "\n- The benchmark is built into the repository, so data collection and large scale reproducibility are out of scope."
                 + "\n- The learned methods are lightweight toy models rather than competitive research systems."
                 + "\n- The writing stage is grounded by construction, which avoids fabricated experiments but also limits rhetorical flexibility."
-                + "\n\nOutstanding revision issues recorded for the next paper-improvement round were:\n"
-                + revision_issue_block
+                + (
+                    "\n- No project-specific literature was persisted for this run, so related-work grounding remains limited."
+                    if not literature
+                    else ""
+                )
             ),
             "conclusion": (
-                f"This run completes a narrow but real executable study for `{plan.topic}`. The system planned the "
-                "study, executed the benchmark, preserved a structured result artifact, and produced a paper whose "
-                "claims are anchored to the recorded experiment outputs. The outcome is best read as a reproducible "
-                f"proxy result for the topic, together with the artifact trail needed for later expansion.\n\n{conclusion_context_sentence}"
+                f"This run completes a narrow executable study for `{plan.topic}` through benchmark "
+                f"`{benchmark_display}`. {comparison_sentence} {hypothesis_resolution_sentence}\n\n"
+                f"{proxy_scope_sentence}"
+                + (f"\n\n{conclusion_context_sentence}" if conclusion_context_sentence else "")
             ),
         }
         return self._render_section_sequence(

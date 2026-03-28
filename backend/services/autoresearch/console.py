@@ -16,11 +16,17 @@ from schemas.autoresearch import (
     AutoResearchUnsupportedClaimRisk,
     AutoResearchNoveltyStatus,
     AutoResearchRunReviewRead,
+    AutoResearchReviewLoopRead,
     AutoResearchPublishPackageRead,
 )
 from services.autoresearch.execution import AutoResearchExecutionPlane
-from services.autoresearch.repository import list_runs, load_run_registry, load_run_registry_views
-from services.autoresearch.review_publish import build_publish_package, build_run_review, get_publish_archive_path
+from services.autoresearch.repository import list_runs, load_run, load_run_registry, load_run_registry_views
+from services.autoresearch.review_publish import (
+    build_publish_package,
+    build_review_loop,
+    build_run_review,
+    get_publish_archive_path,
+)
 
 
 def _benchmark_name(run: AutoResearchRunRead) -> str | None:
@@ -42,6 +48,7 @@ def _run_actions(
         resume=run.status != "done",
         retry=run.status in {"done", "failed", "canceled"},
         cancel=active_or_queued and not execution.cancel_requested,
+        refresh_review=run.status == "done",
         rebuild_paper=run.status == "done",
         export_publish=run.status == "done",
         download_publish=has_publish_archive,
@@ -54,6 +61,7 @@ def _run_summary(
     run: AutoResearchRunRead,
     execution: AutoResearchRunExecutionRead,
     review: AutoResearchRunReviewRead | None,
+    review_loop: AutoResearchReviewLoopRead | None,
     publish: AutoResearchPublishPackageRead | None,
 ) -> AutoResearchOperatorRunSummaryRead:
     registry_views = load_run_registry_views(run.project_id, run.id)
@@ -93,6 +101,10 @@ def _run_summary(
         candidate_execution_limit=request.candidate_execution_limit if request is not None else None,
         executed_candidate_count=len(run.portfolio.executed_candidate_ids) if run.portfolio is not None else 0,
         recovery_count=max((job.recovery_count for job in execution.jobs), default=0),
+        review_round=review_loop.current_round if review_loop is not None else 0,
+        open_issue_count=review_loop.open_issue_count if review_loop is not None else 0,
+        pending_action_count=review_loop.pending_action_count if review_loop is not None else 0,
+        completed_action_count=review_loop.completed_action_count if review_loop is not None else 0,
         publish_status=publish.status if publish is not None else None,
         publish_ready=publish.publish_ready if publish is not None else False,
         review_risk=review.unsupported_claim_risk if review is not None else None,
@@ -185,14 +197,17 @@ def build_operator_console(
     execution_by_run: dict[str, AutoResearchRunExecutionRead] = {}
     filtered_runs: list[AutoResearchRunRead] = []
     review_by_run: dict[str, AutoResearchRunReviewRead | None] = {}
+    review_loop_by_run: dict[str, AutoResearchReviewLoopRead | None] = {}
     publish_by_run: dict[str, AutoResearchPublishPackageRead | None] = {}
 
     for run in runs:
         execution = execution_plane.get_run_execution(project_id, run.id)
         execution_by_run[run.id] = execution
         review = build_run_review(run.project_id, run.id) if run.status == "done" else None
+        review_loop = build_review_loop(run.project_id, run.id) if run.status == "done" else None
         publish = build_publish_package(run.project_id, run.id) if run.status == "done" else None
         review_by_run[run.id] = review
+        review_loop_by_run[run.id] = review_loop
         publish_by_run[run.id] = publish
         if not _matches_filters(run=run, review=review, publish=publish, filters=filters):
             continue
@@ -202,6 +217,7 @@ def build_operator_console(
                 run=run,
                 execution=execution,
                 review=review,
+                review_loop=review_loop,
                 publish=publish,
             )
         )
@@ -212,11 +228,15 @@ def build_operator_console(
 
     current_run = None
     if selected_run is not None:
+        latest_run = load_run(project_id, selected_run.id)
+        if latest_run is not None:
+            selected_run = latest_run
         execution = execution_by_run[selected_run.id]
         registry = load_run_registry(project_id, selected_run.id)
         registry_views = load_run_registry_views(project_id, selected_run.id)
         if registry is not None and registry_views is not None:
             review = review_by_run[selected_run.id]
+            review_loop = review_loop_by_run[selected_run.id]
             publish = publish_by_run[selected_run.id]
             has_publish_archive = get_publish_archive_path(project_id, selected_run.id).is_file()
             current_run = AutoResearchOperatorRunDetailRead(
@@ -225,6 +245,7 @@ def build_operator_console(
                 registry=registry,
                 registry_views=registry_views,
                 review=review,
+                review_loop=review_loop,
                 publish=publish,
                 actions=_run_actions(
                     run=selected_run,

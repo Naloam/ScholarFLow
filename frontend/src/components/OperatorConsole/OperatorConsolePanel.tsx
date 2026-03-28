@@ -14,6 +14,7 @@ type OperatorConsolePanelProps = {
   onResume: () => void;
   onRetry: () => void;
   onCancel: () => void;
+  onRefreshReview: () => void;
   onRebuildPaper: () => void;
   onExportPublish: () => void;
   onDownloadPublish: () => void;
@@ -47,6 +48,7 @@ export function OperatorConsolePanel({
   onResume,
   onRetry,
   onCancel,
+  onRefreshReview,
   onRebuildPaper,
   onExportPublish,
   onDownloadPublish,
@@ -72,6 +74,7 @@ export function OperatorConsolePanel({
 
   const current = consoleState?.current_run ?? null;
   const review = current?.review ?? null;
+  const reviewLoop = current?.review_loop ?? null;
   const publish = current?.publish ?? null;
   const candidateEntries = current?.registry?.candidates ?? [];
   const counts = current?.registry_views?.counts;
@@ -179,11 +182,20 @@ export function OperatorConsolePanel({
         <button
           type="button"
           className="ghost-btn"
+          onClick={onRefreshReview}
+          disabled={disabled || !current?.actions.refresh_review}
+          data-testid="refresh-review-button"
+        >
+          Refresh Review
+        </button>
+        <button
+          type="button"
+          className="ghost-btn"
           onClick={onRebuildPaper}
           disabled={disabled || !current?.actions.rebuild_paper}
           data-testid="rebuild-paper-button"
         >
-          Rebuild Paper
+          Apply Revisions
         </button>
         <button
           type="button"
@@ -391,6 +403,9 @@ export function OperatorConsolePanel({
                     {run.publish_status ?? "n/a"}
                   </small>
                   <small>
+                    review r{run.review_round} / open {run.open_issue_count} / pending {run.pending_action_count}
+                  </small>
+                  <small>
                     benchmark {run.benchmark_name ?? "n/a"} / family {formatTaskFamily(run.task_family)}
                   </small>
                   <small>
@@ -545,6 +560,18 @@ export function OperatorConsolePanel({
                   <span className="meta-label">Recoveries</span>
                   <strong>{currentSummary?.recovery_count ?? 0}</strong>
                 </div>
+                <div>
+                  <span className="meta-label">Review Loop</span>
+                  <strong data-testid="operator-review-loop-summary">
+                    {reviewLoop
+                      ? `r${reviewLoop.current_round} / open ${reviewLoop.open_issue_count} / pending ${reviewLoop.pending_action_count}`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">Completed Actions</span>
+                  <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
+                </div>
               </div>
 
               <div className="meta-block">
@@ -562,6 +589,18 @@ export function OperatorConsolePanel({
                   <p data-testid="operator-novelty-summary">
                     {novelty.summary} Top matches={novelty.top_related_work.length} uncovered_claims=
                     {novelty.uncovered_claims.length}
+                  </p>
+                </div>
+              ) : null}
+
+              {reviewLoop ? (
+                <div className="meta-block">
+                  <span className="meta-label">Review Loop</span>
+                  <p data-testid="operator-review-loop-detail">
+                    fingerprint={reviewLoop.latest_review_fingerprint ?? "n/a"} rounds=
+                    {reviewLoop.rounds.length} open={reviewLoop.open_issue_count} resolved=
+                    {reviewLoop.resolved_issue_count} pending={reviewLoop.pending_action_count} completed=
+                    {reviewLoop.completed_action_count}
                   </p>
                 </div>
               ) : null}
@@ -600,6 +639,25 @@ export function OperatorConsolePanel({
                 )) ?? (
                   <div className="empty-state">
                     <p>No review findings yet.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="stack">
+                <p className="inline-title">Revision Actions</p>
+                {reviewLoop && reviewLoop.actions.length > 0 ? reviewLoop.actions.slice(0, 4).map((action) => (
+                  <div key={action.action_id} className="suggestion-card" data-testid={`operator-review-action-${action.action_id}`}>
+                    <strong>
+                      {action.status.toUpperCase()} · {action.priority} · {action.title}
+                    </strong>
+                    <p>
+                      round {action.first_seen_round} {"->"} {action.completed_round ?? action.last_seen_round} · issues=
+                      {action.issue_ids.length}
+                    </p>
+                  </div>
+                )) : (
+                  <div className="empty-state">
+                    <p>No revision actions yet.</p>
                   </div>
                 )}
               </div>

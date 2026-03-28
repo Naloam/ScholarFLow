@@ -1342,6 +1342,7 @@ class AutoResearchOperatorRunActionsRead(BaseModel):
     resume: bool = False
     retry: bool = False
     cancel: bool = False
+    refresh_review: bool = False
     rebuild_paper: bool = False
     export_publish: bool = False
     download_publish: bool = False
@@ -1371,6 +1372,10 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     candidate_execution_limit: int | None = None
     executed_candidate_count: int = 0
     recovery_count: int = 0
+    review_round: int = 0
+    open_issue_count: int = 0
+    pending_action_count: int = 0
+    completed_action_count: int = 0
     publish_status: AutoResearchPublishStatus | None = None
     publish_ready: bool = False
     review_risk: AutoResearchUnsupportedClaimRisk | None = None
@@ -1385,6 +1390,7 @@ class AutoResearchOperatorRunDetailRead(BaseModel):
     registry: AutoResearchRunRegistryRead
     registry_views: AutoResearchRunRegistryViewsRead
     review: AutoResearchRunReviewRead | None = None
+    review_loop: AutoResearchReviewLoopRead | None = None
     publish: AutoResearchPublishPackageRead | None = None
     actions: AutoResearchOperatorRunActionsRead
 

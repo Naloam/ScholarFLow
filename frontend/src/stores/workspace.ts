@@ -139,6 +139,7 @@ type WorkspaceState = {
   }) => Promise<void>;
   selectDraft: (version: number) => void;
   selectAutoResearchRun: (runId: string) => Promise<void>;
+  refreshAutoResearchReviewLoop: () => Promise<void>;
   setEditorContent: (content: string) => void;
   setFocusedText: (content: string) => void;
   setConnectionState: (state: ConnectionState) => void;
@@ -755,15 +756,35 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      set({ working: true, notice: `Rebuilding paper pipeline for ${runId}...` });
+      set({ working: true, notice: `Applying revision actions and rebuilding paper for ${runId}...` });
       try {
         await api.rebuildAutoResearchPaper(currentProjectId, runId);
         await sleep(400);
         await get().refreshProject();
         await get().refreshAutoResearchConsole(runId);
-        set({ notice: `Paper pipeline rebuilt for ${runId}` });
+        set({ notice: `Revision actions applied and paper rebuilt for ${runId}` });
       } catch (error) {
         handleActionError(error, "Rebuild paper pipeline failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async refreshAutoResearchReviewLoop() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before refreshing review state" });
+        return;
+      }
+
+      set({ working: true, notice: `Refreshing review loop for ${runId}...` });
+      try {
+        await api.refreshAutoResearchReviewLoop(currentProjectId, runId);
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Review loop refreshed for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Refresh review loop failed");
       } finally {
         set({ working: false });
       }

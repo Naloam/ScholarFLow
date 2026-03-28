@@ -21,6 +21,9 @@ test("workspace supports browser flow from project creation to export", async ({
     timeout: 15000,
   });
   await expect(page.getByTestId("operator-current-task-family")).toHaveText("text classification");
+  await expect(page.getByTestId("operator-review-loop-summary")).toContainText("r1");
+  await page.getByTestId("refresh-review-button").click();
+  await expect(page.getByTestId("operator-review-loop-detail")).toContainText("rounds=1");
 
   await page.getByTestId("generate-draft-button").click();
 

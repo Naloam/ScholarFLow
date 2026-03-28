@@ -1085,6 +1085,7 @@ export type AutoResearchOperatorRunActions = {
   resume: boolean;
   retry: boolean;
   cancel: boolean;
+  refresh_review: boolean;
   rebuild_paper: boolean;
   export_publish: boolean;
   download_publish: boolean;
@@ -1114,6 +1115,10 @@ export type AutoResearchOperatorRunSummary = {
   candidate_execution_limit?: number | null;
   executed_candidate_count: number;
   recovery_count: number;
+  review_round: number;
+  open_issue_count: number;
+  pending_action_count: number;
+  completed_action_count: number;
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   publish_ready: boolean;
   review_risk?: "low" | "medium" | "high" | null;
@@ -1128,6 +1133,7 @@ export type AutoResearchOperatorRunDetail = {
   registry: AutoResearchRunRegistry;
   registry_views: AutoResearchRunRegistryViews;
   review?: AutoResearchRunReview | null;
+  review_loop?: AutoResearchReviewLoop | null;
   publish?: AutoResearchPublishPackage | null;
   actions: AutoResearchOperatorRunActions;
 };

@@ -1234,6 +1234,95 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
         client.close()
 
 
+def test_autoresearch_review_loop_refresh_command_updates_rounds_and_resolution_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Review Refresh Command Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        first_loop = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/review-loop/refresh"
+        ).json()
+        assert first_loop["current_round"] == 1
+        assert first_loop["pending_action_count"] >= 1
+        first_fingerprint = first_loop["latest_review_fingerprint"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        assert run.plan is not None
+        autoresearch_repository.save_run(
+            run.model_copy(
+                update={
+                    "literature": [
+                        LiteratureInsight(
+                            paper_id="paper-refresh-1",
+                            title="Compact Classification Signals for CS Abstracts",
+                            year=2024,
+                            source="semantic_scholar",
+                            insight="Provides grounded related-work context for compact abstract classification systems.",
+                            method_hint="Use compact lexical and probabilistic signals for topic classification.",
+                            gap_hint="Preserve explicit artifact-grounded reporting while adding citations.",
+                        )
+                    ],
+                    "paper_markdown": f"""# {run.plan.title}
+
+## Abstract
+This grounded summary ties the selected artifact to preserved related work [1].
+
+## 1. Introduction
+Prior work informs the task framing and benchmark choice for this run [1].
+
+## 2. Related Work and Research Plan
+Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
+
+## 3. Method
+The method remains grounded in the persisted run plan and artifact.
+
+## 4. Experimental Setup
+The experimental setup remains unchanged and artifact-backed.
+
+## 5. Results
+The results are still grounded in the persisted artifact table and acceptance checks.
+
+## 6. Discussion
+The discussion connects the run outcome back to prior work and preserved context [1].
+
+## 7. Limitations
+The limitations remain explicit and literature-aware [1].
+
+## 8. Conclusion
+The conclusion revisits the strongest supported claim in light of prior work [1].
+
+## 9. References
+[1] Compact Classification Signals for CS Abstracts. semantic scholar, 2024.
+""",
+                }
+            )
+        )
+
+        updated_loop = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/review-loop/refresh"
+        ).json()
+        assert updated_loop["current_round"] == 2
+        assert updated_loop["latest_review_fingerprint"] != first_fingerprint
+        assert updated_loop["resolved_issue_count"] >= 1
+        assert updated_loop["completed_action_count"] >= 1
+    finally:
+        client.close()
+
+
 def test_autoresearch_paper_revision_state_tracks_review_loop_progress(
     monkeypatch,
     tmp_path: Path,
@@ -2281,6 +2370,9 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert console["runs"][0]["status"] == "done"
         assert console["runs"][0]["task_family"] == "text_classification"
         assert console["runs"][0]["benchmark_name"] == "toy_cs_abstract_topic"
+        assert console["runs"][0]["review_round"] == 1
+        assert console["runs"][0]["open_issue_count"] >= 1
+        assert console["runs"][0]["pending_action_count"] >= 1
         assert console["runs"][0]["selected_count"] == 1
         assert console["runs"][0]["failed_count"] == 0
         assert console["runs"][0]["publish_status"] == "blocked"
@@ -2300,10 +2392,14 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert current["registry"]["lineage"]["edges"]
         assert current["registry_views"]["counts"]["selected"] == 1
         assert current["review"]["overall_status"] == "needs_revision"
+        assert current["review_loop"]["current_round"] == 1
+        assert current["review_loop"]["open_issue_count"] >= 1
+        assert current["review_loop"]["pending_action_count"] >= 1
         assert current["publish"]["status"] == "blocked"
         assert current["actions"]["resume"] is False
         assert current["actions"]["retry"] is True
         assert current["actions"]["cancel"] is False
+        assert current["actions"]["refresh_review"] is True
         assert current["actions"]["rebuild_paper"] is True
         assert current["actions"]["export_publish"] is True
         assert current["actions"]["download_publish"] is True

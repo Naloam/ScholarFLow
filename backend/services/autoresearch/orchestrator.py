@@ -679,6 +679,8 @@ class AutoResearchOrchestrator:
         project_id: str,
         run_id: str,
     ) -> AutoResearchRunRead:
+        from services.autoresearch.review_publish import build_review_loop
+
         run = load_run(project_id, run_id)
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
@@ -690,6 +692,15 @@ class AutoResearchOrchestrator:
         if not selected_candidate_id:
             raise ValueError("Run does not have a selected candidate for paper rebuild")
         selected_candidate = self._candidate_by_id(run.candidates, selected_candidate_id)
+        if selected_candidate is None or selected_candidate.artifact is None:
+            raise ValueError("Selected candidate is missing the persisted artifact required for paper rebuild")
+
+        # Pull the latest persisted review-loop state into the paper revision state before rebuilding.
+        build_review_loop(project_id, run_id)
+        refreshed_run = load_run(project_id, run_id)
+        if refreshed_run is not None:
+            run = refreshed_run
+            selected_candidate = self._candidate_by_id(run.candidates, selected_candidate_id)
         if selected_candidate is None or selected_candidate.artifact is None:
             raise ValueError("Selected candidate is missing the persisted artifact required for paper rebuild")
 
@@ -795,6 +806,7 @@ class AutoResearchOrchestrator:
         from services.autoresearch.review_publish import build_run_review
 
         build_run_review(project_id, run_id)
+        build_review_loop(project_id, run_id)
         return load_run(project_id, run_id) or rebuilt_run
 
     def execute(

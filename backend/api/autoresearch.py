@@ -253,6 +253,19 @@ def get_auto_research_review_loop(
     return loop
 
 
+@router.post("/{run_id}/review-loop/refresh", response_model=AutoResearchReviewLoopRead)
+def refresh_auto_research_review_loop(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchReviewLoopRead:
+    del db
+    loop = build_review_loop(project_id, run_id)
+    if loop is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return loop
+
+
 @router.post("/{run_id}/paper/rebuild", response_model=AutoResearchRunRead)
 def rebuild_auto_research_paper_pipeline(
     project_id: str,

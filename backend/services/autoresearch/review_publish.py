@@ -1351,11 +1351,27 @@ def build_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRea
     return _build_review_loop(project_id=project_id, run_id=run_id, review=review)
 
 
+def _review_loop_revision_requirements(review_loop: AutoResearchReviewLoopRead | None) -> list[str]:
+    if review_loop is None:
+        return []
+    messages: list[str] = []
+    if review_loop.open_issue_count > 0:
+        messages.append(
+            f"Review loop still has {review_loop.open_issue_count} open issue(s) in round {review_loop.current_round}."
+        )
+    if review_loop.pending_action_count > 0:
+        messages.append(
+            f"Review loop still has {review_loop.pending_action_count} pending revision action(s)."
+        )
+    return messages
+
+
 def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPackageRead | None:
     review = build_run_review(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
     if review is None or bundle_index is None:
         return None
+    review_loop = _build_review_loop(project_id=project_id, run_id=run_id, review=review)
 
     bundle = _selected_bundle(bundle_index)
     if bundle is None:
@@ -1368,8 +1384,14 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     missing_final_assets = [item for item in final_required_assets if not item.ref.exists]
     blockers = [item.summary for item in review.findings if item.severity == "error"]
     semantic_final_blockers = _semantic_final_publish_blockers(review)
+    review_loop_requirements = (
+        _review_loop_revision_requirements(review_loop)
+        if review.overall_status != "ready"
+        else []
+    )
     final_blockers = [
         *semantic_final_blockers,
+        *review_loop_requirements,
         *(f"Missing final publish asset: {item.role}" for item in missing_final_assets),
     ]
     review_bundle_ready = not missing_required_assets
@@ -1377,6 +1399,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         review.overall_status == "ready"
         and not missing_final_assets
         and not semantic_final_blockers
+        and not review_loop_requirements
     )
     completeness_status = "complete" if not missing_final_assets else "incomplete"
     status = (
@@ -1407,10 +1430,14 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         missing_final_asset_count=len(missing_final_assets),
         blocker_count=len(blockers),
         final_blocker_count=len(final_blockers),
-        revision_count=len(review.revision_plan),
+        revision_count=review_loop.pending_action_count if review_loop is not None else len(review.revision_plan),
         blockers=blockers,
         final_blockers=final_blockers,
-        revision_actions=[item.title for item in review.revision_plan],
+        revision_actions=(
+            list(review_loop.pending_revision_actions)
+            if review_loop is not None
+            else [item.title for item in review.revision_plan]
+        ),
         required_assets=required_assets,
         final_required_assets=final_required_assets,
         optional_assets=optional_assets,

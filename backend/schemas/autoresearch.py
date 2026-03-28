@@ -1343,6 +1343,7 @@ class AutoResearchOperatorRunActionsRead(BaseModel):
     retry: bool = False
     cancel: bool = False
     refresh_review: bool = False
+    apply_review_actions: bool = False
     rebuild_paper: bool = False
     export_publish: bool = False
     download_publish: bool = False
@@ -1459,3 +1460,21 @@ class AutoResearchExecutionCommandResponse(BaseModel):
 class AutoResearchRunControlUpdateRead(BaseModel):
     run: AutoResearchRunRead
     execution: AutoResearchRunExecutionRead
+
+
+class AutoResearchReviewLoopApplyRequest(BaseModel):
+    expected_round: int
+    expected_review_fingerprint: str
+
+    @field_validator("expected_round")
+    @classmethod
+    def validate_expected_round(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("expected_round must be at least 1")
+        return value
+
+
+class AutoResearchReviewLoopApplyRead(BaseModel):
+    run: AutoResearchRunRead
+    review: AutoResearchRunReviewRead
+    review_loop: AutoResearchReviewLoopRead

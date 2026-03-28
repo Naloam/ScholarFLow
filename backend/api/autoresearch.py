@@ -25,6 +25,8 @@ from schemas.autoresearch import (
     AutoResearchRunStatus,
     AutoResearchRunReviewRead,
     AutoResearchReviewLoopRead,
+    AutoResearchReviewLoopApplyRead,
+    AutoResearchReviewLoopApplyRequest,
     AutoResearchRunRegistryRead,
     AutoResearchRunRegistryViewsRead,
     AutoResearchRunRequest,
@@ -264,6 +266,36 @@ def refresh_auto_research_review_loop(
     if loop is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return loop
+
+
+@router.post("/{run_id}/review-loop/apply", response_model=AutoResearchReviewLoopApplyRead)
+def apply_auto_research_review_loop_actions(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchReviewLoopApplyRequest,
+    db: Session = Depends(get_db),
+) -> AutoResearchReviewLoopApplyRead:
+    try:
+        run = AutoResearchOrchestrator().apply_review_actions(
+            db=db,
+            project_id=project_id,
+            run_id=run_id,
+            expected_round=payload.expected_round,
+            expected_review_fingerprint=payload.expected_review_fingerprint,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    review = build_run_review(project_id, run_id)
+    review_loop = build_review_loop(project_id, run_id)
+    if review is None or review_loop is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return AutoResearchReviewLoopApplyRead(
+        run=run,
+        review=review,
+        review_loop=review_loop,
+    )
 
 
 @router.post("/{run_id}/paper/rebuild", response_model=AutoResearchRunRead)

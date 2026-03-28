@@ -41,6 +41,7 @@ def _run_actions(
     *,
     run: AutoResearchRunRead,
     execution: AutoResearchRunExecutionRead,
+    review_loop: AutoResearchReviewLoopRead | None,
     has_publish_archive: bool,
 ) -> AutoResearchOperatorRunActionsRead:
     active_or_queued = any(job.status in {"queued", "leased", "running"} for job in execution.jobs)
@@ -49,6 +50,11 @@ def _run_actions(
         retry=run.status in {"done", "failed", "canceled"},
         cancel=active_or_queued and not execution.cancel_requested,
         refresh_review=run.status == "done",
+        apply_review_actions=(
+            run.status == "done"
+            and review_loop is not None
+            and review_loop.pending_action_count > 0
+        ),
         rebuild_paper=run.status == "done",
         export_publish=run.status == "done",
         download_publish=has_publish_archive,
@@ -250,6 +256,7 @@ def build_operator_console(
                 actions=_run_actions(
                     run=selected_run,
                     execution=execution,
+                    review_loop=review_loop,
                     has_publish_archive=has_publish_archive,
                 ),
             )

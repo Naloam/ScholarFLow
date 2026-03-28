@@ -672,6 +672,34 @@ class AutoResearchOrchestrator:
             )
         )
 
+    def apply_review_actions(
+        self,
+        *,
+        db: Session,
+        project_id: str,
+        run_id: str,
+        expected_round: int,
+        expected_review_fingerprint: str,
+    ) -> AutoResearchRunRead:
+        from services.autoresearch.review_publish import build_review_loop
+
+        review_loop = build_review_loop(project_id, run_id)
+        if review_loop is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if review_loop.current_round != expected_round:
+            raise ValueError(
+                f"Review loop round changed from expected {expected_round} to {review_loop.current_round}"
+            )
+        if review_loop.latest_review_fingerprint != expected_review_fingerprint:
+            raise ValueError("Review loop fingerprint changed; refresh review state before applying revisions")
+        if review_loop.pending_action_count < 1:
+            raise ValueError("Review loop has no pending revision actions to apply")
+        return self.rebuild_paper_pipeline(
+            db=db,
+            project_id=project_id,
+            run_id=run_id,
+        )
+
     def rebuild_paper_pipeline(
         self,
         *,

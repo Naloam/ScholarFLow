@@ -575,6 +575,11 @@ export type AutoResearchExecutionCommandResponse = {
   execution: AutoResearchExecution;
 };
 
+export type AutoResearchReviewLoopApplyRequest = {
+  expected_round: number;
+  expected_review_fingerprint: string;
+};
+
 export type AutoResearchRegistryAssetRef = {
   path: string;
   kind: "file" | "directory";
@@ -1019,6 +1024,12 @@ export type AutoResearchReviewLoop = {
   pending_revision_actions: string[];
 };
 
+export type AutoResearchReviewLoopApply = {
+  run: AutoResearchRun;
+  review: AutoResearchRunReview;
+  review_loop: AutoResearchReviewLoop;
+};
+
 export type AutoResearchPublishPackage = {
   project_id: string;
   run_id: string;
@@ -1086,6 +1097,7 @@ export type AutoResearchOperatorRunActions = {
   retry: boolean;
   cancel: boolean;
   refresh_review: boolean;
+  apply_review_actions: boolean;
   rebuild_paper: boolean;
   export_publish: boolean;
   download_publish: boolean;

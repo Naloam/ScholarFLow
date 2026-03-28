@@ -8,6 +8,8 @@ import type {
   AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExport,
   AutoResearchPublishPackage,
+  AutoResearchReviewLoopApply,
+  AutoResearchReviewLoopApplyRequest,
   AutoResearchReviewLoop,
   AutoResearchRunControlPatch,
   AutoResearchRunControlUpdate,
@@ -398,6 +400,17 @@ export const api = {
   refreshAutoResearchReviewLoop(projectId: string, runId: string): Promise<AutoResearchReviewLoop> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/review-loop/refresh`, {
       method: "POST",
+    });
+  },
+
+  applyAutoResearchReviewLoop(
+    projectId: string,
+    runId: string,
+    payload: AutoResearchReviewLoopApplyRequest,
+  ): Promise<AutoResearchReviewLoopApply> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/review-loop/apply`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   },
 

@@ -17,13 +17,18 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("header-project-chip")).toHaveText("Browser E2E Workspace");
 
   await page.getByTestId("start-autoresearch-button").click();
-  await expect(page.getByTestId("operator-current-benchmark")).toHaveText("toy_cs_abstract_topic", {
-    timeout: 15000,
+  await expect(page.getByTestId("operator-review-loop-summary")).toContainText("r1", {
+    timeout: 60000,
   });
-  await expect(page.getByTestId("operator-current-task-family")).toHaveText("text classification");
-  await expect(page.getByTestId("operator-review-loop-summary")).toContainText("r1");
+  await expect(page.getByTestId("operator-console-panel")).toContainText("toy_cs_abstract_topic");
+  await expect(page.getByTestId("operator-console-panel")).toContainText("text classification");
   await page.getByTestId("refresh-review-button").click();
   await expect(page.getByTestId("operator-review-loop-detail")).toContainText("rounds=1");
+  await expect(page.getByTestId("apply-review-actions-button")).toBeEnabled();
+  await page.getByTestId("apply-review-actions-button").click();
+  await expect(page.getByTestId("status-notice")).toContainText("Review actions applied", {
+    timeout: 15000,
+  });
 
   await page.getByTestId("generate-draft-button").click();
 

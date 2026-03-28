@@ -140,6 +140,7 @@ type WorkspaceState = {
   selectDraft: (version: number) => void;
   selectAutoResearchRun: (runId: string) => Promise<void>;
   refreshAutoResearchReviewLoop: () => Promise<void>;
+  applyAutoResearchReviewActions: () => Promise<void>;
   setEditorContent: (content: string) => void;
   setFocusedText: (content: string) => void;
   setConnectionState: (state: ConnectionState) => void;
@@ -785,6 +786,41 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `Review loop refreshed for ${runId}` });
       } catch (error) {
         handleActionError(error, "Refresh review loop failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async applyAutoResearchReviewActions() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const currentRun = autoResearchConsole?.current_run;
+      const runId = currentRun?.run.id;
+      const reviewLoop = currentRun?.review_loop;
+      if (!currentProjectId || !runId || !reviewLoop) {
+        set({ notice: "Select an auto-research run with review actions before applying revisions" });
+        return;
+      }
+      if (reviewLoop.pending_action_count < 1) {
+        set({ notice: "Current review loop has no pending revision actions" });
+        return;
+      }
+      if (!reviewLoop.latest_review_fingerprint) {
+        set({ notice: "Refresh review state before applying revision actions" });
+        return;
+      }
+
+      set({ working: true, notice: `Applying review actions for ${runId}...` });
+      try {
+        await api.applyAutoResearchReviewLoop(currentProjectId, runId, {
+          expected_round: reviewLoop.current_round,
+          expected_review_fingerprint: reviewLoop.latest_review_fingerprint,
+        });
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Review actions applied for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Apply review actions failed");
       } finally {
         set({ working: false });
       }

@@ -15,6 +15,7 @@ type OperatorConsolePanelProps = {
   onRetry: () => void;
   onCancel: () => void;
   onRefreshReview: () => void;
+  onApplyReviewActions: () => void;
   onRebuildPaper: () => void;
   onExportPublish: () => void;
   onDownloadPublish: () => void;
@@ -49,6 +50,7 @@ export function OperatorConsolePanel({
   onRetry,
   onCancel,
   onRefreshReview,
+  onApplyReviewActions,
   onRebuildPaper,
   onExportPublish,
   onDownloadPublish,
@@ -191,11 +193,20 @@ export function OperatorConsolePanel({
         <button
           type="button"
           className="ghost-btn"
+          onClick={onApplyReviewActions}
+          disabled={disabled || !current?.actions.apply_review_actions}
+          data-testid="apply-review-actions-button"
+        >
+          Apply Review Actions
+        </button>
+        <button
+          type="button"
+          className="ghost-btn"
           onClick={onRebuildPaper}
           disabled={disabled || !current?.actions.rebuild_paper}
           data-testid="rebuild-paper-button"
         >
-          Apply Revisions
+          Rebuild Paper
         </button>
         <button
           type="button"

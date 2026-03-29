@@ -630,6 +630,12 @@ export type AutoResearchReviewLoopApplyRequest = {
   expected_review_fingerprint: string;
 };
 
+export type AutoResearchDeploymentRef = {
+  deployment_id: string;
+  label: string;
+  listed_at: string;
+};
+
 export type AutoResearchRegistryAssetRef = {
   path: string;
   kind: "file" | "directory";
@@ -1186,6 +1192,85 @@ export type AutoResearchBridgeUpdate = {
   source: "none" | "inline" | "file";
 };
 
+export type AutoResearchPublicationManifest = {
+  publication_id: string;
+  project_id: string;
+  project_title?: string | null;
+  run_id: string;
+  topic: string;
+  paper_title: string;
+  paper_summary?: string | null;
+  generated_at: string;
+  updated_at: string;
+  selected_candidate_id?: string | null;
+  benchmark_name?: string | null;
+  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+  package_id: string;
+  package_fingerprint?: string | null;
+  bundle_kind: "review_bundle" | "final_publish_bundle";
+  review_bundle_ready: boolean;
+  final_publish_ready: boolean;
+  archive_ready: boolean;
+  archive_current: boolean;
+  review_round: number;
+  review_fingerprint?: string | null;
+  publication_manifest_path: string;
+  publish_manifest_path: string;
+  publish_archive_path: string;
+  paper_path?: string | null;
+  code_package_path?: string | null;
+  code_package_sha256?: string | null;
+  run_api_path: string;
+  registry_api_path: string;
+  publish_api_path: string;
+  publish_download_path: string;
+  paper_download_path?: string | null;
+  code_package_download_path?: string | null;
+  deployments: AutoResearchDeploymentRef[];
+};
+
+export type AutoResearchDeploymentPublication = {
+  deployment_id: string;
+  listed_at: string;
+  publication: AutoResearchPublicationManifest;
+};
+
+export type AutoResearchDeploymentSummary = {
+  deployment_id: string;
+  label: string;
+  created_at: string;
+  updated_at: string;
+  publication_count: number;
+  project_count: number;
+  final_publish_ready_count: number;
+  latest_publication_id?: string | null;
+  latest_run_id?: string | null;
+};
+
+export type AutoResearchDeployment = {
+  deployment_id: string;
+  label: string;
+  created_at: string;
+  updated_at: string;
+  publication_count: number;
+  project_count: number;
+  final_publish_ready_count: number;
+  latest_publication_id?: string | null;
+  latest_run_id?: string | null;
+  publications: AutoResearchDeploymentPublication[];
+};
+
+export type AutoResearchDeploymentList = {
+  deployment_count: number;
+  publication_count: number;
+  deployments: AutoResearchDeploymentSummary[];
+};
+
+export type AutoResearchPublishExportRequest = {
+  deployment_id?: string | null;
+  deployment_label?: string | null;
+};
+
 export type AutoResearchPublishPackage = {
   project_id: string;
   run_id: string;
@@ -1202,6 +1287,10 @@ export type AutoResearchPublishPackage = {
   manifest_path?: string | null;
   archive_path?: string | null;
   archive_manifest_path?: string | null;
+  publication_id?: string | null;
+  publication_manifest_path?: string | null;
+  code_package_path?: string | null;
+  deployment_ids: string[];
   package_fingerprint?: string | null;
   review_round: number;
   review_fingerprint?: string | null;
@@ -1232,12 +1321,18 @@ export type AutoResearchPublishExport = {
   run_id: string;
   package_id: string;
   generated_at: string;
+  publication_id?: string | null;
+  publication_manifest_path?: string | null;
+  deployment_id?: string | null;
+  deployment_label?: string | null;
   bundle_kind: "review_bundle" | "final_publish_bundle";
   review_bundle_ready: boolean;
   final_publish_ready: boolean;
   file_name: string;
   archive_path: string;
   archive_manifest_path?: string | null;
+  code_package_path?: string | null;
+  code_package_download_path?: string | null;
   package_fingerprint?: string | null;
   review_round: number;
   review_fingerprint?: string | null;

@@ -27,7 +27,9 @@ ScholarFlow is being developed as a FARS-style auto-research system for computer
 - Execution recovery now tracks stale-lease recoveries explicitly and fences old lease updates so recovered jobs cannot be incorrectly closed out by stale workers.
 - Publish hardening now distinguishes review-bundle readiness from final publish completeness, so missing reproducibility assets are exposed explicitly before final packaging.
 - Export hardening now writes an explicit `archive_manifest.json` into publish bundles and labels each export as either a `review_bundle` or `final_publish_bundle`.
-- The numbered Phase 1-6 baseline is complete; the current focus is broader multi-worker scaling and richer execution telemetry beyond the current hardened single-worker plane.
+- Deployment hardening now exposes global deployment listing/detail APIs, persisted `publication_manifest.json`, and a stable `paper.md` / `publish_bundle.zip` / `code_package.zip` publication surface.
+- Research-quality hardening now adds role-aware candidate diversity, robustness-aware portfolio elimination, richer failed-config diagnostics, family-aware Holm metadata, and comparison-level power analysis notes.
+- The numbered Phase 1-6 baseline plus Workstreams E/F are complete; the remaining gaps are deeper paper automation, compile-ready coverage, and higher-throughput scaling.
 
 ## Development Entry Points
 

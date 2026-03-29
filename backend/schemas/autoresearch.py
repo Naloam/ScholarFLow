@@ -471,12 +471,19 @@ class SignificanceTestResult(BaseModel):
     metric: str
     candidate: str
     comparator: str
+    comparison_family: str | None = None
+    family_size: int = 1
     alternative: SignificanceAlternative = "two_sided"
     method: SignificanceTestMethod = "paired_sign_flip_exact"
     p_value: float
     adjusted_p_value: float | None = None
+    adjusted_alpha: float | None = None
     correction: MultipleComparisonCorrection | None = None
     effect_size: float
+    minimum_detectable_effect: float | None = None
+    recommended_sample_count: int | None = None
+    adequately_powered: bool | None = None
+    power_detail: str | None = None
     significant: bool = False
     sample_count: int = 0
     detail: str
@@ -487,8 +494,13 @@ class FailureRecord(BaseModel):
     sweep_label: str
     seed: int | None = None
     category: FailureCategory = "unknown_failure"
+    config_signature: str | None = None
+    config_params: dict[str, Any] = Field(default_factory=dict)
+    runtime_context: dict[str, Any] = Field(default_factory=dict)
     summary: str
     detail: str
+    diagnosis: str | None = None
+    likely_fix: str | None = None
     returncode: int | None = None
     status: Literal["failed"] = "failed"
 
@@ -616,6 +628,7 @@ class ResultArtifact(BaseModel):
     per_seed_results: list[SeedArtifactResult] = Field(default_factory=list)
     sweep_results: list[SweepEvaluationResult] = Field(default_factory=list)
     significance_tests: list[SignificanceTestResult] = Field(default_factory=list)
+    power_analysis_notes: list[str] = Field(default_factory=list)
     negative_results: list[NegativeResultRecord] = Field(default_factory=list)
     failed_trials: list[FailureRecord] = Field(default_factory=list)
     anomalous_trials: list[AnomalousTrialRecord] = Field(default_factory=list)
@@ -881,6 +894,8 @@ class HypothesisCandidate(BaseModel):
     id: str
     program_id: str
     rank: int
+    portfolio_role: str | None = None
+    diversity_axis: str | None = None
     title: str
     hypothesis: str
     proposed_method: str
@@ -909,6 +924,7 @@ class PortfolioDecisionRecord(BaseModel):
     candidate_id: str
     rank: int
     status: HypothesisCandidateStatus
+    quality_tier: str | None = None
     outcome: PortfolioDecisionOutcome = "pending"
     executed: bool = False
     selected: bool = False
@@ -1337,6 +1353,91 @@ class AutoResearchReviewLoopRead(BaseModel):
     pending_revision_actions: list[str] = Field(default_factory=list)
 
 
+class AutoResearchDeploymentRefRead(BaseModel):
+    deployment_id: str
+    label: str
+    listed_at: datetime
+
+
+class AutoResearchPublicationManifestRead(BaseModel):
+    publication_id: str
+    project_id: str
+    project_title: str | None = None
+    run_id: str
+    topic: str
+    paper_title: str
+    paper_summary: str | None = None
+    generated_at: datetime
+    updated_at: datetime
+    selected_candidate_id: str | None = None
+    benchmark_name: str | None = None
+    task_family: TaskFamily | None = None
+    package_id: str
+    package_fingerprint: str | None = None
+    bundle_kind: AutoResearchPublishBundleKind = "review_bundle"
+    review_bundle_ready: bool = False
+    final_publish_ready: bool = False
+    archive_ready: bool = False
+    archive_current: bool = False
+    review_round: int = 0
+    review_fingerprint: str | None = None
+    publication_manifest_path: str
+    publish_manifest_path: str
+    publish_archive_path: str
+    paper_path: str | None = None
+    code_package_path: str | None = None
+    code_package_sha256: str | None = None
+    run_api_path: str
+    registry_api_path: str
+    publish_api_path: str
+    publish_download_path: str
+    paper_download_path: str | None = None
+    code_package_download_path: str | None = None
+    deployments: list[AutoResearchDeploymentRefRead] = Field(default_factory=list)
+
+
+class AutoResearchDeploymentPublicationRead(BaseModel):
+    deployment_id: str
+    listed_at: datetime
+    publication: AutoResearchPublicationManifestRead
+
+
+class AutoResearchDeploymentSummaryRead(BaseModel):
+    deployment_id: str
+    label: str
+    created_at: datetime
+    updated_at: datetime
+    publication_count: int = 0
+    project_count: int = 0
+    final_publish_ready_count: int = 0
+    latest_publication_id: str | None = None
+    latest_run_id: str | None = None
+
+
+class AutoResearchDeploymentRead(BaseModel):
+    deployment_id: str
+    label: str
+    created_at: datetime
+    updated_at: datetime
+    publication_count: int = 0
+    project_count: int = 0
+    final_publish_ready_count: int = 0
+    latest_publication_id: str | None = None
+    latest_run_id: str | None = None
+    publications: list[AutoResearchDeploymentPublicationRead] = Field(default_factory=list)
+
+
+class AutoResearchDeploymentListRead(BaseModel):
+    deployment_count: int = 0
+    publication_count: int = 0
+    deployments: list[AutoResearchDeploymentSummaryRead] = Field(default_factory=list)
+
+
+class AutoResearchPublishExportRequest(BaseModel):
+    deployment_id: str | None = None
+    deployment_label: str | None = None
+
+
 class AutoResearchPublishPackageRead(BaseModel):
     project_id: str
     run_id: str
@@ -1353,6 +1454,10 @@ class AutoResearchPublishPackageRead(BaseModel):
     manifest_path: str | None = None
     archive_path: str | None = None
     archive_manifest_path: str | None = None
+    publication_id: str | None = None
+    publication_manifest_path: str | None = None
+    code_package_path: str | None = None
+    deployment_ids: list[str] = Field(default_factory=list)
     package_fingerprint: str | None = None
     review_round: int = 0
     review_fingerprint: str | None = None
@@ -1383,12 +1488,18 @@ class AutoResearchPublishExportRead(BaseModel):
     run_id: str
     package_id: str
     generated_at: datetime
+    publication_id: str | None = None
+    publication_manifest_path: str | None = None
+    deployment_id: str | None = None
+    deployment_label: str | None = None
     bundle_kind: AutoResearchPublishBundleKind = "review_bundle"
     review_bundle_ready: bool = False
     final_publish_ready: bool = False
     file_name: str
     archive_path: str
     archive_manifest_path: str | None = None
+    code_package_path: str | None = None
+    code_package_download_path: str | None = None
     package_fingerprint: str | None = None
     review_round: int = 0
     review_fingerprint: str | None = None

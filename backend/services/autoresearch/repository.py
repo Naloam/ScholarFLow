@@ -111,10 +111,11 @@ def candidate_dir(project_id: str, run_id: str, candidate_id: str) -> Path:
 
 
 def _write_json(path: Path, payload: object) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    temporary_path.write_text(encoded, encoding="utf-8")
+    temporary_path.replace(path)
 
 
 def _read_json(path: Path) -> object | None:
@@ -1278,7 +1279,10 @@ def load_run(project_id: str, run_id: str) -> AutoResearchRunRead | None:
     path = _run_path(project_id, run_id) / RUN_FILENAME
     if not path.exists():
         return None
-    return AutoResearchRunRead.model_validate_json(path.read_text(encoding="utf-8"))
+    try:
+        return AutoResearchRunRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def list_runs(project_id: str) -> list[AutoResearchRunRead]:

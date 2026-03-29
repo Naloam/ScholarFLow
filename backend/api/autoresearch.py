@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,8 @@ from schemas.autoresearch import (
     AutoResearchExperimentBridgeRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
+    AutoResearchPublicationManifestRead,
+    AutoResearchPublishExportRequest,
     AutoResearchPublishStatus,
     AutoResearchPublishExportRead,
     AutoResearchPublishPackageRead,
@@ -47,6 +51,7 @@ from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
 from services.autoresearch.review_publish import (
     build_publish_package,
+    build_publication_manifest,
     build_review_loop,
     build_run_review,
     export_publish_package,
@@ -465,14 +470,33 @@ def get_auto_research_publish_package(
     return package
 
 
+@router.get("/{run_id}/publish/manifest", response_model=AutoResearchPublicationManifestRead)
+def get_auto_research_publication_manifest(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchPublicationManifestRead:
+    del db
+    manifest = build_publication_manifest(project_id, run_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Auto research publication manifest not found")
+    return manifest
+
+
 @router.post("/{run_id}/publish/export", response_model=AutoResearchPublishExportRead)
 def export_auto_research_publish_package(
     project_id: str,
     run_id: str,
+    payload: AutoResearchPublishExportRequest | None = Body(default=None),
     db: Session = Depends(get_db),
 ) -> AutoResearchPublishExportRead:
     del db
-    export_result = export_publish_package(project_id, run_id)
+    export_result = export_publish_package(
+        project_id,
+        run_id,
+        deployment_id=payload.deployment_id if payload is not None else None,
+        deployment_label=payload.deployment_label if payload is not None else None,
+    )
     if export_result is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return export_result
@@ -503,6 +527,46 @@ def download_auto_research_publish_package(
         path=archive_path,
         filename=archive_path.name,
         media_type="application/zip",
+    )
+
+
+@router.get("/{run_id}/publish/code/download")
+def download_auto_research_code_package(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    del db
+    manifest = build_publication_manifest(project_id, run_id)
+    if manifest is None or manifest.code_package_path is None:
+        raise HTTPException(status_code=404, detail="Auto research code package not found")
+    code_package_path = Path(manifest.code_package_path).resolve()
+    if not code_package_path.is_file():
+        raise HTTPException(status_code=404, detail="Auto research code package not found")
+    return FileResponse(
+        path=code_package_path,
+        filename=code_package_path.name,
+        media_type="application/zip",
+    )
+
+
+@router.get("/{run_id}/publish/paper/download")
+def download_auto_research_paper_asset(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    del db
+    manifest = build_publication_manifest(project_id, run_id)
+    if manifest is None or manifest.paper_path is None:
+        raise HTTPException(status_code=404, detail="Auto research paper asset not found")
+    paper_path = Path(manifest.paper_path).resolve()
+    if not paper_path.is_file():
+        raise HTTPException(status_code=404, detail="Auto research paper asset not found")
+    return FileResponse(
+        path=paper_path,
+        filename=paper_path.name,
+        media_type="text/markdown",
     )
 
 

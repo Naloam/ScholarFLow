@@ -167,6 +167,8 @@ class ResearchPlanner:
         method_sentence = plan.proposed_method.rstrip(".")
         return [
             {
+                "role": "primary_method",
+                "diversity_axis": "highest_upside",
                 "title_suffix": "Primary Method Candidate",
                 "method": method_sentence,
                 "rationale": (
@@ -184,6 +186,8 @@ class ResearchPlanner:
                 ),
             },
             {
+                "role": "baseline_anchor",
+                "diversity_axis": "low_risk_anchor",
                 "title_suffix": "Baseline Anchor Candidate",
                 "method": (
                     f"{method_sentence}; execution is biased toward stronger heuristic baselines "
@@ -204,6 +208,8 @@ class ResearchPlanner:
                 ),
             },
             {
+                "role": "stability_probe",
+                "diversity_axis": "robustness_probe",
                 "title_suffix": "Stability Probe Candidate",
                 "method": (
                     f"{method_sentence}; execution emphasizes robustness checks, smaller "
@@ -235,15 +241,22 @@ class ResearchPlanner:
     def _candidate_search_strategies(
         self,
         base_strategies: list[str],
-        rank: int,
+        *,
+        role: str,
     ) -> list[str]:
         if not base_strategies:
             return []
-        if rank == 1:
-            return list(base_strategies)
-        if rank == 2:
+        if role == "baseline_anchor":
             return list(base_strategies[:-1] or base_strategies[:1])
-        return list(base_strategies[:1])
+        if role == "stability_probe":
+            if len(base_strategies) == 1:
+                return list(base_strategies)
+            if len(base_strategies) == 2:
+                return [base_strategies[1], base_strategies[0]]
+            return [base_strategies[1], base_strategies[0], *base_strategies[2:]]
+        if role == "primary_method":
+            return list(base_strategies)
+        return list(base_strategies)
 
     def build_program(
         self,
@@ -260,8 +273,9 @@ class ResearchPlanner:
             objective=plan.problem_statement,
             benchmark_name=benchmark_name,
             portfolio_policy=(
-                "Rank candidates by expected research signal, benchmark fit, and reproducibility "
-                "under the current execution budget before expanding to full candidate fan-out."
+                "Rank candidates by expected research signal, diversity of candidate posture, "
+                "benchmark fit, and reproducibility under the current execution budget before "
+                "expanding to full candidate fan-out."
             ),
             research_questions=plan.research_questions,
             scope_limits=plan.scope_limits,
@@ -289,13 +303,18 @@ class ResearchPlanner:
                     id=candidate_id,
                     program_id=program.id,
                     rank=index,
+                    portfolio_role=template["role"],
+                    diversity_axis=template["diversity_axis"],
                     title=f"{plan.title}: {template['title_suffix']}",
                     hypothesis=self._candidate_hypothesis(plan, index - 1),
                     proposed_method=template["method"],
                     rationale=template["rationale"],
                     planned_contributions=planned_contributions,
                     differentiators=template["differentiators"],
-                    search_strategies=self._candidate_search_strategies(spec.search_strategies, index),
+                    search_strategies=self._candidate_search_strategies(
+                        spec.search_strategies,
+                        role=template["role"],
+                    ),
                     status="selected" if index == 1 else "planned",
                     selection_reason=template["selection_reason"],
                 )

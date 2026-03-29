@@ -2782,6 +2782,193 @@ def test_autoresearch_publish_export_marks_final_bundle_kind_for_complete_packag
         client.close()
 
 
+def test_autoresearch_publish_export_writes_publication_manifest_and_code_package(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 7 Publication Manifest Project",
+            "Stable publish manifest for a deployment listing",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Stable publish manifest for a deployment listing"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        export_response = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/export",
+            json={"deployment_id": "live_alpha", "deployment_label": "Live Alpha"},
+        )
+        assert export_response.status_code == 200
+        export_body = export_response.json()
+        assert export_body["deployment_id"] == "live_alpha"
+        assert export_body["deployment_label"] == "Live Alpha"
+        assert export_body["publication_id"] == f"publication_{run_id}"
+        assert Path(export_body["archive_path"]).is_file()
+        assert Path(export_body["code_package_path"]).is_file()
+        assert Path(export_body["publication_manifest_path"]).is_file()
+
+        manifest_response = client.get(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/manifest"
+        )
+        assert manifest_response.status_code == 200
+        manifest = manifest_response.json()
+        assert manifest["publication_id"] == f"publication_{run_id}"
+        assert manifest["deployments"][0]["deployment_id"] == "live_alpha"
+        assert manifest["deployments"][0]["label"] == "Live Alpha"
+        assert manifest["publish_download_path"].endswith("/publish/download")
+        assert manifest["code_package_download_path"].endswith("/publish/code/download")
+        assert manifest["paper_download_path"].endswith("/publish/paper/download")
+
+        code_download = client.get(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/code/download"
+        )
+        assert code_download.status_code == 200
+        paper_download = client.get(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/paper/download"
+        )
+        assert paper_download.status_code == 200
+
+        with ZipFile(Path(export_body["code_package_path"])) as archive:
+            archived_names = set(archive.namelist())
+        assert "run.json" in archived_names
+        assert len(archived_names) > 1
+    finally:
+        client.close()
+
+
+def test_autoresearch_deployment_api_aggregates_publications_across_projects(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        first_project_id = _create_project(
+            client,
+            "Deployment Listing Project A",
+            "Deployment listing aggregation first run",
+        )
+        second_project_id = _create_project(
+            client,
+            "Deployment Listing Project B",
+            "Deployment listing aggregation second run",
+        )
+        first_run = client.post(
+            f"/api/projects/{first_project_id}/auto-research/run",
+            json={"topic": "Deployment listing aggregation first run"},
+        )
+        second_run = client.post(
+            f"/api/projects/{second_project_id}/auto-research/run",
+            json={"topic": "Deployment listing aggregation second run"},
+        )
+        assert first_run.status_code == 200
+        assert second_run.status_code == 200
+        first_run_id = first_run.json()["id"]
+        second_run_id = second_run.json()["id"]
+
+        for project_id, run_id in (
+            (first_project_id, first_run_id),
+            (second_project_id, second_run_id),
+        ):
+            response = client.post(
+                f"/api/projects/{project_id}/auto-research/{run_id}/publish/export",
+                json={"deployment_id": "live_batch", "deployment_label": "Live Batch"},
+            )
+            assert response.status_code == 200
+
+        deployment_list = client.get("/api/auto-research/deployments")
+        assert deployment_list.status_code == 200
+        deployments = deployment_list.json()
+        assert deployments["deployment_count"] >= 1
+        live_batch = next(
+            item for item in deployments["deployments"] if item["deployment_id"] == "live_batch"
+        )
+        assert live_batch["label"] == "Live Batch"
+        assert live_batch["publication_count"] == 2
+        assert live_batch["project_count"] == 2
+
+        deployment_detail = client.get("/api/auto-research/deployments/live_batch")
+        assert deployment_detail.status_code == 200
+        detail = deployment_detail.json()
+        assert detail["deployment_id"] == "live_batch"
+        assert detail["publication_count"] == 2
+        assert {item["publication"]["project_id"] for item in detail["publications"]} == {
+            first_project_id,
+            second_project_id,
+        }
+        assert {item["publication"]["run_id"] for item in detail["publications"]} == {
+            first_run_id,
+            second_run_id,
+        }
+        assert all(item["publication"]["code_package_path"] for item in detail["publications"])
+        assert all(item["publication"]["publish_archive_path"] for item in detail["publications"])
+    finally:
+        client.close()
+
+
+def test_autoresearch_deployment_api_skips_transient_invalid_run_snapshots(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        stable_project_id = _create_project(
+            client,
+            "Deployment Stable Project",
+            "Stable deployment listing run",
+        )
+        transient_project_id = _create_project(
+            client,
+            "Deployment Transient Project",
+            "Transient deployment listing run",
+        )
+        stable_run_id = client.post(
+            f"/api/projects/{stable_project_id}/auto-research/run",
+            json={"topic": "Stable deployment listing run"},
+        ).json()["id"]
+        transient_run_id = client.post(
+            f"/api/projects/{transient_project_id}/auto-research/run",
+            json={"topic": "Transient deployment listing run"},
+        ).json()["id"]
+
+        for project_id, run_id in (
+            (stable_project_id, stable_run_id),
+            (transient_project_id, transient_run_id),
+        ):
+            response = client.post(
+                f"/api/projects/{project_id}/auto-research/{run_id}/publish/export",
+                json={"deployment_id": "live_transient", "deployment_label": "Live Transient"},
+            )
+            assert response.status_code == 200
+
+        run_json_path = (
+            autoresearch_repository.run_dir(transient_project_id, transient_run_id) / "run.json"
+        )
+        run_json_path.write_text("", encoding="utf-8")
+
+        deployment_list = client.get("/api/auto-research/deployments")
+        assert deployment_list.status_code == 200
+        live_transient = next(
+            item
+            for item in deployment_list.json()["deployments"]
+            if item["deployment_id"] == "live_transient"
+        )
+        assert live_transient["publication_count"] == 1
+
+        deployment_detail = client.get("/api/auto-research/deployments/live_transient")
+        assert deployment_detail.status_code == 200
+        detail = deployment_detail.json()
+        assert detail["publication_count"] == 1
+        assert detail["publications"][0]["publication"]["project_id"] == stable_project_id
+    finally:
+        client.close()
+
+
 def test_autoresearch_operator_console_aggregates_current_run_state(
     monkeypatch,
     tmp_path: Path,
@@ -3509,6 +3696,180 @@ def test_autoresearch_selects_best_executed_candidate_from_portfolio(
         client.close()
 
 
+def test_autoresearch_prefers_robust_candidate_over_flaky_higher_score_candidate(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+
+    def fake_run(
+        self,
+        *,
+        plan,
+        spec,
+        round_index,
+        **kwargs,
+    ):
+        del self, kwargs
+        if "narrower modeling delta" in plan.proposed_method:
+            candidate_label = "baseline_anchor"
+            score = 0.84
+            failed_trials = []
+            significance_tests = [
+                {
+                    "scope": "system",
+                    "metric": "macro_f1",
+                    "candidate": "demo_system",
+                    "comparator": "majority",
+                    "comparison_family": "system:macro_f1",
+                    "family_size": 1,
+                    "p_value": 0.02,
+                    "adjusted_p_value": 0.02,
+                    "adjusted_alpha": 0.05,
+                    "correction": "holm_bonferroni",
+                    "effect_size": 0.44,
+                    "recommended_sample_count": 2,
+                    "adequately_powered": True,
+                    "power_detail": "Current paired seed coverage is adequate.",
+                    "sample_count": 2,
+                    "significant": True,
+                    "detail": "baseline anchor separated cleanly from majority.",
+                }
+            ]
+        elif "robustness checks" in plan.proposed_method:
+            candidate_label = "stability_probe"
+            score = 0.8
+            failed_trials = []
+            significance_tests = []
+        else:
+            candidate_label = "primary_method"
+            score = 0.88
+            failed_trials = [
+                {
+                    "scope": "seed",
+                    "sweep_label": "default",
+                    "seed": 13,
+                    "category": "code_failure",
+                    "config_signature": 'default|seed=13|{}',
+                    "summary": "primary method failed on one seed",
+                    "detail": "primary method failed on one seed",
+                    "diagnosis": "One seed crashed inside generated experiment code.",
+                    "likely_fix": "Use the lower-risk baseline anchor candidate.",
+                }
+            ]
+            significance_tests = [
+                {
+                    "scope": "system",
+                    "metric": "macro_f1",
+                    "candidate": "demo_system",
+                    "comparator": "majority",
+                    "comparison_family": "system:macro_f1",
+                    "family_size": 1,
+                    "p_value": 0.11,
+                    "adjusted_p_value": 0.11,
+                    "adjusted_alpha": 0.05,
+                    "correction": "holm_bonferroni",
+                    "effect_size": 0.48,
+                    "recommended_sample_count": 5,
+                    "adequately_powered": False,
+                    "power_detail": "Observed effect looks promising, but more paired seeds are needed.",
+                    "sample_count": 2,
+                    "significant": False,
+                    "detail": "primary method remained underpowered.",
+                }
+            ]
+        strategy = spec.search_strategies[min(round_index - 1, len(spec.search_strategies) - 1)]
+        code_path = tmp_path / f"{candidate_label}_{round_index}.py"
+        code_path.write_text(f"# {candidate_label} round {round_index}\n", encoding="utf-8")
+        artifact = ResultArtifact(
+            status="done",
+            summary=f"{candidate_label} round {round_index}",
+            key_findings=[candidate_label],
+            primary_metric="macro_f1",
+            best_system="demo_system",
+            objective_system="demo_system",
+            objective_score=score,
+            system_results=[
+                {"system": "majority", "metrics": {"accuracy": 0.40, "macro_f1": 0.40}},
+                {"system": "demo_system", "metrics": {"accuracy": score, "macro_f1": score}},
+            ],
+            aggregate_system_results=[
+                {
+                    "system": "majority",
+                    "mean_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                    "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+                    "min_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                    "max_metrics": {"accuracy": 0.40, "macro_f1": 0.40},
+                    "sample_count": 2,
+                },
+                {
+                    "system": "demo_system",
+                    "mean_metrics": {"accuracy": score, "macro_f1": score},
+                    "std_metrics": {"accuracy": 0.01, "macro_f1": 0.01},
+                    "min_metrics": {"accuracy": score - 0.01, "macro_f1": score - 0.01},
+                    "max_metrics": {"accuracy": score + 0.01, "macro_f1": score + 0.01},
+                    "sample_count": 2,
+                },
+            ],
+            significance_tests=significance_tests,
+            failed_trials=failed_trials,
+            acceptance_checks=[
+                {
+                    "criterion": "Record mean and standard deviation for the primary metric.",
+                    "passed": True,
+                    "detail": "Synthetic candidate passed.",
+                }
+            ],
+            tables=[
+                {
+                    "title": "Main Results",
+                    "columns": ["System", "Macro F1"],
+                    "rows": [["majority", "0.4000"], ["demo_system", f"{score:.4f}"]],
+                }
+            ],
+            environment={
+                "executor_mode": "synthetic",
+                "python_version": "3.11.0",
+                "platform": "test-platform",
+                "runtime_seconds": 0.01,
+                "selected_sweep": "default",
+                "seed_count": 2,
+            },
+        )
+        return strategy, str(code_path), artifact
+
+    monkeypatch.setattr(AutoExperimentRunner, "run", fake_run)
+    try:
+        project_id = _create_project(
+            client,
+            "Robust Portfolio Winner Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert response.status_code == 200
+        run = client.get(f"/api/projects/{project_id}/auto-research/{response.json()['id']}").json()
+        assert run["status"] == "done"
+        assert run["portfolio"]["selected_candidate_id"].endswith("cand_02")
+        winner = run["candidates"][0]
+        primary_method = next(item for item in run["candidates"] if item["portfolio_role"] == "primary_method")
+        assert winner["id"] == run["portfolio"]["selected_candidate_id"]
+        assert winner["portfolio_role"] == "baseline_anchor"
+        winner_decision = next(
+            item for item in run["portfolio"]["decisions"] if item["candidate_id"] == winner["id"]
+        )
+        primary_decision = next(
+            item for item in run["portfolio"]["decisions"] if item["candidate_id"] == primary_method["id"]
+        )
+        assert winner_decision["quality_tier"] == "robust"
+        assert primary_decision["quality_tier"] == "fragile"
+        assert "underpowered" in primary_method["selection_reason"]
+    finally:
+        client.close()
+
+
 def test_autoresearch_can_pull_remote_csv_benchmark(monkeypatch, tmp_path: Path) -> None:
     client = _configure_test_client(monkeypatch, tmp_path)
     csv_payload = """text,label,split
@@ -3776,6 +4137,155 @@ def test_experiment_spec_acceptance_criteria_upgrades_legacy_strings() -> None:
     assert spec.acceptance_criteria[2].required_statistics == ["mean", "std"]
 
 
+def test_planner_build_portfolio_assigns_diverse_candidate_axes() -> None:
+    planner = autoresearch_planner.ResearchPlanner()
+    benchmark = builtin_benchmark("text_classification")
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Diverse Portfolio Test",
+        task_family="text_classification",
+        problem_statement="Test diversity-aware candidate generation.",
+        motivation="Portfolio candidates should not collapse into the same execution posture.",
+        proposed_method="a compact classifier with explicit baseline and robustness probes",
+        research_questions=["Do portfolio candidates cover different execution postures?"],
+        hypotheses=["Different portfolio roles should preserve different search orders."],
+        planned_contributions=["Role-aware candidate diversity.", "Stable benchmark execution."],
+        experiment_outline=["Generate a ranked portfolio and inspect candidate roles."],
+        scope_limits=["Unit-level planner validation only."],
+    )
+    spec = build_experiment_spec("text_classification", benchmark)
+    program = planner.build_program(
+        run_id="run-diverse",
+        plan=plan,
+        benchmark_name=benchmark.benchmark_name,
+    )
+
+    candidates, portfolio = planner.build_portfolio(
+        program=program,
+        plan=plan,
+        spec=spec,
+    )
+
+    assert [item.portfolio_role for item in candidates] == [
+        "primary_method",
+        "baseline_anchor",
+        "stability_probe",
+    ]
+    assert [item.diversity_axis for item in candidates] == [
+        "highest_upside",
+        "low_risk_anchor",
+        "robustness_probe",
+    ]
+    assert candidates[0].search_strategies == spec.search_strategies
+    assert candidates[1].search_strategies == spec.search_strategies[:-1]
+    assert candidates[2].search_strategies[0] == spec.search_strategies[1]
+    assert portfolio.selected_candidate_id == candidates[0].id
+    assert "diversity of candidate posture" in program.portfolio_policy
+
+
+def test_runner_adds_familywise_holm_and_power_style_analysis(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    runner = AutoExperimentRunner()
+    plan = ResearchPlan(
+        topic="Automatic topic classification for compact CS abstracts",
+        title="Power Analysis Test",
+        task_family="text_classification",
+        problem_statement="Test family-wise Holm and power-style diagnostics.",
+        motivation="Research-quality reporting should expose multiple-comparison family metadata.",
+        proposed_method="Compare several systems across paired seeds and sweeps.",
+        research_questions=["Do significance tests carry family and power metadata?"],
+        hypotheses=["The runner should preserve richer comparison diagnostics."],
+        planned_contributions=["Family-wise multiple-comparison metadata.", "Power-style analysis."],
+        experiment_outline=["Run two sweeps with four paired seeds each."],
+        scope_limits=["Unit-level runner validation only."],
+    )
+    spec = build_experiment_spec("text_classification", builtin_benchmark("text_classification")).model_copy(
+        update={
+            "seeds": [1, 2, 3, 4],
+            "sweeps": [
+                SweepConfig(label="base", params={"variant": "base"}),
+                SweepConfig(label="boosted", params={"variant": "boosted"}),
+            ],
+        }
+    )
+
+    def fake_generate(self, **kwargs):
+        del kwargs
+        return "naive_bayes_search", 'print("__RESULT__" + "{}")'
+
+    def fake_run(payload: dict[str, object]) -> dict[str, object]:
+        env = payload.get("env")
+        assert isinstance(env, dict)
+        seed = int(env["SCHOLARFLOW_SEED"])
+        sweep = json.loads(env["SCHOLARFLOW_SWEEP_JSON"])
+        variant = str(sweep["variant"])
+        boosted_scores = {1: 0.84, 2: 0.83, 3: 0.86, 4: 0.85}
+        base_scores = {1: 0.78, 2: 0.77, 3: 0.8, 4: 0.79}
+        keyword_scores = {1: 0.74, 2: 0.73, 3: 0.75, 4: 0.74}
+        majority_scores = {1: 0.4, 2: 0.4, 3: 0.4, 4: 0.4}
+        selected_scores = boosted_scores if variant == "boosted" else base_scores
+        return {
+            "logs": f"seed={seed} sweep={variant}",
+            "outputs": {
+                "returncode": 0,
+                "executor_mode": "local",
+                "docker_image": None,
+                "workdir": str(tmp_path),
+                "duration_ms": 15,
+                "host_platform": "test-platform",
+                "host_python": "3.11.0",
+                "result": {
+                    "summary": f"{variant} seed={seed}",
+                    "primary_metric": "macro_f1",
+                    "best_system": "naive_bayes",
+                    "objective_system": "naive_bayes",
+                    "objective_score": selected_scores[seed],
+                    "key_findings": [variant, str(seed)],
+                    "system_results": [
+                        {"system": "majority", "metrics": {"accuracy": majority_scores[seed], "macro_f1": majority_scores[seed]}},
+                        {"system": "keyword_rule", "metrics": {"accuracy": keyword_scores[seed], "macro_f1": keyword_scores[seed]}},
+                        {"system": "naive_bayes", "metrics": {"accuracy": selected_scores[seed], "macro_f1": selected_scores[seed]}},
+                    ],
+                    "tables": [],
+                    "environment": {
+                        "python_version": "3.11.0",
+                        "platform": "test-platform",
+                        "runtime_seconds": 0.015,
+                        "seed": seed,
+                        "sweep": sweep,
+                    },
+                },
+            },
+        }
+
+    monkeypatch.setattr(autoresearch_codegen.ExperimentCodeGenerator, "generate", fake_generate)
+    monkeypatch.setattr(runner.sandbox, "run", fake_run)
+
+    _, _, artifact = runner.run(
+        project_id="project-test",
+        run_id="run-power",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=builtin_benchmark("text_classification").payload,
+        round_index=2,
+        goal="search_for_better_candidate",
+        prior_attempts=[],
+    )
+
+    system_tests = [item for item in artifact.significance_tests if item.scope == "system"]
+    assert len(system_tests) == 2
+    assert all(item.comparison_family == "system:macro_f1" for item in system_tests)
+    assert all(item.family_size == 2 for item in system_tests)
+    assert all(item.adjusted_alpha is not None for item in system_tests)
+    assert all(item.recommended_sample_count is not None for item in system_tests)
+    assert all(item.power_detail for item in system_tests)
+    assert artifact.power_analysis_notes
+    assert any(table.title == "Comparison Power" for table in artifact.tables)
+
+
 def test_runner_records_partial_sweeps_negative_results_and_anomalies(
     monkeypatch,
     tmp_path: Path,
@@ -3884,6 +4394,9 @@ def test_runner_records_partial_sweeps_negative_results_and_anomalies(
     assert len(artifact.failed_trials) == 1
     assert artifact.failed_trials[0].category == "code_failure"
     assert artifact.failed_trials[0].sweep_label == "risky"
+    assert artifact.failed_trials[0].config_signature == 'risky|seed=4|{"variant": "risky"}'
+    assert artifact.failed_trials[0].diagnosis is not None
+    assert artifact.failed_trials[0].likely_fix is not None
     assert any(item.scope == "sweep" for item in artifact.negative_results)
     assert artifact.anomalous_trials
     assert any(table.title == "Failed Configs" for table in artifact.tables)

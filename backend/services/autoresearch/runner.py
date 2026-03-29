@@ -195,25 +195,102 @@ def _paired_sign_flip_test(
     return _round_metric(p_value), alternative, effect_size, len(differences), method
 
 
+def _paired_differences(values_a: list[float], values_b: list[float]) -> list[float]:
+    return [left - right for left, right in zip(values_a, values_b, strict=False)]
+
+
+def _power_style_analysis(differences: list[float]) -> dict[str, object]:
+    sample_count = len(differences)
+    absolute_effect = abs(_mean(differences)) if differences else 0.0
+    if sample_count < 2:
+        return {
+            "minimum_detectable_effect": None,
+            "recommended_sample_count": 4,
+            "adequately_powered": False,
+            "power_detail": (
+                f"Only {sample_count} paired seed(s) were available, so power-style analysis is "
+                "advisory only and more paired seeds are recommended."
+            ),
+        }
+
+    difference_std = _sample_std(differences)
+    if difference_std <= 1e-12:
+        recommended = 2 if absolute_effect > 0 else 4
+        adequately_powered = sample_count >= recommended and absolute_effect > 0
+        return {
+            "minimum_detectable_effect": 0.0,
+            "recommended_sample_count": recommended,
+            "adequately_powered": adequately_powered,
+            "power_detail": (
+                f"Observed paired differences were nearly deterministic across {sample_count} seeds; "
+                f"an effect of {absolute_effect:.4f} is already stable under the current design."
+                if adequately_powered
+                else (
+                    f"Observed paired differences were nearly deterministic, but the mean paired delta "
+                    f"({absolute_effect:.4f}) is too small to treat the current design as adequately powered."
+                )
+            ),
+        }
+
+    z_alpha_plus_beta = 2.8
+    minimum_detectable_effect = z_alpha_plus_beta * difference_std / math.sqrt(sample_count)
+    if absolute_effect <= 1e-12:
+        recommended_sample_count = 512
+    else:
+        recommended_sample_count = int(
+            max(
+                2,
+                min(
+                    512,
+                    math.ceil((z_alpha_plus_beta * difference_std / absolute_effect) ** 2),
+                ),
+            )
+        )
+    adequately_powered = sample_count >= recommended_sample_count
+    return {
+        "minimum_detectable_effect": _round_metric(minimum_detectable_effect),
+        "recommended_sample_count": recommended_sample_count,
+        "adequately_powered": adequately_powered,
+        "power_detail": (
+            f"With {sample_count} paired seeds and paired-difference std={difference_std:.4f}, "
+            f"the design can reliably detect deltas around {minimum_detectable_effect:.4f}; "
+            f"the observed mean delta was {absolute_effect:.4f}."
+            + (
+                " Current seed coverage is likely adequate."
+                if adequately_powered
+                else f" Roughly {recommended_sample_count} paired seeds would be safer."
+            )
+        ),
+    }
+
+
 def _holm_bonferroni_adjustment(results: list[SignificanceTestResult]) -> list[SignificanceTestResult]:
     if not results:
         return results
-    indexed = sorted(enumerate(results), key=lambda item: item[1].p_value)
-    running_max = 0.0
-    adjusted: dict[int, float] = {}
-    total = len(indexed)
-    for position, (original_index, item) in enumerate(indexed, start=1):
-        candidate = min(1.0, item.p_value * (total - position + 1))
-        running_max = max(running_max, candidate)
-        adjusted[original_index] = _round_metric(running_max)
-    return [
-        item.model_copy(
-            update={
-                "adjusted_p_value": adjusted[index],
+    grouped: dict[str, list[tuple[int, SignificanceTestResult]]] = {}
+    for index, item in enumerate(results):
+        family = f"{item.scope}:{item.metric}"
+        grouped.setdefault(family, []).append((index, item))
+
+    updates: dict[int, dict[str, object]] = {}
+    for family, family_results in grouped.items():
+        indexed = sorted(family_results, key=lambda item: item[1].p_value)
+        running_max = 0.0
+        total = len(indexed)
+        for position, (original_index, item) in enumerate(indexed, start=1):
+            candidate = min(1.0, item.p_value * (total - position + 1))
+            running_max = max(running_max, candidate)
+            adjusted_alpha = 0.05 / (total - position + 1)
+            updates[original_index] = {
+                "comparison_family": family,
+                "family_size": total,
+                "adjusted_p_value": _round_metric(running_max),
+                "adjusted_alpha": round(adjusted_alpha, 6),
                 "correction": "holm_bonferroni",
-                "significant": adjusted[index] < 0.05,
+                "significant": running_max < 0.05,
             }
-        )
+    return [
+        item.model_copy(update=updates[index])
         for index, item in enumerate(results)
     ]
 
@@ -508,6 +585,54 @@ class AutoExperimentRunner:
             return "metric_failure"
         return "unknown_failure"
 
+    def _config_signature(self, *, seed: int | None, sweep: SweepConfig) -> str:
+        seed_fragment = f"seed={seed}" if seed is not None else "seed=n/a"
+        return (
+            f"{sweep.label}|{seed_fragment}|"
+            f"{json.dumps(sweep.params, ensure_ascii=False, sort_keys=True)}"
+        )
+
+    def _failure_diagnosis(
+        self,
+        *,
+        artifact: ResultArtifact,
+        category: FailureCategory,
+        sweep: SweepConfig,
+        seed: int | None,
+    ) -> tuple[str, str]:
+        config_label = (
+            f"sweep `{sweep.label}` seed {seed}" if seed is not None else f"sweep `{sweep.label}`"
+        )
+        if category == "runtime_contract_failure":
+            return (
+                f"{config_label} returned an artifact without the required seed/sweep runtime metadata.",
+                "Regenerate the experiment so it records the active seed and sweep parameters in the result artifact.",
+            )
+        if category == "code_failure":
+            return (
+                f"{config_label} failed inside generated experiment code before producing a complete structured artifact.",
+                "Inspect the generated code and traceback, then prefer a safer baseline or a repair-focused retry.",
+            )
+        if category == "environment_failure":
+            return (
+                f"{config_label} hit an execution-environment issue rather than a model-quality issue.",
+                "Check sandbox, dependency, timeout, or backend configuration before retrying the same candidate.",
+            )
+        if category == "data_failure":
+            return (
+                f"{config_label} failed while reading or validating benchmark data.",
+                "Re-check dataset fields, schema assumptions, and benchmark payload materialization.",
+            )
+        if category == "metric_failure":
+            return (
+                f"{config_label} ran but did not preserve enough metric structure for aggregation.",
+                "Patch the result emitter so objective score, primary metric, and system-level metrics are always recorded.",
+            )
+        return (
+            f"{config_label} failed for an uncategorized reason.",
+            "Inspect the preserved logs and tighten failure categorization before rerunning at scale.",
+        )
+
     def _failure_record(
         self,
         *,
@@ -516,20 +641,36 @@ class AutoExperimentRunner:
         sweep: SweepConfig,
     ) -> FailureRecord:
         category = self._failure_category(artifact)
+        diagnosis, likely_fix = self._failure_diagnosis(
+            artifact=artifact,
+            category=category,
+            sweep=sweep,
+            seed=seed,
+        )
         detail_parts = [artifact.summary]
         if artifact.logs:
             detail_parts.append(_detail_excerpt(artifact.logs))
         violations = artifact.environment.get("runtime_contract_violations")
         if isinstance(violations, list) and violations:
             detail_parts.append(f"runtime_contract={', '.join(str(item) for item in violations)}")
+        detail_parts.append(diagnosis)
         returncode = artifact.outputs.get("returncode") if isinstance(artifact.outputs, dict) else None
         return FailureRecord(
             scope="seed" if seed is not None else "sweep",
             sweep_label=sweep.label,
             seed=seed,
             category=category,
+            config_signature=self._config_signature(seed=seed, sweep=sweep),
+            config_params=dict(sweep.params),
+            runtime_context={
+                "strategy": artifact.environment.get("strategy"),
+                "generated_code_path": artifact.environment.get("generated_code_path"),
+                "executor_mode": artifact.environment.get("executor_mode"),
+            },
             summary=artifact.summary,
             detail=" | ".join(part for part in detail_parts if part),
+            diagnosis=diagnosis,
+            likely_fix=likely_fix,
             returncode=int(returncode) if isinstance(returncode, int) else None,
         )
 
@@ -565,7 +706,9 @@ class AutoExperimentRunner:
                 continue
             values_a = [selected_scores[seed] for seed in common_seeds]
             values_b = [comparator_scores[seed] for seed in common_seeds]
+            differences = _paired_differences(values_a, values_b)
             p_value, alternative, effect_size, sample_count, method = _paired_sign_flip_test(values_a, values_b)
+            power_analysis = _power_style_analysis(differences)
             tests.append(
                 SignificanceTestResult(
                     scope="system",
@@ -576,6 +719,10 @@ class AutoExperimentRunner:
                     method=method,
                     p_value=p_value,
                     effect_size=effect_size,
+                    minimum_detectable_effect=power_analysis["minimum_detectable_effect"],  # type: ignore[arg-type]
+                    recommended_sample_count=power_analysis["recommended_sample_count"],  # type: ignore[arg-type]
+                    adequately_powered=power_analysis["adequately_powered"],  # type: ignore[arg-type]
+                    power_detail=power_analysis["power_detail"],  # type: ignore[arg-type]
                     sample_count=sample_count,
                     detail=(
                         f"`{selected_system}` vs `{item.system}` on `{primary_metric}` over {sample_count} paired seeds "
@@ -602,7 +749,9 @@ class AutoExperimentRunner:
                 continue
             values_a = [selected_scores[seed] for seed in common_seeds]
             values_b = [comparator_scores[seed] for seed in common_seeds]
+            differences = _paired_differences(values_a, values_b)
             p_value, alternative, effect_size, sample_count, method = _paired_sign_flip_test(values_a, values_b)
+            power_analysis = _power_style_analysis(differences)
             tests.append(
                 SignificanceTestResult(
                     scope="sweep",
@@ -613,6 +762,10 @@ class AutoExperimentRunner:
                     method=method,
                     p_value=p_value,
                     effect_size=effect_size,
+                    minimum_detectable_effect=power_analysis["minimum_detectable_effect"],  # type: ignore[arg-type]
+                    recommended_sample_count=power_analysis["recommended_sample_count"],  # type: ignore[arg-type]
+                    adequately_powered=power_analysis["adequately_powered"],  # type: ignore[arg-type]
+                    power_detail=power_analysis["power_detail"],  # type: ignore[arg-type]
                     sample_count=sample_count,
                     detail=(
                         f"Sweep `{selected_sweep.label}` vs `{sweep_label}` on `{primary_metric}` over "
@@ -810,22 +963,62 @@ class AutoExperimentRunner:
                     title="Significance Tests",
                     columns=[
                         "Scope",
+                        "Family",
                         "Candidate",
                         "Comparator",
                         "Metric",
                         "Effect",
                         "Adj P",
+                        "Adj Alpha",
                         "Significant",
+                        "Adequate Power",
+                    ],
+                    rows=[
+                        [
+                            item.scope,
+                            item.comparison_family or "n/a",
+                            item.candidate,
+                            item.comparator,
+                            _metric_label(item.metric),
+                            f"{item.effect_size:.4f}",
+                            f"{(item.adjusted_p_value if item.adjusted_p_value is not None else item.p_value):.4f}",
+                            f"{item.adjusted_alpha:.4f}" if item.adjusted_alpha is not None else "n/a",
+                            "yes" if item.significant else "no",
+                            "yes" if item.adequately_powered else "no",
+                        ]
+                        for item in significance_tests
+                    ],
+                )
+            )
+            tables.append(
+                ResultTable(
+                    title="Comparison Power",
+                    columns=[
+                        "Scope",
+                        "Candidate",
+                        "Comparator",
+                        "Paired Seeds",
+                        "Min Detectable Effect",
+                        "Recommended Seeds",
+                        "Adequate",
                     ],
                     rows=[
                         [
                             item.scope,
                             item.candidate,
                             item.comparator,
-                            _metric_label(item.metric),
-                            f"{item.effect_size:.4f}",
-                            f"{(item.adjusted_p_value if item.adjusted_p_value is not None else item.p_value):.4f}",
-                            "yes" if item.significant else "no",
+                            str(item.sample_count),
+                            (
+                                f"{item.minimum_detectable_effect:.4f}"
+                                if item.minimum_detectable_effect is not None
+                                else "n/a"
+                            ),
+                            (
+                                str(item.recommended_sample_count)
+                                if item.recommended_sample_count is not None
+                                else "n/a"
+                            ),
+                            "yes" if item.adequately_powered else "no",
                         ]
                         for item in significance_tests
                     ],
@@ -905,14 +1098,24 @@ class AutoExperimentRunner:
             tables.append(
                 ResultTable(
                     title="Failed Configs",
-                    columns=["Scope", "Sweep", "Seed", "Category", "Summary"],
+                    columns=[
+                        "Scope",
+                        "Sweep",
+                        "Seed",
+                        "Category",
+                        "Config",
+                        "Diagnosis",
+                        "Likely Fix",
+                    ],
                     rows=[
                         [
                             item.scope,
                             item.sweep_label,
                             str(item.seed) if item.seed is not None else "n/a",
                             item.category,
-                            item.summary,
+                            item.config_signature or "n/a",
+                            item.diagnosis or item.summary,
+                            item.likely_fix or "n/a",
                         ]
                         for item in failed_trials
                     ],
@@ -1387,6 +1590,7 @@ class AutoExperimentRunner:
             significance_tests=significance_tests,
             sweep_results=sweep_results,
         )
+        power_analysis_notes = [item.power_detail for item in significance_tests if item.power_detail]
         anomalous_trials = self._anomalous_trials(
             per_seed_results=per_seed_results,
             primary_metric=primary_metric,
@@ -1427,6 +1631,9 @@ class AutoExperimentRunner:
                 "confidence_interval_level": 0.95,
                 "confidence_interval_method": "student_t_95",
                 "significance_test_count": len(significance_tests),
+                "underpowered_test_count": sum(
+                    1 for item in significance_tests if item.adequately_powered is False
+                ),
                 "negative_result_count": len(negative_results),
                 "anomalous_trial_count": len(anomalous_trials),
                 "failed_trial_count": len(failed_trials),
@@ -1464,6 +1671,13 @@ class AutoExperimentRunner:
         key_findings.append(
             f"Recorded {len(significance_tests)} paired significance comparisons with Holm correction."
         )
+        underpowered_count = sum(
+            1 for item in significance_tests if item.adequately_powered is False
+        )
+        if underpowered_count:
+            key_findings.append(
+                f"Flagged {underpowered_count} comparison(s) as underpowered for the observed effect sizes."
+            )
         if negative_results:
             key_findings.append(
                 f"Preserved {len(negative_results)} negative-result records for weaker systems, sweeps, or unsupported comparisons."
@@ -1498,6 +1712,7 @@ class AutoExperimentRunner:
             per_seed_results=per_seed_results,
             sweep_results=sweep_results,
             significance_tests=significance_tests,
+            power_analysis_notes=power_analysis_notes,
             negative_results=negative_results,
             failed_trials=failed_trials,
             anomalous_trials=anomalous_trials,

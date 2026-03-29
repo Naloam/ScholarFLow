@@ -24,7 +24,10 @@ type OperatorConsolePanelProps = {
   onImportBridgeResult: (payload: AutoResearchBridgeImportRequest) => void;
   onApplyReviewActions: () => void;
   onRebuildPaper: () => void;
-  onExportPublish: () => void;
+  onExportPublish: (payload?: {
+    deployment_id?: string | null;
+    deployment_label?: string | null;
+  }) => void;
   onDownloadPublish: () => void;
   onUpdateControls: (payload: {
     max_rounds?: number | null;
@@ -96,6 +99,10 @@ export function OperatorConsolePanel({
     key_findings: "Imported execution preserved benchmark-aligned metrics",
     notes: "",
   });
+  const [publishDraft, setPublishDraft] = useState({
+    deployment_id: "local_default",
+    deployment_label: "Local Deployment",
+  });
 
   useEffect(() => {
     setDraftFilters(filters);
@@ -150,7 +157,7 @@ export function OperatorConsolePanel({
         currentSummary.candidate_execution_limit !== null &&
         currentSummary.candidate_execution_limit !== undefined
           ? String(currentSummary.candidate_execution_limit)
-          : "",
+      : "",
     });
   }, [
     currentSummary?.run_id,
@@ -158,6 +165,19 @@ export function OperatorConsolePanel({
     currentSummary?.max_rounds,
     currentSummary?.candidate_execution_limit,
   ]);
+
+  useEffect(() => {
+    const currentDeploymentId = publish?.deployment_ids?.[0] ?? "local_default";
+    setPublishDraft((state) => ({
+      deployment_id: currentDeploymentId,
+      deployment_label:
+        state.deployment_id === currentDeploymentId
+          ? state.deployment_label
+          : currentDeploymentId === "local_default"
+            ? "Local Deployment"
+            : currentDeploymentId.replaceAll("_", " "),
+    }));
+  }, [publish?.deployment_ids]);
 
   function updateFilter<K extends keyof AutoResearchOperatorConsoleFilters>(
     key: K,
@@ -313,7 +333,12 @@ export function OperatorConsolePanel({
         <button
           type="button"
           className="ghost-btn"
-          onClick={onExportPublish}
+          onClick={() =>
+            onExportPublish({
+              deployment_id: publishDraft.deployment_id.trim() || null,
+              deployment_label: publishDraft.deployment_label.trim() || null,
+            })
+          }
           disabled={disabled || !current?.actions.export_publish}
           data-testid="export-publish-button"
         >
@@ -772,6 +797,52 @@ export function OperatorConsolePanel({
                   >
                     Apply Controls
                   </button>
+                </div>
+              </form>
+
+              <form
+                className="stack"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onExportPublish({
+                    deployment_id: publishDraft.deployment_id.trim() || null,
+                    deployment_label: publishDraft.deployment_label.trim() || null,
+                  });
+                }}
+              >
+                <p className="inline-title">Publish Deployment</p>
+                <div className="button-row">
+                  <input
+                    type="text"
+                    value={publishDraft.deployment_id}
+                    onChange={(event) =>
+                      setPublishDraft((state) => ({
+                        ...state,
+                        deployment_id: event.target.value,
+                      }))
+                    }
+                    disabled={disabled || !current.actions.export_publish}
+                    placeholder="Deployment id"
+                    data-testid="publish-deployment-id"
+                  />
+                  <input
+                    type="text"
+                    value={publishDraft.deployment_label}
+                    onChange={(event) =>
+                      setPublishDraft((state) => ({
+                        ...state,
+                        deployment_label: event.target.value,
+                      }))
+                    }
+                    disabled={disabled || !current.actions.export_publish}
+                    placeholder="Deployment label"
+                    data-testid="publish-deployment-label"
+                  />
+                  <span className="auth-copy" data-testid="publish-deployment-summary">
+                    {publish?.deployment_ids?.length
+                      ? `Registered in ${publish.deployment_ids.join(", ")}`
+                      : "Export will register the current paper/run/code package into a deployment"}
+                  </span>
                 </div>
               </form>
 

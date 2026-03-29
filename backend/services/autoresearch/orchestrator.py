@@ -203,10 +203,11 @@ class AutoResearchOrchestrator:
             if score != float("-inf")
             else "a completed artifact"
         )
+        quality_tier = self._candidate_quality_tier(candidate)
         return (
             f"Selected `{candidate.title}` as the current portfolio winner after "
             f"{len(attempts)} execution rounds on `{benchmark_name}` with {score_fragment} and "
-            f"acceptance {passed}/{total} ({ratio:.2f})."
+            f"acceptance {passed}/{total} ({ratio:.2f}); quality tier={quality_tier}."
         )
 
     def _acceptance_summary(self, artifact: ResultArtifact | None) -> tuple[bool, int, int, float]:
@@ -223,12 +224,49 @@ class AutoResearchOrchestrator:
         all_passed, _, _, ratio = self._acceptance_summary(artifact)
         return int(all_passed), ratio, self._artifact_score(artifact)
 
-    def _candidate_sort_key(self, candidate: HypothesisCandidate) -> tuple[int, int, float, float]:
+    def _artifact_power_ok(self, artifact: ResultArtifact | None) -> bool:
+        if artifact is None or artifact.status != "done":
+            return False
+        power_checks = [
+            item.adequately_powered
+            for item in artifact.significance_tests
+            if item.adequately_powered is not None
+        ]
+        if not power_checks:
+            return True
+        return all(power_checks)
+
+    def _artifact_failure_free(self, artifact: ResultArtifact | None) -> bool:
+        return artifact is not None and artifact.status == "done" and not artifact.failed_trials
+
+    def _candidate_quality_tier(self, candidate: HypothesisCandidate) -> str:
+        artifact = candidate.artifact
+        if candidate.status != "done" or artifact is None or artifact.status != "done":
+            return "incomplete"
+        all_passed, _, _, _ = self._acceptance_summary(artifact)
+        if all_passed and self._artifact_failure_free(artifact) and self._artifact_power_ok(artifact):
+            return "robust"
+        if all_passed and self._artifact_failure_free(artifact):
+            return "complete"
+        if all_passed:
+            return "fragile"
+        return "insufficient"
+
+    def _candidate_sort_key(self, candidate: HypothesisCandidate) -> tuple[int, int, int, int, float, float]:
         artifact = candidate.artifact
         is_done = int(candidate.status == "done" and artifact is not None and artifact.status == "done")
         all_passed, _, _, ratio = self._acceptance_summary(artifact)
         score = candidate.score if candidate.score is not None else float("-inf")
-        return is_done, int(all_passed), ratio, score
+        quality_rank = {
+            "robust": 3,
+            "complete": 2,
+            "fragile": 1,
+            "insufficient": 0,
+            "incomplete": 0,
+        }[self._candidate_quality_tier(candidate)]
+        failure_free = int(self._artifact_failure_free(artifact))
+        power_ok = int(self._artifact_power_ok(artifact)) if artifact is not None else 0
+        return quality_rank, is_done, int(all_passed), failure_free + power_ok, ratio, score
 
     def _rank_candidates(self, candidates: list[HypothesisCandidate]) -> list[HypothesisCandidate]:
         ranked = sorted(candidates, key=self._candidate_sort_key, reverse=True)
@@ -258,10 +296,11 @@ class AutoResearchOrchestrator:
                 f"`{benchmark_name}`, but none has produced a successful artifact yet."
             )
         _, passed, total, ratio = self._acceptance_summary(leader.artifact)
+        quality_tier = self._candidate_quality_tier(leader)
         return (
             f"Executed {executed_count}/{total_candidates} portfolio candidates on `{benchmark_name}`. "
             f"Current leader is `{leader.title}` with score {leader.score if leader.score is not None else float('-inf'):.4f} "
-            f"and acceptance {passed}/{total} ({ratio:.2f})."
+            f"and acceptance {passed}/{total} ({ratio:.2f}); quality tier={quality_tier}."
         )
 
     def _candidate_selection_reason(
@@ -289,19 +328,33 @@ class AutoResearchOrchestrator:
             if candidate.score is not None
             else "a completed artifact"
         )
+        quality_tier = self._candidate_quality_tier(candidate)
+        failed_configs = len(artifact.failed_trials)
+        underpowered = sum(1 for item in artifact.significance_tests if item.adequately_powered is False)
         if winner is not None and candidate.id == winner.id:
             return (
                 f"Won the executed portfolio on `{benchmark_name}` with {score_fragment} and "
-                f"acceptance {passed}/{total} ({ratio:.2f})."
+                f"acceptance {passed}/{total} ({ratio:.2f}); quality tier={quality_tier}."
             )
         winner_fragment = (
             f"`{winner.title}` with {winner.artifact.primary_metric}={winner.score:.4f}"
             if winner is not None and winner.artifact is not None and winner.score is not None
             else "the selected winner"
         )
+        tradeoff_notes: list[str] = []
+        if failed_configs:
+            tradeoff_notes.append(f"{failed_configs} failed config(s)")
+        if underpowered:
+            tradeoff_notes.append(f"{underpowered} underpowered comparison(s)")
+        tradeoff_clause = (
+            " Evidence was weaker due to " + ", ".join(tradeoff_notes) + "."
+            if tradeoff_notes
+            else ""
+        )
         return (
             f"Completed on `{benchmark_name}` with {score_fragment} and acceptance "
-            f"{passed}/{total} ({ratio:.2f}), but trailed {winner_fragment}."
+            f"{passed}/{total} ({ratio:.2f}), but trailed {winner_fragment}; "
+            f"quality tier={quality_tier}.{tradeoff_clause}"
         )
 
     def _apply_selection_reasons(
@@ -501,9 +554,10 @@ class AutoResearchOrchestrator:
             latest_summary = candidate.attempts[-1].summary if candidate.attempts else "Execution failed."
             return f"Execution failed on `{benchmark_name}`. Latest summary: {latest_summary}"
         if candidate.status == "done" and candidate.artifact is not None:
-            _, passed, total, ratio = self._acceptance_summary(candidate.artifact)
+            artifact = candidate.artifact
+            _, passed, total, ratio = self._acceptance_summary(artifact)
             score_fragment = (
-                f"{candidate.artifact.primary_metric}={candidate.score:.4f}"
+                f"{artifact.primary_metric}={candidate.score:.4f}"
                 if candidate.score is not None
                 else "a completed artifact"
             )
@@ -512,9 +566,15 @@ class AutoResearchOrchestrator:
                 if winner is not None and winner.id != candidate.id
                 else ""
             )
+            quality_tier = self._candidate_quality_tier(candidate)
+            failure_fragment = (
+                f" Failed configs={len(artifact.failed_trials)}."
+                if artifact.failed_trials
+                else ""
+            )
             return (
                 f"Completed on `{benchmark_name}` with {score_fragment} and acceptance "
-                f"{passed}/{total} ({ratio:.2f}).{leader_fragment}"
+                f"{passed}/{total} ({ratio:.2f}); quality tier={quality_tier}.{failure_fragment}{leader_fragment}"
             )
         return f"No structured decision is available yet for `{candidate.title}`."
 
@@ -553,15 +613,28 @@ class AutoResearchOrchestrator:
         benchmark_name: str,
         final: bool,
     ) -> list[str]:
-        _, passed, total, ratio = self._acceptance_summary(candidate.artifact)
+        artifact = candidate.artifact
+        _, passed, total, ratio = self._acceptance_summary(artifact)
         criteria: list[str] = [f"benchmark={benchmark_name}", f"status={candidate.status}"]
-        if candidate.score is not None and candidate.artifact is not None:
-            criteria.append(f"{candidate.artifact.primary_metric}={candidate.score:.4f}")
+        criteria.append(f"quality_tier={self._candidate_quality_tier(candidate)}")
+        if candidate.portfolio_role:
+            criteria.append(f"portfolio_role={candidate.portfolio_role}")
+        if candidate.diversity_axis:
+            criteria.append(f"diversity_axis={candidate.diversity_axis}")
+        if candidate.score is not None and artifact is not None:
+            criteria.append(f"{artifact.primary_metric}={candidate.score:.4f}")
         if total:
             criteria.append(f"acceptance={passed}/{total}")
             criteria.append(f"acceptance_ratio={ratio:.2f}")
         if candidate.status == "deferred":
             criteria.append("deferred_by_candidate_budget")
+        if artifact is not None and artifact.status == "done":
+            criteria.append(f"failed_configs={len(artifact.failed_trials)}")
+            underpowered = sum(
+                1 for item in artifact.significance_tests if item.adequately_powered is False
+            )
+            if artifact.significance_tests:
+                criteria.append(f"underpowered_comparisons={underpowered}")
         if final and winner is not None:
             if candidate.id == winner.id:
                 criteria.append("ranked_first_among_executed_candidates")
@@ -587,6 +660,7 @@ class AutoResearchOrchestrator:
                     candidate_id=candidate.id,
                     rank=candidate.rank,
                     status=candidate.status,
+                    quality_tier=self._candidate_quality_tier(candidate),
                     outcome=self._decision_outcome(
                         candidate,
                         winner=winner,

@@ -5,6 +5,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from schemas.autoresearch import (
@@ -12,9 +13,12 @@ from schemas.autoresearch import (
     AutoResearchBundleIndexRead,
     AutoResearchBundleRead,
     AutoResearchCitationCoverageRead,
+    AutoResearchDeploymentRefRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchPublishExportRead,
+    AutoResearchPublishExportRequest,
     AutoResearchPublishPackageRead,
+    AutoResearchPublicationManifestRead,
     AutoResearchRelatedWorkMatchRead,
     AutoResearchReviewEvidenceRead,
     AutoResearchReviewFindingRead,
@@ -43,6 +47,10 @@ REVIEW_LOOP_FILENAME = "review_loop.json"
 PUBLISH_PACKAGE_FILENAME = "publish_package.json"
 PUBLISH_ARCHIVE_FILENAME = "publish_bundle.zip"
 PUBLISH_ARCHIVE_MANIFEST_FILENAME = "archive_manifest.json"
+PUBLICATION_MANIFEST_FILENAME = "publication_manifest.json"
+CODE_PACKAGE_FILENAME = "code_package.zip"
+_DEFAULT_DEPLOYMENT_ID = "local_default"
+_DEFAULT_DEPLOYMENT_LABEL = "Local Deployment"
 _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_json",
     "program_json",
@@ -53,6 +61,24 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_artifact_json",
     "run_generated_code",
     "run_paper_markdown",
+    "workspace",
+    "candidate_json",
+    "plan_json",
+    "spec_json",
+    "attempts_json",
+    "artifact_json",
+    "manifest_json",
+    "generated_code",
+}
+_CODE_PACKAGE_INCLUDED_ROLES = {
+    "run_json",
+    "program_json",
+    "portfolio_json",
+    "benchmark_json",
+    "run_plan_json",
+    "run_spec_json",
+    "run_artifact_json",
+    "run_generated_code",
     "workspace",
     "candidate_json",
     "plan_json",
@@ -157,10 +183,11 @@ def _utcnow() -> datetime:
 
 
 def _write_json(path: Path, payload: object) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    temporary_path.write_text(encoded, encoding="utf-8")
+    temporary_path.replace(path)
 
 
 def _review_path(project_id: str, run_id: str) -> Path:
@@ -181,6 +208,42 @@ def _publish_archive_path(project_id: str, run_id: str) -> Path:
 
 def _publish_archive_manifest_path(project_id: str, run_id: str) -> Path:
     return run_dir(project_id, run_id) / PUBLISH_ARCHIVE_MANIFEST_FILENAME
+
+
+def _publication_manifest_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / PUBLICATION_MANIFEST_FILENAME
+
+
+def _code_package_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / CODE_PACKAGE_FILENAME
+
+
+def _normalize_deployment_id(value: str | None) -> str:
+    normalized = "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in (value or _DEFAULT_DEPLOYMENT_ID).strip()
+    ).strip("_")
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized or _DEFAULT_DEPLOYMENT_ID
+
+
+def _deployment_ref(
+    *,
+    deployment_id: str | None,
+    deployment_label: str | None,
+) -> AutoResearchDeploymentRefRead:
+    normalized_id = _normalize_deployment_id(deployment_id)
+    label = (deployment_label or "").strip() or (
+        _DEFAULT_DEPLOYMENT_LABEL
+        if normalized_id == _DEFAULT_DEPLOYMENT_ID
+        else normalized_id.replace("_", " ").title()
+    )
+    return AutoResearchDeploymentRefRead(
+        deployment_id=normalized_id,
+        label=label,
+        listed_at=_utcnow(),
+    )
 
 
 def _selected_bundle(bundle_index: AutoResearchBundleIndexRead) -> AutoResearchBundleRead | None:
@@ -1448,6 +1511,159 @@ def _archive_manifest_generated_at(archive_manifest: dict[str, object] | None) -
     return None
 
 
+def _load_publication_manifest(project_id: str, run_id: str) -> AutoResearchPublicationManifestRead | None:
+    path = _publication_manifest_path(project_id, run_id)
+    if not path.is_file():
+        return None
+    try:
+        return AutoResearchPublicationManifestRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _file_sha256(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _paper_title(run: AutoResearchRunRead) -> str:
+    markdown = _paper_markdown(run)
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip() or run.topic
+        return stripped[:160]
+    if run.artifact is not None and run.artifact.best_system:
+        return f"{run.topic}: {run.artifact.best_system}"
+    return run.topic
+
+
+def _paper_summary(run: AutoResearchRunRead) -> str | None:
+    markdown = _paper_markdown(run)
+    lines = [line.strip() for line in markdown.splitlines() if line.strip()]
+    body_lines = [line for line in lines if not line.startswith("#")]
+    summary = " ".join(body_lines[:2]).strip()
+    return summary[:280] if summary else None
+
+
+def _bundle_assets_for_code_package(
+    package: AutoResearchPublishPackageRead,
+) -> list[AutoResearchBundleAssetRead]:
+    code_assets: list[AutoResearchBundleAssetRead] = []
+    seen_asset_ids: set[str] = set()
+    for asset in [*package.required_assets, *package.optional_assets]:
+        if asset.role not in _CODE_PACKAGE_INCLUDED_ROLES or not asset.ref.exists:
+            continue
+        if asset.asset_id in seen_asset_ids:
+            continue
+        seen_asset_ids.add(asset.asset_id)
+        code_assets.append(asset)
+    return code_assets
+
+
+def _export_code_package(
+    *,
+    project_id: str,
+    run_id: str,
+    package: AutoResearchPublishPackageRead,
+) -> Path:
+    archive_path = _code_package_path(project_id, run_id)
+    run_root = run_dir(project_id, run_id)
+    added: set[str] = set()
+    with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
+        for asset in _bundle_assets_for_code_package(package):
+            _add_path_to_zip(handle, run_root=run_root, path=Path(asset.ref.path), added=added)
+    return archive_path
+
+
+def _updated_deployments(
+    existing: list[AutoResearchDeploymentRefRead],
+    new_ref: AutoResearchDeploymentRefRead,
+) -> list[AutoResearchDeploymentRefRead]:
+    preserved = [item for item in existing if item.deployment_id != new_ref.deployment_id]
+    preserved.append(new_ref)
+    preserved.sort(key=lambda item: item.listed_at, reverse=True)
+    return preserved
+
+
+def build_publication_manifest(
+    project_id: str,
+    run_id: str,
+    *,
+    deployment_id: str | None = None,
+    deployment_label: str | None = None,
+) -> AutoResearchPublicationManifestRead | None:
+    run = load_run(project_id, run_id)
+    package = build_publish_package(project_id, run_id)
+    if run is None or package is None or not package.archive_ready:
+        return None
+    manifest_path = _publication_manifest_path(project_id, run_id)
+    existing = _load_publication_manifest(project_id, run_id)
+    if deployment_id is None and deployment_label is None:
+        deployments = (
+            list(existing.deployments)
+            if existing is not None
+            else [_deployment_ref(deployment_id=None, deployment_label=None)]
+        )
+    else:
+        deployments = _updated_deployments(
+            existing.deployments if existing is not None else [],
+            _deployment_ref(
+                deployment_id=deployment_id,
+                deployment_label=deployment_label,
+            ),
+        )
+    code_package_path = _code_package_path(project_id, run_id)
+    if not code_package_path.is_file():
+        code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
+
+    publication = AutoResearchPublicationManifestRead(
+        publication_id=f"publication_{run_id}",
+        project_id=project_id,
+        project_title=None,
+        run_id=run_id,
+        topic=run.topic,
+        paper_title=_paper_title(run),
+        paper_summary=_paper_summary(run),
+        generated_at=existing.generated_at if existing is not None else _utcnow(),
+        updated_at=_utcnow(),
+        selected_candidate_id=package.selected_candidate_id,
+        benchmark_name=run.spec.benchmark_name if run.spec is not None else run.program.benchmark_name if run.program is not None else None,
+        task_family=run.task_family,
+        package_id=package.package_id,
+        package_fingerprint=package.package_fingerprint,
+        bundle_kind=_archive_bundle_kind(package),
+        review_bundle_ready=package.review_bundle_ready,
+        final_publish_ready=package.final_publish_ready,
+        archive_ready=package.archive_ready,
+        archive_current=package.archive_current,
+        review_round=package.review_round,
+        review_fingerprint=package.review_fingerprint,
+        publication_manifest_path=str(manifest_path),
+        publish_manifest_path=package.manifest_path or str(_publish_manifest_path(project_id, run_id)),
+        publish_archive_path=package.archive_path or str(_publish_archive_path(project_id, run_id)),
+        paper_path=run.paper_path or str(run_dir(project_id, run_id) / "paper.md"),
+        code_package_path=str(code_package_path),
+        code_package_sha256=_file_sha256(code_package_path),
+        run_api_path=f"/api/projects/{project_id}/auto-research/{run_id}",
+        registry_api_path=f"/api/projects/{project_id}/auto-research/{run_id}/registry",
+        publish_api_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish",
+        publish_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/download",
+        paper_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/paper/download",
+        code_package_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/code/download",
+        deployments=deployments,
+    )
+    _write_json(manifest_path, publication.model_dump(mode="json"))
+    return publication
+
+
 def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPackageRead | None:
     review = build_run_review(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
@@ -1541,6 +1757,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         status=status,
     )
     archive_manifest = _load_publish_archive_manifest(project_id, run_id)
+    publication_manifest = _load_publication_manifest(project_id, run_id)
     archive_path = _publish_archive_path(project_id, run_id)
     archive_ready = archive_manifest is not None and archive_path.is_file()
     archive_current = (
@@ -1568,6 +1785,20 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
                 archive_manifest.get("review_fingerprint")
                 if archive_manifest is not None
                 else None
+            ),
+            "publication_id": publication_manifest.publication_id if publication_manifest is not None else None,
+            "publication_manifest_path": (
+                publication_manifest.publication_manifest_path
+                if publication_manifest is not None
+                else str(_publication_manifest_path(project_id, run_id))
+            ),
+            "code_package_path": (
+                publication_manifest.code_package_path if publication_manifest is not None else str(_code_package_path(project_id, run_id))
+            ),
+            "deployment_ids": (
+                [item.deployment_id for item in publication_manifest.deployments]
+                if publication_manifest is not None
+                else []
             ),
             "revision_actions": revision_actions,
         }
@@ -1661,7 +1892,13 @@ def _archive_manifest(
     }
 
 
-def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishExportRead | None:
+def export_publish_package(
+    project_id: str,
+    run_id: str,
+    *,
+    deployment_id: str | None = None,
+    deployment_label: str | None = None,
+) -> AutoResearchPublishExportRead | None:
     package = build_publish_package(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
     if package is None or bundle_index is None:
@@ -1696,6 +1933,13 @@ def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishE
                 continue
             _add_path_to_zip(handle, run_root=run_root, path=Path(asset.ref.path), added=added)
 
+    code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
+    publication_manifest = build_publication_manifest(
+        project_id,
+        run_id,
+        deployment_id=deployment_id,
+        deployment_label=deployment_label,
+    )
     package = package.model_copy(update={"archive_path": str(archive_path)})
     package = package.model_copy(
         update={
@@ -1707,20 +1951,45 @@ def export_publish_package(project_id: str, run_id: str) -> AutoResearchPublishE
             "archive_bundle_kind": archive_manifest["bundle_kind"],
             "archive_review_round": archive_manifest["review_round"],
             "archive_review_fingerprint": archive_manifest["review_fingerprint"],
+            "publication_id": (
+                publication_manifest.publication_id if publication_manifest is not None else None
+            ),
+            "publication_manifest_path": (
+                publication_manifest.publication_manifest_path
+                if publication_manifest is not None
+                else str(_publication_manifest_path(project_id, run_id))
+            ),
+            "code_package_path": str(code_package_path),
+            "deployment_ids": (
+                [item.deployment_id for item in publication_manifest.deployments]
+                if publication_manifest is not None
+                else []
+            ),
         }
     )
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
+    deployment = publication_manifest.deployments[0] if publication_manifest is not None and publication_manifest.deployments else None
     return AutoResearchPublishExportRead(
         project_id=project_id,
         run_id=run_id,
         package_id=package.package_id,
         generated_at=_utcnow(),
+        publication_id=publication_manifest.publication_id if publication_manifest is not None else None,
+        publication_manifest_path=(
+            publication_manifest.publication_manifest_path
+            if publication_manifest is not None
+            else str(_publication_manifest_path(project_id, run_id))
+        ),
+        deployment_id=deployment.deployment_id if deployment is not None else None,
+        deployment_label=deployment.label if deployment is not None else None,
         bundle_kind=_archive_bundle_kind(package),
         review_bundle_ready=package.review_bundle_ready,
         final_publish_ready=package.final_publish_ready,
         file_name=archive_path.name,
         archive_path=str(archive_path),
         archive_manifest_path=str(archive_manifest_path),
+        code_package_path=str(code_package_path),
+        code_package_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/code/download",
         package_fingerprint=package.package_fingerprint,
         review_round=package.review_round,
         review_fingerprint=package.review_fingerprint,

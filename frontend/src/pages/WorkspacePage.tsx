@@ -6,6 +6,7 @@ import { WizardPanel } from "../components/Wizard/WizardPanel";
 import { FileManager } from "../components/FileManager/FileManager";
 import { EditorSurface } from "../components/Editor/EditorSurface";
 import { EvidencePanel } from "../components/EvidencePanel/EvidencePanel";
+import { DeploymentPanel } from "../components/DeploymentPanel/DeploymentPanel";
 import { OperatorConsolePanel } from "../components/OperatorConsole/OperatorConsolePanel";
 import { ReviewPanel } from "../components/ReviewPanel/ReviewPanel";
 import { StatusBar } from "../components/Status/StatusBar";
@@ -27,6 +28,9 @@ export function WorkspacePage() {
   const reviews = useWorkspaceStore((state) => state.reviews);
   const autoResearchConsole = useWorkspaceStore((state) => state.autoResearchConsole);
   const autoResearchConsoleFilters = useWorkspaceStore((state) => state.autoResearchConsoleFilters);
+  const autoResearchDeploymentList = useWorkspaceStore((state) => state.autoResearchDeploymentList);
+  const selectedAutoResearchDeploymentId = useWorkspaceStore((state) => state.selectedAutoResearchDeploymentId);
+  const autoResearchDeployment = useWorkspaceStore((state) => state.autoResearchDeployment);
   const analysis = useWorkspaceStore((state) => state.analysis);
   const betaSummary = useWorkspaceStore((state) => state.betaSummary);
   const mentorAccess = useWorkspaceStore((state) => state.mentorAccess);
@@ -54,6 +58,8 @@ export function WorkspacePage() {
   const generateDraft = useWorkspaceStore((state) => state.generateDraft);
   const startAutoResearch = useWorkspaceStore((state) => state.startAutoResearch);
   const selectAutoResearchRun = useWorkspaceStore((state) => state.selectAutoResearchRun);
+  const selectAutoResearchDeployment = useWorkspaceStore((state) => state.selectAutoResearchDeployment);
+  const openAutoResearchPublication = useWorkspaceStore((state) => state.openAutoResearchPublication);
   const resumeAutoResearch = useWorkspaceStore((state) => state.resumeAutoResearch);
   const retryAutoResearch = useWorkspaceStore((state) => state.retryAutoResearch);
   const cancelAutoResearch = useWorkspaceStore((state) => state.cancelAutoResearch);
@@ -194,6 +200,14 @@ export function WorkspacePage() {
         </section>
 
         <aside className="workspace-column workspace-column-right">
+          <DeploymentPanel
+            deploymentList={autoResearchDeploymentList}
+            deployment={autoResearchDeployment}
+            selectedDeploymentId={selectedAutoResearchDeploymentId}
+            disabled={workspaceBusy || authLocked}
+            onSelectDeployment={selectAutoResearchDeployment}
+            onOpenPublication={openAutoResearchPublication}
+          />
           <EvidencePanel evidence={evidence} focusedText={focusedText} />
           <ReviewPanel reviews={reviews} analysis={analysis} />
           <BetaPanel summary={betaSummary} disabled={betaBusy} onSubmit={submitFeedback} />

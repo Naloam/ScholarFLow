@@ -3,6 +3,8 @@ import type {
   AutoResearchBridgeUpdate,
   AutoResearchBundleIndex,
   AutoResearchCandidateRegistry,
+  AutoResearchDeployment,
+  AutoResearchDeploymentList,
   AnalysisSummary,
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
@@ -10,7 +12,9 @@ import type {
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExport,
+  AutoResearchPublishExportRequest,
   AutoResearchPublishPackage,
+  AutoResearchPublicationManifest,
   AutoResearchReviewLoopApply,
   AutoResearchReviewLoopApplyRequest,
   AutoResearchReviewLoop,
@@ -448,12 +452,21 @@ export const api = {
     return request(`/api/projects/${projectId}/auto-research/${runId}/publish`);
   },
 
+  getAutoResearchPublicationManifest(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchPublicationManifest> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/publish/manifest`);
+  },
+
   exportAutoResearchPublishPackage(
     projectId: string,
     runId: string,
+    payload?: AutoResearchPublishExportRequest,
   ): Promise<AutoResearchPublishExport> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/publish/export`, {
       method: "POST",
+      body: JSON.stringify(payload ?? {}),
     });
   },
 
@@ -462,6 +475,21 @@ export const api = {
       `/api/projects/${projectId}/auto-research/${runId}/publish/download`,
       `${runId}-publish_bundle.zip`,
     );
+  },
+
+  downloadAutoResearchCodePackage(projectId: string, runId: string): Promise<string> {
+    return download(
+      `/api/projects/${projectId}/auto-research/${runId}/publish/code/download`,
+      `${runId}-code_package.zip`,
+    );
+  },
+
+  listAutoResearchDeployments(): Promise<AutoResearchDeploymentList> {
+    return request("/api/auto-research/deployments");
+  },
+
+  getAutoResearchDeployment(deploymentId: string): Promise<AutoResearchDeployment> {
+    return request(`/api/auto-research/deployments/${deploymentId}`);
   },
 
   resumeAutoResearch(

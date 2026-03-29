@@ -213,6 +213,7 @@ def build_operator_console(
         queue_priority=queue_priority,
     )
     execution_plane = AutoResearchExecutionPlane()
+    queue_telemetry, workers = execution_plane.get_queue_snapshot()
     summaries: list[AutoResearchOperatorRunSummaryRead] = []
     execution_by_run: dict[str, AutoResearchRunExecutionRead] = {}
     filtered_runs: list[AutoResearchRunRead] = []
@@ -289,6 +290,8 @@ def build_operator_console(
         selected_run_id=current_run.run.id if current_run is not None else None,
         filters=filters,
         actions=AutoResearchOperatorProjectActionsRead(start_run=True),
+        queue=queue_telemetry,
+        workers=workers,
         runs=summaries,
         current_run=current_run,
     )

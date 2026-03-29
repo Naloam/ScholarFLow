@@ -1558,6 +1558,8 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     selected_run_id: str | None = None
     filters: AutoResearchOperatorConsoleFiltersRead = Field(default_factory=AutoResearchOperatorConsoleFiltersRead)
     actions: AutoResearchOperatorProjectActionsRead
+    queue: "AutoResearchQueueTelemetryRead | None" = None
+    workers: list["AutoResearchWorkerState"] = Field(default_factory=list)
     runs: list[AutoResearchOperatorRunSummaryRead] = Field(default_factory=list)
     current_run: AutoResearchOperatorRunDetailRead | None = None
 
@@ -1589,10 +1591,35 @@ class AutoResearchWorkerState(BaseModel):
     current_run_id: str | None = None
     current_lease_id: str | None = None
     heartbeat_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    last_started_at: datetime | None = None
+    last_completed_at: datetime | None = None
+    last_recovered_at: datetime | None = None
     processed_jobs: int = 0
     queue_depth: int = 0
     recovered_job_count: int = 0
+    stale: bool = False
     last_error: str | None = None
+
+
+class AutoResearchQueueTelemetryRead(BaseModel):
+    queue_depth: int = 0
+    total_jobs: int = 0
+    queued_jobs: int = 0
+    leased_jobs: int = 0
+    running_jobs: int = 0
+    succeeded_jobs: int = 0
+    failed_jobs: int = 0
+    canceled_jobs: int = 0
+    worker_count: int = 0
+    active_workers: int = 0
+    idle_workers: int = 0
+    stale_workers: int = 0
+    total_processed_jobs: int = 0
+    total_recovered_jobs: int = 0
+    last_recovered_at: datetime | None = None
+    last_job_started_at: datetime | None = None
+    last_job_finished_at: datetime | None = None
 
 
 class AutoResearchRunExecutionRead(BaseModel):
@@ -1601,7 +1628,9 @@ class AutoResearchRunExecutionRead(BaseModel):
     jobs: list[AutoResearchExecutionJob] = Field(default_factory=list)
     active_job_id: str | None = None
     cancel_requested: bool = False
+    queue: AutoResearchQueueTelemetryRead | None = None
     worker: AutoResearchWorkerState | None = None
+    workers: list[AutoResearchWorkerState] = Field(default_factory=list)
 
 
 class AutoResearchExecutionCommandResponse(BaseModel):

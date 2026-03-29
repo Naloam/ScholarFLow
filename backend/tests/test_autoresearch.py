@@ -3064,42 +3064,46 @@ def test_autoresearch_stale_lease_recovery_increments_recovery_count_and_fences_
             project_id,
             "Stale lease recovery fencing for auto research",
         )
-        plane = AutoResearchExecutionPlane()
+        plane = AutoResearchExecutionPlane(worker_id="worker-stale")
         plane.enqueue(project_id=project_id, run_id=run.id, action="run")
 
         leased = plane._lease_next_job()
         assert leased is not None
         assert leased.lease_id is not None
 
-        with autoresearch_execution._STATE_LOCK:
-            state = autoresearch_execution._load_state()
+        with autoresearch_execution._locked_queue_state():
+            state = autoresearch_execution._load_state_unlocked()
             stale_heartbeat = (
                 autoresearch_execution._utcnow()
                 - autoresearch_execution.LEASE_TIMEOUT
                 - timedelta(seconds=1)
             )
-            autoresearch_execution._save_state(
-                state.model_copy(
+            workers = [
+                worker.model_copy(
                     update={
-                        "worker": state.worker.model_copy(
-                            update={
-                                "status": "running",
-                                "current_job_id": leased.id,
-                                "current_run_id": run.id,
-                                "current_lease_id": leased.lease_id,
-                                "heartbeat_at": stale_heartbeat,
-                            }
-                        )
+                        "status": "running",
+                        "current_job_id": leased.id,
+                        "current_run_id": run.id,
+                        "current_lease_id": leased.lease_id,
+                        "heartbeat_at": stale_heartbeat,
                     }
                 )
+                if worker.worker_id == "worker-stale"
+                else worker
+                for worker in state.workers
+            ]
+            autoresearch_execution._save_state_unlocked(
+                state.model_copy(update={"workers": workers})
             )
 
-        recovered = plane._lease_next_job()
+        recovery_plane = AutoResearchExecutionPlane(worker_id="worker-recovery")
+        recovered = recovery_plane._lease_next_job()
         assert recovered is not None
         assert recovered.run_id == run.id
         assert recovered.lease_id is not None
         assert recovered.lease_id != leased.lease_id
         assert recovered.recovery_count == 1
+        assert recovered.worker_id == "worker-recovery"
 
         stale_update = plane._update_job(
             leased.id,
@@ -3109,12 +3113,124 @@ def test_autoresearch_stale_lease_recovery_increments_recovery_count_and_fences_
         )
         assert stale_update is None
 
-        execution = plane.get_run_execution(project_id, run.id)
+        execution = recovery_plane.get_run_execution(project_id, run.id)
         assert execution.jobs[-1].recovery_count == 1
         assert execution.jobs[-1].last_recovered_at is not None
+        assert execution.queue is not None
+        assert execution.queue.total_recovered_jobs == 1
         assert execution.worker is not None
+        assert execution.worker.worker_id == "worker-recovery"
         assert execution.worker.recovered_job_count == 1
         assert execution.worker.current_lease_id == recovered.lease_id
+        recovered_worker = next(
+            worker for worker in execution.workers if worker.worker_id == "worker-recovery"
+        )
+        stale_worker = next(
+            worker for worker in execution.workers if worker.worker_id == "worker-stale"
+        )
+        assert recovered_worker.recovered_job_count == 1
+        assert stale_worker.last_recovered_at is not None
+        assert stale_worker.last_error == "Recovered stale auto-research worker lease."
+    finally:
+        client.close()
+
+
+def test_autoresearch_execution_plane_supports_multiple_workers_without_job_collisions(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 6 Multi Worker Project",
+            "Multiple workers should lease different auto research runs safely",
+        )
+        run_a = autoresearch_repository.create_run(project_id, "Synthetic multi-worker run A")
+        run_b = autoresearch_repository.create_run(project_id, "Synthetic multi-worker run B")
+        worker_a = AutoResearchExecutionPlane(worker_id="worker-a")
+        worker_b = AutoResearchExecutionPlane(worker_id="worker-b")
+
+        worker_a.enqueue(project_id=project_id, run_id=run_a.id, action="run")
+        worker_b.enqueue(project_id=project_id, run_id=run_b.id, action="run")
+
+        leased_a = worker_a._lease_next_job()
+        leased_b = worker_b._lease_next_job()
+        assert leased_a is not None
+        assert leased_b is not None
+        assert leased_a.id != leased_b.id
+        assert leased_a.run_id == run_a.id
+        assert leased_b.run_id == run_b.id
+        assert leased_a.worker_id == "worker-a"
+        assert leased_b.worker_id == "worker-b"
+
+        worker_a._sync_worker(
+            status="running",
+            job_id=leased_a.id,
+            run_id=run_a.id,
+            lease_id=leased_a.lease_id,
+            expected_lease_id=leased_a.lease_id,
+        )
+        worker_b._sync_worker(
+            status="running",
+            job_id=leased_b.id,
+            run_id=run_b.id,
+            lease_id=leased_b.lease_id,
+            expected_lease_id=leased_b.lease_id,
+        )
+        worker_a._update_job(
+            leased_a.id,
+            status="running",
+            detail="running:run",
+            expected_lease_id=leased_a.lease_id,
+        )
+        worker_b._update_job(
+            leased_b.id,
+            status="running",
+            detail="running:run",
+            expected_lease_id=leased_b.lease_id,
+        )
+        worker_a._update_job(
+            leased_a.id,
+            status="succeeded",
+            detail="done",
+            expected_lease_id=leased_a.lease_id,
+        )
+        worker_b._update_job(
+            leased_b.id,
+            status="succeeded",
+            detail="done",
+            expected_lease_id=leased_b.lease_id,
+        )
+        worker_a._sync_worker(
+            status="idle",
+            job_id=None,
+            run_id=None,
+            lease_id=None,
+            expected_lease_id=leased_a.lease_id,
+        )
+        worker_b._sync_worker(
+            status="idle",
+            job_id=None,
+            run_id=None,
+            lease_id=None,
+            expected_lease_id=leased_b.lease_id,
+        )
+
+        execution_a = worker_a.get_run_execution(project_id, run_a.id)
+        execution_b = worker_b.get_run_execution(project_id, run_b.id)
+        assert execution_a.jobs[-1].status == "succeeded"
+        assert execution_b.jobs[-1].status == "succeeded"
+        assert execution_a.worker is not None
+        assert execution_b.worker is not None
+        assert execution_a.worker.worker_id == "worker-a"
+        assert execution_b.worker.worker_id == "worker-b"
+        assert execution_a.queue is not None
+        assert execution_a.queue.total_jobs == 2
+        assert execution_a.queue.queue_depth == 0
+        assert execution_a.queue.worker_count == 2
+        assert execution_a.queue.total_processed_jobs == 2
+        assert {worker.worker_id for worker in execution_a.workers} >= {"worker-a", "worker-b"}
     finally:
         client.close()
 
@@ -5337,8 +5453,47 @@ def test_autoresearch_exposes_execution_state_for_completed_run(
         assert payload["jobs"][0]["status"] == "succeeded"
         assert payload["active_job_id"] is None
         assert payload["cancel_requested"] is False
+        assert payload["queue"]["total_jobs"] == 1
+        assert payload["queue"]["queue_depth"] == 0
+        assert payload["queue"]["worker_count"] >= 1
         assert payload["worker"]["status"] == "idle"
         assert payload["worker"]["queue_depth"] == 0
+        assert payload["workers"][0]["status"] == "idle"
+    finally:
+        client.close()
+
+
+def test_autoresearch_operator_console_exposes_queue_telemetry_and_worker_fleet(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Execution Telemetry Console",
+            "Queue telemetry should be visible from the operator console",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Queue telemetry should be visible from the operator console"},
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"run_id": run_id},
+        )
+        assert console.status_code == 200
+        payload = console.json()
+        assert payload["queue"]["total_jobs"] == 1
+        assert payload["queue"]["worker_count"] >= 1
+        assert payload["queue"]["total_processed_jobs"] >= 1
+        assert payload["workers"]
+        assert payload["workers"][0]["worker_id"] is not None
+        assert payload["current_run"]["execution"]["queue"]["total_jobs"] == 1
+        assert payload["current_run"]["execution"]["workers"]
     finally:
         client.close()
 

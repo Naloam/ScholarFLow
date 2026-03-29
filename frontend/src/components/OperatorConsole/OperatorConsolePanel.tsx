@@ -44,6 +44,17 @@ function formatTaskFamily(value: string | null | undefined): string {
   return value.replaceAll("_", " ");
 }
 
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
 export function OperatorConsolePanel({
   consoleState,
   filters,
@@ -107,6 +118,8 @@ export function OperatorConsolePanel({
   const lineage = current?.registry?.lineage;
   const novelty = review?.novelty_assessment ?? null;
   const activeConsole = consoleState;
+  const queueTelemetry = activeConsole?.queue ?? current?.execution.queue ?? null;
+  const workerFleet = activeConsole?.workers ?? current?.execution.workers ?? [];
   const currentSummary =
     activeConsole?.runs.find((run) => run.run_id === current?.run.id) ?? null;
   const hasRuns = Boolean(consoleState && consoleState.run_count > 0);
@@ -533,6 +546,100 @@ export function OperatorConsolePanel({
           </button>
         </div>
       </form>
+
+      {activeConsole ? (
+        <>
+          <div className="summary-banner operator-summary-grid" data-testid="operator-queue-summary">
+            <div>
+              <span className="meta-label">Queue Depth</span>
+              <strong>{queueTelemetry?.queue_depth ?? 0}</strong>
+            </div>
+            <div>
+              <span className="meta-label">Active Jobs</span>
+              <strong>
+                {(queueTelemetry?.leased_jobs ?? 0) + (queueTelemetry?.running_jobs ?? 0)}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-label">Queued / Running</span>
+              <strong>
+                {queueTelemetry?.queued_jobs ?? 0} / {queueTelemetry?.running_jobs ?? 0}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-label">Done / Failed</span>
+              <strong>
+                {queueTelemetry?.succeeded_jobs ?? 0} / {queueTelemetry?.failed_jobs ?? 0}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-label">Workers</span>
+              <strong>
+                {queueTelemetry?.worker_count ?? 0} total / {queueTelemetry?.active_workers ?? 0} active
+              </strong>
+            </div>
+            <div>
+              <span className="meta-label">Idle / Stale</span>
+              <strong>
+                {queueTelemetry?.idle_workers ?? 0} / {queueTelemetry?.stale_workers ?? 0}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-label">Processed / Recovered</span>
+              <strong>
+                {queueTelemetry?.total_processed_jobs ?? 0} / {queueTelemetry?.total_recovered_jobs ?? 0}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-label">Last Recovery</span>
+              <strong>{formatTimestamp(queueTelemetry?.last_recovered_at)}</strong>
+            </div>
+            <div>
+              <span className="meta-label">Last Finish</span>
+              <strong>{formatTimestamp(queueTelemetry?.last_job_finished_at)}</strong>
+            </div>
+          </div>
+
+          <div className="list-block" data-testid="operator-worker-fleet">
+            {workerFleet.length ? (
+              workerFleet.map((worker) => (
+                <div
+                  key={worker.worker_id ?? "worker-unknown"}
+                  className="evidence-card"
+                  data-testid={`operator-worker-${worker.worker_id ?? "unknown"}`}
+                >
+                  <strong>
+                    {worker.worker_id ?? "worker-unknown"} {worker.stale ? "(stale)" : ""}
+                  </strong>
+                  <small>
+                    status {worker.status} / queue {worker.queue_depth} / processed {worker.processed_jobs} /
+                    recovered {worker.recovered_job_count}
+                  </small>
+                  <small>
+                    job {worker.current_job_id ?? "idle"} / run {worker.current_run_id ?? "n/a"}
+                  </small>
+                  <small>
+                    heartbeat {formatTimestamp(worker.heartbeat_at)} / lease expires{" "}
+                    {formatTimestamp(worker.lease_expires_at)}
+                  </small>
+                  <small>
+                    started {formatTimestamp(worker.last_started_at)} / completed{" "}
+                    {formatTimestamp(worker.last_completed_at)} / recovered{" "}
+                    {formatTimestamp(worker.last_recovered_at)}
+                  </small>
+                  <small>lease {worker.current_lease_id ?? "n/a"}</small>
+                  <small>error {worker.last_error ?? "n/a"}</small>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">
+                <p>No execution workers registered yet.</p>
+                <span>The queue will populate worker telemetry after the first execution lease.</span>
+              </div>
+            )}
+          </div>
+        </>
+      ) : null}
 
       {!hasRuns ? (
         <div className="empty-state">

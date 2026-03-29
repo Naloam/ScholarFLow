@@ -576,10 +576,35 @@ export type AutoResearchWorkerState = {
   current_run_id?: string | null;
   current_lease_id?: string | null;
   heartbeat_at?: string | null;
+  lease_expires_at?: string | null;
+  last_started_at?: string | null;
+  last_completed_at?: string | null;
+  last_recovered_at?: string | null;
   processed_jobs: number;
   queue_depth: number;
   recovered_job_count: number;
+  stale: boolean;
   last_error?: string | null;
+};
+
+export type AutoResearchQueueTelemetry = {
+  queue_depth: number;
+  total_jobs: number;
+  queued_jobs: number;
+  leased_jobs: number;
+  running_jobs: number;
+  succeeded_jobs: number;
+  failed_jobs: number;
+  canceled_jobs: number;
+  worker_count: number;
+  active_workers: number;
+  idle_workers: number;
+  stale_workers: number;
+  total_processed_jobs: number;
+  total_recovered_jobs: number;
+  last_recovered_at?: string | null;
+  last_job_started_at?: string | null;
+  last_job_finished_at?: string | null;
 };
 
 export type AutoResearchExecution = {
@@ -588,7 +613,9 @@ export type AutoResearchExecution = {
   jobs: AutoResearchExecutionJob[];
   active_job_id?: string | null;
   cancel_requested: boolean;
+  queue?: AutoResearchQueueTelemetry | null;
   worker?: AutoResearchWorkerState | null;
+  workers: AutoResearchWorkerState[];
 };
 
 export type AutoResearchExecutionCommandResponse = {
@@ -1313,6 +1340,8 @@ export type AutoResearchOperatorConsole = {
   selected_run_id?: string | null;
   filters: AutoResearchOperatorConsoleFilters;
   actions: AutoResearchOperatorProjectActions;
+  queue?: AutoResearchQueueTelemetry | null;
+  workers: AutoResearchWorkerState[];
   runs: AutoResearchOperatorRunSummary[];
   current_run?: AutoResearchOperatorRunDetail | null;
 };

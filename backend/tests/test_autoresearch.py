@@ -78,6 +78,170 @@ def _create_project(client: TestClient, title: str, topic: str) -> str:
     return project_id
 
 
+def _bridge_result_payload(
+    *,
+    summary: str = "External bridge execution completed successfully.",
+    objective_score: float = 0.81,
+    primary_metric: str = "macro_f1",
+    objective_system: str = "candidate_system",
+    baseline_system: str = "baseline",
+    baseline_score: float = 0.7,
+) -> dict[str, object]:
+    return {
+        "status": "done",
+        "summary": summary,
+        "key_findings": [
+            f"{objective_system} reached {objective_score:.4f} {primary_metric}.",
+            "Imported bridge execution preserved benchmark-linked metrics.",
+        ],
+        "primary_metric": primary_metric,
+        "best_system": objective_system,
+        "objective_system": objective_system,
+        "objective_score": objective_score,
+        "system_results": [
+            {"system": objective_system, "metrics": {primary_metric: objective_score}},
+            {"system": baseline_system, "metrics": {primary_metric: baseline_score}},
+        ],
+        "aggregate_system_results": [
+            {
+                "system": objective_system,
+                "mean_metrics": {primary_metric: objective_score},
+                "std_metrics": {primary_metric: 0.0},
+                "confidence_intervals": {
+                    primary_metric: {
+                        "lower": objective_score,
+                        "upper": objective_score,
+                        "level": 0.95,
+                        "method": "student_t_95",
+                    }
+                },
+                "min_metrics": {primary_metric: objective_score},
+                "max_metrics": {primary_metric: objective_score},
+                "sample_count": 1,
+            },
+            {
+                "system": baseline_system,
+                "mean_metrics": {primary_metric: baseline_score},
+                "std_metrics": {primary_metric: 0.0},
+                "confidence_intervals": {
+                    primary_metric: {
+                        "lower": baseline_score,
+                        "upper": baseline_score,
+                        "level": 0.95,
+                        "method": "student_t_95",
+                    }
+                },
+                "min_metrics": {primary_metric: baseline_score},
+                "max_metrics": {primary_metric: baseline_score},
+                "sample_count": 1,
+            },
+        ],
+        "per_seed_results": [
+            {
+                "seed": 0,
+                "sweep_label": "bridge_file",
+                "best_system": objective_system,
+                "objective_system": objective_system,
+                "objective_score": objective_score,
+                "primary_metric": primary_metric,
+                "system_results": [
+                    {"system": objective_system, "metrics": {primary_metric: objective_score}},
+                    {"system": baseline_system, "metrics": {primary_metric: baseline_score}},
+                ],
+            }
+        ],
+        "sweep_results": [
+            {
+                "label": "bridge_file",
+                "params": {},
+                "description": "Imported bridge result",
+                "status": "done",
+                "best_system": objective_system,
+                "objective_system": objective_system,
+                "objective_score_mean": objective_score,
+                "objective_score_std": 0.0,
+                "objective_score_confidence_interval": {
+                    "lower": objective_score,
+                    "upper": objective_score,
+                    "level": 0.95,
+                    "method": "student_t_95",
+                },
+                "aggregate_system_results": [
+                    {
+                        "system": objective_system,
+                        "mean_metrics": {primary_metric: objective_score},
+                        "std_metrics": {primary_metric: 0.0},
+                        "confidence_intervals": {
+                            primary_metric: {
+                                "lower": objective_score,
+                                "upper": objective_score,
+                                "level": 0.95,
+                                "method": "student_t_95",
+                            }
+                        },
+                        "min_metrics": {primary_metric: objective_score},
+                        "max_metrics": {primary_metric: objective_score},
+                        "sample_count": 1,
+                    },
+                    {
+                        "system": baseline_system,
+                        "mean_metrics": {primary_metric: baseline_score},
+                        "std_metrics": {primary_metric: 0.0},
+                        "confidence_intervals": {
+                            primary_metric: {
+                                "lower": baseline_score,
+                                "upper": baseline_score,
+                                "level": 0.95,
+                                "method": "student_t_95",
+                            }
+                        },
+                        "min_metrics": {primary_metric: baseline_score},
+                        "max_metrics": {primary_metric: baseline_score},
+                        "sample_count": 1,
+                    },
+                ],
+                "failed_seeds": [],
+                "seed_count": 1,
+                "successful_seed_count": 1,
+                "failure_categories": [],
+            }
+        ],
+        "significance_tests": [],
+        "negative_results": [
+            {
+                "scope": "system",
+                "subject": baseline_system,
+                "reference": objective_system,
+                "metric": primary_metric,
+                "observed_score": baseline_score,
+                "reference_score": objective_score,
+                "delta": round(baseline_score - objective_score, 4),
+                "detail": f"`{baseline_system}` remained below `{objective_system}`.",
+            }
+        ],
+        "failed_trials": [],
+        "anomalous_trials": [],
+        "acceptance_checks": [],
+        "tables": [
+            {
+                "title": "Imported Bridge Result",
+                "columns": ["System", primary_metric],
+                "rows": [
+                    [objective_system, f"{objective_score:.4f}"],
+                    [baseline_system, f"{baseline_score:.4f}"],
+                ],
+            }
+        ],
+        "logs": "bridge execution logs",
+        "environment": {
+            "executor_mode": "external_bridge",
+            "selected_sweep": "bridge_file",
+            "bridge_imported": True,
+        },
+        "outputs": {"source": "bridge_file"},
+    }
+
+
 def test_research_planner_accepts_object_style_llm_responses(monkeypatch) -> None:
     class _Message:
         def __init__(self, content: str) -> None:
@@ -4549,6 +4713,200 @@ def test_autoresearch_supports_command_execution_backend(monkeypatch, tmp_path: 
         assert run["status"] == "done"
         assert run["execution_backend"]["kind"] == "command"
         assert run["artifact"]["environment"]["executor_mode"] == "command"
+    finally:
+        client.close()
+
+
+def test_autoresearch_bridge_handoff_waits_for_external_result(monkeypatch, tmp_path: Path) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Bridge Handoff Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+                json={
+                    "topic": "Automatic topic classification for compact CS abstracts",
+                    "max_rounds": 1,
+                    "candidate_execution_limit": 1,
+                    "experiment_bridge": {
+                    "enabled": True,
+                    "mode": "manual_async",
+                    "target_kind": "manual",
+                    "target_label": "gpu-box-a",
+                    "auto_resume_on_result": True,
+                    "notification_hooks": [{"channel": "console"}],
+                },
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "running"
+        assert run["artifact"] is None
+
+        bridge = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/bridge").json()
+        assert bridge["enabled"] is True
+        assert bridge["status"] == "waiting_result"
+        assert bridge["config"]["target_label"] == "gpu-box-a"
+        assert bridge["current_session"]["status"] == "waiting_result"
+        assert Path(bridge["current_session"]["manifest_path"]).is_file()
+        assert Path(bridge["current_session"]["instructions_path"]).is_file()
+        assert Path(bridge["current_session"]["code_path"]).is_file()
+        assert Path(bridge["current_session"]["result_path"]).name == "result_artifact.json"
+        assert bridge["checkpoint_count"] >= 1
+        assert any(item["event"] == "session_created" for item in bridge["notifications"])
+
+        resume_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/resume")
+        assert resume_response.status_code == 409
+        assert "waiting for bridge result import" in resume_response.json()["detail"].lower()
+
+        console = client.get(
+            f"/api/projects/{project_id}/auto-research/console",
+            params={"run_id": run_id},
+        ).json()
+        assert console["current_run"]["bridge"]["status"] == "waiting_result"
+        assert console["current_run"]["actions"]["refresh_bridge"] is True
+        assert console["current_run"]["actions"]["import_bridge_result"] is True
+        assert console["current_run"]["actions"]["resume"] is False
+    finally:
+        client.close()
+
+
+def test_autoresearch_bridge_inline_import_auto_resumes_and_completes_run(monkeypatch, tmp_path: Path) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Bridge Inline Import Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+                json={
+                    "topic": "Automatic topic classification for compact CS abstracts",
+                    "max_rounds": 1,
+                    "candidate_execution_limit": 1,
+                    "experiment_bridge": {
+                    "enabled": True,
+                    "mode": "manual_async",
+                    "target_kind": "manual",
+                    "target_label": "gpu-box-b",
+                    "auto_resume_on_result": True,
+                    "notification_hooks": [{"channel": "console"}],
+                },
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+        bridge_before = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/bridge").json()
+        session_id = bridge_before["current_session"]["session_id"]
+
+        import_response = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/bridge/import",
+            json={
+                "session_id": session_id,
+                "summary": "Imported bridge result shows the candidate system outperforming the baseline.",
+                "objective_score": 0.82,
+                "primary_metric": "macro_f1",
+                "objective_system": "candidate_system",
+                "baseline_system": "baseline",
+                "baseline_score": 0.71,
+                "key_findings": ["External bridge execution preserved grounded metrics."],
+                "notes": "inline-import",
+            },
+        )
+        assert import_response.status_code == 200
+        assert import_response.json()["imported"] is True
+        assert import_response.json()["source"] == "inline"
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert run["artifact"]["environment"]["executor_mode"] == "bridge_import"
+        assert run["artifact"]["environment"]["bridge_imported"] is True
+
+        bridge = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/bridge").json()
+        assert bridge["status"] == "completed"
+        assert bridge["current_session"]["status"] == "completed"
+        assert bridge["current_session"]["imported_artifact"]["source"] == "inline"
+        assert any(item["event"] == "resume_enqueued" for item in bridge["notifications"])
+        assert any(item["event"] == "run_completed" for item in bridge["notifications"])
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["selected_candidate_id"] == run["portfolio"]["selected_candidate_id"]
+    finally:
+        client.close()
+
+
+def test_autoresearch_bridge_refresh_imports_result_file_and_writes_notification_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Bridge File Refresh Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+                json={
+                    "topic": "Automatic topic classification for compact CS abstracts",
+                    "max_rounds": 1,
+                    "candidate_execution_limit": 1,
+                    "experiment_bridge": {
+                    "enabled": True,
+                    "mode": "manual_async",
+                    "target_kind": "manual",
+                    "target_label": "gpu-box-c",
+                    "auto_resume_on_result": True,
+                    "notification_hooks": [
+                        {"channel": "console"},
+                        {"channel": "file", "target": "bridge-events.jsonl"},
+                    ],
+                },
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        bridge_before = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/bridge").json()
+        result_path = Path(bridge_before["current_session"]["result_path"])
+        result_path.write_text(
+            json.dumps(
+                _bridge_result_payload(
+                    summary="File-based bridge result completed successfully.",
+                    objective_score=0.84,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        refresh_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/bridge/refresh")
+        assert refresh_response.status_code == 200
+        assert refresh_response.json()["imported"] is True
+        assert refresh_response.json()["source"] == "file"
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert run["artifact"]["environment"]["executor_mode"] == "external_bridge"
+
+        bridge = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/bridge").json()
+        assert bridge["status"] == "completed"
+        assert bridge["current_session"]["imported_artifact"]["source"] == "file"
+        file_notification = next(item for item in bridge["notifications"] if item["channel"] == "file")
+        notification_file = Path(file_notification["target"])
+        assert notification_file.is_file()
+        notification_lines = notification_file.read_text(encoding="utf-8")
+        assert "result_imported" in notification_lines
+        assert "resume_enqueued" in notification_lines
+        assert "run_completed" in notification_lines
     finally:
         client.close()
 

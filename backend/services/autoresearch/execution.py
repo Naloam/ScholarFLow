@@ -91,6 +91,7 @@ class AutoResearchExecutionPlane:
             queue_priority="normal",
             benchmark=run.benchmark,
             execution_backend=run.execution_backend,
+            experiment_bridge=run.request.experiment_bridge if run.request is not None else None,
             auto_search_literature=False,
             auto_fetch_literature=False,
             docker_image=run.docker_image,

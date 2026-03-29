@@ -10,8 +10,10 @@ import {
 } from "../api/client";
 import type {
   AnalysisSummary,
+  AutoResearchBridgeImportRequest,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
+  AutoResearchRunRequest,
   AuthConfig,
   AuthUser,
   BetaSummary,
@@ -140,6 +142,7 @@ type WorkspaceState = {
   selectDraft: (version: number) => void;
   selectAutoResearchRun: (runId: string) => Promise<void>;
   refreshAutoResearchReviewLoop: () => Promise<void>;
+  refreshAutoResearchBridge: () => Promise<void>;
   applyAutoResearchReviewActions: () => Promise<void>;
   setEditorContent: (content: string) => void;
   setFocusedText: (content: string) => void;
@@ -147,11 +150,12 @@ type WorkspaceState = {
   applyProgressSnapshot: (snapshot: ProjectProgressSnapshot) => void;
   saveDraft: () => Promise<void>;
   generateDraft: () => Promise<void>;
-  startAutoResearch: () => Promise<void>;
+  startAutoResearch: (payload?: Partial<AutoResearchRunRequest>) => Promise<void>;
   resumeAutoResearch: () => Promise<void>;
   retryAutoResearch: () => Promise<void>;
   cancelAutoResearch: () => Promise<void>;
   rebuildAutoResearchPaper: () => Promise<void>;
+  importAutoResearchBridgeResult: (payload: AutoResearchBridgeImportRequest) => Promise<void>;
   exportAutoResearchPublish: () => Promise<void>;
   downloadAutoResearchPublish: () => Promise<void>;
   runReview: () => Promise<void>;
@@ -660,7 +664,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
     },
 
-    async startAutoResearch() {
+    async startAutoResearch(payload) {
       const { currentProjectId, project } = get();
       if (!currentProjectId || !project) {
         set({ notice: "Create or open a project before starting auto-research" });
@@ -671,6 +675,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       try {
         const response = await api.startAutoResearch(currentProjectId, {
           topic: project.topic ?? project.title,
+          ...payload,
         });
         await sleep(400);
         await get().refreshProject();
@@ -791,6 +796,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
     },
 
+    async refreshAutoResearchBridge() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before refreshing bridge state" });
+        return;
+      }
+
+      set({ working: true, notice: `Refreshing bridge state for ${runId}...` });
+      try {
+        const update = await api.refreshAutoResearchBridge(currentProjectId, runId);
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({
+          notice: update.imported
+            ? update.resumed
+              ? `Bridge result imported and resume queued for ${runId}`
+              : `Bridge result imported for ${runId}`
+            : `Bridge state refreshed for ${runId}`,
+        });
+      } catch (error) {
+        handleActionError(error, "Refresh bridge state failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
     async applyAutoResearchReviewActions() {
       const { currentProjectId, autoResearchConsole } = get();
       const currentRun = autoResearchConsole?.current_run;
@@ -821,6 +854,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `Review actions applied for ${runId}` });
       } catch (error) {
         handleActionError(error, "Apply review actions failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async importAutoResearchBridgeResult(payload) {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before importing a bridge result" });
+        return;
+      }
+
+      set({ working: true, notice: `Importing bridge result for ${runId}...` });
+      try {
+        const update = await api.importAutoResearchBridgeResult(currentProjectId, runId, payload);
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({
+          notice: update.resumed
+            ? `Bridge result imported and resume queued for ${runId}`
+            : `Bridge result imported for ${runId}`,
+        });
+      } catch (error) {
+        handleActionError(error, "Import bridge result failed");
       } finally {
         set({ working: false });
       }

@@ -270,6 +270,28 @@ export type AutoResearchRunStatus =
 
 export type AutoResearchJobAction = "run" | "resume" | "retry";
 
+export type AutoResearchExperimentBridgeNotificationHook = {
+  channel: "console" | "file";
+  target?: string | null;
+  events: Array<
+    | "session_created"
+    | "result_imported"
+    | "resume_enqueued"
+    | "run_completed"
+    | "run_failed"
+    | "run_canceled"
+  >;
+};
+
+export type AutoResearchExperimentBridgeConfig = {
+  enabled: boolean;
+  mode: "manual_async";
+  target_kind: "manual" | "external_repo" | "gpu_server" | "workspace";
+  target_label: string;
+  auto_resume_on_result: boolean;
+  notification_hooks: AutoResearchExperimentBridgeNotificationHook[];
+};
+
 export type AutoResearchRunRequest = {
   topic: string;
   task_family_hint?: "text_classification" | "tabular_classification" | "ir_reranking";
@@ -280,6 +302,7 @@ export type AutoResearchRunRequest = {
   queue_priority?: "low" | "normal" | "high";
   benchmark?: Record<string, unknown> | null;
   execution_backend?: Record<string, unknown> | null;
+  experiment_bridge?: AutoResearchExperimentBridgeConfig | null;
   auto_search_literature?: boolean;
   auto_fetch_literature?: boolean;
 };
@@ -1030,6 +1053,112 @@ export type AutoResearchReviewLoopApply = {
   review_loop: AutoResearchReviewLoop;
 };
 
+export type AutoResearchBridgeImportedArtifact = {
+  imported_at: string;
+  source: "inline" | "file";
+  artifact_path: string;
+  summary: string;
+  primary_metric: string;
+  objective_score?: number | null;
+};
+
+export type AutoResearchBridgeSession = {
+  session_id: string;
+  created_at: string;
+  updated_at: string;
+  status: "waiting_result" | "result_imported" | "completed" | "failed" | "canceled";
+  candidate_id: string;
+  candidate_title: string;
+  round_index: number;
+  goal: string;
+  strategy: string;
+  handoff_dir: string;
+  manifest_path: string;
+  instructions_path: string;
+  code_path: string;
+  benchmark_path?: string | null;
+  result_path: string;
+  last_polled_at?: string | null;
+  external_status?: string | null;
+  last_error?: string | null;
+  imported_artifact?: AutoResearchBridgeImportedArtifact | null;
+};
+
+export type AutoResearchBridgeCheckpoint = {
+  checkpoint_id: string;
+  created_at: string;
+  kind:
+    | "session_created"
+    | "status_polled"
+    | "result_imported"
+    | "resume_enqueued"
+    | "run_completed"
+    | "run_failed"
+    | "run_canceled";
+  summary: string;
+  detail?: string | null;
+  session_id?: string | null;
+};
+
+export type AutoResearchBridgeNotification = {
+  notification_id: string;
+  created_at: string;
+  event:
+    | "session_created"
+    | "result_imported"
+    | "resume_enqueued"
+    | "run_completed"
+    | "run_failed"
+    | "run_canceled";
+  channel: "console" | "file";
+  status: "sent" | "failed" | "skipped";
+  target?: string | null;
+  message: string;
+  delivered_at?: string | null;
+  error?: string | null;
+};
+
+export type AutoResearchExperimentBridge = {
+  project_id: string;
+  run_id: string;
+  enabled: boolean;
+  config?: AutoResearchExperimentBridgeConfig | null;
+  persisted_path?: string | null;
+  status: "inactive" | "waiting_result" | "result_imported" | "completed" | "failed" | "canceled";
+  active_session_id?: string | null;
+  latest_session_id?: string | null;
+  open_session_count: number;
+  imported_session_count: number;
+  session_count: number;
+  checkpoint_count: number;
+  notification_count: number;
+  current_session?: AutoResearchBridgeSession | null;
+  sessions: AutoResearchBridgeSession[];
+  checkpoints: AutoResearchBridgeCheckpoint[];
+  notifications: AutoResearchBridgeNotification[];
+};
+
+export type AutoResearchBridgeImportRequest = {
+  session_id?: string | null;
+  summary: string;
+  objective_score: number;
+  primary_metric: string;
+  objective_system: string;
+  baseline_system: string;
+  baseline_score?: number | null;
+  key_findings: string[];
+  notes?: string | null;
+};
+
+export type AutoResearchBridgeUpdate = {
+  bridge: AutoResearchExperimentBridge;
+  run: AutoResearchRun;
+  execution: AutoResearchExecution;
+  imported: boolean;
+  resumed: boolean;
+  source: "none" | "inline" | "file";
+};
+
 export type AutoResearchPublishPackage = {
   project_id: string;
   run_id: string;
@@ -1110,6 +1239,8 @@ export type AutoResearchOperatorRunActions = {
   resume: boolean;
   retry: boolean;
   cancel: boolean;
+  refresh_bridge: boolean;
+  import_bridge_result: boolean;
   refresh_review: boolean;
   apply_review_actions: boolean;
   rebuild_paper: boolean;
@@ -1141,6 +1272,10 @@ export type AutoResearchOperatorRunSummary = {
   candidate_execution_limit?: number | null;
   executed_candidate_count: number;
   recovery_count: number;
+  bridge_status?: "inactive" | "waiting_result" | "result_imported" | "completed" | "failed" | "canceled" | null;
+  bridge_target_label?: string | null;
+  bridge_session_status?: "waiting_result" | "result_imported" | "completed" | "failed" | "canceled" | null;
+  bridge_session_count: number;
   review_round: number;
   open_issue_count: number;
   pending_action_count: number;
@@ -1156,6 +1291,7 @@ export type AutoResearchOperatorRunSummary = {
 export type AutoResearchOperatorRunDetail = {
   run: AutoResearchRun;
   execution: AutoResearchExecution;
+  bridge?: AutoResearchExperimentBridge | null;
   registry: AutoResearchRunRegistry;
   registry_views: AutoResearchRunRegistryViews;
   review?: AutoResearchRunReview | null;

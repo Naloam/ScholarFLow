@@ -1,20 +1,27 @@
 import { useEffect, useState } from "react";
 
-import type { AutoResearchOperatorConsole, AutoResearchOperatorConsoleFilters } from "../../api/types";
+import type {
+  AutoResearchBridgeImportRequest,
+  AutoResearchOperatorConsole,
+  AutoResearchOperatorConsoleFilters,
+  AutoResearchRunRequest,
+} from "../../api/types";
 
 type OperatorConsolePanelProps = {
   consoleState: AutoResearchOperatorConsole | null;
   filters: AutoResearchOperatorConsoleFilters;
   projectTopic?: string | null;
   disabled: boolean;
-  onStartRun: () => void;
+  onStartRun: (payload?: Partial<AutoResearchRunRequest>) => void;
   onApplyFilters: (filters: AutoResearchOperatorConsoleFilters) => void;
   onClearFilters: () => void;
   onSelectRun: (runId: string) => void;
   onResume: () => void;
   onRetry: () => void;
   onCancel: () => void;
+  onRefreshBridge: () => void;
   onRefreshReview: () => void;
+  onImportBridgeResult: (payload: AutoResearchBridgeImportRequest) => void;
   onApplyReviewActions: () => void;
   onRebuildPaper: () => void;
   onExportPublish: () => void;
@@ -49,7 +56,9 @@ export function OperatorConsolePanel({
   onResume,
   onRetry,
   onCancel,
+  onRefreshBridge,
   onRefreshReview,
+  onImportBridgeResult,
   onApplyReviewActions,
   onRebuildPaper,
   onExportPublish,
@@ -61,6 +70,20 @@ export function OperatorConsolePanel({
     queue_priority: "normal" as "low" | "normal" | "high",
     max_rounds: "3",
     candidate_execution_limit: "",
+  });
+  const [launchDraft, setLaunchDraft] = useState({
+    mode: "inline" as "inline" | "bridge",
+    targetLabel: "external-environment",
+  });
+  const [bridgeImportDraft, setBridgeImportDraft] = useState({
+    summary: "Imported bridge result from external environment",
+    objective_score: "0.78",
+    primary_metric: "macro_f1",
+    objective_system: "candidate_system",
+    baseline_system: "baseline",
+    baseline_score: "0.70",
+    key_findings: "Imported execution preserved benchmark-aligned metrics",
+    notes: "",
   });
 
   useEffect(() => {
@@ -75,6 +98,7 @@ export function OperatorConsolePanel({
   ]);
 
   const current = consoleState?.current_run ?? null;
+  const bridge = current?.bridge ?? null;
   const review = current?.review ?? null;
   const reviewLoop = current?.review_loop ?? null;
   const publish = current?.publish ?? null;
@@ -148,8 +172,38 @@ export function OperatorConsolePanel({
         <button
           type="button"
           className="primary-btn"
-          onClick={onStartRun}
-          disabled={disabled || !projectTopic}
+          onClick={() =>
+            onStartRun(
+              launchDraft.mode === "bridge"
+                ? {
+                    max_rounds: 1,
+                    candidate_execution_limit: 1,
+                    experiment_bridge: {
+                      enabled: true,
+                      mode: "manual_async",
+                      target_kind: "manual",
+                      target_label: launchDraft.targetLabel.trim() || "external-environment",
+                      auto_resume_on_result: true,
+                      notification_hooks: [
+                        {
+                          channel: "console",
+                          target: null,
+                          events: [
+                            "session_created",
+                            "result_imported",
+                            "resume_enqueued",
+                            "run_completed",
+                            "run_failed",
+                            "run_canceled",
+                          ],
+                        },
+                      ],
+                    },
+                  }
+                : undefined,
+            )
+          }
+          disabled={disabled || !projectTopic || (launchDraft.mode === "bridge" && !launchDraft.targetLabel.trim())}
           data-testid="start-autoresearch-button"
         >
           Start Run
@@ -184,11 +238,46 @@ export function OperatorConsolePanel({
         <button
           type="button"
           className="ghost-btn"
+          onClick={onRefreshBridge}
+          disabled={disabled || !current?.actions.refresh_bridge}
+          data-testid="refresh-bridge-button"
+        >
+          Refresh Bridge
+        </button>
+        <button
+          type="button"
+          className="ghost-btn"
           onClick={onRefreshReview}
           disabled={disabled || !current?.actions.refresh_review}
           data-testid="refresh-review-button"
         >
           Refresh Review
+        </button>
+        <button
+          type="button"
+          className="ghost-btn"
+          onClick={() =>
+            onImportBridgeResult({
+              session_id: bridge?.current_session?.session_id ?? null,
+              summary: bridgeImportDraft.summary,
+              objective_score: Number(bridgeImportDraft.objective_score),
+              primary_metric: bridgeImportDraft.primary_metric,
+              objective_system: bridgeImportDraft.objective_system,
+              baseline_system: bridgeImportDraft.baseline_system,
+              baseline_score: bridgeImportDraft.baseline_score
+                ? Number(bridgeImportDraft.baseline_score)
+                : null,
+              key_findings: bridgeImportDraft.key_findings
+                .split("\n")
+                .map((item) => item.trim())
+                .filter(Boolean),
+              notes: bridgeImportDraft.notes || null,
+            })
+          }
+          disabled={disabled || !current?.actions.import_bridge_result}
+          data-testid="import-bridge-result-button"
+        >
+          Import Bridge Result
         </button>
         <button
           type="button"
@@ -227,6 +316,78 @@ export function OperatorConsolePanel({
           Download Publish
         </button>
       </div>
+
+      <form
+        className="stack"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onStartRun(
+            launchDraft.mode === "bridge"
+              ? {
+                  max_rounds: 1,
+                  candidate_execution_limit: 1,
+                  experiment_bridge: {
+                    enabled: true,
+                    mode: "manual_async",
+                    target_kind: "manual",
+                    target_label: launchDraft.targetLabel.trim() || "external-environment",
+                    auto_resume_on_result: true,
+                    notification_hooks: [
+                      {
+                        channel: "console",
+                        target: null,
+                        events: [
+                          "session_created",
+                          "result_imported",
+                          "resume_enqueued",
+                          "run_completed",
+                          "run_failed",
+                          "run_canceled",
+                        ],
+                      },
+                    ],
+                  },
+                }
+              : undefined,
+          );
+        }}
+      >
+        <p className="inline-title">Launch Profile</p>
+        <div className="button-row">
+          <select
+            value={launchDraft.mode}
+            onChange={(event) =>
+              setLaunchDraft((state) => ({
+                ...state,
+                mode: event.target.value as "inline" | "bridge",
+              }))
+            }
+            disabled={disabled}
+            data-testid="operator-launch-mode"
+          >
+            <option value="inline">Inline Execution</option>
+            <option value="bridge">Bridge Handoff</option>
+          </select>
+          <input
+            type="text"
+            value={launchDraft.targetLabel}
+            onChange={(event) =>
+              setLaunchDraft((state) => ({
+                ...state,
+                targetLabel: event.target.value,
+              }))
+            }
+            disabled={disabled || launchDraft.mode !== "bridge"}
+            placeholder="Bridge target label"
+            data-testid="operator-launch-bridge-target"
+          />
+          <span className="auth-copy" data-testid="operator-launch-profile-detail">
+            {launchDraft.mode === "bridge"
+              ? `Manual async bridge to ${launchDraft.targetLabel || "external-environment"}`
+              : "Run attempts inline inside the local execution plane"}
+          </span>
+        </div>
+      </form>
 
       <form
         className="stack"
@@ -424,6 +585,10 @@ export function OperatorConsolePanel({
                     {run.candidate_execution_limit ? ` / limit ${run.candidate_execution_limit}` : ""}
                   </small>
                   <small>priority {run.queue_priority} / rounds {run.max_rounds}</small>
+                  <small>
+                    bridge {run.bridge_status ?? "n/a"}
+                    {run.bridge_target_label ? ` / ${run.bridge_target_label}` : ""}
+                  </small>
                   <small>recoveries {run.recovery_count}</small>
                 </div>
               </button>
@@ -529,6 +694,18 @@ export function OperatorConsolePanel({
                   <strong>{current.execution.active_job_id ?? current.execution.worker?.status ?? "idle"}</strong>
                 </div>
                 <div>
+                  <span className="meta-label">Bridge</span>
+                  <strong data-testid="operator-bridge-summary">
+                    {bridge
+                      ? `${bridge.status}${bridge.current_session ? ` / ${bridge.current_session.status}` : ""}`
+                      : "disabled"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">Bridge Target</span>
+                  <strong>{bridge?.config?.target_label ?? "n/a"}</strong>
+                </div>
+                <div>
                   <span className="meta-label">Publish</span>
                   <strong>{publish?.status ?? "not built"}</strong>
                 </div>
@@ -606,6 +783,148 @@ export function OperatorConsolePanel({
                   {lineage?.top_level_paper_candidate_id ?? "n/a"} edges={lineage?.edges.length ?? 0}
                 </code>
               </div>
+
+              {bridge ? (
+                <div className="meta-block">
+                  <span className="meta-label">Bridge State</span>
+                  <p data-testid="operator-bridge-detail">
+                    status={bridge.status} sessions={bridge.session_count} open={bridge.open_session_count} imported=
+                    {bridge.imported_session_count} checkpoints={bridge.checkpoint_count} notifications=
+                    {bridge.notification_count}
+                    {bridge.current_session
+                      ? ` current=${bridge.current_session.session_id} round=${bridge.current_session.round_index} target=${bridge.config?.target_label ?? "n/a"}`
+                      : ""}
+                  </p>
+                  {bridge.current_session ? (
+                    <code data-testid="operator-bridge-session-paths">
+                      handoff={bridge.current_session.handoff_dir} result={bridge.current_session.result_path}
+                    </code>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {current.actions.import_bridge_result ? (
+                <form
+                  className="stack"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    onImportBridgeResult({
+                      session_id: bridge?.current_session?.session_id ?? null,
+                      summary: bridgeImportDraft.summary,
+                      objective_score: Number(bridgeImportDraft.objective_score),
+                      primary_metric: bridgeImportDraft.primary_metric,
+                      objective_system: bridgeImportDraft.objective_system,
+                      baseline_system: bridgeImportDraft.baseline_system,
+                      baseline_score: bridgeImportDraft.baseline_score
+                        ? Number(bridgeImportDraft.baseline_score)
+                        : null,
+                      key_findings: bridgeImportDraft.key_findings
+                        .split("\n")
+                        .map((item) => item.trim())
+                        .filter(Boolean),
+                      notes: bridgeImportDraft.notes || null,
+                    });
+                  }}
+                >
+                  <p className="inline-title">Bridge Import</p>
+                  <div className="button-row">
+                    <input
+                      type="text"
+                      value={bridgeImportDraft.summary}
+                      onChange={(event) =>
+                        setBridgeImportDraft((state) => ({
+                          ...state,
+                          summary: event.target.value,
+                        }))
+                      }
+                      disabled={disabled || !current.actions.import_bridge_result}
+                      placeholder="Result summary"
+                      data-testid="bridge-import-summary"
+                    />
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={bridgeImportDraft.objective_score}
+                      onChange={(event) =>
+                        setBridgeImportDraft((state) => ({
+                          ...state,
+                          objective_score: event.target.value,
+                        }))
+                      }
+                      disabled={disabled || !current.actions.import_bridge_result}
+                      placeholder="Objective score"
+                      data-testid="bridge-import-score"
+                    />
+                    <input
+                      type="text"
+                      value={bridgeImportDraft.primary_metric}
+                      onChange={(event) =>
+                        setBridgeImportDraft((state) => ({
+                          ...state,
+                          primary_metric: event.target.value,
+                        }))
+                      }
+                      disabled={disabled || !current.actions.import_bridge_result}
+                      placeholder="Primary metric"
+                      data-testid="bridge-import-metric"
+                    />
+                  </div>
+                  <div className="button-row">
+                    <input
+                      type="text"
+                      value={bridgeImportDraft.objective_system}
+                      onChange={(event) =>
+                        setBridgeImportDraft((state) => ({
+                          ...state,
+                          objective_system: event.target.value,
+                        }))
+                      }
+                      disabled={disabled || !current.actions.import_bridge_result}
+                      placeholder="Objective system"
+                      data-testid="bridge-import-system"
+                    />
+                    <input
+                      type="text"
+                      value={bridgeImportDraft.baseline_system}
+                      onChange={(event) =>
+                        setBridgeImportDraft((state) => ({
+                          ...state,
+                          baseline_system: event.target.value,
+                        }))
+                      }
+                      disabled={disabled || !current.actions.import_bridge_result}
+                      placeholder="Baseline system"
+                      data-testid="bridge-import-baseline"
+                    />
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={bridgeImportDraft.baseline_score}
+                      onChange={(event) =>
+                        setBridgeImportDraft((state) => ({
+                          ...state,
+                          baseline_score: event.target.value,
+                        }))
+                      }
+                      disabled={disabled || !current.actions.import_bridge_result}
+                      placeholder="Baseline score"
+                      data-testid="bridge-import-baseline-score"
+                    />
+                  </div>
+                  <textarea
+                    value={bridgeImportDraft.key_findings}
+                    onChange={(event) =>
+                      setBridgeImportDraft((state) => ({
+                        ...state,
+                        key_findings: event.target.value,
+                      }))
+                    }
+                    disabled={disabled || !current.actions.import_bridge_result}
+                    placeholder="One key finding per line"
+                    data-testid="bridge-import-findings"
+                  />
+                </form>
+              ) : null}
 
               {novelty ? (
                 <div className="meta-block">

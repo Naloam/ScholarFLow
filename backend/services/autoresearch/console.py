@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from schemas.autoresearch import (
     AutoResearchBudgetStatus,
+    AutoResearchExperimentBridgeRead,
     AutoResearchOperatorConsoleRead,
     AutoResearchOperatorConsoleFiltersRead,
     AutoResearchOperatorProjectActionsRead,
@@ -19,6 +20,7 @@ from schemas.autoresearch import (
     AutoResearchReviewLoopRead,
     AutoResearchPublishPackageRead,
 )
+from services.autoresearch.bridge import build_bridge_state
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.repository import list_runs, load_run, load_run_registry, load_run_registry_views
 from services.autoresearch.review_publish import build_publish_package, build_review_loop, build_run_review
@@ -36,14 +38,18 @@ def _run_actions(
     *,
     run: AutoResearchRunRead,
     execution: AutoResearchRunExecutionRead,
+    bridge: AutoResearchExperimentBridgeRead | None,
     review_loop: AutoResearchReviewLoopRead | None,
     publish: AutoResearchPublishPackageRead | None,
 ) -> AutoResearchOperatorRunActionsRead:
     active_or_queued = any(job.status in {"queued", "leased", "running"} for job in execution.jobs)
+    bridge_waiting = bool(bridge is not None and bridge.current_session is not None and bridge.current_session.status == "waiting_result")
     return AutoResearchOperatorRunActionsRead(
-        resume=run.status != "done",
+        resume=run.status != "done" and not bridge_waiting,
         retry=run.status in {"done", "failed", "canceled"},
-        cancel=active_or_queued and not execution.cancel_requested,
+        cancel=(active_or_queued and not execution.cancel_requested) or bridge_waiting,
+        refresh_bridge=bool(bridge is not None and bridge.enabled),
+        import_bridge_result=bridge_waiting,
         refresh_review=run.status == "done",
         apply_review_actions=(
             run.status == "done"
@@ -65,6 +71,7 @@ def _run_summary(
     *,
     run: AutoResearchRunRead,
     execution: AutoResearchRunExecutionRead,
+    bridge: AutoResearchExperimentBridgeRead | None,
     review: AutoResearchRunReviewRead | None,
     review_loop: AutoResearchReviewLoopRead | None,
     publish: AutoResearchPublishPackageRead | None,
@@ -106,6 +113,14 @@ def _run_summary(
         candidate_execution_limit=request.candidate_execution_limit if request is not None else None,
         executed_candidate_count=len(run.portfolio.executed_candidate_ids) if run.portfolio is not None else 0,
         recovery_count=max((job.recovery_count for job in execution.jobs), default=0),
+        bridge_status=bridge.status if bridge is not None and bridge.enabled else None,
+        bridge_target_label=(
+            bridge.config.target_label
+            if bridge is not None and bridge.config is not None
+            else None
+        ),
+        bridge_session_status=bridge.current_session.status if bridge is not None and bridge.current_session is not None else None,
+        bridge_session_count=bridge.session_count if bridge is not None else 0,
         review_round=review_loop.current_round if review_loop is not None else 0,
         open_issue_count=review_loop.open_issue_count if review_loop is not None else 0,
         pending_action_count=review_loop.pending_action_count if review_loop is not None else 0,
@@ -201,6 +216,7 @@ def build_operator_console(
     summaries: list[AutoResearchOperatorRunSummaryRead] = []
     execution_by_run: dict[str, AutoResearchRunExecutionRead] = {}
     filtered_runs: list[AutoResearchRunRead] = []
+    bridge_by_run: dict[str, AutoResearchExperimentBridgeRead | None] = {}
     review_by_run: dict[str, AutoResearchRunReviewRead | None] = {}
     review_loop_by_run: dict[str, AutoResearchReviewLoopRead | None] = {}
     publish_by_run: dict[str, AutoResearchPublishPackageRead | None] = {}
@@ -208,6 +224,8 @@ def build_operator_console(
     for run in runs:
         execution = execution_plane.get_run_execution(project_id, run.id)
         execution_by_run[run.id] = execution
+        bridge = build_bridge_state(run.project_id, run.id)
+        bridge_by_run[run.id] = bridge
         review = build_run_review(run.project_id, run.id) if run.status == "done" else None
         review_loop = build_review_loop(run.project_id, run.id) if run.status == "done" else None
         publish = build_publish_package(run.project_id, run.id) if run.status == "done" else None
@@ -221,6 +239,7 @@ def build_operator_console(
             _run_summary(
                 run=run,
                 execution=execution,
+                bridge=bridge,
                 review=review,
                 review_loop=review_loop,
                 publish=publish,
@@ -240,12 +259,14 @@ def build_operator_console(
         registry = load_run_registry(project_id, selected_run.id)
         registry_views = load_run_registry_views(project_id, selected_run.id)
         if registry is not None and registry_views is not None:
+            bridge = bridge_by_run[selected_run.id]
             review = review_by_run[selected_run.id]
             review_loop = review_loop_by_run[selected_run.id]
             publish = publish_by_run[selected_run.id]
             current_run = AutoResearchOperatorRunDetailRead(
                 run=selected_run,
                 execution=execution,
+                bridge=bridge,
                 registry=registry,
                 registry_views=registry_views,
                 review=review,
@@ -254,6 +275,7 @@ def build_operator_console(
                 actions=_run_actions(
                     run=selected_run,
                     execution=execution,
+                    bridge=bridge,
                     review_loop=review_loop,
                     publish=publish,
                 ),

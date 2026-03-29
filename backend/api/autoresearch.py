@@ -7,10 +7,13 @@ from sqlalchemy.orm import Session
 from config.db import SessionLocal
 from config.deps import get_db, get_identity, require_project_access
 from schemas.autoresearch import (
+    AutoResearchBridgeImportRequest,
+    AutoResearchBridgeUpdateRead,
     AutoResearchBudgetStatus,
     AutoResearchBundleIndexRead,
     AutoResearchCandidateRegistryRead,
     AutoResearchExecutionCommandResponse,
+    AutoResearchExperimentBridgeRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
     AutoResearchPublishStatus,
@@ -34,6 +37,11 @@ from schemas.autoresearch import (
     AutoResearchUnsupportedClaimRisk,
 )
 from schemas.common import IdResponse
+from services.autoresearch.bridge import (
+    AutoResearchExperimentBridgeService,
+    bridge_is_waiting_for_result,
+    build_bridge_state,
+)
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
@@ -88,7 +96,10 @@ def run_auto_research(
         user_id=identity.user_id if identity else None,
         detail=f"job_id={job.id} action=run topic={payload.topic}",
     )
-    background_tasks.add_task(execution_plane.drain)
+    if request_snapshot.experiment_bridge is not None and request_snapshot.experiment_bridge.enabled:
+        execution_plane.drain()
+    else:
+        background_tasks.add_task(execution_plane.drain)
     return IdResponse(id=run.id)
 
 
@@ -171,6 +182,131 @@ def get_auto_research_execution(
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
+
+
+@router.get("/{run_id}/bridge", response_model=AutoResearchExperimentBridgeRead)
+def get_auto_research_bridge(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentBridgeRead:
+    del db
+    bridge = build_bridge_state(project_id, run_id)
+    if bridge is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return bridge
+
+
+@router.post("/{run_id}/bridge/refresh", response_model=AutoResearchBridgeUpdateRead)
+def refresh_auto_research_bridge(
+    project_id: str,
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> AutoResearchBridgeUpdateRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    bridge_service = AutoResearchExperimentBridgeService()
+    try:
+        bridge, artifact, source = bridge_service.refresh_waiting_session(
+            project_id=project_id,
+            run_id=run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    imported = False
+    resumed = False
+    if artifact is not None:
+        bridge, run = bridge_service.import_result(
+            project_id=project_id,
+            run_id=run_id,
+            session_id=bridge.current_session.session_id if bridge.current_session is not None else None,
+            artifact=artifact,
+            source=source,
+        )
+        imported = True
+        if bridge.config is not None and bridge.config.auto_resume_on_result:
+            plane = AutoResearchExecutionPlane()
+            _job, created = plane.enqueue(project_id=project_id, run_id=run_id, action="resume")
+            if created:
+                bridge = bridge_service.record_resume_enqueued(project_id=project_id, run_id=run_id)
+                plane.drain()
+                resumed = True
+    execution = AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
+    latest_run = load_run(project_id, run_id)
+    if latest_run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    latest_bridge = build_bridge_state(project_id, run_id)
+    if latest_bridge is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return AutoResearchBridgeUpdateRead(
+        bridge=latest_bridge,
+        run=latest_run,
+        execution=execution,
+        imported=imported,
+        resumed=resumed,
+        source=source,  # type: ignore[arg-type]
+    )
+
+
+@router.post("/{run_id}/bridge/import", response_model=AutoResearchBridgeUpdateRead)
+def import_auto_research_bridge_result(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchBridgeImportRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> AutoResearchBridgeUpdateRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    bridge_service = AutoResearchExperimentBridgeService()
+    try:
+        bridge, _run = bridge_service.import_inline_result(
+            project_id=project_id,
+            run_id=run_id,
+            session_id=payload.session_id,
+            summary=payload.summary,
+            objective_score=payload.objective_score,
+            primary_metric=payload.primary_metric,
+            objective_system=payload.objective_system,
+            baseline_system=payload.baseline_system,
+            baseline_score=payload.baseline_score,
+            key_findings=payload.key_findings,
+            notes=payload.notes,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    resumed = False
+    if bridge.config is not None and bridge.config.auto_resume_on_result:
+        plane = AutoResearchExecutionPlane()
+        _job, created = plane.enqueue(project_id=project_id, run_id=run_id, action="resume")
+        if created:
+            bridge = bridge_service.record_resume_enqueued(project_id=project_id, run_id=run_id)
+            plane.drain()
+            resumed = True
+    execution = AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
+    latest_run = load_run(project_id, run_id)
+    if latest_run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    latest_bridge = build_bridge_state(project_id, run_id)
+    if latest_bridge is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return AutoResearchBridgeUpdateRead(
+        bridge=latest_bridge,
+        run=latest_run,
+        execution=execution,
+        imported=True,
+        resumed=resumed,
+        source="inline",
+    )
 
 
 @router.get("/{run_id}/registry", response_model=AutoResearchRunRegistryRead)
@@ -381,6 +517,11 @@ def _queue_existing_run(
     run = load_run(project_id, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
+    if action == "resume" and bridge_is_waiting_for_result(project_id, run_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Auto research run is waiting for bridge result import before it can resume",
+        )
     plane = AutoResearchExecutionPlane()
     if action == "resume" and run.status == "done":
         execution = plane.get_run_execution(project_id, run_id)
@@ -466,7 +607,17 @@ def cancel_auto_research_run(
     try:
         execution = AutoResearchExecutionPlane().request_cancel(project_id=project_id, run_id=run_id)
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if bridge_is_waiting_for_result(project_id, run_id):
+            try:
+                AutoResearchExperimentBridgeService().cancel_waiting_session(
+                    project_id=project_id,
+                    run_id=run_id,
+                )
+            except ValueError as bridge_exc:
+                raise HTTPException(status_code=409, detail=str(bridge_exc)) from bridge_exc
+            execution = AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
+        else:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     latest_job = execution.jobs[-1] if execution.jobs else None
     return AutoResearchExecutionCommandResponse(
         run_id=run_id,

@@ -57,3 +57,42 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("latest-export-status")).toContainText("is ready");
   await expect(page.getByTestId("download-latest-export-button")).toBeEnabled();
 });
+
+test("workspace supports manual bridge handoff and inline result import", async ({ page }) => {
+  test.setTimeout(90000);
+  await page.goto("/");
+
+  await expect(page.getByTestId("workspace-page")).toBeVisible();
+  await page.getByTestId("project-title-input").fill("Browser Bridge Workspace");
+  await page
+    .getByTestId("project-topic-input")
+    .fill("Manual async bridge flow for persisted external execution");
+  await page.getByTestId("create-project-button").click();
+
+  await expect(page.getByTestId("current-project-id")).not.toHaveText("Not selected");
+  await page.getByTestId("operator-launch-mode").selectOption("bridge");
+  await page.getByTestId("operator-launch-bridge-target").fill("playwright-bridge");
+  await page.getByTestId("start-autoresearch-button").click();
+
+  await expect(page.getByTestId("operator-bridge-summary")).toContainText("waiting_result", {
+    timeout: 30000,
+  });
+  await expect(page.getByTestId("operator-bridge-detail")).toContainText("target=playwright-bridge");
+  await expect(page.getByTestId("bridge-import-summary")).toBeVisible();
+
+  await page
+    .getByTestId("bridge-import-summary")
+    .fill("Imported bridge result from browser flow");
+  await page.getByTestId("bridge-import-score").fill("0.83");
+  await page.getByTestId("import-bridge-result-button").click();
+
+  await expect(page.getByTestId("status-notice")).toContainText("Bridge result imported", {
+    timeout: 30000,
+  });
+  await expect(page.getByTestId("operator-bridge-summary")).toContainText("completed", {
+    timeout: 30000,
+  });
+  await expect(page.getByTestId("operator-review-loop-summary")).toContainText("r1", {
+    timeout: 30000,
+  });
+});

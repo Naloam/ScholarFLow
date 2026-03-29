@@ -57,10 +57,12 @@ export function WorkspacePage() {
   const resumeAutoResearch = useWorkspaceStore((state) => state.resumeAutoResearch);
   const retryAutoResearch = useWorkspaceStore((state) => state.retryAutoResearch);
   const cancelAutoResearch = useWorkspaceStore((state) => state.cancelAutoResearch);
+  const refreshAutoResearchBridge = useWorkspaceStore((state) => state.refreshAutoResearchBridge);
   const refreshAutoResearchReviewLoop = useWorkspaceStore((state) => state.refreshAutoResearchReviewLoop);
   const applyAutoResearchReviewActions = useWorkspaceStore((state) => state.applyAutoResearchReviewActions);
   const rebuildAutoResearchPaper = useWorkspaceStore((state) => state.rebuildAutoResearchPaper);
   const updateAutoResearchRunControls = useWorkspaceStore((state) => state.updateAutoResearchRunControls);
+  const importAutoResearchBridgeResult = useWorkspaceStore((state) => state.importAutoResearchBridgeResult);
   const exportAutoResearchPublish = useWorkspaceStore((state) => state.exportAutoResearchPublish);
   const downloadAutoResearchPublish = useWorkspaceStore((state) => state.downloadAutoResearchPublish);
   const runReview = useWorkspaceStore((state) => state.runReview);
@@ -164,7 +166,9 @@ export function WorkspacePage() {
             onResume={resumeAutoResearch}
             onRetry={retryAutoResearch}
             onCancel={cancelAutoResearch}
+            onRefreshBridge={refreshAutoResearchBridge}
             onRefreshReview={refreshAutoResearchReviewLoop}
+            onImportBridgeResult={importAutoResearchBridgeResult}
             onApplyReviewActions={applyAutoResearchReviewActions}
             onRebuildPaper={rebuildAutoResearchPaper}
             onExportPublish={exportAutoResearchPublish}

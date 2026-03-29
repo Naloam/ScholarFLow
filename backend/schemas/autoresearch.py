@@ -17,6 +17,8 @@ BenchmarkKind = Literal[
     "beir_json",
 ]
 ExecutionBackendKind = Literal["auto", "local", "docker", "docker_gpu", "command"]
+AutoResearchExperimentBridgeMode = Literal["manual_async"]
+AutoResearchExperimentBridgeTargetKind = Literal["manual", "external_repo", "gpu_server", "workspace"]
 AutoResearchJobAction = Literal["run", "resume", "retry"]
 AutoResearchJobStatus = Literal["queued", "leased", "running", "succeeded", "failed", "canceled"]
 AutoResearchWorkerStatus = Literal["idle", "starting", "running", "stopping"]
@@ -120,6 +122,27 @@ AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "block
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
 AutoResearchPublishArchiveStatus = Literal["missing", "stale", "current"]
+AutoResearchBridgeStatus = Literal["inactive", "waiting_result", "result_imported", "completed", "failed", "canceled"]
+AutoResearchBridgeSessionStatus = Literal["waiting_result", "result_imported", "completed", "failed", "canceled"]
+AutoResearchBridgeCheckpointKind = Literal[
+    "session_created",
+    "status_polled",
+    "result_imported",
+    "resume_enqueued",
+    "run_completed",
+    "run_failed",
+    "run_canceled",
+]
+AutoResearchBridgeNotificationChannel = Literal["console", "file"]
+AutoResearchBridgeNotificationStatus = Literal["sent", "failed", "skipped"]
+AutoResearchBridgeNotificationEvent = Literal[
+    "session_created",
+    "result_imported",
+    "resume_enqueued",
+    "run_completed",
+    "run_failed",
+    "run_canceled",
+]
 AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
 AutoResearchBudgetStatus = Literal["default", "constrained"]
 AutoResearchClaimSupportStatus = Literal["supported", "partial", "unsupported"]
@@ -185,6 +208,40 @@ class ExecutionBackendSpec(BaseModel):
     command_prefix: list[str] = Field(default_factory=list)
 
 
+class AutoResearchExperimentBridgeNotificationHook(BaseModel):
+    channel: AutoResearchBridgeNotificationChannel = "console"
+    target: str | None = None
+    events: list[AutoResearchBridgeNotificationEvent] = Field(
+        default_factory=lambda: [
+            "session_created",
+            "result_imported",
+            "resume_enqueued",
+            "run_completed",
+            "run_failed",
+            "run_canceled",
+        ]
+    )
+
+
+class AutoResearchExperimentBridgeConfig(BaseModel):
+    enabled: bool = False
+    mode: AutoResearchExperimentBridgeMode = "manual_async"
+    target_kind: AutoResearchExperimentBridgeTargetKind = "manual"
+    target_label: str = "external-environment"
+    auto_resume_on_result: bool = True
+    notification_hooks: list[AutoResearchExperimentBridgeNotificationHook] = Field(
+        default_factory=lambda: [AutoResearchExperimentBridgeNotificationHook(channel="console")]
+    )
+
+    @field_validator("target_label")
+    @classmethod
+    def validate_target_label(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("target_label must not be empty")
+        return cleaned
+
+
 class BenchmarkSource(BaseModel):
     kind: BenchmarkKind = "builtin"
     name: str | None = None
@@ -220,6 +277,7 @@ class AutoResearchRunRequest(BaseModel):
     queue_priority: AutoResearchQueuePriority = "normal"
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
+    experiment_bridge: AutoResearchExperimentBridgeConfig | None = None
     auto_search_literature: bool = False
     auto_fetch_literature: bool = False
 
@@ -239,6 +297,7 @@ class AutoResearchRunConfig(BaseModel):
     queue_priority: AutoResearchQueuePriority = "normal"
     benchmark: BenchmarkSource | None = None
     execution_backend: ExecutionBackendSpec | None = None
+    experiment_bridge: AutoResearchExperimentBridgeConfig | None = None
     auto_search_literature: bool = False
     auto_fetch_literature: bool = False
     docker_image: str | None = None
@@ -260,6 +319,7 @@ class AutoResearchRunConfig(BaseModel):
             queue_priority=payload.queue_priority,
             benchmark=payload.benchmark,
             execution_backend=payload.execution_backend,
+            experiment_bridge=payload.experiment_bridge,
             auto_search_literature=payload.auto_search_literature,
             auto_fetch_literature=payload.auto_fetch_literature,
             docker_image=payload.docker_image,
@@ -1339,6 +1399,78 @@ class AutoResearchPublishExportRead(BaseModel):
     download_ready: bool = True
 
 
+class AutoResearchBridgeImportedArtifactRead(BaseModel):
+    imported_at: datetime
+    source: Literal["inline", "file"]
+    artifact_path: str
+    summary: str
+    primary_metric: str
+    objective_score: float | None = None
+
+
+class AutoResearchBridgeSessionRead(BaseModel):
+    session_id: str
+    created_at: datetime
+    updated_at: datetime
+    status: AutoResearchBridgeSessionStatus = "waiting_result"
+    candidate_id: str
+    candidate_title: str
+    round_index: int
+    goal: str
+    strategy: str
+    handoff_dir: str
+    manifest_path: str
+    instructions_path: str
+    code_path: str
+    benchmark_path: str | None = None
+    result_path: str
+    last_polled_at: datetime | None = None
+    external_status: str | None = None
+    last_error: str | None = None
+    imported_artifact: AutoResearchBridgeImportedArtifactRead | None = None
+
+
+class AutoResearchBridgeCheckpointRead(BaseModel):
+    checkpoint_id: str
+    created_at: datetime
+    kind: AutoResearchBridgeCheckpointKind
+    summary: str
+    detail: str | None = None
+    session_id: str | None = None
+
+
+class AutoResearchBridgeNotificationRead(BaseModel):
+    notification_id: str
+    created_at: datetime
+    event: AutoResearchBridgeNotificationEvent
+    channel: AutoResearchBridgeNotificationChannel
+    status: AutoResearchBridgeNotificationStatus = "sent"
+    target: str | None = None
+    message: str
+    delivered_at: datetime | None = None
+    error: str | None = None
+
+
+class AutoResearchExperimentBridgeRead(BaseModel):
+    project_id: str
+    run_id: str
+    enabled: bool = False
+    config: AutoResearchExperimentBridgeConfig | None = None
+    persisted_path: str | None = None
+    status: AutoResearchBridgeStatus = "inactive"
+    active_session_id: str | None = None
+    latest_session_id: str | None = None
+    open_session_count: int = 0
+    imported_session_count: int = 0
+    session_count: int = 0
+    checkpoint_count: int = 0
+    notification_count: int = 0
+    current_session: AutoResearchBridgeSessionRead | None = None
+    sessions: list[AutoResearchBridgeSessionRead] = Field(default_factory=list)
+    checkpoints: list[AutoResearchBridgeCheckpointRead] = Field(default_factory=list)
+    notifications: list[AutoResearchBridgeNotificationRead] = Field(default_factory=list)
+
+
 class AutoResearchOperatorProjectActionsRead(BaseModel):
     start_run: bool = True
 
@@ -1357,6 +1489,8 @@ class AutoResearchOperatorRunActionsRead(BaseModel):
     resume: bool = False
     retry: bool = False
     cancel: bool = False
+    refresh_bridge: bool = False
+    import_bridge_result: bool = False
     refresh_review: bool = False
     apply_review_actions: bool = False
     rebuild_paper: bool = False
@@ -1388,6 +1522,10 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     candidate_execution_limit: int | None = None
     executed_candidate_count: int = 0
     recovery_count: int = 0
+    bridge_status: AutoResearchBridgeStatus | None = None
+    bridge_target_label: str | None = None
+    bridge_session_status: AutoResearchBridgeSessionStatus | None = None
+    bridge_session_count: int = 0
     review_round: int = 0
     open_issue_count: int = 0
     pending_action_count: int = 0
@@ -1403,6 +1541,7 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
 class AutoResearchOperatorRunDetailRead(BaseModel):
     run: AutoResearchRunRead
     execution: AutoResearchRunExecutionRead
+    bridge: AutoResearchExperimentBridgeRead | None = None
     registry: AutoResearchRunRegistryRead
     registry_views: AutoResearchRunRegistryViewsRead
     review: AutoResearchRunReviewRead | None = None
@@ -1475,6 +1614,43 @@ class AutoResearchExecutionCommandResponse(BaseModel):
 class AutoResearchRunControlUpdateRead(BaseModel):
     run: AutoResearchRunRead
     execution: AutoResearchRunExecutionRead
+
+
+class AutoResearchBridgeImportRequest(BaseModel):
+    session_id: str | None = None
+    summary: str
+    objective_score: float
+    primary_metric: str = "macro_f1"
+    objective_system: str = "candidate_system"
+    baseline_system: str = "baseline"
+    baseline_score: float | None = None
+    key_findings: list[str] = Field(default_factory=list)
+    notes: str | None = None
+
+    @field_validator("summary")
+    @classmethod
+    def validate_summary(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("summary must not be empty")
+        return cleaned
+
+    @field_validator("primary_metric", "objective_system", "baseline_system")
+    @classmethod
+    def validate_non_empty_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("field must not be empty")
+        return cleaned
+
+
+class AutoResearchBridgeUpdateRead(BaseModel):
+    bridge: AutoResearchExperimentBridgeRead
+    run: AutoResearchRunRead
+    execution: AutoResearchRunExecutionRead
+    imported: bool = False
+    resumed: bool = False
+    source: Literal["none", "inline", "file"] = "none"
 
 
 class AutoResearchReviewLoopApplyRequest(BaseModel):

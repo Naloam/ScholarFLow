@@ -19,6 +19,7 @@ from schemas.autoresearch import (
     TaskFamily,
 )
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec
+from services.autoresearch.bridge import AutoResearchExperimentBridgeService, build_bridge_state
 from services.autoresearch.ingestion import resolve_benchmark
 from services.autoresearch.literature_pipeline import gather_literature_context
 from services.autoresearch.planner import ResearchPlanner
@@ -672,6 +673,95 @@ class AutoResearchOrchestrator:
             )
         )
 
+    def ingest_bridge_result(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        session_id: str,
+        artifact: ResultArtifact,
+    ) -> AutoResearchRunRead:
+        run = load_run(project_id, run_id)
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if run.plan is None or run.spec is None or run.portfolio is None:
+            raise ValueError("Run is missing persisted planning state required for bridge import")
+        bridge = build_bridge_state(project_id, run_id)
+        if bridge is None:
+            raise ValueError(f"Run not found: {run_id}")
+        session = next((item for item in bridge.sessions if item.session_id == session_id), None)
+        if session is None:
+            raise ValueError(f"Bridge session not found: {session_id}")
+        candidate = self._candidate_by_id(run.candidates, session.candidate_id)
+        if candidate is None:
+            raise ValueError(f"Candidate not found for bridge session: {session.candidate_id}")
+
+        attempts = list(candidate.attempts)
+        if any(item.round_index == session.round_index for item in attempts):
+            raise ValueError(
+                f"Bridge result for round {session.round_index} was already imported for {session.candidate_id}"
+            )
+        critique = self._attempt_critique(artifact, attempts)
+        attempt = ExperimentAttempt(
+            round_index=session.round_index,
+            strategy=session.strategy,
+            goal=session.goal,
+            status="done" if artifact.status == "done" else "failed",
+            summary=artifact.summary,
+            critique=critique,
+            code_path=session.code_path,
+            repair_summary=None,
+            artifact=artifact,
+        )
+        attempts.append(attempt)
+        best_attempt = self._best_attempt_from_history(attempts)
+        best_artifact = best_attempt.artifact if best_attempt is not None else attempts[-1].artifact
+        best_code_path = best_attempt.code_path if best_attempt is not None else attempts[-1].code_path
+        best_score = (
+            self._artifact_score(best_attempt.artifact)
+            if best_attempt is not None and best_attempt.artifact is not None
+            else None
+        )
+
+        candidates = self._update_candidate(
+            run.candidates,
+            candidate.id,
+            status="running",
+            attempts=attempts,
+            artifact=best_artifact,
+            generated_code_path=best_code_path,
+            selected_round_index=best_attempt.round_index if best_attempt is not None else None,
+            score=(
+                best_score
+                if best_score is not None and best_score != float("-inf")
+                else None
+            ),
+        )
+        checkpoint_candidate = self._candidate_by_id(candidates, candidate.id)
+        if checkpoint_candidate is not None:
+            candidates = self._replace_candidate(
+                candidates,
+                self._persist_candidate(
+                    project_id=project_id,
+                    run_id=run_id,
+                    base_plan=run.plan,
+                    base_spec=run.spec,
+                    candidate=checkpoint_candidate,
+                ),
+            )
+        candidates = self._sync_candidate_manifests(
+            project_id=project_id,
+            run_id=run_id,
+            candidates=candidates,
+            decisions=run.portfolio.decisions,
+        )
+        return self._checkpoint_run_state(
+            run,
+            candidates=candidates,
+            portfolio=run.portfolio,
+            preferred_candidate_id=candidate.id,
+        )
+
     def apply_review_actions(
         self,
         *,
@@ -867,6 +957,7 @@ class AutoResearchOrchestrator:
             effective_backend = execution_backend or run.execution_backend
             if effective_backend is None and docker_image:
                 effective_backend = ExecutionBackendSpec(docker_image=docker_image)
+            bridge_service = AutoResearchExperimentBridgeService()
             self._raise_if_cancelled(should_cancel)
             restoring_from_checkpoint = (
                 execution_action in {"resume", "retry"} and self._can_resume_from_checkpoint(run)
@@ -1068,6 +1159,11 @@ class AutoResearchOrchestrator:
                     }
                 )
             run = save_run(run.model_copy(update=run_updates))
+            bridge_enabled = bool(
+                run.request is not None
+                and run.request.experiment_bridge is not None
+                and run.request.experiment_bridge.enabled
+            )
 
             for candidate_id in candidate_order:
                 self._raise_if_cancelled(should_cancel)
@@ -1141,6 +1237,8 @@ class AutoResearchOrchestrator:
                     self._raise_if_cancelled(should_cancel)
                     goal = self._attempt_goal(attempts, round_index)
                     repair_summary = None
+                    code_override = None
+                    strategy_override = None
                     if goal == "repair_previous_failure" and attempts:
                         repair_candidate = self.repair.repair(
                             previous_attempt=attempts[-1],
@@ -1156,37 +1254,11 @@ class AutoResearchOrchestrator:
                             ),
                         }
                         if repair_candidate.strategy != "repair_regenerate":
-                            strategy, code_path, artifact = self.runner.run(
-                                project_id=project_id,
-                                run_id=run_id,
-                                plan=candidate_plan,
-                                spec=candidate_spec,
-                                benchmark_payload=benchmark.payload,
-                                round_index=round_index,
-                                goal=goal,
-                                prior_attempts=attempts,
-                                execution_backend=effective_backend,
-                                code_override=repair_candidate.code,
-                                strategy_override=repair_candidate.strategy,
-                                code_filename_prefix=candidate.id,
-                                code_subdir=f"candidates/{candidate.id}",
-                            )
-                        else:
-                            strategy, code_path, artifact = self.runner.run(
-                                project_id=project_id,
-                                run_id=run_id,
-                                plan=candidate_plan,
-                                spec=candidate_spec,
-                                benchmark_payload=benchmark.payload,
-                                round_index=round_index,
-                                goal=goal,
-                                prior_attempts=attempts,
-                                execution_backend=effective_backend,
-                                code_filename_prefix=candidate.id,
-                                code_subdir=f"candidates/{candidate.id}",
-                            )
-                    else:
-                        strategy, code_path, artifact = self.runner.run(
+                            code_override = repair_candidate.code
+                            strategy_override = repair_candidate.strategy
+
+                    if bridge_enabled:
+                        strategy, code_path, _prepared_code = self.runner.prepare_attempt(
                             project_id=project_id,
                             run_id=run_id,
                             plan=candidate_plan,
@@ -1195,10 +1267,78 @@ class AutoResearchOrchestrator:
                             round_index=round_index,
                             goal=goal,
                             prior_attempts=attempts,
-                            execution_backend=effective_backend,
+                            code_override=code_override,
+                            strategy_override=strategy_override,
                             code_filename_prefix=candidate.id,
                             code_subdir=f"candidates/{candidate.id}",
                         )
+                        candidates = self._update_candidate(
+                            candidates,
+                            candidate.id,
+                            status="running",
+                            generated_code_path=code_path,
+                        )
+                        checkpoint_candidate = self._candidate_by_id(candidates, candidate.id)
+                        if checkpoint_candidate is not None:
+                            candidates = self._replace_candidate(
+                                candidates,
+                                self._persist_candidate(
+                                    project_id=project_id,
+                                    run_id=run_id,
+                                    base_plan=plan,
+                                    base_spec=spec,
+                                    candidate=checkpoint_candidate,
+                                ),
+                            )
+                        candidates = self._sync_candidate_manifests(
+                            project_id=project_id,
+                            run_id=run_id,
+                            candidates=candidates,
+                            decisions=portfolio.decisions,
+                        )
+                        run = self._checkpoint_run_state(
+                            run,
+                            candidates=candidates,
+                            portfolio=portfolio,
+                            preferred_candidate_id=candidate.id,
+                        )
+                        candidates = run.candidates
+                        active_candidate = self._candidate_by_id(candidates, candidate.id)
+                        bridge_service.start_session(
+                            project_id=project_id,
+                            run_id=run_id,
+                            candidate_id=candidate.id,
+                            candidate_title=active_candidate.title if active_candidate is not None else candidate.title,
+                            round_index=round_index,
+                            goal=goal,
+                            strategy=strategy,
+                            code_path=code_path,
+                            plan_payload=candidate_plan.model_dump(mode="json"),
+                            spec_payload=candidate_spec.model_dump(mode="json"),
+                            prior_attempts_payload=[item.model_dump(mode="json") for item in attempts],
+                            execution_backend_payload=(
+                                effective_backend.model_dump(mode="json")
+                                if effective_backend is not None
+                                else None
+                            ),
+                        )
+                        return load_run(project_id, run_id) or run
+
+                    strategy, code_path, artifact = self.runner.run(
+                        project_id=project_id,
+                        run_id=run_id,
+                        plan=candidate_plan,
+                        spec=candidate_spec,
+                        benchmark_payload=benchmark.payload,
+                        round_index=round_index,
+                        goal=goal,
+                        prior_attempts=attempts,
+                        execution_backend=effective_backend,
+                        code_override=code_override,
+                        strategy_override=strategy_override,
+                        code_filename_prefix=candidate.id,
+                        code_subdir=f"candidates/{candidate.id}",
+                    )
                     artifact.environment.setdefault("benchmark_snapshot_path", benchmark_snapshot_path)
                     if chunk_context:
                         artifact.environment.setdefault("literature_chunk_context", chunk_context)
@@ -1409,6 +1549,11 @@ class AutoResearchOrchestrator:
                         }
                     )
                 )
+                bridge_service.finalize_run(
+                    project_id=project_id,
+                    run_id=run_id,
+                    run_status="failed",
+                )
                 return failed
 
             winner_plan = self.planner.candidate_plan(plan, winner)
@@ -1546,6 +1691,11 @@ class AutoResearchOrchestrator:
                     }
                 )
             )
+            bridge_service.finalize_run(
+                project_id=project_id,
+                run_id=run_id,
+                run_status="done",
+            )
             return completed
         except AutoResearchExecutionCancelled as exc:
             canceled = save_run(
@@ -1556,6 +1706,11 @@ class AutoResearchOrchestrator:
                     }
                 )
             )
+            bridge_service.finalize_run(
+                project_id=project_id,
+                run_id=run_id,
+                run_status="canceled",
+            )
             raise AutoResearchExecutionCancelled(canceled.error or str(exc)) from exc
         except Exception as exc:
             failed = save_run(
@@ -1565,5 +1720,10 @@ class AutoResearchOrchestrator:
                         "error": str(exc),
                     }
                 )
+            )
+            bridge_service.finalize_run(
+                project_id=project_id,
+                run_id=run_id,
+                run_status="failed",
             )
             return failed

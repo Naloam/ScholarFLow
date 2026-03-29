@@ -1,9 +1,12 @@
 import type {
+  AutoResearchBridgeImportRequest,
+  AutoResearchBridgeUpdate,
   AutoResearchBundleIndex,
   AutoResearchCandidateRegistry,
   AnalysisSummary,
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
+  AutoResearchExperimentBridge,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExport,
@@ -332,6 +335,27 @@ export const api = {
 
   getAutoResearchExecution(projectId: string, runId: string): Promise<AutoResearchExecution> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/execution`);
+  },
+
+  getAutoResearchBridge(projectId: string, runId: string): Promise<AutoResearchExperimentBridge> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/bridge`);
+  },
+
+  refreshAutoResearchBridge(projectId: string, runId: string): Promise<AutoResearchBridgeUpdate> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/bridge/refresh`, {
+      method: "POST",
+    });
+  },
+
+  importAutoResearchBridgeResult(
+    projectId: string,
+    runId: string,
+    payload: AutoResearchBridgeImportRequest,
+  ): Promise<AutoResearchBridgeUpdate> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/bridge/import`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   getAutoResearchOperatorConsole(

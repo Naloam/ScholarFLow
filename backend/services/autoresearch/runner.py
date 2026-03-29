@@ -1075,7 +1075,7 @@ class AutoExperimentRunner:
             key=lambda item: item.objective_score_mean if item.objective_score_mean is not None else float("-inf"),
         )
 
-    def run(
+    def prepare_attempt(
         self,
         *,
         project_id: str,
@@ -1091,7 +1091,7 @@ class AutoExperimentRunner:
         strategy_override: str | None = None,
         code_filename_prefix: str | None = None,
         code_subdir: str | None = None,
-    ) -> tuple[str, str, ResultArtifact]:
+    ) -> tuple[str, str, str]:
         if code_override is not None and strategy_override is not None:
             strategy, code = strategy_override, code_override
         else:
@@ -1113,6 +1113,39 @@ class AutoExperimentRunner:
             code,
             filename=f"{filename_prefix}experiment_round_{round_index}_{safe_strategy}.py",
             subdir=code_subdir,
+        )
+        return strategy, code_path, code
+
+    def run(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark_payload: dict[str, Any],
+        round_index: int,
+        goal: str,
+        prior_attempts: list[ExperimentAttempt],
+        execution_backend: ExecutionBackendSpec | None = None,
+        code_override: str | None = None,
+        strategy_override: str | None = None,
+        code_filename_prefix: str | None = None,
+        code_subdir: str | None = None,
+    ) -> tuple[str, str, ResultArtifact]:
+        strategy, code_path, code = self.prepare_attempt(
+            project_id=project_id,
+            run_id=run_id,
+            plan=plan,
+            spec=spec,
+            benchmark_payload=benchmark_payload,
+            round_index=round_index,
+            goal=goal,
+            prior_attempts=prior_attempts,
+            code_override=code_override,
+            strategy_override=strategy_override,
+            code_filename_prefix=code_filename_prefix,
+            code_subdir=code_subdir,
         )
 
         sweep_results: list[SweepEvaluationResult] = []

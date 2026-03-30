@@ -54,6 +54,8 @@ def _utcnow() -> datetime:
 
 
 _INLINE_LATEX_PATTERN = re.compile(r"`([^`]+)`|\[(\d+(?:,\s*\d+)*)\]")
+_COMPILE_REQUIRED_SOURCE_KINDS = {"latex", "bibtex", "shell"}
+_COMPILE_REQUIRED_SOURCE_PATHS = {"paper.md", "paper_compile_report.json", "manifest.json"}
 
 
 def _latex_escape(text: str) -> str:
@@ -70,6 +72,19 @@ def _latex_escape(text: str) -> str:
         "^": r"\textasciicircum{}",
     }
     return "".join(replacements.get(character, character) for character in text)
+
+
+def _compile_required_source_files(
+    paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+) -> list[str]:
+    return _dedupe_preserving_order(
+        [
+            item.relative_path
+            for item in paper_sources_manifest.files
+            if item.kind in _COMPILE_REQUIRED_SOURCE_KINDS
+            or item.relative_path in _COMPILE_REQUIRED_SOURCE_PATHS
+        ]
+    )
 
 
 def _excerpt(text: str, *, limit: int = 280) -> str | None:
@@ -291,6 +306,137 @@ class PaperWriter:
             for item in paper_revision_state.open_issues
             if lowered_title in item.lower()
         ]
+
+    def _humanize_evidence_focus(self, evidence_focus: list[str]) -> str | None:
+        labels = _dedupe_preserving_order(
+            [
+                item.replace("paper_revision_state", "revision state")
+                .replace("claim_evidence_matrix", "claim evidence matrix")
+                .replace(".", " ")
+                .replace("_", " ")
+                for item in evidence_focus
+            ]
+        )
+        if not labels:
+            return None
+        if len(labels) == 1:
+            return labels[0]
+        if len(labels) == 2:
+            return f"{labels[0]} and {labels[1]}"
+        return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+    def _auto_revision_paragraph_markers(self) -> tuple[str, ...]:
+        return (
+            "This revision pass keeps",
+            "Claims without full support are now framed",
+            "Open review items are treated",
+            "Revision focus for this section:",
+            "One unresolved review concern for this section is:",
+            "The section foregrounds the preserved evidence anchors in",
+            "This section was refreshed against",
+        )
+
+    def _strip_auto_revision_paragraph(self, body: str) -> str:
+        paragraphs = [item.strip() for item in body.strip().split("\n\n") if item.strip()]
+        if not paragraphs:
+            return ""
+        last_paragraph = paragraphs[-1]
+        if any(marker in last_paragraph for marker in self._auto_revision_paragraph_markers()):
+            return "\n\n".join(paragraphs[:-1]).strip()
+        return body.strip()
+
+    def _revision_sentence_fragment(self, text: str, *, limit: int = 180) -> str | None:
+        excerpt = _excerpt(text, limit=limit)
+        if excerpt is None:
+            return None
+        return excerpt if excerpt.endswith((".", "!", "?")) else f"{excerpt}."
+
+    def _section_revision_scope_sentence(self, section: AutoResearchPaperPlanSectionRead) -> str:
+        title = section.title.lower()
+        if title in {"results", "experimental setup"}:
+            return (
+                "This revision pass keeps the section tied to the selected sweep, aggregate metrics, "
+                "acceptance checks, and paired significance evidence preserved in the artifact."
+            )
+        if title in {"related work and research plan", "discussion", "conclusion", "introduction"}:
+            return (
+                "This revision pass keeps the section tied to the executed proxy benchmark, preserved "
+                "literature context, and explicitly bounded contribution framing."
+            )
+        if title == "method":
+            return (
+                "This revision pass keeps the section tied to the concrete benchmark setup, baselines, "
+                "ablations, and executable constraints preserved for the run."
+            )
+        if title == "limitations":
+            return (
+                "This revision pass keeps negative results, failed configurations, and unresolved risks "
+                "explicit instead of leaving them outside the manuscript."
+            )
+        return (
+            "This revision pass keeps the section tied to the persisted evidence trail and avoids "
+            "claims that are broader than the executed run supports."
+        )
+
+    def _auto_revision_draft(
+        self,
+        *,
+        section: AutoResearchPaperPlanSectionRead,
+        current_body: str,
+        claim_entries: list[AutoResearchClaimEvidenceEntryRead],
+        actions: list[AutoResearchPaperRevisionActionRead],
+        open_issues: list[str],
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+    ) -> str:
+        base_body = self._strip_auto_revision_paragraph(current_body) or self._fallback_section_body(section)
+        if paper_revision_state.revision_round <= 0:
+            return base_body
+        focus_section = (
+            section.title in paper_revision_state.focus_sections
+            or bool(actions)
+            or bool(open_issues)
+        )
+        if not focus_section:
+            return base_body
+
+        revision_sentences = [self._section_revision_scope_sentence(section)]
+        unsupported_claim_count = sum(
+            1 for item in claim_entries if item.support_status != "supported"
+        )
+        if unsupported_claim_count:
+            revision_sentences.append(
+                "Claims without full support are now framed as bounded observations or follow-up questions "
+                "rather than settled findings."
+            )
+        if open_issues:
+            revision_sentences.append(
+                "Open review items are treated as explicit caveats in this section instead of remaining "
+                "implicit assumptions."
+            )
+            primary_issue = self._revision_sentence_fragment(open_issues[0])
+            if primary_issue is not None:
+                revision_sentences.append(
+                    f"One unresolved review concern for this section is: {primary_issue}"
+                )
+        evidence_focus = self._humanize_evidence_focus(section.evidence_focus)
+        if evidence_focus:
+            revision_sentences.append(
+                f"The section foregrounds the preserved evidence anchors in {evidence_focus}."
+            )
+        if actions:
+            primary_action = self._revision_sentence_fragment(actions[0].detail)
+            if primary_action is not None:
+                revision_sentences.append(
+                    f"Revision focus for this section: {primary_action}"
+                )
+            revision_sentences.append(
+                f"This section was refreshed against {len(actions)} persisted revision action(s) in "
+                f"round {paper_revision_state.revision_round}."
+            )
+        revision_paragraph = " ".join(revision_sentences).strip()
+        if not revision_paragraph:
+            return base_body
+        return f"{base_body}\n\n{revision_paragraph}".strip()
 
     def _rewrite_packet_asset_paths(
         self,
@@ -1683,6 +1829,14 @@ Program objective:
         evidence_focus_block = [f"- {item}" for item in packet.evidence_focus] or ["- None."]
         source_assets_block = [f"- `{item}`" for item in packet.source_asset_paths] or ["- None."]
         current_body_block = current_body.strip() or "_No current manuscript body was available for this section._"
+        auto_revision_draft = self._auto_revision_draft(
+            section=section,
+            current_body=current_body,
+            claim_entries=claim_entries,
+            actions=actions,
+            open_issues=packet.open_issues,
+            paper_revision_state=paper_revision_state,
+        )
         return "\n".join(
             [
                 f"# Section Rewrite Packet: {packet.section_title}",
@@ -1716,6 +1870,9 @@ Program objective:
                 "",
                 "## Source Assets",
                 *source_assets_block,
+                "",
+                "## Auto-Revision Draft",
+                auto_revision_draft,
                 "",
             ]
         )
@@ -2362,9 +2519,12 @@ Program objective:
         ):
             required_inputs.append(paper_sources_manifest.bibliography)
         required_inputs = _dedupe_preserving_order(required_inputs)
+        required_source_files = _compile_required_source_files(paper_sources_manifest)
         expected_outputs = list(paper_sources_manifest.expected_outputs)
         missing_required_inputs = [item for item in required_inputs if item not in workspace_files]
         materialized_outputs = [item for item in expected_outputs if item in workspace_files]
+        source_package_complete = True
+        all_expected_outputs_materialized = not expected_outputs
         return AutoResearchPaperCompileReportRead(
             generated_at=_utcnow(),
             entrypoint=paper_sources_manifest.entrypoint,
@@ -2373,9 +2533,13 @@ Program objective:
             compile_commands=list(paper_sources_manifest.compile_commands),
             required_inputs=required_inputs,
             missing_required_inputs=missing_required_inputs,
+            required_source_files=required_source_files,
+            missing_required_source_files=[],
             expected_outputs=expected_outputs,
             materialized_outputs=materialized_outputs,
-            ready_for_compile=not missing_required_inputs,
+            source_package_complete=source_package_complete,
+            all_expected_outputs_materialized=all_expected_outputs_materialized,
+            ready_for_compile=not missing_required_inputs and source_package_complete,
         )
 
     def build_pipeline(
@@ -2734,6 +2898,31 @@ Program objective:
                 + (f"\n\n{conclusion_context_sentence}" if conclusion_context_sentence else "")
             ),
         }
+        if paper_revision_state.revision_round > 0:
+            for section in paper_plan.sections:
+                slug = _section_slug(section.title)
+                current_body = section_bodies.get(slug, self._fallback_section_body(section))
+                claim_entries = self._section_claim_entries(
+                    section=section,
+                    claim_evidence_matrix=claim_evidence_matrix,
+                )
+                actions = self._section_pending_actions(
+                    section=section,
+                    paper_revision_state=paper_revision_state,
+                )
+                open_issues = self._section_open_issues(
+                    section=section,
+                    claim_entries=claim_entries,
+                    paper_revision_state=paper_revision_state,
+                )
+                section_bodies[slug] = self._auto_revision_draft(
+                    section=section,
+                    current_body=current_body,
+                    claim_entries=claim_entries,
+                    actions=actions,
+                    open_issues=open_issues,
+                    paper_revision_state=paper_revision_state,
+                )
         return self._render_section_sequence(
             title=plan.title,
             paper_plan=paper_plan,

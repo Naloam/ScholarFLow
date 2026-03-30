@@ -4,11 +4,13 @@ import type {
   AutoResearchBridgeImportRequest,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
+  AutoResearchPublicationManifest,
   AutoResearchRunRequest,
 } from "../../api/types";
 
 type OperatorConsolePanelProps = {
   consoleState: AutoResearchOperatorConsole | null;
+  publicationManifest: AutoResearchPublicationManifest | null;
   filters: AutoResearchOperatorConsoleFilters;
   projectTopic?: string | null;
   disabled: boolean;
@@ -29,6 +31,9 @@ type OperatorConsolePanelProps = {
     deployment_label?: string | null;
   }) => void;
   onDownloadPublish: () => void;
+  onDownloadPaper: () => void;
+  onDownloadCompiledPaper: () => void;
+  onDownloadCodePackage: () => void;
   onUpdateControls: (payload: {
     max_rounds?: number | null;
     candidate_execution_limit?: number | null;
@@ -60,6 +65,7 @@ function formatTimestamp(value: string | null | undefined): string {
 
 export function OperatorConsolePanel({
   consoleState,
+  publicationManifest,
   filters,
   projectTopic,
   disabled,
@@ -77,6 +83,9 @@ export function OperatorConsolePanel({
   onRebuildPaper,
   onExportPublish,
   onDownloadPublish,
+  onDownloadPaper,
+  onDownloadCompiledPaper,
+  onDownloadCodePackage,
   onUpdateControls,
 }: OperatorConsolePanelProps) {
   const [draftFilters, setDraftFilters] = useState<AutoResearchOperatorConsoleFilters>(filters);
@@ -125,6 +134,8 @@ export function OperatorConsolePanel({
   const lineage = current?.registry?.lineage;
   const novelty = review?.novelty_assessment ?? null;
   const activeConsole = consoleState;
+  const currentPublication =
+    current && publicationManifest?.run_id === current.run.id ? publicationManifest : null;
   const queueTelemetry = activeConsole?.queue ?? current?.execution.queue ?? null;
   const workerFleet = activeConsole?.workers ?? current?.execution.workers ?? [];
   const currentSummary =
@@ -845,6 +856,110 @@ export function OperatorConsolePanel({
                   </span>
                 </div>
               </form>
+
+              {currentPublication ? (
+                <>
+                  <div
+                    className="summary-banner operator-summary-grid"
+                    data-testid="operator-publication-summary"
+                  >
+                    <div>
+                      <span className="meta-label">Publication</span>
+                      <strong>{currentPublication.publication_id}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Bundle</span>
+                      <strong>{currentPublication.bundle_kind}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Paper Asset</span>
+                      <strong>{currentPublication.paper_path ? "available" : "missing"}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Compiled PDF</span>
+                      <strong>{currentPublication.compiled_paper_path ? "available" : "missing"}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Compile Outputs</span>
+                      <strong>{currentPublication.paper_compile_output_paths.length}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Code Package</span>
+                      <strong>{currentPublication.code_package_path ? "available" : "missing"}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Archive</span>
+                      <strong>{currentPublication.archive_current ? "current" : "stale"}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Final Ready</span>
+                      <strong>{currentPublication.final_publish_ready ? "yes" : "no"}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">Updated</span>
+                      <strong>{formatTimestamp(currentPublication.updated_at)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onDownloadPaper}
+                      disabled={disabled || !currentPublication.paper_path}
+                      data-testid="download-paper-button"
+                    >
+                      Download Paper
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onDownloadCompiledPaper}
+                      disabled={disabled || !currentPublication.compiled_paper_path}
+                      data-testid="download-compiled-paper-button"
+                    >
+                      Download Compiled PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onDownloadCodePackage}
+                      disabled={disabled || !currentPublication.code_package_path}
+                      data-testid="download-code-package-button"
+                    >
+                      Download Code Package
+                    </button>
+                  </div>
+
+                  <div className="meta-block">
+                    <span className="meta-label">Publication Assets</span>
+                    <code data-testid="operator-publication-assets">
+                      archive={currentPublication.publish_archive_path} | paper=
+                      {currentPublication.paper_path ?? "n/a"} | compiled=
+                      {currentPublication.compiled_paper_path ?? "n/a"} | code=
+                      {currentPublication.code_package_path ?? "n/a"}
+                    </code>
+                  </div>
+
+                  <div className="meta-block">
+                    <span className="meta-label">Compile Outputs</span>
+                    <code data-testid="operator-compile-output-paths">
+                      {currentPublication.paper_compile_output_paths.length
+                        ? currentPublication.paper_compile_output_paths.join(" | ")
+                        : "n/a"}
+                    </code>
+                  </div>
+                </>
+              ) : (
+                <div className="empty-state" data-testid="operator-publication-empty">
+                  <p>No publication manifest for the current run.</p>
+                  <span>
+                    {publish?.publication_id
+                      ? "Refresh the run or export publish again if paper assets were changed."
+                      : "Export Publish to materialize a publication manifest and paper assets."}
+                  </span>
+                </div>
+              )}
 
               <div className="summary-banner operator-summary-grid">
                 <div>

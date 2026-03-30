@@ -104,50 +104,52 @@ export function DeploymentPanel({
               </div>
 
               <div className="list-block">
-                {deployment.publications.map((item) => (
-                  <div
-                    key={item.publication.publication_id}
-                    className="evidence-card"
-                    data-testid={`deployment-publication-${item.publication.run_id}`}
-                  >
-                    <strong>{item.publication.paper_title}</strong>
-                    <small>
-                      project {item.publication.project_title ?? item.publication.project_id} / run{" "}
-                      {item.publication.run_id}
-                    </small>
-                    <small>
-                      bundle {item.publication.bundle_kind} / final ready{" "}
-                      {item.publication.final_publish_ready ? "yes" : "no"}
-                    </small>
-                    <small>
-                      topic {item.publication.topic}
-                    </small>
-                    <small>
-                      listed {formatTimestamp(item.listed_at)} / updated{" "}
-                      {formatTimestamp(item.publication.updated_at)}
-                    </small>
-                    <small>
-                      archive {item.publication.publish_archive_path}
-                    </small>
-                    <small>
-                      code {item.publication.code_package_path ?? "n/a"}
-                    </small>
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={() =>
-                        onOpenPublication(
-                          item.publication.project_id,
-                          item.publication.run_id,
-                        )
-                      }
-                      disabled={disabled}
-                      data-testid={`deployment-open-${item.publication.run_id}`}
+                {deployment.publications.map((item) => {
+                  const compileOutputCount = item.publication.paper_compile_output_paths.length;
+                  return (
+                    <div
+                      key={item.publication.publication_id}
+                      className="evidence-card"
+                      data-testid={`deployment-publication-${item.publication.run_id}`}
                     >
-                      Open Publication
-                    </button>
-                  </div>
-                ))}
+                      <strong>{item.publication.paper_title}</strong>
+                      <small>
+                        project {item.publication.project_title ?? item.publication.project_id} / run{" "}
+                        {item.publication.run_id}
+                      </small>
+                      <small>
+                        bundle {item.publication.bundle_kind} / final ready{" "}
+                        {item.publication.final_publish_ready ? "yes" : "no"}
+                      </small>
+                      <small>topic {item.publication.topic}</small>
+                      <small>
+                        listed {formatTimestamp(item.listed_at)} / updated{" "}
+                        {formatTimestamp(item.publication.updated_at)}
+                      </small>
+                      <small>archive {item.publication.publish_archive_path}</small>
+                      <small>paper {item.publication.paper_path ?? "n/a"}</small>
+                      <small>
+                        compiled {item.publication.compiled_paper_path ?? "n/a"} / outputs{" "}
+                        {compileOutputCount}
+                      </small>
+                      <small>code {item.publication.code_package_path ?? "n/a"}</small>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() =>
+                          onOpenPublication(
+                            item.publication.project_id,
+                            item.publication.run_id,
+                          )
+                        }
+                        disabled={disabled}
+                        data-testid={`deployment-open-${item.publication.run_id}`}
+                      >
+                        Open Publication
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </>
           ) : null}

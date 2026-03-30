@@ -31,6 +31,9 @@ export function WorkspacePage() {
   const autoResearchDeploymentList = useWorkspaceStore((state) => state.autoResearchDeploymentList);
   const selectedAutoResearchDeploymentId = useWorkspaceStore((state) => state.selectedAutoResearchDeploymentId);
   const autoResearchDeployment = useWorkspaceStore((state) => state.autoResearchDeployment);
+  const autoResearchPublicationManifest = useWorkspaceStore(
+    (state) => state.autoResearchPublicationManifest,
+  );
   const analysis = useWorkspaceStore((state) => state.analysis);
   const betaSummary = useWorkspaceStore((state) => state.betaSummary);
   const mentorAccess = useWorkspaceStore((state) => state.mentorAccess);
@@ -71,6 +74,13 @@ export function WorkspacePage() {
   const importAutoResearchBridgeResult = useWorkspaceStore((state) => state.importAutoResearchBridgeResult);
   const exportAutoResearchPublish = useWorkspaceStore((state) => state.exportAutoResearchPublish);
   const downloadAutoResearchPublish = useWorkspaceStore((state) => state.downloadAutoResearchPublish);
+  const downloadAutoResearchPaper = useWorkspaceStore((state) => state.downloadAutoResearchPaper);
+  const downloadAutoResearchCompiledPaper = useWorkspaceStore(
+    (state) => state.downloadAutoResearchCompiledPaper,
+  );
+  const downloadAutoResearchCodePackage = useWorkspaceStore(
+    (state) => state.downloadAutoResearchCodePackage,
+  );
   const runReview = useWorkspaceStore((state) => state.runReview);
   const exportDraft = useWorkspaceStore((state) => state.exportDraft);
   const downloadLatestExport = useWorkspaceStore((state) => state.downloadLatestExport);
@@ -162,6 +172,7 @@ export function WorkspacePage() {
         <section className="workspace-column workspace-column-center">
           <OperatorConsolePanel
             consoleState={autoResearchConsole}
+            publicationManifest={autoResearchPublicationManifest}
             filters={autoResearchConsoleFilters}
             projectTopic={project?.topic ?? project?.title}
             disabled={workspaceBusy || authLocked}
@@ -179,6 +190,9 @@ export function WorkspacePage() {
             onRebuildPaper={rebuildAutoResearchPaper}
             onExportPublish={exportAutoResearchPublish}
             onDownloadPublish={downloadAutoResearchPublish}
+            onDownloadPaper={downloadAutoResearchPaper}
+            onDownloadCompiledPaper={downloadAutoResearchCompiledPaper}
+            onDownloadCodePackage={downloadAutoResearchCodePackage}
             onUpdateControls={updateAutoResearchRunControls}
           />
           <EditorSurface

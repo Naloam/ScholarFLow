@@ -566,8 +566,18 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         )
         assert run["paper_compile_report"]["ready_for_compile"] is True
         assert run["paper_compile_report"]["missing_required_inputs"] == []
+        assert run["paper_compile_report"]["missing_required_source_files"] == []
         assert run["paper_compile_report"]["materialized_outputs"] == []
+        assert run["paper_compile_report"]["source_package_complete"] is True
+        assert run["paper_compile_report"]["all_expected_outputs_materialized"] is False
         assert run["paper_compile_report"]["expected_outputs"] == run["paper_sources_manifest"]["expected_outputs"]
+        required_source_files = set(run["paper_compile_report"]["required_source_files"])
+        assert "paper.md" in required_source_files
+        assert "paper_compile_report.json" in required_source_files
+        assert "build.sh" in required_source_files
+        assert "main.tex" in required_source_files
+        assert "references.bib" in required_source_files
+        assert "manifest.json" in required_source_files
         assert run["paper_sources_manifest"]["entrypoint"] == "main.tex"
         assert "pdflatex main.tex" in run["paper_sources_manifest"]["compile_commands"]
         assert run["paper_sources_manifest"]["compiler_hint"] in {"pdflatex", "pdflatex + bibtex"}
@@ -670,6 +680,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "The search and repair trace for this run was" not in paper
         assert "## 7. Limitations" in paper
         assert "proxy benchmark rather than the full topic area" in paper
+        assert "This revision pass keeps the section tied to the persisted evidence trail" not in paper
 
         drafts = client.get(f"/api/projects/{project_id}/drafts")
         assert drafts.status_code == 200
@@ -792,6 +803,8 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         assert registry["files"]["paper_latex_source"]["exists"] is True
         assert registry["files"]["paper_bibliography_bib"]["exists"] is True
         assert registry["files"]["paper_sources_manifest_json"]["exists"] is True
+        assert registry["files"]["paper_compiled_pdf"]["exists"] is False
+        assert registry["files"]["paper_bibliography_output_bbl"]["exists"] is False
         assert any(edge["relation"] == "selected_candidate" for edge in registry["lineage"]["edges"])
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "artifact"
@@ -815,6 +828,14 @@ def test_autoresearch_registry_exposes_run_lineage_and_candidate_manifests(
         )
         assert any(
             edge["relation"] == "has_asset" and edge["target_kind"] == "paper_compile_report"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_compiled_pdf"
+            for edge in registry["lineage"]["edges"]
+        )
+        assert any(
+            edge["relation"] == "has_asset" and edge["target_kind"] == "paper_bibliography_output"
             for edge in registry["lineage"]["edges"]
         )
         assert any(
@@ -1525,8 +1546,10 @@ def test_autoresearch_review_loop_apply_command_rebuilds_paper_with_fencing(
         assert applied["run"]["paper_draft_version"] == persisted_run.paper_draft_version + 1
         assert applied["review"]["run_id"] == run_id
         assert applied["review_loop"]["run_id"] == run_id
-        assert applied["review_loop"]["current_round"] >= first_loop["current_round"]
+        assert applied["review_loop"]["current_round"] == first_loop["current_round"] + 1
         assert applied["review_loop"]["latest_review_fingerprint"]
+        assert applied["run"]["paper_revision_state"]["revision_round"] == applied["review_loop"]["current_round"]
+        assert applied["run"]["paper_revision_action_index"]["revision_round"] == applied["review_loop"]["current_round"]
     finally:
         client.close()
 
@@ -1945,15 +1968,24 @@ def test_autoresearch_rebuilds_paper_pipeline_from_persisted_run_state(
         assert rebuilt["paper_markdown"].startswith(f"# {run.plan.title}")
         assert "Stale manual draft." not in rebuilt["paper_markdown"]
         assert "[1]" in rebuilt["paper_markdown"]
+        assert "This revision pass keeps the section tied to the executed proxy benchmark" in rebuilt["paper_markdown"]
+        assert "This revision pass keeps the section tied to the selected sweep, aggregate metrics" in rebuilt["paper_markdown"]
         assert rebuilt["paper_bibliography_bib"]
         assert "@misc{ref1" in rebuilt["paper_bibliography_bib"]
         assert "\\bibliography{references}" in rebuilt["paper_latex_source"]
         assert rebuilt["paper_compile_report"]["ready_for_compile"] is True
         assert rebuilt["paper_compile_report"]["missing_required_inputs"] == []
+        assert rebuilt["paper_compile_report"]["missing_required_source_files"] == []
         assert rebuilt["paper_compile_report"]["materialized_outputs"] == ["main.pdf", "main.bbl"]
+        assert rebuilt["paper_compile_report"]["source_package_complete"] is True
+        assert rebuilt["paper_compile_report"]["all_expected_outputs_materialized"] is True
         assert rebuilt["paper_sources_manifest"]["compiler_hint"] == "pdflatex + bibtex"
         assert rebuilt["paper_sources_manifest"]["expected_outputs"] == ["main.pdf", "main.bbl"]
         assert rebuilt["paper_compile_report"]["expected_outputs"] == ["main.pdf", "main.bbl"]
+        assert "build.sh" in rebuilt["paper_compile_report"]["required_source_files"]
+        assert "main.tex" in rebuilt["paper_compile_report"]["required_source_files"]
+        assert "references.bib" in rebuilt["paper_compile_report"]["required_source_files"]
+        assert "manifest.json" in rebuilt["paper_compile_report"]["required_source_files"]
         assert Path(rebuilt["paper_path"]).read_text(encoding="utf-8") == rebuilt["paper_markdown"]
         assert json.loads(Path(rebuilt["paper_compile_report_path"]).read_text(encoding="utf-8"))["ready_for_compile"] is True
         assert Path(rebuilt["paper_sources_dir"], "main.pdf").is_file()
@@ -2006,16 +2038,17 @@ def test_autoresearch_paper_rebuild_preserves_revision_brief_from_review_loop(
         revision_brief = Path(rebuilt["paper_sources_dir"], "revision_brief.md").read_text(encoding="utf-8")
         revision_actions = Path(rebuilt["paper_sources_dir"], "revision_actions.md").read_text(encoding="utf-8")
         revision_diff = Path(rebuilt["paper_sources_dir"], "revision_diff.md").read_text(encoding="utf-8")
-        assert rebuilt["paper_revision_action_index"]["revision_round"] == loop["current_round"]
+        rebuilt_revision_round = rebuilt["paper_revision_action_index"]["revision_round"]
+        assert rebuilt_revision_round == loop["current_round"]
         assert Path(rebuilt["paper_revision_action_index_path"]).is_file()
-        assert rebuilt["paper_revision_diff"]["revision_round"] == loop["current_round"]
+        assert rebuilt["paper_revision_diff"]["revision_round"] == rebuilt_revision_round
         assert Path(rebuilt["paper_revision_diff_path"]).is_file()
-        assert rebuilt["paper_section_rewrite_index"]["revision_round"] == loop["current_round"]
+        assert rebuilt["paper_section_rewrite_index"]["revision_round"] == rebuilt_revision_round
         assert Path(rebuilt["paper_section_rewrite_index_path"]).is_file()
         assert Path(rebuilt["paper_section_rewrite_packets_dir"], "results.md").is_file()
-        assert f"- Revision round: {loop['current_round']}" in revision_brief
-        assert f"- Revision round: {loop['current_round']}" in revision_actions
-        assert f"- Revision round: {loop['current_round']}" in revision_diff
+        assert f"- Revision round: {rebuilt_revision_round}" in revision_brief
+        assert f"- Revision round: {rebuilt_revision_round}" in revision_actions
+        assert f"- Revision round: {rebuilt_revision_round}" in revision_diff
         assert "## Next Actions" in revision_brief
         assert first_issue in revision_brief
         assert first_action.action_id in revision_brief
@@ -2023,6 +2056,16 @@ def test_autoresearch_paper_rebuild_preserves_revision_brief_from_review_loop(
         results_packet = Path(rebuilt["paper_section_rewrite_packets_dir"], "results.md").read_text(encoding="utf-8")
         assert "# Section Rewrite Packet: Results" in results_packet
         assert "## Open Issues" in results_packet
+        assert "## Auto-Revision Draft" in results_packet
+        assert "This revision pass keeps the section tied to the selected sweep, aggregate metrics" in results_packet
+        assert "This revision pass keeps the section tied to the selected sweep, aggregate metrics" in rebuilt["paper_markdown"]
+        auto_revision_section = results_packet.split("## Auto-Revision Draft", 1)[1]
+        assert (
+            auto_revision_section.count(
+                "This revision pass keeps the section tied to the selected sweep, aggregate metrics"
+            )
+            == 1
+        )
         assert "revision_brief.md" in {
             item["relative_path"] for item in rebuilt["paper_sources_manifest"]["files"]
         }
@@ -2041,6 +2084,43 @@ def test_autoresearch_paper_rebuild_preserves_revision_brief_from_review_loop(
         assert "rewrite_packets/index.json" in {
             item["relative_path"] for item in rebuilt["paper_sources_manifest"]["files"]
         }
+        refreshed_loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
+        assert refreshed_loop["current_round"] == loop["current_round"] + 1
+        assert refreshed_loop["latest_review_fingerprint"] != loop["latest_review_fingerprint"]
+    finally:
+        client.close()
+
+
+def test_autoresearch_run_detail_refreshes_live_compile_report_from_paper_sources(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Compile Refresh Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        initial_run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        paper_sources_dir = Path(initial_run["paper_sources_dir"])
+        build_script = paper_sources_dir / "build.sh"
+        build_script.unlink()
+
+        refreshed_run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        report = refreshed_run["paper_compile_report"]
+        assert report["ready_for_compile"] is False
+        assert report["source_package_complete"] is False
+        assert report["missing_required_inputs"] == []
+        assert "build.sh" in report["required_source_files"]
+        assert report["missing_required_source_files"] == ["build.sh"]
     finally:
         client.close()
 
@@ -2377,6 +2457,11 @@ def test_autoresearch_publish_package_is_derived_from_selected_bundle(
         assert "run_generated_code" in final_required_roles
         assert "attempts_json" in final_required_roles
         assert "artifact_json" in final_required_roles
+        assert "run_paper_compile_report_json" in final_required_roles
+        assert "run_paper_build_script" in final_required_roles
+        assert "run_paper_latex_source" in final_required_roles
+        assert "run_paper_bibliography_bib" in final_required_roles
+        assert "run_paper_sources_manifest_json" in final_required_roles
         assert "run_artifact_json" in optional_roles
         assert "run_paper_revision_history_markdown" in optional_roles
         assert "run_paper_revision_brief_markdown" in optional_roles
@@ -2384,7 +2469,6 @@ def test_autoresearch_publish_package_is_derived_from_selected_bundle(
         assert "run_paper_revision_diff_json" in optional_roles
         assert "run_paper_section_rewrite_index_json" in optional_roles
         assert "run_paper_section_rewrite_packets_dir" in optional_roles
-        assert "run_paper_build_script" in optional_roles
         assert "run_paper_checkpoint_index_json" in optional_roles
         assert "generated_code" in optional_roles
         assert Path(package["review_path"]).is_file()
@@ -2513,6 +2597,69 @@ def test_autoresearch_publish_package_flags_missing_final_semantic_assets(
         assert package["missing_final_asset_count"] >= 1
         assert package["final_blocker_count"] >= 1
         assert any("generated_code" in item for item in package["final_blockers"])
+    finally:
+        client.close()
+
+
+def test_autoresearch_publish_package_requires_compile_ready_paper_sources(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-publish-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-publish-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 5 Compile Gate Project",
+            "Compact reranking for cs retrieval",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        Path(run["paper_sources_dir"], "build.sh").unlink()
+
+        package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert package["status"] == "revision_required"
+        assert package["publish_ready"] is False
+        assert package["review_bundle_ready"] is True
+        assert package["final_publish_ready"] is False
+        assert package["missing_required_asset_count"] == 0
+        assert package["missing_final_asset_count"] >= 1
+        assert any("run_paper_build_script" in item for item in package["final_blockers"])
+        assert any(
+            item == "Paper source package is incomplete: missing build.sh."
+            for item in package["final_blockers"]
+        )
     finally:
         client.close()
 
@@ -2838,6 +2985,75 @@ def test_autoresearch_publish_export_writes_publication_manifest_and_code_packag
             archived_names = set(archive.namelist())
         assert "run.json" in archived_names
         assert len(archived_names) > 1
+    finally:
+        client.close()
+
+
+def test_autoresearch_publication_manifest_surfaces_compiled_paper_outputs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    try:
+        project_id = _create_project(
+            client,
+            "Phase 7 Compiled Paper Manifest Project",
+            "Stable publish manifest with compiled paper outputs",
+        )
+        run_response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={"topic": "Stable publish manifest with compiled paper outputs"},
+        )
+        assert run_response.status_code == 200
+        run_id = run_response.json()["id"]
+
+        run = autoresearch_repository.load_run(project_id, run_id)
+        assert run is not None
+        paper_sources_dir = Path(run.paper_sources_dir or "")
+        (paper_sources_dir / "main.pdf").write_bytes(b"%PDF-1.4\n% compiled paper output\n")
+        (paper_sources_dir / "main.bbl").write_text("% compiled bibliography output\n", encoding="utf-8")
+
+        registry_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry")
+        assert registry_response.status_code == 200
+        registry = registry_response.json()
+        assert registry["files"]["paper_compiled_pdf"]["exists"] is True
+        assert registry["files"]["paper_bibliography_output_bbl"]["exists"] is True
+        bundle_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/registry/bundles")
+        assert bundle_response.status_code == 200
+        selected_bundle = bundle_response.json()["bundles"][0]
+        assert any(item["role"] == "run_paper_compiled_pdf" for item in selected_bundle["assets"])
+        assert any(item["role"] == "run_paper_bibliography_output_bbl" for item in selected_bundle["assets"])
+
+        export_response = client.post(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/export",
+            json={"deployment_id": "compiled_alpha", "deployment_label": "Compiled Alpha"},
+        )
+        assert export_response.status_code == 200
+        export_body = export_response.json()
+
+        manifest_response = client.get(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/manifest"
+        )
+        assert manifest_response.status_code == 200
+        manifest = manifest_response.json()
+        assert manifest["compiled_paper_path"].endswith("/paper_sources/main.pdf")
+        assert len(manifest["compiled_paper_sha256"]) == 64
+        assert manifest["compiled_paper_download_path"].endswith("/publish/paper/compiled/download")
+        assert manifest["paper_compile_output_paths"][-2:] == [
+            str(paper_sources_dir / "main.pdf"),
+            str(paper_sources_dir / "main.bbl"),
+        ]
+
+        compiled_download = client.get(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/paper/compiled/download"
+        )
+        assert compiled_download.status_code == 200
+        assert compiled_download.headers["content-disposition"].endswith('main.pdf"')
+
+        with ZipFile(Path(export_body["archive_path"])) as archive:
+            archived_names = set(archive.namelist())
+        assert "paper_sources/main.pdf" in archived_names
+        assert "paper_sources/main.bbl" in archived_names
     finally:
         client.close()
 

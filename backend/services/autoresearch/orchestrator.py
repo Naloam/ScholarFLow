@@ -858,10 +858,11 @@ class AutoResearchOrchestrator:
             raise ValueError("Review loop fingerprint changed; refresh review state before applying revisions")
         if review_loop.pending_action_count < 1:
             raise ValueError("Review loop has no pending revision actions to apply")
-        return self.rebuild_paper_pipeline(
+        return self._rebuild_paper_pipeline(
             db=db,
             project_id=project_id,
             run_id=run_id,
+            refresh_review_after_rebuild=True,
         )
 
     def rebuild_paper_pipeline(
@@ -870,6 +871,21 @@ class AutoResearchOrchestrator:
         db: Session,
         project_id: str,
         run_id: str,
+    ) -> AutoResearchRunRead:
+        return self._rebuild_paper_pipeline(
+            db=db,
+            project_id=project_id,
+            run_id=run_id,
+            refresh_review_after_rebuild=False,
+        )
+
+    def _rebuild_paper_pipeline(
+        self,
+        *,
+        db: Session,
+        project_id: str,
+        run_id: str,
+        refresh_review_after_rebuild: bool,
     ) -> AutoResearchRunRead:
         from services.autoresearch.review_publish import build_review_loop
 
@@ -992,13 +1008,11 @@ class AutoResearchOrchestrator:
                     "paper_draft_version": draft.version,
                     "candidates": updated_candidates,
                 }
-            )
+        )
         )
         set_project_status(db, project_id, "edit")
-        from services.autoresearch.review_publish import build_run_review
-
-        build_run_review(project_id, run_id)
-        build_review_loop(project_id, run_id)
+        if refresh_review_after_rebuild:
+            build_review_loop(project_id, run_id)
         return load_run(project_id, run_id) or rebuilt_run
 
     def execute(

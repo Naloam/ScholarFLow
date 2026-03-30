@@ -570,6 +570,26 @@ def download_auto_research_paper_asset(
     )
 
 
+@router.get("/{run_id}/publish/paper/compiled/download")
+def download_auto_research_compiled_paper_asset(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    del db
+    manifest = build_publication_manifest(project_id, run_id)
+    if manifest is None or manifest.compiled_paper_path is None:
+        raise HTTPException(status_code=404, detail="Auto research compiled paper asset not found")
+    compiled_paper_path = Path(manifest.compiled_paper_path).resolve()
+    if not compiled_paper_path.is_file():
+        raise HTTPException(status_code=404, detail="Auto research compiled paper asset not found")
+    return FileResponse(
+        path=compiled_paper_path,
+        filename=compiled_paper_path.name,
+        media_type="application/pdf",
+    )
+
+
 def _queue_existing_run(
     *,
     project_id: str,

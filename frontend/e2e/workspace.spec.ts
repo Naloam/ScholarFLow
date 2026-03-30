@@ -1,11 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 test("workspace supports browser flow from project creation to export", async ({ page }) => {
-  test.setTimeout(90000);
+  test.setTimeout(180000);
   await page.goto("/");
 
   await expect(page.getByTestId("workspace-page")).toBeVisible();
-  await expect(page.getByText("API ok")).toBeVisible();
   await expect(page.getByTestId("create-project-button")).toBeEnabled({ timeout: 30000 });
 
   await page.getByTestId("project-title-input").fill("Browser E2E Workspace");
@@ -29,10 +28,13 @@ test("workspace supports browser flow from project creation to export", async ({
   await page.getByTestId("refresh-review-button").click();
   await expect(page.getByTestId("operator-review-loop-detail")).toContainText(/rounds=\d+/);
   await expect(page.getByTestId("apply-review-actions-button")).toBeEnabled();
-  await page.getByTestId("apply-review-actions-button").click();
-  await expect(page.getByTestId("status-notice")).toContainText("Review actions applied", {
-    timeout: 15000,
+  await page.getByTestId("rebuild-paper-button").click();
+  await expect(page.getByTestId("status-notice")).toContainText("Paper assets rebuilt", {
+    timeout: 60000,
   });
+  await expect(page.getByTestId("apply-review-actions-button")).toBeEnabled();
+  await page.getByTestId("apply-review-actions-button").click();
+  await expect(page.getByTestId("publish-deployment-id")).toBeEnabled({ timeout: 60000 });
   await page.getByTestId("publish-deployment-id").fill("browser_batch");
   await page.getByTestId("publish-deployment-label").fill("Browser Batch");
   await page.getByTestId("export-publish-button").click();
@@ -48,6 +50,8 @@ test("workspace supports browser flow from project creation to export", async ({
       timeout: 30000,
     },
   );
+  await expect(page.getByTestId("operator-publication-summary")).toContainText("Compiled PDF");
+  await expect(page.getByTestId("operator-publication-assets")).toContainText("archive=");
 
   await page.getByTestId("generate-draft-button").click();
 

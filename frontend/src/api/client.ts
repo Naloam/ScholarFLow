@@ -477,6 +477,20 @@ export const api = {
     );
   },
 
+  downloadAutoResearchPaper(projectId: string, runId: string): Promise<string> {
+    return download(
+      `/api/projects/${projectId}/auto-research/${runId}/publish/paper/download`,
+      `${runId}-paper.md`,
+    );
+  },
+
+  downloadAutoResearchCompiledPaper(projectId: string, runId: string): Promise<string> {
+    return download(
+      `/api/projects/${projectId}/auto-research/${runId}/publish/paper/compiled/download`,
+      `${runId}-paper.pdf`,
+    );
+  },
+
   downloadAutoResearchCodePackage(projectId: string, runId: string): Promise<string> {
     return download(
       `/api/projects/${projectId}/auto-research/${runId}/publish/code/download`,

@@ -16,6 +16,7 @@ import type {
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExportRequest,
+  AutoResearchPublicationManifest,
   AutoResearchRunRequest,
   AuthConfig,
   AuthUser,
@@ -88,6 +89,7 @@ const emptyWorkspaceSlice = {
   autoResearchDeploymentList: null as AutoResearchDeploymentList | null,
   selectedAutoResearchDeploymentId: "",
   autoResearchDeployment: null as AutoResearchDeployment | null,
+  autoResearchPublicationManifest: null as AutoResearchPublicationManifest | null,
   analysis: null as AnalysisSummary | null,
   betaSummary: null as BetaSummary | null,
   mentorAccess: [] as MentorAccessEntry[],
@@ -118,6 +120,7 @@ type WorkspaceState = {
   autoResearchDeploymentList: AutoResearchDeploymentList | null;
   selectedAutoResearchDeploymentId: string;
   autoResearchDeployment: AutoResearchDeployment | null;
+  autoResearchPublicationManifest: AutoResearchPublicationManifest | null;
   analysis: AnalysisSummary | null;
   betaSummary: BetaSummary | null;
   mentorAccess: MentorAccessEntry[];
@@ -170,6 +173,9 @@ type WorkspaceState = {
   importAutoResearchBridgeResult: (payload: AutoResearchBridgeImportRequest) => Promise<void>;
   exportAutoResearchPublish: (payload?: AutoResearchPublishExportRequest) => Promise<void>;
   downloadAutoResearchPublish: () => Promise<void>;
+  downloadAutoResearchPaper: () => Promise<void>;
+  downloadAutoResearchCompiledPaper: () => Promise<void>;
+  downloadAutoResearchCodePackage: () => Promise<void>;
   runReview: () => Promise<void>;
   exportDraft: (format: "markdown" | "latex" | "word" | "docx") => Promise<void>;
   downloadLatestExport: () => Promise<void>;
@@ -181,6 +187,26 @@ type WorkspaceState = {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   const workspaceRequiresToken = (authConfig: AuthConfig | null): boolean =>
     Boolean(authConfig?.api_protected);
+  const resolveSelectedRunId = (
+    consoleState: AutoResearchOperatorConsole | null,
+  ): string | null => consoleState?.selected_run_id ?? consoleState?.current_run?.run.id ?? null;
+  const loadPublicationManifest = async (
+    projectId: string,
+    runId: string | null | undefined,
+  ): Promise<AutoResearchPublicationManifest | null> => {
+    if (!runId) {
+      return null;
+    }
+    try {
+      return await api.getAutoResearchPublicationManifest(projectId, runId);
+    } catch (error) {
+      if (isApiError(error) && error.status === 404) {
+        return null;
+      }
+      console.error(`Could not load publication manifest for ${runId}`, error);
+      return null;
+    }
+  };
 
   const expireSession = (message: string) => {
     clearAuthToken();
@@ -440,6 +466,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         }
 
         const drafts = draftsResult.status === "fulfilled" ? draftsResult.value : [];
+        const autoResearchConsole = consoleResult.status === "fulfilled" ? consoleResult.value : null;
+        const autoResearchPublicationManifest = await loadPublicationManifest(
+          projectId,
+          resolveSelectedRunId(autoResearchConsole),
+        );
         const selectedVersion = drafts.length > 0 ? drafts[0].version : null;
         const selectedDraft =
           selectedVersion !== null
@@ -461,9 +492,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           focusedText: "",
           evidence: evidenceResult.status === "fulfilled" ? evidenceResult.value : [],
           reviews: reviewsResult.status === "fulfilled" ? reviewsResult.value : [],
-          autoResearchConsole: consoleResult.status === "fulfilled" ? consoleResult.value : null,
+          autoResearchConsole,
           autoResearchConsoleFilters:
-            consoleResult.status === "fulfilled" ? consoleResult.value.filters : {},
+            autoResearchConsole?.filters ?? {},
           autoResearchDeploymentList:
             deploymentListResult.status === "fulfilled" ? deploymentListResult.value : null,
           selectedAutoResearchDeploymentId:
@@ -474,6 +505,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
                 : "",
           autoResearchDeployment:
             deploymentDetailResult.status === "fulfilled" ? deploymentDetailResult.value : null,
+          autoResearchPublicationManifest,
           analysis: analysisResult.status === "fulfilled" ? analysisResult.value : null,
           betaSummary: betaResult.status === "fulfilled" ? betaResult.value : null,
           mentorAccess: mentorAccessResult.status === "fulfilled" ? mentorAccessResult.value : [],
@@ -528,6 +560,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           get().isDirty &&
           fallbackVersion !== null &&
           fallbackVersion === selectedDraftVersion;
+        const autoResearchPublicationManifest = await loadPublicationManifest(
+          projectId,
+          resolveSelectedRunId(autoResearchConsole),
+        );
 
         set({
           projectStatus: status,
@@ -544,6 +580,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             autoResearchDeploymentList.deployments[0]?.deployment_id ??
             "",
           autoResearchDeployment,
+          autoResearchPublicationManifest,
           analysis,
           betaSummary,
           mentorAccess,
@@ -570,9 +607,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             ...filters,
           },
         );
+        const autoResearchPublicationManifest = await loadPublicationManifest(
+          projectId,
+          resolveSelectedRunId(console),
+        );
         set({
           autoResearchConsole: console,
           autoResearchConsoleFilters: console.filters,
+          autoResearchPublicationManifest,
         });
       } catch (error) {
         handleActionError(error, "Auto-research console refresh failed");
@@ -614,9 +656,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           runId: get().autoResearchConsole?.selected_run_id ?? undefined,
           ...nextFilters,
         });
+        const autoResearchPublicationManifest = await loadPublicationManifest(
+          projectId,
+          resolveSelectedRunId(console),
+        );
         set({
           autoResearchConsole: console,
           autoResearchConsoleFilters: console.filters,
+          autoResearchPublicationManifest,
           notice: `Auto-research console filtered to ${console.filtered_run_count}/${console.run_count} runs`,
         });
       } catch (error) {
@@ -676,9 +723,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           runId,
           ...normalizeConsoleFilters(get().autoResearchConsoleFilters),
         });
+        const autoResearchPublicationManifest = await loadPublicationManifest(
+          projectId,
+          resolveSelectedRunId(console),
+        );
         set({
           autoResearchConsole: console,
           autoResearchConsoleFilters: console.filters,
+          autoResearchPublicationManifest,
           notice: `Auto-research run ${runId} loaded`,
         });
       } catch (error) {
@@ -869,13 +921,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      set({ working: true, notice: `Applying revision actions and rebuilding paper for ${runId}...` });
+      set({ working: true, notice: `Rebuilding paper assets for ${runId}...` });
       try {
         await api.rebuildAutoResearchPaper(currentProjectId, runId);
         await sleep(400);
         await get().refreshProject();
         await get().refreshAutoResearchConsole(runId);
-        set({ notice: `Revision actions applied and paper rebuilt for ${runId}` });
+        set({ notice: `Paper assets rebuilt for ${runId}` });
       } catch (error) {
         handleActionError(error, "Rebuild paper pipeline failed");
       } finally {
@@ -1031,6 +1083,63 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `Downloaded ${fileName}` });
       } catch (error) {
         handleActionError(error, "Publish download failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async downloadAutoResearchPaper() {
+      const { currentProjectId, autoResearchConsole, autoResearchPublicationManifest } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId || !autoResearchPublicationManifest?.paper_path) {
+        set({ notice: "Current run does not have a published paper asset yet" });
+        return;
+      }
+
+      set({ working: true, notice: "Preparing paper download..." });
+      try {
+        const fileName = await api.downloadAutoResearchPaper(currentProjectId, runId);
+        set({ notice: `Downloaded ${fileName}` });
+      } catch (error) {
+        handleActionError(error, "Paper download failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async downloadAutoResearchCompiledPaper() {
+      const { currentProjectId, autoResearchConsole, autoResearchPublicationManifest } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId || !autoResearchPublicationManifest?.compiled_paper_path) {
+        set({ notice: "Current run does not have a compiled paper PDF yet" });
+        return;
+      }
+
+      set({ working: true, notice: "Preparing compiled paper download..." });
+      try {
+        const fileName = await api.downloadAutoResearchCompiledPaper(currentProjectId, runId);
+        set({ notice: `Downloaded ${fileName}` });
+      } catch (error) {
+        handleActionError(error, "Compiled paper download failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async downloadAutoResearchCodePackage() {
+      const { currentProjectId, autoResearchConsole, autoResearchPublicationManifest } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId || !autoResearchPublicationManifest?.code_package_path) {
+        set({ notice: "Current run does not have a published code package yet" });
+        return;
+      }
+
+      set({ working: true, notice: "Preparing code package download..." });
+      try {
+        const fileName = await api.downloadAutoResearchCodePackage(currentProjectId, runId);
+        set({ notice: `Downloaded ${fileName}` });
+      } catch (error) {
+        handleActionError(error, "Code package download failed");
       } finally {
         set({ working: false });
       }

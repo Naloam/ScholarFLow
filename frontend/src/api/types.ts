@@ -507,8 +507,12 @@ export type AutoResearchPaperCompileReport = {
   compile_commands: string[];
   required_inputs: string[];
   missing_required_inputs: string[];
+  required_source_files: string[];
+  missing_required_source_files: string[];
   expected_outputs: string[];
   materialized_outputs: string[];
+  source_package_complete: boolean;
+  all_expected_outputs_materialized: boolean;
   ready_for_compile: boolean;
 };
 
@@ -676,7 +680,9 @@ export type AutoResearchLineageEdge = {
     | "paper_checkpoint_index"
     | "paper_latex"
     | "paper_bibliography"
-    | "paper_sources_manifest";
+    | "paper_sources_manifest"
+    | "paper_compiled_pdf"
+    | "paper_bibliography_output";
   source_id: string;
   relation: "owns" | "selected_candidate" | "has_asset" | "materialized_to_run_asset";
   target_kind:
@@ -710,7 +716,9 @@ export type AutoResearchLineageEdge = {
     | "paper_checkpoint_index"
     | "paper_latex"
     | "paper_bibliography"
-    | "paper_sources_manifest";
+    | "paper_sources_manifest"
+    | "paper_compiled_pdf"
+    | "paper_bibliography_output";
   target_id: string;
   target_path?: string | null;
   exists?: boolean | null;
@@ -745,6 +753,8 @@ export type AutoResearchRunRegistryFiles = {
   paper_latex_source?: AutoResearchRegistryAssetRef | null;
   paper_bibliography_bib?: AutoResearchRegistryAssetRef | null;
   paper_sources_manifest_json?: AutoResearchRegistryAssetRef | null;
+  paper_compiled_pdf?: AutoResearchRegistryAssetRef | null;
+  paper_bibliography_output_bbl?: AutoResearchRegistryAssetRef | null;
 };
 
 export type AutoResearchCandidateRegistryFiles = {
@@ -868,6 +878,8 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_latex_source"
     | "run_paper_bibliography_bib"
     | "run_paper_sources_manifest_json"
+    | "run_paper_compiled_pdf"
+    | "run_paper_bibliography_output_bbl"
     | "workspace"
     | "candidate_json"
     | "plan_json"
@@ -1218,6 +1230,9 @@ export type AutoResearchPublicationManifest = {
   publish_manifest_path: string;
   publish_archive_path: string;
   paper_path?: string | null;
+  compiled_paper_path?: string | null;
+  compiled_paper_sha256?: string | null;
+  paper_compile_output_paths: string[];
   code_package_path?: string | null;
   code_package_sha256?: string | null;
   run_api_path: string;
@@ -1225,6 +1240,7 @@ export type AutoResearchPublicationManifest = {
   publish_api_path: string;
   publish_download_path: string;
   paper_download_path?: string | null;
+  compiled_paper_download_path?: string | null;
   code_package_download_path?: string | null;
   deployments: AutoResearchDeploymentRef[];
 };

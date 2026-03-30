@@ -37,7 +37,7 @@ from schemas.autoresearch import (
     PortfolioDecisionRecord,
     ResearchPlan,
 )
-from services.autoresearch.writer import PaperWriter
+from services.autoresearch.writer import PaperWriter, _compile_required_source_files
 from services.workspace import autoresearch_dir
 
 
@@ -73,6 +73,8 @@ PAPER_BUILD_SCRIPT_FILENAME = "build.sh"
 PAPER_LATEX_FILENAME = "main.tex"
 PAPER_BIB_FILENAME = "references.bib"
 PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
+PAPER_COMPILED_PDF_FILENAME = "main.pdf"
+PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME = "main.bbl"
 BENCHMARK_FILENAME = "benchmark.json"
 CANDIDATES_DIRNAME = "candidates"
 CANDIDATE_FILENAME = "candidate.json"
@@ -553,6 +555,8 @@ def _candidate_lineage_edges(
             ("paper_latex_source", "paper_latex"),
             ("paper_bibliography_bib", "paper_bibliography"),
             ("paper_sources_manifest_json", "paper_sources_manifest"),
+            ("paper_compiled_pdf", "paper_compiled_pdf"),
+            ("paper_bibliography_output_bbl", "paper_bibliography_output"),
             ("generated_code", "generated_code"),
         ]
         for attr, target_kind in mirrored_assets:
@@ -628,6 +632,8 @@ def _run_lineage_edges(
         ("paper_latex_source", "paper_latex"),
         ("paper_bibliography_bib", "paper_bibliography"),
         ("paper_sources_manifest_json", "paper_sources_manifest"),
+        ("paper_compiled_pdf", "paper_compiled_pdf"),
+        ("paper_bibliography_output_bbl", "paper_bibliography_output"),
         ("generated_code", "generated_code"),
         ("benchmark_json", "benchmark"),
     ]
@@ -864,6 +870,24 @@ def _run_bundle_assets(
             ref=files.paper_sources_manifest_json,
             required=False,
         ),
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_compiled_pdf",
+            label="Selected run compiled paper PDF",
+            role="run_paper_compiled_pdf",
+            ref=files.paper_compiled_pdf,
+            required=False,
+        )
+        if files.paper_compiled_pdf is not None and files.paper_compiled_pdf.exists
+        else None,
+        _bundle_asset(
+            asset_id=f"{run_registry.run_id}:run_paper_bibliography_output_bbl",
+            label="Selected run compiled bibliography output",
+            role="run_paper_bibliography_output_bbl",
+            ref=files.paper_bibliography_output_bbl,
+            required=False,
+        )
+        if files.paper_bibliography_output_bbl is not None and files.paper_bibliography_output_bbl.exists
+        else None,
     ]
 
 
@@ -1007,15 +1031,34 @@ def _refresh_paper_compile_report(
         for item in report.required_inputs
         if not _input_present(item)
     ]
+    required_source_files = report.required_source_files or (
+        _compile_required_source_files(payload.paper_sources_manifest)
+        if payload.paper_sources_manifest is not None
+        else []
+    )
+    missing_required_source_files = [
+        item
+        for item in required_source_files
+        if not _input_present(item)
+    ]
     materialized_outputs = [
         item
         for item in report.expected_outputs
         if (paper_sources_dir / item).exists()
     ]
-    ready_for_compile = not missing_required_inputs
+    source_package_complete = not missing_required_source_files
+    all_expected_outputs_materialized = (
+        not report.expected_outputs
+        or len(materialized_outputs) == len(report.expected_outputs)
+    )
+    ready_for_compile = not missing_required_inputs and source_package_complete
     if (
         report.missing_required_inputs == missing_required_inputs
+        and report.required_source_files == required_source_files
+        and report.missing_required_source_files == missing_required_source_files
         and report.materialized_outputs == materialized_outputs
+        and report.source_package_complete == source_package_complete
+        and report.all_expected_outputs_materialized == all_expected_outputs_materialized
         and report.ready_for_compile == ready_for_compile
     ):
         return payload
@@ -1025,12 +1068,25 @@ def _refresh_paper_compile_report(
                 update={
                     "generated_at": _utcnow(),
                     "missing_required_inputs": missing_required_inputs,
+                    "required_source_files": required_source_files,
+                    "missing_required_source_files": missing_required_source_files,
                     "materialized_outputs": materialized_outputs,
+                    "source_package_complete": source_package_complete,
+                    "all_expected_outputs_materialized": all_expected_outputs_materialized,
                     "ready_for_compile": ready_for_compile,
                 }
             )
         }
     )
+
+
+def _hydrate_run(payload: AutoResearchRunRead) -> AutoResearchRunRead:
+    base = run_dir(payload.project_id, payload.id)
+    hydrated = _refresh_paper_section_rewrite_index(payload)
+    hydrated = _refresh_paper_revision_diff(hydrated, base=base)
+    hydrated = _refresh_paper_revision_action_index(hydrated, base=base)
+    hydrated = _refresh_paper_compile_report(hydrated, base=base)
+    return hydrated
 
 
 def _refresh_paper_section_rewrite_index(payload: AutoResearchRunRead) -> AutoResearchRunRead:
@@ -1121,13 +1177,15 @@ def _refresh_paper_revision_action_index(
     return payload.model_copy(update={"paper_revision_action_index": index})
 
 
-def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> AutoResearchRunRead:
+def save_run(
+    run: AutoResearchRunRead,
+    *,
+    touch_updated_at: bool = True,
+    materialize_paper_workspace: bool = True,
+) -> AutoResearchRunRead:
     payload = run.model_copy(update={"updated_at": _utcnow()}) if touch_updated_at else run.model_copy()
-    payload = _refresh_paper_section_rewrite_index(payload)
+    payload = _hydrate_run(payload)
     base = run_dir(payload.project_id, payload.id)
-    payload = _refresh_paper_revision_diff(payload, base=base)
-    payload = _refresh_paper_revision_action_index(payload, base=base)
-    payload = _refresh_paper_compile_report(payload, base=base)
     _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
     if payload.program is not None:
         _write_json(base / PROGRAM_FILENAME, payload.program.model_dump(mode="json"))
@@ -1144,7 +1202,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
             _write_json(candidate_dir / f"{candidate.id}.json", candidate.model_dump(mode="json"))
     if payload.artifact is not None:
         _write_json(base / ARTIFACT_FILENAME, payload.artifact.model_dump(mode="json"))
-    if payload.paper_markdown:
+    if payload.paper_markdown and materialize_paper_workspace:
         (base / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
     if payload.narrative_report_markdown:
         (base / NARRATIVE_REPORT_FILENAME).write_text(payload.narrative_report_markdown, encoding="utf-8")
@@ -1156,7 +1214,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         _write_json(base / FIGURE_PLAN_FILENAME, payload.figure_plan.model_dump(mode="json"))
     if payload.paper_revision_state is not None:
         _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
-    if payload.paper_compile_report is not None:
+    if payload.paper_compile_report is not None and materialize_paper_workspace:
         _write_json(base / PAPER_COMPILE_REPORT_FILENAME, payload.paper_compile_report.model_dump(mode="json"))
     if payload.paper_revision_diff is not None:
         _write_json(base / PAPER_REVISION_DIFF_FILENAME, payload.paper_revision_diff.model_dump(mode="json"))
@@ -1171,14 +1229,14 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
             payload.paper_section_rewrite_index.model_dump(mode="json"),
         )
     if (
-        payload.paper_markdown is not None
-        or payload.paper_compile_report is not None
+        (payload.paper_markdown is not None and materialize_paper_workspace)
+        or (payload.paper_compile_report is not None and materialize_paper_workspace)
         or payload.paper_revision_diff is not None
         or payload.paper_revision_action_index is not None
         or payload.paper_section_rewrite_index is not None
-        or payload.paper_latex_source is not None
-        or payload.paper_bibliography_bib is not None
-        or payload.paper_sources_manifest is not None
+        or (payload.paper_latex_source is not None and materialize_paper_workspace)
+        or (payload.paper_bibliography_bib is not None and materialize_paper_workspace)
+        or (payload.paper_sources_manifest is not None and materialize_paper_workspace)
     ):
         paper_sources_dir = base / PAPER_SOURCES_DIRNAME
         paper_sources_dir.mkdir(parents=True, exist_ok=True)
@@ -1188,7 +1246,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
         revision_brief = _paper_revision_brief(payload)
         paper_build_script = _paper_build_script(payload)
         section_rewrite_index, section_rewrite_packets = _paper_section_rewrite_packets(payload)
-        if payload.paper_markdown is not None:
+        if payload.paper_markdown is not None and materialize_paper_workspace:
             (paper_sources_dir / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
         if payload.narrative_report_markdown:
             (paper_sources_dir / NARRATIVE_REPORT_FILENAME).write_text(
@@ -1219,7 +1277,7 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 paper_sources_dir / PAPER_REVISION_STATE_FILENAME,
                 payload.paper_revision_state.model_dump(mode="json"),
             )
-        if payload.paper_compile_report is not None:
+        if payload.paper_compile_report is not None and materialize_paper_workspace:
             _write_json(
                 paper_sources_dir / PAPER_COMPILE_REPORT_FILENAME,
                 payload.paper_compile_report.model_dump(mode="json"),
@@ -1249,15 +1307,15 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
                 packet_path = paper_sources_dir / relative_path
                 packet_path.parent.mkdir(parents=True, exist_ok=True)
                 packet_path.write_text(content, encoding="utf-8")
-        if paper_build_script is not None:
+        if paper_build_script is not None and materialize_paper_workspace:
             build_script_path = paper_sources_dir / PAPER_BUILD_SCRIPT_FILENAME
             build_script_path.write_text(paper_build_script, encoding="utf-8")
             build_script_path.chmod(0o755)
-        if payload.paper_latex_source is not None:
+        if payload.paper_latex_source is not None and materialize_paper_workspace:
             (paper_sources_dir / PAPER_LATEX_FILENAME).write_text(payload.paper_latex_source, encoding="utf-8")
-        if payload.paper_bibliography_bib is not None:
+        if payload.paper_bibliography_bib is not None and materialize_paper_workspace:
             (paper_sources_dir / PAPER_BIB_FILENAME).write_text(payload.paper_bibliography_bib, encoding="utf-8")
-        if payload.paper_sources_manifest is not None:
+        if payload.paper_sources_manifest is not None and materialize_paper_workspace:
             _write_json(
                 paper_sources_dir / PAPER_SOURCES_MANIFEST_FILENAME,
                 payload.paper_sources_manifest.model_dump(mode="json"),
@@ -1272,6 +1330,16 @@ def save_run(run: AutoResearchRunRead, *, touch_updated_at: bool = True) -> Auto
             revision_history=revision_history,
             paper_build_script=paper_build_script,
         )
+    if payload.paper_compile_report is not None and materialize_paper_workspace:
+        payload = _refresh_paper_compile_report(payload, base=base)
+        _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
+        _write_json(base / PAPER_COMPILE_REPORT_FILENAME, payload.paper_compile_report.model_dump(mode="json"))
+        paper_sources_dir = base / PAPER_SOURCES_DIRNAME
+        if paper_sources_dir.is_dir():
+            _write_json(
+                paper_sources_dir / PAPER_COMPILE_REPORT_FILENAME,
+                payload.paper_compile_report.model_dump(mode="json"),
+            )
     return payload
 
 
@@ -1280,7 +1348,7 @@ def load_run(project_id: str, run_id: str) -> AutoResearchRunRead | None:
     if not path.exists():
         return None
     try:
-        return AutoResearchRunRead.model_validate_json(path.read_text(encoding="utf-8"))
+        return _hydrate_run(AutoResearchRunRead.model_validate_json(path.read_text(encoding="utf-8")))
     except Exception:
         return None
 
@@ -1290,7 +1358,7 @@ def list_runs(project_id: str) -> list[AutoResearchRunRead]:
     root = _runs_dir(project_id)
     for path in sorted(root.glob("*/run.json"), reverse=True):
         try:
-            items.append(AutoResearchRunRead.model_validate_json(path.read_text(encoding="utf-8")))
+            items.append(_hydrate_run(AutoResearchRunRead.model_validate_json(path.read_text(encoding="utf-8"))))
         except Exception:
             continue
     items.sort(key=lambda item: item.updated_at, reverse=True)
@@ -1528,6 +1596,12 @@ def load_candidate_registry(
                 current_run.paper_sources_manifest_path
                 or (run_base / PAPER_SOURCES_DIRNAME / PAPER_SOURCES_MANIFEST_FILENAME)
             ),
+            paper_compiled_pdf=_asset_ref(
+                run_base / PAPER_SOURCES_DIRNAME / PAPER_COMPILED_PDF_FILENAME
+            ),
+            paper_bibliography_output_bbl=_asset_ref(
+                run_base / PAPER_SOURCES_DIRNAME / PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME
+            ),
         )
     manifest = load_candidate_manifest(
         project_id,
@@ -1669,6 +1743,12 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         ),
         paper_sources_manifest_json=_asset_ref(
             run.paper_sources_manifest_path or (base / PAPER_SOURCES_DIRNAME / PAPER_SOURCES_MANIFEST_FILENAME)
+        ),
+        paper_compiled_pdf=_asset_ref(
+            base / PAPER_SOURCES_DIRNAME / PAPER_COMPILED_PDF_FILENAME
+        ),
+        paper_bibliography_output_bbl=_asset_ref(
+            base / PAPER_SOURCES_DIRNAME / PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME
         ),
     )
 

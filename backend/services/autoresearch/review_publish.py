@@ -33,6 +33,8 @@ from schemas.autoresearch import (
     HypothesisCandidate,
 )
 from services.autoresearch.repository import (
+    PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME,
+    PAPER_COMPILED_PDF_FILENAME,
     load_run,
     load_run_bundle_index,
     load_run_registry,
@@ -68,6 +70,11 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_paper_compile_report_json",
+    "run_paper_build_script",
+    "run_paper_latex_source",
+    "run_paper_bibliography_bib",
+    "run_paper_sources_manifest_json",
     "generated_code",
 }
 _CODE_PACKAGE_INCLUDED_ROLES = {
@@ -1131,6 +1138,7 @@ def _sync_paper_revision_state(
     save_run(
         run.model_copy(update={"paper_revision_state": synced_state}),
         touch_updated_at=False,
+        materialize_paper_workspace=False,
     )
 
 
@@ -1429,6 +1437,35 @@ def _review_loop_revision_requirements(review_loop: AutoResearchReviewLoopRead |
     return messages
 
 
+def _compile_ready_final_blockers(run: AutoResearchRunRead | None) -> list[str]:
+    if run is None:
+        return ["Paper source package could not be loaded for compile-readiness checks."]
+    report = run.paper_compile_report
+    if report is None:
+        return ["Paper compile report is missing, so compile-ready publication coverage cannot be verified."]
+    messages: list[str] = []
+    if report.missing_required_source_files:
+        missing = ", ".join(report.missing_required_source_files[:6])
+        if len(report.missing_required_source_files) > 6:
+            missing = f"{missing}, ..."
+        messages.append(f"Paper source package is incomplete: missing {missing}.")
+    extra_missing_inputs = [
+        item
+        for item in report.missing_required_inputs
+        if item not in report.missing_required_source_files
+    ]
+    if extra_missing_inputs:
+        messages.append(
+            "Paper compile path is missing required inputs: "
+            + ", ".join(extra_missing_inputs[:6])
+            + (", ..." if len(extra_missing_inputs) > 6 else "")
+            + "."
+        )
+    if not report.ready_for_compile and not messages:
+        messages.append("Paper source package is not currently marked ready for compile.")
+    return messages
+
+
 def _publish_asset_fingerprint_payload(
     assets: list[AutoResearchBundleAssetRead],
 ) -> list[dict[str, object]]:
@@ -1593,6 +1630,33 @@ def _updated_deployments(
     return preserved
 
 
+def _paper_compile_output_paths(run: AutoResearchRunRead) -> list[str]:
+    report = run.paper_compile_report
+    paper_sources_dir = Path(run.paper_sources_dir or (run_dir(run.project_id, run.id) / "paper_sources"))
+    candidates = []
+    if report is not None:
+        candidates.extend(report.materialized_outputs)
+    candidates.extend([PAPER_COMPILED_PDF_FILENAME, PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME])
+    outputs: list[str] = []
+    seen: set[str] = set()
+    for relative_path in candidates:
+        if relative_path in seen:
+            continue
+        seen.add(relative_path)
+        path = paper_sources_dir / relative_path
+        if path.is_file():
+            outputs.append(str(path))
+    return outputs
+
+
+def _compiled_paper_path(run: AutoResearchRunRead) -> str | None:
+    paper_sources_dir = Path(run.paper_sources_dir or (run_dir(run.project_id, run.id) / "paper_sources"))
+    compiled_pdf = paper_sources_dir / PAPER_COMPILED_PDF_FILENAME
+    if compiled_pdf.is_file():
+        return str(compiled_pdf)
+    return None
+
+
 def build_publication_manifest(
     project_id: str,
     run_id: str,
@@ -1623,6 +1687,8 @@ def build_publication_manifest(
     code_package_path = _code_package_path(project_id, run_id)
     if not code_package_path.is_file():
         code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
+    compiled_paper_path = _compiled_paper_path(run)
+    paper_compile_output_paths = _paper_compile_output_paths(run)
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -1650,6 +1716,9 @@ def build_publication_manifest(
         publish_manifest_path=package.manifest_path or str(_publish_manifest_path(project_id, run_id)),
         publish_archive_path=package.archive_path or str(_publish_archive_path(project_id, run_id)),
         paper_path=run.paper_path or str(run_dir(project_id, run_id) / "paper.md"),
+        compiled_paper_path=compiled_paper_path,
+        compiled_paper_sha256=_file_sha256(Path(compiled_paper_path)) if compiled_paper_path is not None else None,
+        paper_compile_output_paths=paper_compile_output_paths,
         code_package_path=str(code_package_path),
         code_package_sha256=_file_sha256(code_package_path),
         run_api_path=f"/api/projects/{project_id}/auto-research/{run_id}",
@@ -1657,6 +1726,11 @@ def build_publication_manifest(
         publish_api_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish",
         publish_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/download",
         paper_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/paper/download",
+        compiled_paper_download_path=(
+            f"/api/projects/{project_id}/auto-research/{run_id}/publish/paper/compiled/download"
+            if compiled_paper_path is not None
+            else None
+        ),
         code_package_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/code/download",
         deployments=deployments,
     )
@@ -1667,7 +1741,8 @@ def build_publication_manifest(
 def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPackageRead | None:
     review = build_run_review(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
-    if review is None or bundle_index is None:
+    run = load_run(project_id, run_id)
+    if review is None or bundle_index is None or run is None:
         return None
     review_loop = _build_review_loop(project_id=project_id, run_id=run_id, review=review)
 
@@ -1682,6 +1757,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     missing_final_assets = [item for item in final_required_assets if not item.ref.exists]
     blockers = [item.summary for item in review.findings if item.severity == "error"]
     semantic_final_blockers = _semantic_final_publish_blockers(review)
+    compile_final_blockers = _compile_ready_final_blockers(run)
     review_loop_requirements = (
         _review_loop_revision_requirements(review_loop)
         if review.overall_status != "ready"
@@ -1689,6 +1765,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     )
     final_blockers = [
         *semantic_final_blockers,
+        *compile_final_blockers,
         *review_loop_requirements,
         *(f"Missing final publish asset: {item.role}" for item in missing_final_assets),
     ]
@@ -1697,6 +1774,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         review.overall_status == "ready"
         and not missing_final_assets
         and not semantic_final_blockers
+        and not compile_final_blockers
         and not review_loop_requirements
     )
     completeness_status = "complete" if not missing_final_assets else "incomplete"

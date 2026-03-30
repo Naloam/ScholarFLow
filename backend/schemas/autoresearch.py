@@ -55,6 +55,8 @@ AutoResearchBundleAssetRole = Literal[
     "run_paper_latex_source",
     "run_paper_bibliography_bib",
     "run_paper_sources_manifest_json",
+    "run_paper_compiled_pdf",
+    "run_paper_bibliography_output_bbl",
     "workspace",
     "candidate_json",
     "plan_json",
@@ -97,6 +99,8 @@ AutoResearchLineageNodeKind = Literal[
     "paper_latex",
     "paper_bibliography",
     "paper_sources_manifest",
+    "paper_compiled_pdf",
+    "paper_bibliography_output",
 ]
 AutoResearchLineageRelation = Literal[
     "owns",
@@ -845,8 +849,12 @@ class AutoResearchPaperCompileReportRead(BaseModel):
     compile_commands: list[str] = Field(default_factory=list)
     required_inputs: list[str] = Field(default_factory=list)
     missing_required_inputs: list[str] = Field(default_factory=list)
+    required_source_files: list[str] = Field(default_factory=list)
+    missing_required_source_files: list[str] = Field(default_factory=list)
     expected_outputs: list[str] = Field(default_factory=list)
     materialized_outputs: list[str] = Field(default_factory=list)
+    source_package_complete: bool = False
+    all_expected_outputs_materialized: bool = False
     ready_for_compile: bool = False
 
 
@@ -1054,6 +1062,8 @@ class AutoResearchRunRegistryFiles(BaseModel):
     paper_latex_source: AutoResearchRegistryAssetRef | None = None
     paper_bibliography_bib: AutoResearchRegistryAssetRef | None = None
     paper_sources_manifest_json: AutoResearchRegistryAssetRef | None = None
+    paper_compiled_pdf: AutoResearchRegistryAssetRef | None = None
+    paper_bibliography_output_bbl: AutoResearchRegistryAssetRef | None = None
 
 
 class AutoResearchCandidateRegistryFiles(BaseModel):
@@ -1385,6 +1395,9 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publish_manifest_path: str
     publish_archive_path: str
     paper_path: str | None = None
+    compiled_paper_path: str | None = None
+    compiled_paper_sha256: str | None = None
+    paper_compile_output_paths: list[str] = Field(default_factory=list)
     code_package_path: str | None = None
     code_package_sha256: str | None = None
     run_api_path: str
@@ -1392,6 +1405,7 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publish_api_path: str
     publish_download_path: str
     paper_download_path: str | None = None
+    compiled_paper_download_path: str | None = None
     code_package_download_path: str | None = None
     deployments: list[AutoResearchDeploymentRefRead] = Field(default_factory=list)
 

@@ -662,8 +662,11 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         compile_report_payload = json.loads(Path(run["paper_compile_report_path"]).read_text(encoding="utf-8"))
         assert compile_report_payload["ready_for_compile"] is True
         assert compile_report_payload["expected_outputs"] == run["paper_sources_manifest"]["expected_outputs"]
-        assert "## 2. Related Work and Research Plan" in paper
-        assert "The study was scoped against the following literature cues" in paper
+        assert "## 2. Related Work" in paper
+        assert (
+            "The study was scoped against the following literature cues" in paper
+            or "No project-specific literature was attached" in paper
+        )
         assert "## 4. Experimental Setup" in paper
         assert "## 5. Results" in paper
         assert "| System | Accuracy | Macro F1 |" in paper
@@ -1381,7 +1384,7 @@ This grounded summary ties the selected artifact to preserved related work [1].
 ## 1. Introduction
 Prior work informs the task framing and benchmark choice for this run [1].
 
-## 2. Related Work and Research Plan
+## 2. Related Work
 Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
 
 ## 3. Method
@@ -1476,7 +1479,7 @@ This grounded summary ties the selected artifact to preserved related work [1].
 ## 1. Introduction
 Prior work informs the task framing and benchmark choice for this run [1].
 
-## 2. Related Work and Research Plan
+## 2. Related Work
 Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
 
 ## 3. Method
@@ -1605,7 +1608,7 @@ This grounded summary ties the selected artifact to preserved related work [1].
 ## 1. Introduction
 Prior work informs the task framing and benchmark choice for this run [1].
 
-## 2. Related Work and Research Plan
+## 2. Related Work
 Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
 
 ## 3. Method
@@ -1805,7 +1808,7 @@ This grounded summary ties the selected artifact to preserved related work [1].
 ## 1. Introduction
 Prior work informs the task framing and benchmark choice for this run [1].
 
-## 2. Related Work and Research Plan
+## 2. Related Work
 Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
 
 ## 3. Method
@@ -2211,7 +2214,7 @@ def test_autoresearch_paper_rebuild_respects_persisted_paper_plan_order(
         custom_order = [
             "Abstract",
             "Introduction",
-            "Related Work and Research Plan",
+            "Related Work",
             "Method",
             "Results",
             "Experimental Setup",
@@ -2236,7 +2239,7 @@ def test_autoresearch_paper_rebuild_respects_persisted_paper_plan_order(
         expected_headings = [
             "## Abstract",
             "## 1. Introduction",
-            "## 2. Related Work and Research Plan",
+            "## 2. Related Work",
             "## 3. Method",
             "## 4. Results",
             "## 5. Experimental Setup",
@@ -2284,7 +2287,7 @@ def test_paper_writer_renders_sections_in_paper_plan_order(
         custom_order = [
             "Abstract",
             "Introduction",
-            "Related Work and Research Plan",
+            "Related Work",
             "Method",
             "Results",
             "Experimental Setup",
@@ -2316,7 +2319,7 @@ def test_paper_writer_renders_sections_in_paper_plan_order(
         expected_headings = [
             "## Abstract",
             "## 1. Introduction",
-            "## 2. Related Work and Research Plan",
+            "## 2. Related Work",
             "## 3. Method",
             "## 4. Results",
             "## 5. Experimental Setup",
@@ -2806,7 +2809,7 @@ This grounded summary ties the selected artifact to preserved related work [1].
 ## 1. Introduction
 Prior work informs the task framing and benchmark choice for this run [1].
 
-## 2. Related Work and Research Plan
+## 2. Related Work
 Retrieved work motivates the selected candidate and keeps the novelty framing explicit [1].
 
 ## 3. Method
@@ -3708,7 +3711,7 @@ def test_autoresearch_operator_console_supports_run_filtering_and_search(
 ## 1. Introduction
 This controlled baseline paper summarizes a completed experiment and artifact trail without explicit literature grounding.
 
-## 2. Related Work and Research Plan
+## 2. Related Work
 No project-specific literature was attached, so related-work grounding is limited.
 
 ## 3. Method

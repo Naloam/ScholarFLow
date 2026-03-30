@@ -358,7 +358,7 @@ class PaperWriter:
                 "This revision pass keeps the section tied to the selected sweep, aggregate metrics, "
                 "acceptance checks, and paired significance evidence preserved in the artifact."
             )
-        if title in {"related work and research plan", "discussion", "conclusion", "introduction"}:
+        if title in {"related work", "discussion", "conclusion", "introduction"}:
             return (
                 "This revision pass keeps the section tied to the executed proxy benchmark, preserved "
                 "literature context, and explicitly bounded contribution framing."
@@ -508,9 +508,9 @@ class PaperWriter:
         if any(token in lowered for token in ("citation", "references", "related-work", "related work", "literature", "novelty", "context")):
             return self._paper_plan_title(
                 paper_plan,
-                "Related Work and Research Plan",
+                "Related Work",
                 "Introduction",
-                fallback="Related Work and Research Plan",
+                fallback="Related Work",
             )
         if any(token in lowered for token in ("statistical", "significance", "seed", "sweep", "artifact", "results", "acceptance")):
             return self._paper_plan_title(
@@ -1292,7 +1292,7 @@ class PaperWriter:
             AutoResearchClaimEvidenceEntryRead(
                 claim_id="claim_context_grounding",
                 category="context",
-                section_hint="Related Work and Research Plan",
+                section_hint="Related Work",
                 claim="The paper's related-work framing is grounded in persisted literature context.",
                 support_status=context_support,
                 evidence=context_evidence,
@@ -1463,7 +1463,7 @@ Program objective:
             ),
             AutoResearchPaperPlanSectionRead(
                 section_id="related_work",
-                title="Related Work and Research Plan",
+                title="Related Work",
                 objective="Explain the literature context, working hypotheses, and portfolio decision.",
                 claim_ids=["claim_context_grounding", "claim_method_selection"],
                 evidence_focus=["literature", "portfolio.decision_summary"],
@@ -2911,7 +2911,7 @@ Program objective:
                 + "The central research questions are:\n"
                 + "\n".join(f"- {item}" for item in plan.research_questions)
             ),
-            "related_work_and_research_plan": (
+            "related_work": (
                 (f"{literature_synthesis_sentence}\n\n" if literature_synthesis_sentence else "")
                 + "The study was scoped against the following literature cues:\n"
                 + f"{literature_block}\n\n"

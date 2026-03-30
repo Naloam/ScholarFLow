@@ -389,6 +389,9 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert run["status"] == "done"
         assert run["task_family"] == "text_classification"
         assert run["spec"]["benchmark_name"] == "toy_cs_abstract_topic"
+        assert "Executable Proxy Study" not in run["plan"]["title"]
+        assert "fully auditable loop" not in run["plan"]["problem_statement"]
+        assert "sandbox" not in run["plan"]["motivation"]
         assert run["program"]["id"].endswith("_program")
         assert run["program"]["benchmark_name"] == "toy_cs_abstract_topic"
         assert run["artifact"]["status"] == "done"
@@ -681,6 +684,10 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "## 7. Limitations" in paper
         assert "proxy benchmark rather than the full topic area" in paper
         assert "This revision pass keeps the section tied to the persisted evidence trail" not in paper
+        assert "ScholarFlow" not in paper
+        assert "generic essay" not in paper
+        assert "rhetorical flexibility" not in paper
+        assert "sandbox runner" not in paper
 
         drafts = client.get(f"/api/projects/{project_id}/drafts")
         assert drafts.status_code == 200
@@ -2058,6 +2065,7 @@ def test_autoresearch_paper_rebuild_preserves_revision_brief_from_review_loop(
         assert "## Open Issues" in results_packet
         assert "## Auto-Revision Draft" in results_packet
         assert "This revision pass keeps the section tied to the selected sweep, aggregate metrics" in results_packet
+        assert "Revision focus for this section:" in results_packet
         assert "This revision pass keeps the section tied to the selected sweep, aggregate metrics" in rebuilt["paper_markdown"]
         auto_revision_section = results_packet.split("## Auto-Revision Draft", 1)[1]
         assert (

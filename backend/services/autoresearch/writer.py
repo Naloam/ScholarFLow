@@ -735,6 +735,56 @@ class PaperWriter:
             for index, item in enumerate(literature)
         )
 
+    def _literature_synthesis_sentence(self, literature: list[LiteratureInsight], *, limit: int = 2) -> str:
+        if not literature:
+            return ""
+        rendered: list[str] = []
+        for index, item in enumerate(literature[: max(1, limit)], start=1):
+            detail = self._revision_sentence_fragment(
+                " ".join(
+                    part
+                    for part in (item.insight, item.method_hint, item.gap_hint)
+                    if part
+                ),
+                limit=150,
+            )
+            if detail is None:
+                detail = "provides adjacent context for the benchmark framing."
+            rendered.append(f"[{index}] `{item.title}` {detail}")
+        return " ".join(rendered)
+
+    def _selected_candidate(
+        self,
+        portfolio: PortfolioSummary | None,
+        candidates: list[HypothesisCandidate],
+    ) -> HypothesisCandidate | None:
+        if not candidates:
+            return None
+        if portfolio is not None and portfolio.selected_candidate_id:
+            selected = next(
+                (item for item in candidates if item.id == portfolio.selected_candidate_id),
+                None,
+            )
+            if selected is not None:
+                return selected
+        return candidates[0]
+
+    def _selected_candidate_sentence(
+        self,
+        portfolio: PortfolioSummary | None,
+        candidates: list[HypothesisCandidate],
+    ) -> str:
+        selected = self._selected_candidate(portfolio, candidates)
+        if selected is None:
+            return ""
+        reason = selected.selection_reason or (portfolio.decision_summary if portfolio is not None else "")
+        if reason:
+            reason = reason.strip()
+            if reason[-1] not in ".!?":
+                reason = f"{reason}."
+            return f"The selected executable hypothesis is `{selected.title}` because {reason}"
+        return f"The selected executable hypothesis is `{selected.title}`."
+
     def _aggregate_metric(self, artifact: ResultArtifact, system_name: str | None, metric: str) -> float | None:
         if not system_name:
             return None
@@ -1038,6 +1088,40 @@ class PaperWriter:
         total = len(artifact.acceptance_checks)
         passed = sum(1 for item in artifact.acceptance_checks if item.passed)
         return passed, total
+
+    def _acceptance_summary_sentence(self, artifact: ResultArtifact) -> str:
+        passed, total = self._acceptance_counts(artifact)
+        if total < 1:
+            return "No explicit acceptance checks were recorded for the selected configuration."
+        if passed == total:
+            return f"All {total} acceptance checks passed for the selected configuration."
+        return f"{passed} of {total} acceptance checks passed for the selected configuration."
+
+    def _lead_significance_sentence(self, artifact: ResultArtifact) -> str:
+        if not artifact.significance_tests:
+            return ""
+        lead = next((item for item in artifact.significance_tests if item.significant), artifact.significance_tests[0])
+        p_value = lead.adjusted_p_value if lead.adjusted_p_value is not None else lead.p_value
+        return (
+            f"The strongest paired comparison was `{lead.candidate}` versus `{lead.comparator}` on `{lead.metric}` "
+            f"with effect={lead.effect_size:.4f} and adjusted p={p_value:.4f} "
+            f"({'significant' if lead.significant else 'not significant'})."
+        )
+
+    def _negative_outcome_summary_sentence(self, artifact: ResultArtifact) -> str:
+        if artifact.negative_results:
+            detail = self._revision_sentence_fragment(artifact.negative_results[0].detail, limit=160)
+            if detail is not None:
+                return f"The artifact also preserves negative evidence, led by: {detail}"
+        if artifact.failed_trials:
+            detail = self._revision_sentence_fragment(artifact.failed_trials[0].summary, limit=160)
+            if detail is not None:
+                return f"The run also preserves failed configurations, including: {detail}"
+        if artifact.anomalous_trials:
+            detail = self._revision_sentence_fragment(artifact.anomalous_trials[0].detail, limit=160)
+            if detail is not None:
+                return f"The run also flags anomalous behavior for follow-up, including: {detail}"
+        return ""
 
     def _claim_entries(
         self,
@@ -2267,7 +2351,7 @@ Program objective:
     ) -> str:
         literature = literature or []
         raw_lines = paper_markdown.splitlines()
-        title = "ScholarFlow AutoResearch Paper"
+        title = "AutoResearch Paper Draft"
         body: list[str] = []
         index = 0
 
@@ -2730,14 +2814,19 @@ Program objective:
         conclusion_context_sentence = self._conclusion_context_sentence(literature)
         references_block = self._references_block(literature)
         acceptance_block = self._acceptance_block(artifact)
+        acceptance_summary_sentence = self._acceptance_summary_sentence(artifact)
         significance_block = self._significance_block(artifact)
+        lead_significance_sentence = self._lead_significance_sentence(artifact)
         negative_results_block = self._negative_results_block(artifact)
+        negative_outcome_summary_sentence = self._negative_outcome_summary_sentence(artifact)
         failure_block = self._failure_block(artifact)
         anomaly_block = self._anomaly_block(artifact)
         benchmark_display = benchmark_name or spec.benchmark_name
         proxy_scope_sentence = self._proxy_scope_sentence(plan, spec, benchmark_display)
         hypothesis_resolution_sentence = self._hypothesis_resolution_sentence(spec, artifact, attempts)
         compared_systems_sentence = self._compared_systems_sentence(artifact)
+        literature_synthesis_sentence = self._literature_synthesis_sentence(literature)
+        selected_candidate_sentence = self._selected_candidate_sentence(portfolio, candidates)
         best_ci_text = self._format_confidence_interval(best_ci)
         best_detail_parts = []
         if best_std is not None:
@@ -2771,6 +2860,24 @@ Program objective:
             if majority_metric is not None
             else "A majority baseline was included as a lower bound."
         )
+        limitation_items = list(plan.scope_limits)
+        limitation_items.append(
+            "The benchmark is intentionally compact, so larger-scale external validation remains open."
+        )
+        limitation_items.append(
+            "The compared methods are lightweight executable baselines rather than field-optimized systems."
+        )
+        if artifact.negative_results:
+            limitation_items.append(artifact.negative_results[0].detail)
+        if artifact.failed_trials:
+            limitation_items.append(artifact.failed_trials[0].summary)
+        if artifact.anomalous_trials:
+            limitation_items.append(artifact.anomalous_trials[0].detail)
+        if not literature:
+            limitation_items.append(
+                "No project-specific literature was persisted for this run, so related-work grounding remains limited."
+            )
+        limitation_block = "\n".join(f"- {item}" for item in _dedupe_preserving_order(limitation_items))
         if spec.task_family == "ir_reranking":
             dataset_sentence = (
                 f"The dataset used in the experiment is `{spec.dataset.name}` with "
@@ -2789,24 +2896,27 @@ Program objective:
             "abstract": (
                 f"This paper reports a bounded executable study related to **{plan.topic}** using the "
                 f"`{benchmark_display}` `{spec.task_family}` benchmark. {comparison_sentence} "
-                f"{hypothesis_resolution_sentence} The run reports {metrics} with persisted execution metadata and "
-                "multi-seed aggregate statistics.\n\n"
+                f"{hypothesis_resolution_sentence} {acceptance_summary_sentence} "
+                f"{lead_significance_sentence + ' ' if lead_significance_sentence else ''}"
+                f"The run reports {metrics} with persisted execution metadata and multi-seed aggregate statistics.\n\n"
                 f"{proxy_scope_sentence}"
             ),
             "introduction": (
                 f"{plan.problem_statement}\n\n"
-                "The motivation for this study is to turn the requested topic into a tractable executable proxy rather "
-                "than a generic essay. In the current runtime, the scope is intentionally restricted to compact "
-                "benchmarks that can run quickly without external dependencies.\n\n"
-                f"{proxy_scope_sentence}\n\n"
+                "The study narrows the requested topic into an executable proxy benchmark so that the resulting claims "
+                "can be tied directly to preserved baselines, aggregates, and failure cases.\n\n"
+                + (f"{selected_candidate_sentence}\n\n" if selected_candidate_sentence else "")
+                + f"{proxy_scope_sentence}\n\n"
                 + (f"{literature_context_sentence}\n\n" if literature_context_sentence else "")
                 + "The central research questions are:\n"
                 + "\n".join(f"- {item}" for item in plan.research_questions)
             ),
             "related_work_and_research_plan": (
-                "The study was scoped against the following literature cues:\n"
-                f"{literature_block}\n\n"
-                "The planning stage produced the following working hypothesis set:\n"
+                (f"{literature_synthesis_sentence}\n\n" if literature_synthesis_sentence else "")
+                + "The study was scoped against the following literature cues:\n"
+                + f"{literature_block}\n\n"
+                + (f"{selected_candidate_sentence}\n\n" if selected_candidate_sentence else "")
+                + "The planning stage produced the following working hypothesis set:\n"
                 + "\n".join(f"- {item}" for item in plan.hypotheses)
                 + "\n\nPlanned contributions for the run were:\n"
                 + "\n".join(f"- {item}" for item in plan.planned_contributions)
@@ -2815,17 +2925,19 @@ Program objective:
             ),
             "method": (
                 f"The proposed method in the plan is summarized as {plan.proposed_method.lower()}. "
-                "The executable experiment specification narrows that idea into a benchmark with fixed train and test "
-                f"partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is "
-                f"`{benchmark_display}`, described as: {spec.benchmark_description}\n\n"
-                f"{dataset_sentence} The compared baselines are {', '.join(item.name for item in spec.baselines)}. "
-                f"The ablation suite contains {', '.join(item.name for item in spec.ablations) if spec.ablations else 'no ablations'}.\n\n"
-                "Implementation constraints were also explicit:\n"
+                + (f"{selected_candidate_sentence} " if selected_candidate_sentence else "")
+                + "The executable experiment specification narrows that idea into a benchmark with fixed train and test "
+                + f"partitions, explicit baselines, and a small ablation suite. The supported benchmark in this run is "
+                + f"`{benchmark_display}`, described as: {spec.benchmark_description}\n\n"
+                + f"{dataset_sentence} The compared baselines are {', '.join(item.name for item in spec.baselines)}. "
+                + f"The ablation suite contains {', '.join(item.name for item in spec.ablations) if spec.ablations else 'no ablations'}.\n\n"
+                + "Implementation constraints were also explicit:\n"
                 + "\n".join(f"- {item}" for item in spec.implementation_notes)
             ),
             "experimental_setup": (
-                "All experiments were executed from generated Python code inside the existing ScholarFlow sandbox "
-                f"runner. The observed execution mode for this run was `{executor_mode}`. The recorded environment "
+                "The experiment was executed from the persisted generated code bundle under a constrained runtime so "
+                "that the resulting artifact remained reproducible. "
+                f"The observed execution mode for this run was `{executor_mode}`. The recorded environment "
                 f"reports Python `{environment.get('python_version') or environment.get('host_python') or 'unknown'}` "
                 f"on `{environment.get('platform') or environment.get('host_platform') or 'unknown'}`. The experiment "
                 f"runtime reported by the artifact was `{runtime if runtime is not None else 'unknown'}` seconds.\n\n"
@@ -2842,7 +2954,10 @@ Program objective:
             ),
             "results": (
                 f"{comparison_sentence} {hypothesis_resolution_sentence} {compared_systems_sentence}\n\n"
-                f"{results_table}\n\n"
+                + (f"{acceptance_summary_sentence} " if acceptance_summary_sentence else "")
+                + (f"{lead_significance_sentence} " if lead_significance_sentence else "")
+                + (f"{negative_outcome_summary_sentence}\n\n" if negative_outcome_summary_sentence else "")
+                + f"{results_table}\n\n"
                 + (
                     "Paired significance comparisons for the selected configuration were:\n"
                     f"{significance_block}\n\n"
@@ -2875,25 +2990,16 @@ Program objective:
                 f"{learned_sentence} {majority_sentence} {ablation_sentence}\n\n"
                 f"{hypothesis_resolution_sentence}\n\n"
                 "At the same time, the benchmark remains intentionally small. The contribution of this run is a "
-                "reproducible proxy result whose evidence can be inspected and rerun, not a field-level claim about "
+                "reproducible proxy result whose evidence can be inspected and rerun, not a substitute for broader evaluation of "
                 f"`{plan.topic}`.\n\n"
                 + (f"{discussion_context_sentence}\n\n" if discussion_context_sentence else "")
                 + f"{proxy_scope_sentence}"
             ),
-            "limitations": (
-                "\n".join(f"- {item}" for item in plan.scope_limits)
-                + "\n- The benchmark is built into the repository, so data collection and large scale reproducibility are out of scope."
-                + "\n- The learned methods are lightweight toy models rather than competitive research systems."
-                + "\n- The writing stage is grounded by construction, which avoids fabricated experiments but also limits rhetorical flexibility."
-                + (
-                    "\n- No project-specific literature was persisted for this run, so related-work grounding remains limited."
-                    if not literature
-                    else ""
-                )
-            ),
+            "limitations": limitation_block,
             "conclusion": (
                 f"This run completes a narrow executable study for `{plan.topic}` through benchmark "
-                f"`{benchmark_display}`. {comparison_sentence} {hypothesis_resolution_sentence}\n\n"
+                f"`{benchmark_display}`. {comparison_sentence} {hypothesis_resolution_sentence} "
+                f"{acceptance_summary_sentence}\n\n"
                 f"{proxy_scope_sentence}"
                 + (f"\n\n{conclusion_context_sentence}" if conclusion_context_sentence else "")
             ),

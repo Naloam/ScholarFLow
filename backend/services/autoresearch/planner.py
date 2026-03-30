@@ -77,7 +77,7 @@ class ResearchPlanner:
             benchmark_labels,
         )
         if task_family == "ir_reranking":
-            title = f"Executable Proxy Study of Retrieval Signals for {topic}"
+            title = f"Compact Retrieval Signal Study for {topic}"
             method = "a lexical rarity-aware reranker backed by overlap baselines"
             questions = [
                 f"Can a lightweight lexical reranker recover the relevant document on {benchmark_scope}?",
@@ -90,10 +90,10 @@ class ResearchPlanner:
             contributions = [
                 f"A reproducible reranking benchmark scoped to {benchmark_scope}.",
                 "A multi-round reranking search trace with overlap, IDF, and bigram lexical variants.",
-                "A grounded paper generated only from executed ranking artifacts.",
+                "An artifact-grounded analysis of the executed ranking variants.",
             ]
         elif task_family == "tabular_classification":
-            title = f"Executable Proxy Study of Stability Signals for {topic}"
+            title = f"Compact Stability Signal Study for {topic}"
             method = "a scaled linear classifier backed by simple rule based baselines"
             questions = [
                 f"Can a small scaled linear model separate the labels exposed by {benchmark_scope}?",
@@ -106,10 +106,10 @@ class ResearchPlanner:
             contributions = [
                 f"A reproducible tabular benchmark scoped to {benchmark_scope}.",
                 "A baseline comparison between majority, threshold, and lightweight linear models.",
-                "A grounded paper generated only from executed experiment artifacts.",
+                "An artifact-grounded analysis of the executed experiment variants.",
             ]
         else:
-            title = f"Executable Proxy Study of {topic}"
+            title = f"Compact Benchmark Study of {topic}"
             method = "a lexical probabilistic classifier backed by majority and keyword baselines"
             questions = [
                 f"Can lightweight lexical modeling classify short snippets from {benchmark_scope} without external libraries?",
@@ -122,7 +122,7 @@ class ResearchPlanner:
             contributions = [
                 f"A compact benchmark scoped to {benchmark_scope} for automated experimentation.",
                 "A reproducible comparison between majority, keyword, and probabilistic lexical models.",
-                "A grounded paper that reports only executed experimental evidence.",
+                "An artifact-grounded analysis that reports only executed experimental evidence.",
             ]
 
         return ResearchPlan(
@@ -131,12 +131,12 @@ class ResearchPlanner:
             task_family=task_family,
             problem_statement=(
                 f"This study investigates {topic} through a deliberately small but executable "
-                f"{task_family.replace('_', ' ')} proxy benchmark centered on {benchmark_scope} so the system can preserve a "
-                "fully auditable loop from planning and execution to artifact-grounded writing."
+                f"{task_family.replace('_', ' ')} benchmark centered on {benchmark_scope}. The goal is to test "
+                "concrete hypotheses while keeping claims tied to preserved execution evidence."
             ),
             motivation=(
-                "The topic needs an executable proxy benchmark that is cheap enough to run in a "
-                "sandbox yet structured enough to support hypotheses, baselines, ablations, and "
+                "The topic needs an executable benchmark that is cheap enough to run repeatedly "
+                "yet structured enough to support hypotheses, baselines, ablations, and "
                 "a result table."
             ),
             proposed_method=(

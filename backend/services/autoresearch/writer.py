@@ -2935,7 +2935,7 @@ Program objective:
                 + "\n".join(f"- {item}" for item in spec.implementation_notes)
             ),
             "experimental_setup": (
-                "The experiment was executed from the persisted generated code bundle under a constrained runtime so "
+                "The experiment was executed from generated experiment code under a constrained runtime so "
                 "that the resulting artifact remained reproducible. "
                 f"The observed execution mode for this run was `{executor_mode}`. The recorded environment "
                 f"reports Python `{environment.get('python_version') or environment.get('host_python') or 'unknown'}` "
@@ -2949,7 +2949,7 @@ Program objective:
                 "The statistical analysis also records paired sign-flip significance comparisons with Holm correction, "
                 "preserves failed seed/sweep configurations, and keeps negative outcomes available for interpretation "
                 "rather than reporting only the winning configuration.\n\n"
-                f"Evaluation uses {metrics}. The purpose of the benchmark is to produce an auditable proxy result, not "
+                f"Evaluation uses {metrics}. The purpose of the benchmark is to produce an auditable benchmark result, not "
                 "to claim state-of-the-art performance."
             ),
             "results": (
@@ -2990,7 +2990,7 @@ Program objective:
                 f"{learned_sentence} {majority_sentence} {ablation_sentence}\n\n"
                 f"{hypothesis_resolution_sentence}\n\n"
                 "At the same time, the benchmark remains intentionally small. The contribution of this run is a "
-                "reproducible proxy result whose evidence can be inspected and rerun, not a substitute for broader evaluation of "
+                "reproducible benchmark result whose evidence can be inspected and rerun, not a substitute for broader evaluation of "
                 f"`{plan.topic}`.\n\n"
                 + (f"{discussion_context_sentence}\n\n" if discussion_context_sentence else "")
                 + f"{proxy_scope_sentence}"

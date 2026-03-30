@@ -157,9 +157,9 @@ class ResearchPlanner:
                 "Use project literature to justify the chosen benchmark and method family.",
             ],
             scope_limits=[
-                "v0 only supports built in proxy benchmarks for text classification, tabular classification, and IR reranking.",
+                "The study is restricted to built-in benchmark families for text classification, tabular classification, and IR reranking.",
                 "The benchmark is intentionally small and does not claim broad external validity.",
-                "No external datasets or large scale training jobs are attempted in this version.",
+                "No external datasets or large-scale training jobs are included in this study.",
             ],
         )
 
@@ -172,14 +172,14 @@ class ResearchPlanner:
                 "title_suffix": "Primary Method Candidate",
                 "method": method_sentence,
                 "rationale": (
-                    "Highest-upside candidate that keeps the main method, the benchmark fit, "
-                    "and the baseline/ablation structure aligned."
-                ),
-                "differentiators": [
-                    "Optimizes for strongest benchmark performance under the fixed sandbox budget.",
-                    "Preserves the full baseline comparison expected by the current paper writer.",
-                    "Best fit for the leading hypothesis in the current research plan.",
-                ],
+                "Highest-upside candidate that keeps the main method, the benchmark fit, "
+                "and the baseline/ablation structure aligned."
+            ),
+            "differentiators": [
+                "Optimizes for strongest benchmark performance under the fixed execution budget.",
+                "Preserves the full baseline comparison expected by the current paper writer.",
+                "Best fit for the leading hypothesis in the current research plan.",
+            ],
                 "selection_reason": (
                     "Selected first because it best matches the plan's main hypothesis while "
                     "retaining the clearest path to an executable result table."

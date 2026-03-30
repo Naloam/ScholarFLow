@@ -691,6 +691,7 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "generic essay" not in paper
         assert "rhetorical flexibility" not in paper
         assert "sandbox runner" not in paper
+        assert "v0 only supports built in proxy benchmarks" not in paper
 
         drafts = client.get(f"/api/projects/{project_id}/drafts")
         assert drafts.status_code == 200

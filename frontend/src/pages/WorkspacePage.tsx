@@ -90,7 +90,8 @@ export function WorkspacePage() {
   const authLocked = Boolean(authConfig?.api_protected) && authState === "anonymous";
   const projectReadOnly = Boolean(project?.user_id && authUser?.id && project.user_id !== authUser.id);
   const workspaceBusy = initializing || authBusy || working;
-  const betaBusy = workspaceBusy || !currentProjectId || authLocked || projectReadOnly;
+  const launcherBusy = authBusy || working;
+  const betaBusy = authBusy || !currentProjectId || authLocked || projectReadOnly;
   const authLabel =
     authUser?.email
         ? `Auth: ${authUser.email}`
@@ -152,7 +153,7 @@ export function WorkspacePage() {
             currentProjectId={currentProjectId}
             availableProjects={availableProjects}
             healthStatus={healthStatus}
-            working={workspaceBusy}
+            working={launcherBusy}
             authLocked={authLocked}
             onCreate={createProject}
             onOpen={loadProject}

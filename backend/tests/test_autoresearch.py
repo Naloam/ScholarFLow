@@ -315,6 +315,7 @@ def test_research_planner_fallback_uses_benchmark_context_for_text_topics(monkey
         benchmark_labels=["planning", "memory", "tool_use"],
     )
 
+    assert plan.title == "How to Build an Agent: Lightweight Lexical Baselines"
     assert "toy_agent_workflow_topic" in plan.problem_statement
     assert "planning" in " ".join(plan.research_questions).lower()
     assert "tool_use" in " ".join(plan.research_questions)
@@ -662,10 +663,18 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         compile_report_payload = json.loads(Path(run["paper_compile_report_path"]).read_text(encoding="utf-8"))
         assert compile_report_payload["ready_for_compile"] is True
         assert compile_report_payload["expected_outputs"] == run["paper_sources_manifest"]["expected_outputs"]
+        scope_sentence = (
+            f"The resulting claims are limited to benchmark `toy_cs_abstract_topic` on "
+            f"`{run['spec']['dataset']['name']}`"
+        )
+        limitation_scope_sentence = (
+            f"Claims are limited to benchmark `toy_cs_abstract_topic` on "
+            f"`{run['spec']['dataset']['name']}`"
+        )
         assert "## 2. Related Work" in paper
         assert (
-            "The study was scoped against the following literature cues" in paper
-            or "No project-specific literature was attached" in paper
+            "The retrieved papers place the executed benchmark in the following local context" in paper
+            or "this section records benchmark context and planning assumptions rather than a citation-based survey" in paper
         )
         assert "## 4. Experimental Setup" in paper
         assert "## 5. Results" in paper
@@ -675,8 +684,8 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "Significance Tests" in paper
         assert "Substantive negative outcomes retained in the artifact" in paper
         assert "Acceptance checks for the selected configuration" in paper
-        assert "The original hypothesis is not supported on this proxy benchmark" in paper
-        assert "The evidence should therefore be interpreted as a result on `toy_cs_abstract_topic`" in paper
+        assert "Within this benchmark setting, the original hypothesis is not supported." in paper
+        assert scope_sentence in paper
         assert "Negative Results" not in paper
         assert "Sweep Summary" not in paper
         assert "Seed Runs" not in paper
@@ -684,8 +693,11 @@ def test_autoresearch_text_run_generates_grounded_paper(monkeypatch, tmp_path: P
         assert "Portfolio planning generated 3 ranked candidates" not in paper
         assert "The figure plan promoted the following artifact-backed visuals" not in paper
         assert "The search and repair trace for this run was" not in paper
+        assert "The selected executable hypothesis is" not in paper
+        assert "The study narrows the requested topic into an executable proxy benchmark" not in paper
         assert "## 7. Limitations" in paper
-        assert "proxy benchmark rather than the full topic area" in paper
+        assert limitation_scope_sentence in paper
+        assert paper.count(scope_sentence) == 2
         assert "This revision pass keeps the section tied to the persisted evidence trail" not in paper
         assert "ScholarFlow" not in paper
         assert "generic essay" not in paper
@@ -2394,7 +2406,9 @@ def test_autoresearch_blocks_topic_proxy_mismatch_in_review_and_publish(
         run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
         assert run["status"] == "done"
         assert run["spec"]["benchmark_name"] == "toy_cs_abstract_topic"
-        assert "not as a direct evaluation of `Protein folding diffusion priors`" in run["paper_markdown"]
+        assert (
+            "should be read as bounded evidence about `Protein folding diffusion priors`" in run["paper_markdown"]
+        )
 
         review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
         assert review["overall_status"] == "blocked"

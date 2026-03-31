@@ -23,6 +23,32 @@ PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.1.2.md"
 
 
 class ResearchPlanner:
+    def _topic_title(self, topic: str) -> str:
+        cleaned = " ".join(topic.split()).strip().rstrip(".")
+        if not cleaned:
+            return "Executable Benchmark Study"
+        return cleaned[0].upper() + cleaned[1:]
+
+    def _fallback_title(self, topic: str, task_family: TaskFamily) -> str:
+        topic_title = self._topic_title(topic)
+        if task_family == "ir_reranking":
+            return f"{topic_title}: Lightweight Retrieval Signals"
+        if task_family == "tabular_classification":
+            return f"{topic_title}: Stable Tabular Baselines"
+        return f"{topic_title}: Lightweight Lexical Baselines"
+
+    def _is_generic_title(self, title: str | None) -> bool:
+        normalized = " ".join((title or "").split()).strip().lower()
+        if not normalized:
+            return True
+        generic_prefixes = (
+            "compact retrieval signal study",
+            "compact stability signal study",
+            "compact benchmark study",
+            "executable benchmark study",
+        )
+        return normalized.startswith(generic_prefixes)
+
     def _benchmark_scope_phrase(
         self,
         benchmark_name: str | None,
@@ -76,8 +102,8 @@ class ResearchPlanner:
             benchmark_description,
             benchmark_labels,
         )
+        title = self._fallback_title(topic, task_family)
         if task_family == "ir_reranking":
-            title = f"Compact Retrieval Signal Study for {topic}"
             method = "a lexical rarity-aware reranker backed by overlap baselines"
             questions = [
                 f"Can a lightweight lexical reranker recover the relevant document on {benchmark_scope}?",
@@ -93,7 +119,6 @@ class ResearchPlanner:
                 "An artifact-grounded analysis of the executed ranking variants.",
             ]
         elif task_family == "tabular_classification":
-            title = f"Compact Stability Signal Study for {topic}"
             method = "a scaled linear classifier backed by simple rule based baselines"
             questions = [
                 f"Can a small scaled linear model separate the labels exposed by {benchmark_scope}?",
@@ -109,7 +134,6 @@ class ResearchPlanner:
                 "An artifact-grounded analysis of the executed experiment variants.",
             ]
         else:
-            title = f"Compact Benchmark Study of {topic}"
             method = "a lexical probabilistic classifier backed by majority and keyword baselines"
             questions = [
                 f"Can lightweight lexical modeling classify short snippets from {benchmark_scope} without external libraries?",
@@ -398,6 +422,8 @@ class ResearchPlanner:
             parsed["topic"] = topic
             parsed["task_family"] = task_family
             parsed.setdefault("title", fallback.title)
+            if self._is_generic_title(parsed.get("title")):
+                parsed["title"] = fallback.title
             parsed.setdefault("problem_statement", fallback.problem_statement)
             parsed.setdefault("motivation", fallback.motivation)
             parsed.setdefault("proposed_method", fallback.proposed_method)

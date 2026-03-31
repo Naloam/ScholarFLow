@@ -428,6 +428,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           template_id: payload.templateId || undefined,
           status: "init",
         });
+        set((state) => {
+          const accessMode =
+            state.authState === "user" || state.authState === "service" ? "owner" : "anonymous";
+          const optimisticProject: Project = {
+            id: response.id,
+            title: payload.title,
+            topic: payload.topic,
+            template_id: payload.templateId || null,
+            status: "init",
+          };
+          const optimisticProjectList: ProjectListItem = {
+            ...optimisticProject,
+            access_mode: accessMode,
+          };
+          const availableProjects = [
+            optimisticProjectList,
+            ...state.availableProjects.filter((item) => item.id !== response.id),
+          ];
+          return {
+            currentProjectId: response.id,
+            project: optimisticProject,
+            availableProjects,
+            notice: `Project ${response.id} created. Loading details...`,
+          };
+        });
         await get().loadProject(response.id);
         set({ notice: `Project ${response.id} ready` });
       } catch (error) {
@@ -585,7 +610,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           betaSummary,
           mentorAccess,
           mentorFeedback,
-          notice: `Project ${projectId} refreshed`,
         });
       } catch (error) {
         handleActionError(error, "Refresh failed");

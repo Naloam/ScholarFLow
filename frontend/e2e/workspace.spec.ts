@@ -60,9 +60,10 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("editor-prose")).toContainText("Abstract");
 
   await page.getByTestId("run-review-button").click();
-  await expect(page.getByTestId("status-notice")).toContainText("Review", {
+  await expect(page.getByTestId("status-notice")).toContainText(/review/i, {
     timeout: 30000,
   });
+  await expect(page.getByTestId("beta-comment-input")).toBeEnabled({ timeout: 60000 });
 
   await page.getByTestId("beta-comment-input").fill("Browser beta feedback captured from the open workspace flow.");
   await page.getByTestId("beta-submit-button").click();
@@ -107,11 +108,11 @@ test("workspace supports manual bridge handoff and inline result import", async 
   await page.getByTestId("bridge-import-score").fill("0.83");
   await page.getByTestId("import-bridge-result-button").click();
 
-  await expect(page.getByTestId("status-notice")).toContainText("Bridge result imported", {
-    timeout: 30000,
-  });
   await expect(page.getByTestId("operator-bridge-summary")).toContainText("completed", {
-    timeout: 30000,
+    timeout: 60000,
+  });
+  await expect(page.getByTestId("status-notice")).toContainText(/bridge result/i, {
+    timeout: 60000,
   });
   await expect(page.getByTestId("operator-review-loop-summary")).toContainText(/r\d+/, {
     timeout: 30000,

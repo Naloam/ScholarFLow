@@ -45,6 +45,7 @@ export default defineConfig({
         DATA_DIR: backendData,
         CORS_ORIGINS: `http://127.0.0.1:${frontendPort},http://localhost:${frontendPort}`,
         SCHOLARFLOW_OFFLINE_LLM: "1",
+        SCHOLARFLOW_E2E_RESET: "1",
         SCHOLARFLOW_E2E_BACKEND_PORT: backendPort,
         AUTH_REQUIRED: authRequired ? "1" : "",
         AUTH_SECRET: authSecret,

@@ -1,5 +1,8 @@
+import { useEffect, useState } from "react";
+
 import type {
   AutoResearchDeployment,
+  AutoResearchDeploymentFilters,
   AutoResearchDeploymentList,
 } from "../../api/types";
 
@@ -7,8 +10,11 @@ type DeploymentPanelProps = {
   deploymentList: AutoResearchDeploymentList | null;
   deployment: AutoResearchDeployment | null;
   selectedDeploymentId?: string | null;
+  filters: AutoResearchDeploymentFilters;
   disabled: boolean;
   onSelectDeployment: (deploymentId: string) => void;
+  onApplyFilters: (filters: AutoResearchDeploymentFilters) => void;
+  onClearFilters: () => void;
   onOpenPublication: (projectId: string, runId: string) => void;
 };
 
@@ -23,15 +29,52 @@ function formatTimestamp(value: string | null | undefined): string {
   return parsed.toLocaleString();
 }
 
+function formatTaskFamily(value: string | null | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  return value.replaceAll("_", " ");
+}
+
 export function DeploymentPanel({
   deploymentList,
   deployment,
   selectedDeploymentId,
+  filters,
   disabled,
   onSelectDeployment,
+  onApplyFilters,
+  onClearFilters,
   onOpenPublication,
 }: DeploymentPanelProps) {
+  const [draftFilters, setDraftFilters] = useState<AutoResearchDeploymentFilters>(filters);
   const hasDeployments = Boolean(deploymentList?.deployments.length);
+  const hasActiveFilters = Boolean(
+    filters.search ||
+      (filters.final_publish_ready !== null &&
+        filters.final_publish_ready !== undefined) ||
+      filters.bundle_kind ||
+      filters.task_family,
+  );
+
+  useEffect(() => {
+    setDraftFilters(filters);
+  }, [
+    filters.search,
+    filters.final_publish_ready,
+    filters.bundle_kind,
+    filters.task_family,
+  ]);
+
+  function updateFilter<K extends keyof AutoResearchDeploymentFilters>(
+    key: K,
+    value: AutoResearchDeploymentFilters[K],
+  ) {
+    setDraftFilters((state) => ({
+      ...state,
+      [key]: value,
+    }));
+  }
 
   return (
     <section className="panel" data-testid="deployment-panel">
@@ -69,21 +112,111 @@ export function DeploymentPanel({
             </select>
             <span className="auth-copy" data-testid="deployment-selection-summary">
               {deployment
-                ? `${deployment.project_count} projects / ${deployment.final_publish_ready_count} final-ready papers`
+                ? `${deployment.filtered_publication_count}/${deployment.publication_count} shown across ${deployment.project_count} projects`
                 : "Select a deployment to inspect publication listings"}
             </span>
           </div>
 
           {deployment ? (
             <>
+              <div className="button-row">
+                <input
+                  type="search"
+                  value={draftFilters.search ?? ""}
+                  onChange={(event) =>
+                    updateFilter("search", event.target.value || null)
+                  }
+                  placeholder="Search publication, topic, run, benchmark"
+                  disabled={disabled}
+                  data-testid="deployment-search-input"
+                />
+                <select
+                  value={
+                    draftFilters.final_publish_ready === null ||
+                    draftFilters.final_publish_ready === undefined
+                      ? ""
+                      : String(draftFilters.final_publish_ready)
+                  }
+                  onChange={(event) =>
+                    updateFilter(
+                      "final_publish_ready",
+                      event.target.value === ""
+                        ? null
+                        : event.target.value === "true",
+                    )
+                  }
+                  disabled={disabled}
+                  data-testid="deployment-final-ready-filter"
+                >
+                  <option value="">All readiness</option>
+                  <option value="true">Final ready only</option>
+                  <option value="false">Needs final work</option>
+                </select>
+                <select
+                  value={draftFilters.bundle_kind ?? ""}
+                  onChange={(event) =>
+                    updateFilter(
+                      "bundle_kind",
+                      event.target.value === ""
+                        ? null
+                        : (event.target.value as AutoResearchDeploymentFilters["bundle_kind"]),
+                    )
+                  }
+                  disabled={disabled}
+                  data-testid="deployment-bundle-kind-filter"
+                >
+                  <option value="">All bundles</option>
+                  <option value="review_bundle">Review bundle</option>
+                  <option value="final_publish_bundle">Final publish bundle</option>
+                </select>
+                <select
+                  value={draftFilters.task_family ?? ""}
+                  onChange={(event) =>
+                    updateFilter(
+                      "task_family",
+                      event.target.value === ""
+                        ? null
+                        : (event.target.value as AutoResearchDeploymentFilters["task_family"]),
+                    )
+                  }
+                  disabled={disabled}
+                  data-testid="deployment-task-family-filter"
+                >
+                  <option value="">All task families</option>
+                  <option value="text_classification">Text classification</option>
+                  <option value="tabular_classification">Tabular classification</option>
+                  <option value="ir_reranking">IR reranking</option>
+                </select>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => onApplyFilters(draftFilters)}
+                  disabled={disabled}
+                  data-testid="deployment-apply-filters-button"
+                >
+                  Apply Filters
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onClearFilters}
+                  disabled={disabled || !hasActiveFilters}
+                  data-testid="deployment-clear-filters-button"
+                >
+                  Clear Filters
+                </button>
+              </div>
+
               <div className="summary-banner operator-summary-grid">
                 <div>
                   <span className="meta-label">Deployment</span>
                   <strong>{deployment.label}</strong>
                 </div>
                 <div>
-                  <span className="meta-label">Publications</span>
-                  <strong>{deployment.publication_count}</strong>
+                  <span className="meta-label">Showing</span>
+                  <strong>
+                    {deployment.filtered_publication_count}/{deployment.publication_count}
+                  </strong>
                 </div>
                 <div>
                   <span className="meta-label">Projects</span>
@@ -103,54 +236,63 @@ export function DeploymentPanel({
                 </div>
               </div>
 
-              <div className="list-block">
-                {deployment.publications.map((item) => {
-                  const compileOutputCount = item.publication.paper_compile_output_paths.length;
-                  return (
-                    <div
-                      key={item.publication.publication_id}
-                      className="evidence-card"
-                      data-testid={`deployment-publication-${item.publication.run_id}`}
-                    >
-                      <strong>{item.publication.paper_title}</strong>
-                      <small>
-                        project {item.publication.project_title ?? item.publication.project_id} / run{" "}
-                        {item.publication.run_id}
-                      </small>
-                      <small>
-                        bundle {item.publication.bundle_kind} / final ready{" "}
-                        {item.publication.final_publish_ready ? "yes" : "no"}
-                      </small>
-                      <small>topic {item.publication.topic}</small>
-                      <small>
-                        listed {formatTimestamp(item.listed_at)} / updated{" "}
-                        {formatTimestamp(item.publication.updated_at)}
-                      </small>
-                      <small>archive {item.publication.publish_archive_path}</small>
-                      <small>paper {item.publication.paper_path ?? "n/a"}</small>
-                      <small>
-                        compiled {item.publication.compiled_paper_path ?? "n/a"} / outputs{" "}
-                        {compileOutputCount}
-                      </small>
-                      <small>code {item.publication.code_package_path ?? "n/a"}</small>
-                      <button
-                        type="button"
-                        className="ghost-btn"
-                        onClick={() =>
-                          onOpenPublication(
-                            item.publication.project_id,
-                            item.publication.run_id,
-                          )
-                        }
-                        disabled={disabled}
-                        data-testid={`deployment-open-${item.publication.run_id}`}
+              {deployment.publications.length === 0 ? (
+                <div className="empty-state" data-testid="deployment-empty-filtered">
+                  <p>No publications match the current filters.</p>
+                  <span>Clear filters or widen the search to inspect the full deployment.</span>
+                </div>
+              ) : (
+                <div className="list-block">
+                  {deployment.publications.map((item) => {
+                    const compileOutputCount = item.publication.paper_compile_output_paths.length;
+                    return (
+                      <div
+                        key={item.publication.publication_id}
+                        className="evidence-card"
+                        data-testid={`deployment-publication-${item.publication.run_id}`}
                       >
-                        Open Publication
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                        <strong>{item.publication.paper_title}</strong>
+                        <small>
+                          project {item.publication.project_title ?? item.publication.project_id} / run{" "}
+                          {item.publication.run_id}
+                        </small>
+                        <small>
+                          task {formatTaskFamily(item.publication.task_family)} / bundle{" "}
+                          {item.publication.bundle_kind} / final ready{" "}
+                          {item.publication.final_publish_ready ? "yes" : "no"}
+                        </small>
+                        <small>topic {item.publication.topic}</small>
+                        <small>benchmark {item.publication.benchmark_name}</small>
+                        <small>
+                          listed {formatTimestamp(item.listed_at)} / updated{" "}
+                          {formatTimestamp(item.publication.updated_at)}
+                        </small>
+                        <small>archive {item.publication.publish_archive_path}</small>
+                        <small>paper {item.publication.paper_path ?? "n/a"}</small>
+                        <small>
+                          compiled {item.publication.compiled_paper_path ?? "n/a"} / outputs{" "}
+                          {compileOutputCount}
+                        </small>
+                        <small>code {item.publication.code_package_path ?? "n/a"}</small>
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() =>
+                            onOpenPublication(
+                              item.publication.project_id,
+                              item.publication.run_id,
+                            )
+                          }
+                          disabled={disabled}
+                          data-testid={`deployment-open-${item.publication.run_id}`}
+                        >
+                          Open Publication
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           ) : null}
         </>

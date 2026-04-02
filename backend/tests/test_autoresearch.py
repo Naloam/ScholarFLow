@@ -3211,6 +3211,117 @@ def test_autoresearch_deployment_api_skips_transient_invalid_run_snapshots(
         client.close()
 
 
+def test_autoresearch_deployment_detail_filters_publications(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id="paper-filter-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id="paper-filter-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+    try:
+        review_project_id = _create_project(
+            client,
+            "Deployment Filter Review Project",
+            "Automatic topic classification for compact CS abstracts",
+        )
+        final_project_id = _create_project(
+            client,
+            "Deployment Filter Final Project",
+            "Compact reranking for cs retrieval",
+        )
+
+        review_run_id = client.post(
+            f"/api/projects/{review_project_id}/auto-research/run",
+            json={"topic": "Automatic topic classification for compact CS abstracts"},
+        ).json()["id"]
+        final_run_id = client.post(
+            f"/api/projects/{final_project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        ).json()["id"]
+
+        review_export = client.post(
+            f"/api/projects/{review_project_id}/auto-research/{review_run_id}/publish/export",
+            json={"deployment_id": "filtered_batch", "deployment_label": "Filtered Batch"},
+        )
+        final_export = client.post(
+            f"/api/projects/{final_project_id}/auto-research/{final_run_id}/publish/export",
+            json={"deployment_id": "filtered_batch", "deployment_label": "Filtered Batch"},
+        )
+        assert review_export.status_code == 200
+        assert final_export.status_code == 200
+        assert review_export.json()["bundle_kind"] == "review_bundle"
+        assert final_export.json()["bundle_kind"] == "final_publish_bundle"
+
+        filtered_review = client.get(
+            "/api/auto-research/deployments/filtered_batch",
+            params={
+                "search": "classification",
+                "bundle_kind": "review_bundle",
+                "task_family": "text_classification",
+            },
+        )
+        assert filtered_review.status_code == 200
+        review_payload = filtered_review.json()
+        assert review_payload["publication_count"] == 2
+        assert review_payload["filtered_publication_count"] == 1
+        assert review_payload["filters"]["search"] == "classification"
+        assert review_payload["filters"]["bundle_kind"] == "review_bundle"
+        assert review_payload["filters"]["task_family"] == "text_classification"
+        assert review_payload["filters"]["final_publish_ready"] is None
+        assert [item["publication"]["run_id"] for item in review_payload["publications"]] == [
+            review_run_id
+        ]
+
+        filtered_final = client.get(
+            "/api/auto-research/deployments/filtered_batch",
+            params={"final_publish_ready": "true"},
+        )
+        assert filtered_final.status_code == 200
+        final_payload = filtered_final.json()
+        assert final_payload["publication_count"] == 2
+        assert final_payload["filtered_publication_count"] == 1
+        assert final_payload["filters"]["final_publish_ready"] is True
+        assert [item["publication"]["run_id"] for item in final_payload["publications"]] == [
+            final_run_id
+        ]
+
+        empty_filtered = client.get(
+            "/api/auto-research/deployments/filtered_batch",
+            params={"search": "missing deployment marker"},
+        )
+        assert empty_filtered.status_code == 200
+        empty_payload = empty_filtered.json()
+        assert empty_payload["publication_count"] == 2
+        assert empty_payload["filtered_publication_count"] == 0
+        assert empty_payload["publications"] == []
+    finally:
+        client.close()
+
+
 def test_autoresearch_operator_console_aggregates_current_run_state(
     monkeypatch,
     tmp_path: Path,

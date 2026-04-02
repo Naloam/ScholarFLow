@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from config.deps import get_db, get_identity
 from config.settings import settings
 from schemas.autoresearch import (
+    AutoResearchPublishBundleKind,
     AutoResearchDeploymentListRead,
     AutoResearchDeploymentRead,
+    TaskFamily,
 )
 from services.autoresearch.deployment import (
     build_deployment_detail,
@@ -47,12 +49,20 @@ def list_auto_research_deployments(
 @router.get("/{deployment_id}", response_model=AutoResearchDeploymentRead)
 def get_auto_research_deployment(
     deployment_id: str,
+    search: str | None = Query(default=None),
+    final_publish_ready: bool | None = Query(default=None),
+    bundle_kind: AutoResearchPublishBundleKind | None = Query(default=None),
+    task_family: TaskFamily | None = Query(default=None),
     db: Session = Depends(get_db),
     identity: AuthIdentity | None = Depends(get_identity),
 ) -> AutoResearchDeploymentRead:
     deployment = build_deployment_detail(
         _accessible_projects(db=db, identity=identity),
         deployment_id,
+        search=search,
+        final_publish_ready=final_publish_ready,
+        bundle_kind=bundle_kind,
+        task_family=task_family,
     )
     if deployment is None:
         raise HTTPException(status_code=404, detail="Auto research deployment not found")

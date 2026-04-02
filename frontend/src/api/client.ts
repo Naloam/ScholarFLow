@@ -4,6 +4,7 @@ import type {
   AutoResearchBundleIndex,
   AutoResearchCandidateRegistry,
   AutoResearchDeployment,
+  AutoResearchDeploymentFilters,
   AutoResearchDeploymentList,
   AnalysisSummary,
   AutoResearchExecution,
@@ -502,8 +503,25 @@ export const api = {
     return request("/api/auto-research/deployments");
   },
 
-  getAutoResearchDeployment(deploymentId: string): Promise<AutoResearchDeployment> {
-    return request(`/api/auto-research/deployments/${deploymentId}`);
+  getAutoResearchDeployment(
+    deploymentId: string,
+    filters?: AutoResearchDeploymentFilters,
+  ): Promise<AutoResearchDeployment> {
+    const params = new URLSearchParams();
+    if (filters?.search) {
+      params.set("search", filters.search);
+    }
+    if (filters?.final_publish_ready !== null && filters?.final_publish_ready !== undefined) {
+      params.set("final_publish_ready", String(filters.final_publish_ready));
+    }
+    if (filters?.bundle_kind) {
+      params.set("bundle_kind", filters.bundle_kind);
+    }
+    if (filters?.task_family) {
+      params.set("task_family", filters.task_family);
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return request(`/api/auto-research/deployments/${deploymentId}${query}`);
   },
 
   resumeAutoResearch(

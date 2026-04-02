@@ -1251,6 +1251,13 @@ export type AutoResearchDeploymentPublication = {
   publication: AutoResearchPublicationManifest;
 };
 
+export type AutoResearchDeploymentFilters = {
+  search?: string | null;
+  final_publish_ready?: boolean | null;
+  bundle_kind?: "review_bundle" | "final_publish_bundle" | null;
+  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+};
+
 export type AutoResearchDeploymentSummary = {
   deployment_id: string;
   label: string;
@@ -1269,10 +1276,12 @@ export type AutoResearchDeployment = {
   created_at: string;
   updated_at: string;
   publication_count: number;
+  filtered_publication_count: number;
   project_count: number;
   final_publish_ready_count: number;
   latest_publication_id?: string | null;
   latest_run_id?: string | null;
+  filters: AutoResearchDeploymentFilters;
   publications: AutoResearchDeploymentPublication[];
 };
 

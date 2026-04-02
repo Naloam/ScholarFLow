@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -26,15 +27,40 @@ import models  # noqa: F401, E402
 from models.base import Base  # noqa: E402
 
 
+def _sqlite_path(db_url: str) -> Path | None:
+    if db_url.startswith("sqlite:///"):
+        return Path(db_url.removeprefix("sqlite:///"))
+    if db_url.startswith("sqlite+pysqlite:///"):
+        return Path(db_url.removeprefix("sqlite+pysqlite:///"))
+    return None
+
+
+def _reset_e2e_state(*, data_dir: Path, db_url: str) -> None:
+    if os.getenv("SCHOLARFLOW_E2E_RESET", "1") != "1":
+        return
+    if data_dir.exists():
+        shutil.rmtree(data_dir)
+    db_path = _sqlite_path(db_url)
+    if db_path is None:
+        return
+    for candidate in (
+        db_path,
+        db_path.with_name(f"{db_path.name}-shm"),
+        db_path.with_name(f"{db_path.name}-wal"),
+    ):
+        if candidate.exists():
+            candidate.unlink()
+
+
 def main() -> None:
     data_dir = Path(os.environ["DATA_DIR"])
-    data_dir.mkdir(parents=True, exist_ok=True)
     db_url = os.environ["DATABASE_URL"]
-    if db_url.startswith("sqlite:///"):
-        db_path = Path(db_url.removeprefix("sqlite:///"))
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-    elif db_url.startswith("sqlite+pysqlite:///"):
-        db_path = Path(db_url.removeprefix("sqlite+pysqlite:///"))
+    db_path = _sqlite_path(db_url)
+
+    _reset_e2e_state(data_dir=data_dir, db_url=db_url)
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    if db_path is not None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
     Base.metadata.create_all(engine)

@@ -12,6 +12,7 @@ import type {
   AnalysisSummary,
   AutoResearchBridgeImportRequest,
   AutoResearchDeployment,
+  AutoResearchDeploymentFilters,
   AutoResearchDeploymentList,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
@@ -66,6 +67,18 @@ function normalizeConsoleFilters(
   };
 }
 
+function normalizeDeploymentFilters(
+  filters: AutoResearchDeploymentFilters,
+): AutoResearchDeploymentFilters {
+  const search = filters.search?.trim();
+  return {
+    search: search ? search : null,
+    final_publish_ready: filters.final_publish_ready ?? null,
+    bundle_kind: filters.bundle_kind ?? null,
+    task_family: filters.task_family ?? null,
+  };
+}
+
 type ConnectionState = "disconnected" | "connecting" | "live";
 type AuthState = "checking" | "anonymous" | "user" | "service";
 
@@ -88,6 +101,7 @@ const emptyWorkspaceSlice = {
   autoResearchConsoleFilters: {} as AutoResearchOperatorConsoleFilters,
   autoResearchDeploymentList: null as AutoResearchDeploymentList | null,
   selectedAutoResearchDeploymentId: "",
+  autoResearchDeploymentFilters: {} as AutoResearchDeploymentFilters,
   autoResearchDeployment: null as AutoResearchDeployment | null,
   autoResearchPublicationManifest: null as AutoResearchPublicationManifest | null,
   analysis: null as AnalysisSummary | null,
@@ -119,6 +133,7 @@ type WorkspaceState = {
   autoResearchConsoleFilters: AutoResearchOperatorConsoleFilters;
   autoResearchDeploymentList: AutoResearchDeploymentList | null;
   selectedAutoResearchDeploymentId: string;
+  autoResearchDeploymentFilters: AutoResearchDeploymentFilters;
   autoResearchDeployment: AutoResearchDeployment | null;
   autoResearchPublicationManifest: AutoResearchPublicationManifest | null;
   analysis: AnalysisSummary | null;
@@ -147,6 +162,8 @@ type WorkspaceState = {
   refreshAutoResearchDeployments: (deploymentId?: string) => Promise<void>;
   applyAutoResearchConsoleFilters: (filters: AutoResearchOperatorConsoleFilters) => Promise<void>;
   clearAutoResearchConsoleFilters: () => Promise<void>;
+  applyAutoResearchDeploymentFilters: (filters: AutoResearchDeploymentFilters) => Promise<void>;
+  clearAutoResearchDeploymentFilters: () => Promise<void>;
   updateAutoResearchRunControls: (payload: {
     max_rounds?: number | null;
     candidate_execution_limit?: number | null;
@@ -331,6 +348,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         autoResearchDeploymentList,
         selectedAutoResearchDeploymentId:
           autoResearchDeploymentList?.deployments[0]?.deployment_id ?? "",
+        autoResearchDeploymentFilters: {},
         autoResearchDeployment: null,
         authError,
         notice,
@@ -475,7 +493,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             api.getAutoResearchOperatorConsole(projectId, {}),
             api.listAutoResearchDeployments(),
             get().selectedAutoResearchDeploymentId
-              ? api.getAutoResearchDeployment(get().selectedAutoResearchDeploymentId)
+              ? api.getAutoResearchDeployment(
+                  get().selectedAutoResearchDeploymentId,
+                  normalizeDeploymentFilters(get().autoResearchDeploymentFilters),
+                )
               : Promise.resolve(null),
             api.getAnalysisSummary(projectId),
             api.getBetaSummary(projectId),
@@ -528,6 +549,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
               : deploymentListResult.status === "fulfilled"
                 ? deploymentListResult.value.deployments[0]?.deployment_id ?? ""
                 : "",
+          autoResearchDeploymentFilters:
+            deploymentDetailResult.status === "fulfilled" && deploymentDetailResult.value
+              ? deploymentDetailResult.value.filters
+              : normalizeDeploymentFilters(get().autoResearchDeploymentFilters),
           autoResearchDeployment:
             deploymentDetailResult.status === "fulfilled" ? deploymentDetailResult.value : null,
           autoResearchPublicationManifest,
@@ -553,6 +578,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       try {
         const selectedRunId = get().autoResearchConsole?.selected_run_id ?? undefined;
         const filters = normalizeConsoleFilters(get().autoResearchConsoleFilters);
+        const deploymentFilters = normalizeDeploymentFilters(get().autoResearchDeploymentFilters);
         const [status, drafts, evidence, reviews, autoResearchConsole, autoResearchDeploymentList, autoResearchDeployment, analysis, betaSummary, mentorAccess, mentorFeedback] = await Promise.all([
           api.getProjectStatus(projectId),
           api.listDrafts(projectId),
@@ -564,7 +590,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           }),
           api.listAutoResearchDeployments(),
           get().selectedAutoResearchDeploymentId
-            ? api.getAutoResearchDeployment(get().selectedAutoResearchDeploymentId).catch(() => null)
+            ? api
+                .getAutoResearchDeployment(
+                  get().selectedAutoResearchDeploymentId,
+                  deploymentFilters,
+                )
+                .catch(() => null)
             : Promise.resolve(null),
           api.getAnalysisSummary(projectId),
           api.getBetaSummary(projectId),
@@ -604,6 +635,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             autoResearchDeployment?.deployment_id ??
             autoResearchDeploymentList.deployments[0]?.deployment_id ??
             "",
+          autoResearchDeploymentFilters:
+            autoResearchDeployment?.filters ?? deploymentFilters,
           autoResearchDeployment,
           autoResearchPublicationManifest,
           analysis,
@@ -647,6 +680,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     async refreshAutoResearchDeployments(deploymentId) {
       try {
+        const filters = normalizeDeploymentFilters(get().autoResearchDeploymentFilters);
         const deploymentList = await api.listAutoResearchDeployments();
         const nextDeploymentId =
           deploymentId ??
@@ -655,11 +689,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           "";
         const deployment =
           nextDeploymentId
-            ? await api.getAutoResearchDeployment(nextDeploymentId).catch(() => null)
+            ? await api.getAutoResearchDeployment(nextDeploymentId, filters).catch(() => null)
             : null;
         set({
           autoResearchDeploymentList: deploymentList,
           selectedAutoResearchDeploymentId: deployment?.deployment_id ?? nextDeploymentId,
+          autoResearchDeploymentFilters: deployment?.filters ?? filters,
           autoResearchDeployment: deployment,
         });
       } catch (error) {
@@ -699,6 +734,38 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     async clearAutoResearchConsoleFilters() {
       return get().applyAutoResearchConsoleFilters({});
+    },
+
+    async applyAutoResearchDeploymentFilters(filters) {
+      const nextFilters = normalizeDeploymentFilters(filters);
+      set({ working: true, notice: "Applying deployment filters..." });
+      try {
+        const deploymentList = await api.listAutoResearchDeployments();
+        const deploymentId =
+          get().selectedAutoResearchDeploymentId ||
+          deploymentList.deployments[0]?.deployment_id ||
+          "";
+        const deployment = deploymentId
+          ? await api.getAutoResearchDeployment(deploymentId, nextFilters).catch(() => null)
+          : null;
+        set({
+          autoResearchDeploymentList: deploymentList,
+          selectedAutoResearchDeploymentId: deployment?.deployment_id ?? deploymentId,
+          autoResearchDeploymentFilters: deployment?.filters ?? nextFilters,
+          autoResearchDeployment: deployment,
+          notice: deployment
+            ? `Deployment filtered to ${deployment.filtered_publication_count}/${deployment.publication_count} publications`
+            : "No deployments available",
+        });
+      } catch (error) {
+        handleActionError(error, "Apply deployment filters failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async clearAutoResearchDeploymentFilters() {
+      return get().applyAutoResearchDeploymentFilters({});
     },
 
     async updateAutoResearchRunControls(payload) {
@@ -769,11 +836,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       try {
         const [deploymentList, deployment] = await Promise.all([
           api.listAutoResearchDeployments(),
-          api.getAutoResearchDeployment(deploymentId),
+          api.getAutoResearchDeployment(
+            deploymentId,
+            normalizeDeploymentFilters(get().autoResearchDeploymentFilters),
+          ),
         ]);
         set({
           autoResearchDeploymentList: deploymentList,
           selectedAutoResearchDeploymentId: deployment.deployment_id,
+          autoResearchDeploymentFilters: deployment.filters,
           autoResearchDeployment: deployment,
           notice: `Deployment ${deploymentId} loaded`,
         });

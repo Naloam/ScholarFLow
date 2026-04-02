@@ -30,6 +30,7 @@ export function WorkspacePage() {
   const autoResearchConsoleFilters = useWorkspaceStore((state) => state.autoResearchConsoleFilters);
   const autoResearchDeploymentList = useWorkspaceStore((state) => state.autoResearchDeploymentList);
   const selectedAutoResearchDeploymentId = useWorkspaceStore((state) => state.selectedAutoResearchDeploymentId);
+  const autoResearchDeploymentFilters = useWorkspaceStore((state) => state.autoResearchDeploymentFilters);
   const autoResearchDeployment = useWorkspaceStore((state) => state.autoResearchDeployment);
   const autoResearchPublicationManifest = useWorkspaceStore(
     (state) => state.autoResearchPublicationManifest,
@@ -54,6 +55,12 @@ export function WorkspacePage() {
   const loadProject = useWorkspaceStore((state) => state.loadProject);
   const applyAutoResearchConsoleFilters = useWorkspaceStore((state) => state.applyAutoResearchConsoleFilters);
   const clearAutoResearchConsoleFilters = useWorkspaceStore((state) => state.clearAutoResearchConsoleFilters);
+  const applyAutoResearchDeploymentFilters = useWorkspaceStore(
+    (state) => state.applyAutoResearchDeploymentFilters,
+  );
+  const clearAutoResearchDeploymentFilters = useWorkspaceStore(
+    (state) => state.clearAutoResearchDeploymentFilters,
+  );
   const selectDraft = useWorkspaceStore((state) => state.selectDraft);
   const setEditorContent = useWorkspaceStore((state) => state.setEditorContent);
   const setFocusedText = useWorkspaceStore((state) => state.setFocusedText);
@@ -219,8 +226,11 @@ export function WorkspacePage() {
             deploymentList={autoResearchDeploymentList}
             deployment={autoResearchDeployment}
             selectedDeploymentId={selectedAutoResearchDeploymentId}
+            filters={autoResearchDeploymentFilters}
             disabled={workspaceBusy || authLocked}
             onSelectDeployment={selectAutoResearchDeployment}
+            onApplyFilters={applyAutoResearchDeploymentFilters}
+            onClearFilters={clearAutoResearchDeploymentFilters}
             onOpenPublication={openAutoResearchPublication}
           />
           <EvidencePanel evidence={evidence} focusedText={focusedText} />

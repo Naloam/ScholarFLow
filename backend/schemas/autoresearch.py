@@ -1416,6 +1416,13 @@ class AutoResearchDeploymentPublicationRead(BaseModel):
     publication: AutoResearchPublicationManifestRead
 
 
+class AutoResearchDeploymentFiltersRead(BaseModel):
+    search: str | None = None
+    final_publish_ready: bool | None = None
+    bundle_kind: AutoResearchPublishBundleKind | None = None
+    task_family: TaskFamily | None = None
+
+
 class AutoResearchDeploymentSummaryRead(BaseModel):
     deployment_id: str
     label: str
@@ -1434,10 +1441,12 @@ class AutoResearchDeploymentRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     publication_count: int = 0
+    filtered_publication_count: int = 0
     project_count: int = 0
     final_publish_ready_count: int = 0
     latest_publication_id: str | None = None
     latest_run_id: str | None = None
+    filters: AutoResearchDeploymentFiltersRead = Field(default_factory=AutoResearchDeploymentFiltersRead)
     publications: list[AutoResearchDeploymentPublicationRead] = Field(default_factory=list)
 
 

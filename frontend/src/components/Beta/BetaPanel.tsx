@@ -59,6 +59,8 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
         <label className="field">
           <span className="field-label">Rating</span>
           <select
+            id="beta-rating-input"
+            name="beta_rating"
             data-testid="beta-rating-input"
             disabled={disabled}
             value={rating}
@@ -74,6 +76,8 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
         <label className="field">
           <span className="field-label">Category</span>
           <select
+            id="beta-category-input"
+            name="beta_category"
             data-testid="beta-category-input"
             disabled={disabled}
             value={category}
@@ -88,6 +92,8 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
         <label className="field">
           <span className="field-label">Comment</span>
           <textarea
+            id="beta-comment-input"
+            name="beta_comment"
             data-testid="beta-comment-input"
             rows={3}
             disabled={disabled}

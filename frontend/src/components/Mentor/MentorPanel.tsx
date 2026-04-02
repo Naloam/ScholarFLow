@@ -79,6 +79,8 @@ export function MentorPanel({
           <label className="field">
             <span className="field-label">Mentor email</span>
             <input
+              id="mentor-email-input"
+              name="mentor_email"
               data-testid="mentor-email-input"
               disabled={disabled}
               value={mentorEmail}
@@ -88,6 +90,8 @@ export function MentorPanel({
           <label className="field">
             <span className="field-label">Display name</span>
             <input
+              id="mentor-name-input"
+              name="mentor_name"
               data-testid="mentor-name-input"
               disabled={disabled}
               value={mentorName}
@@ -116,6 +120,8 @@ export function MentorPanel({
           <label className="field">
             <span className="field-label">Summary</span>
             <textarea
+              id="mentor-summary-input"
+              name="mentor_summary"
               data-testid="mentor-summary-input"
               rows={2}
               disabled={disabled}
@@ -126,6 +132,8 @@ export function MentorPanel({
           <label className="field">
             <span className="field-label">Strengths</span>
             <textarea
+              id="mentor-strengths-input"
+              name="mentor_strengths"
               data-testid="mentor-strengths-input"
               rows={2}
               disabled={disabled}
@@ -136,6 +144,8 @@ export function MentorPanel({
           <label className="field">
             <span className="field-label">Concerns</span>
             <textarea
+              id="mentor-concerns-input"
+              name="mentor_concerns"
               data-testid="mentor-concerns-input"
               rows={2}
               disabled={disabled}
@@ -146,6 +156,8 @@ export function MentorPanel({
           <label className="field">
             <span className="field-label">Next steps</span>
             <textarea
+              id="mentor-next-steps-input"
+              name="mentor_next_steps"
               data-testid="mentor-next-steps-input"
               rows={2}
               disabled={disabled}

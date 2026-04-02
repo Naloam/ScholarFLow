@@ -207,10 +207,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   const resolveSelectedRunId = (
     consoleState: AutoResearchOperatorConsole | null,
   ): string | null => consoleState?.selected_run_id ?? consoleState?.current_run?.run.id ?? null;
+  const shouldLoadPublicationManifest = (
+    consoleState: AutoResearchOperatorConsole | null,
+  ): boolean => {
+    const publish = consoleState?.current_run?.publish;
+    return Boolean(publish && publish.final_publish_ready && publish.archive_ready);
+  };
   const loadPublicationManifest = async (
     projectId: string,
-    runId: string | null | undefined,
+    consoleState: AutoResearchOperatorConsole | null,
   ): Promise<AutoResearchPublicationManifest | null> => {
+    const runId = resolveSelectedRunId(consoleState);
+    if (!shouldLoadPublicationManifest(consoleState) || !runId) {
+      return null;
+    }
     if (!runId) {
       return null;
     }
@@ -223,6 +233,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       console.error(`Could not load publication manifest for ${runId}`, error);
       return null;
     }
+  };
+  const loadWorkspaceBootstrapData = async (): Promise<
+    [
+      PromiseSettledResult<{ items: TemplateMeta[] }>,
+      PromiseSettledResult<ProjectListItem[]>,
+      PromiseSettledResult<AutoResearchDeploymentList>,
+    ]
+  > => {
+    let lastResults: [
+      PromiseSettledResult<{ items: TemplateMeta[] }>,
+      PromiseSettledResult<ProjectListItem[]>,
+      PromiseSettledResult<AutoResearchDeploymentList>,
+    ] | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const results = await Promise.allSettled([
+        api.listTemplates(),
+        api.listProjects(),
+        api.listAutoResearchDeployments(),
+      ]);
+      lastResults = results;
+      const hasRetryableFailure = results.some(
+        (result) => result.status === "rejected" && !isUnauthorizedError(result.reason),
+      );
+      if (!hasRetryableFailure || attempt === 2) {
+        return results;
+      }
+      await sleep(500 * (attempt + 1));
+    }
+    return lastResults as [
+      PromiseSettledResult<{ items: TemplateMeta[] }>,
+      PromiseSettledResult<ProjectListItem[]>,
+      PromiseSettledResult<AutoResearchDeploymentList>,
+    ];
   };
 
   const expireSession = (message: string) => {
@@ -306,11 +349,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const requiresAuth = workspaceRequiresToken(authConfig);
 
       if (healthResult.status === "fulfilled" && (!requiresAuth || Boolean(getAuthToken()))) {
-        const [templateResult, projectListResult, deploymentListResult] = await Promise.allSettled([
-          api.listTemplates(),
-          api.listProjects(),
-          api.listAutoResearchDeployments(),
-        ]);
+        const [templateResult, projectListResult, deploymentListResult] =
+          await loadWorkspaceBootstrapData();
         if (templateResult.status === "fulfilled") {
           templates = templateResult.value.items;
           availableProjects =
@@ -375,11 +415,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           role: payload.role,
         });
         setAuthToken(session.access_token);
-        const [templateResult, projectListResult, deploymentListResult] = await Promise.allSettled([
-          api.listTemplates(),
-          api.listProjects(),
-          api.listAutoResearchDeployments(),
-        ]);
+        const [templateResult, projectListResult, deploymentListResult] =
+          await loadWorkspaceBootstrapData();
         set({
           templates: templateResult.status === "fulfilled" ? templateResult.value.items : [],
           availableProjects:
@@ -515,7 +552,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const autoResearchConsole = consoleResult.status === "fulfilled" ? consoleResult.value : null;
         const autoResearchPublicationManifest = await loadPublicationManifest(
           projectId,
-          resolveSelectedRunId(autoResearchConsole),
+          autoResearchConsole,
         );
         const selectedVersion = drafts.length > 0 ? drafts[0].version : null;
         const selectedDraft =
@@ -618,7 +655,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           fallbackVersion === selectedDraftVersion;
         const autoResearchPublicationManifest = await loadPublicationManifest(
           projectId,
-          resolveSelectedRunId(autoResearchConsole),
+          autoResearchConsole,
         );
 
         set({
@@ -666,7 +703,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         );
         const autoResearchPublicationManifest = await loadPublicationManifest(
           projectId,
-          resolveSelectedRunId(console),
+          console,
         );
         set({
           autoResearchConsole: console,
@@ -717,7 +754,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         });
         const autoResearchPublicationManifest = await loadPublicationManifest(
           projectId,
-          resolveSelectedRunId(console),
+          console,
         );
         set({
           autoResearchConsole: console,
@@ -816,7 +853,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         });
         const autoResearchPublicationManifest = await loadPublicationManifest(
           projectId,
-          resolveSelectedRunId(console),
+          console,
         );
         set({
           autoResearchConsole: console,
@@ -929,6 +966,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       try {
         const response = await api.startAutoResearch(currentProjectId, {
           topic: project.topic ?? project.title,
+          auto_search_literature: true,
           ...payload,
         });
         await sleep(400);

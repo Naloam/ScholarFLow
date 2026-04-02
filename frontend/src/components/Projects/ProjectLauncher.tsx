@@ -43,6 +43,8 @@ export function ProjectLauncher({
       <label className="field">
         <span className="field-label">Project title</span>
         <input
+          id="project-title-input"
+          name="project_title"
           data-testid="project-title-input"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
@@ -52,6 +54,8 @@ export function ProjectLauncher({
       <label className="field">
         <span className="field-label">Topic</span>
         <textarea
+          id="project-topic-input"
+          name="project_topic"
           data-testid="project-topic-input"
           rows={3}
           value={topic}
@@ -62,6 +66,8 @@ export function ProjectLauncher({
       <label className="field">
         <span className="field-label">Template</span>
         <select
+          id="project-template-select"
+          name="project_template"
           data-testid="project-template-select"
           value={templateId}
           onChange={(event) => setTemplateId(event.target.value)}
@@ -100,6 +106,8 @@ export function ProjectLauncher({
         <p className="inline-title">Open existing project</p>
         <div className="inline-row">
           <input
+            id="open-project-input"
+            name="open_project_id"
             data-testid="open-project-input"
             placeholder="Paste project id"
             value={existingProjectId}

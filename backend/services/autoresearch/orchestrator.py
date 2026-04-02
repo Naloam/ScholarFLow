@@ -21,7 +21,7 @@ from schemas.autoresearch import (
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec
 from services.autoresearch.bridge import AutoResearchExperimentBridgeService, build_bridge_state
 from services.autoresearch.ingestion import resolve_benchmark
-from services.autoresearch.literature_pipeline import gather_literature_context
+from services.autoresearch.literature_pipeline import build_fallback_literature_context, gather_literature_context
 from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.repair import ExperimentRepairEngine
 from services.autoresearch.repository import (
@@ -1085,6 +1085,11 @@ class AutoResearchOrchestrator:
                     ]
                     portfolio = self._retry_portfolio(portfolio, candidates)
             else:
+                benchmark = resolve_benchmark(
+                    topic=topic,
+                    task_family_hint=task_family_hint,
+                    benchmark_source=benchmark_source,
+                )
                 _papers, literature, chunk_context = gather_literature_context(
                     db=db,
                     project_id=project_id,
@@ -1093,11 +1098,17 @@ class AutoResearchOrchestrator:
                     auto_search=auto_search_literature,
                     auto_fetch=auto_fetch_literature,
                 )
-                benchmark = resolve_benchmark(
-                    topic=topic,
-                    task_family_hint=task_family_hint,
-                    benchmark_source=benchmark_source,
-                )
+                if auto_search_literature and not literature:
+                    literature = build_fallback_literature_context(
+                        topic=topic,
+                        benchmark_name=benchmark.benchmark_name,
+                        benchmark_description=benchmark.benchmark_description,
+                        dataset_name=str(benchmark.payload.get("name") or benchmark.benchmark_name),
+                        dataset_description=str(
+                            benchmark.payload.get("description") or benchmark.benchmark_description
+                        ),
+                        task_family=benchmark.task_family,
+                    )
                 self._raise_if_cancelled(should_cancel)
                 plan = self.planner.plan(
                     topic,

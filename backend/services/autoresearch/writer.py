@@ -697,9 +697,18 @@ class PaperWriter:
         labels = ", ".join(str(index) for index in range(1, count + 1))
         return f"[{labels}]"
 
+    def _fallback_context_only(self, literature: list[LiteratureInsight]) -> bool:
+        return bool(literature) and all((item.source or "").endswith("_context") for item in literature)
+
     def _literature_context_sentence(self, literature: list[LiteratureInsight]) -> str:
         if not literature:
             return ""
+        if self._fallback_context_only(literature):
+            return (
+                f"Preserved benchmark context {self._literature_citation_span(literature)} anchored the benchmark "
+                "framing and kept the related-work discussion explicit even when external paper search returned no "
+                "project-specific hits."
+            )
         return (
             f"Recent retrieved work {self._literature_citation_span(literature)} anchored the benchmark framing and "
             "preserved explicit related-work context for the selected hypothesis."
@@ -708,6 +717,11 @@ class PaperWriter:
     def _discussion_context_sentence(self, literature: list[LiteratureInsight]) -> str:
         if not literature:
             return ""
+        if self._fallback_context_only(literature):
+            return (
+                f"The preserved benchmark context {self._literature_citation_span(literature)} makes the contribution "
+                "boundary explicit: this run is a bounded executable check rather than a state-of-the-art claim."
+            )
         return (
             f"The preserved literature context {self._literature_citation_span(literature)} makes the contribution "
             "boundary explicit: this run is a bounded executable check rather than a state-of-the-art claim."
@@ -716,6 +730,11 @@ class PaperWriter:
     def _conclusion_context_sentence(self, literature: list[LiteratureInsight]) -> str:
         if not literature:
             return ""
+        if self._fallback_context_only(literature):
+            return (
+                f"Relative to the preserved benchmark context {self._literature_citation_span(literature)}, the "
+                "primary contribution here is the end-to-end evidence trail and not a claim of algorithmic novelty."
+            )
         return (
             f"Relative to the retrieved literature context {self._literature_citation_span(literature)}, the primary "
             "contribution here is the end-to-end evidence trail and not a claim of algorithmic novelty."
@@ -2935,6 +2954,11 @@ Program objective:
         discussion_context_sentence = self._discussion_context_sentence(literature)
         conclusion_context_sentence = self._conclusion_context_sentence(literature)
         references_block = self._references_block(literature)
+        related_work_intro = (
+            "The preserved context sources place the executed benchmark in the following local context:\n"
+            if self._fallback_context_only(literature)
+            else "The retrieved papers place the executed benchmark in the following local context:\n"
+        )
         acceptance_block = self._acceptance_block(artifact)
         acceptance_summary_sentence = self._acceptance_summary_sentence(artifact)
         significance_block = self._significance_block(artifact)
@@ -3044,7 +3068,7 @@ Program objective:
             "related_work": (
                 (
                     (f"{literature_synthesis_sentence}\n\n" if literature_synthesis_sentence else "")
-                    + "The retrieved papers place the executed benchmark in the following local context:\n"
+                    + related_work_intro
                     + f"{literature_block}\n\n"
                     if literature
                     else "No project-specific papers were persisted for this run, so this section records benchmark context and planning assumptions rather than a citation-based survey.\n\n"

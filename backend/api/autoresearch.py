@@ -491,12 +491,15 @@ def export_auto_research_publish_package(
     db: Session = Depends(get_db),
 ) -> AutoResearchPublishExportRead:
     del db
-    export_result = export_publish_package(
-        project_id,
-        run_id,
-        deployment_id=payload.deployment_id if payload is not None else None,
-        deployment_label=payload.deployment_label if payload is not None else None,
-    )
+    try:
+        export_result = export_publish_package(
+            project_id,
+            run_id,
+            deployment_id=payload.deployment_id if payload is not None else None,
+            deployment_label=payload.deployment_label if payload is not None else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if export_result is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return export_result
@@ -515,6 +518,11 @@ def download_auto_research_publish_package(
     package = build_publish_package(project_id, run_id)
     if package is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
+    if not package.final_publish_ready:
+        raise HTTPException(
+            status_code=409,
+            detail="Auto research run is not final publish ready; export is only available for publish-ready runs",
+        )
     archive_path = get_publish_archive_path(project_id, run_id).resolve()
     if not package.archive_ready or not archive_path.is_file():
         raise HTTPException(status_code=409, detail="Publish package has not been exported yet")

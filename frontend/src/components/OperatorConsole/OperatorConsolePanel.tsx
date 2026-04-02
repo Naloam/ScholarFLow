@@ -129,6 +129,7 @@ export function OperatorConsolePanel({
   const review = current?.review ?? null;
   const reviewLoop = current?.review_loop ?? null;
   const publish = current?.publish ?? null;
+  const finalPublishReady = Boolean(publish?.final_publish_ready);
   const candidateEntries = current?.registry?.candidates ?? [];
   const counts = current?.registry_views?.counts;
   const lineage = current?.registry?.lineage;
@@ -353,7 +354,7 @@ export function OperatorConsolePanel({
           disabled={disabled || !current?.actions.export_publish}
           data-testid="export-publish-button"
         >
-          Export Publish
+          Export Final Publish
         </button>
         <button
           type="button"
@@ -362,7 +363,7 @@ export function OperatorConsolePanel({
           disabled={disabled || !current?.actions.download_publish}
           data-testid="download-publish-button"
         >
-          Download Publish
+          Download Final Publish
         </button>
       </div>
 
@@ -404,6 +405,8 @@ export function OperatorConsolePanel({
         <p className="inline-title">Launch Profile</p>
         <div className="button-row">
           <select
+            id="operator-launch-mode"
+            name="operator_launch_mode"
             value={launchDraft.mode}
             onChange={(event) =>
               setLaunchDraft((state) => ({
@@ -418,6 +421,8 @@ export function OperatorConsolePanel({
             <option value="bridge">Bridge Handoff</option>
           </select>
           <input
+            id="operator-launch-bridge-target"
+            name="operator_launch_bridge_target"
             type="text"
             value={launchDraft.targetLabel}
             onChange={(event) =>
@@ -448,6 +453,8 @@ export function OperatorConsolePanel({
         <p className="inline-title">Run Filters</p>
         <div className="button-row">
           <input
+            id="operator-filter-search"
+            name="operator_filter_search"
             type="search"
             value={draftFilters.search ?? ""}
             onChange={(event) => updateFilter("search", event.target.value || null)}
@@ -456,6 +463,8 @@ export function OperatorConsolePanel({
             data-testid="operator-filter-search"
           />
           <select
+            id="operator-filter-status"
+            name="operator_filter_status"
             value={draftFilters.status ?? ""}
             onChange={(event) =>
               updateFilter(
@@ -474,6 +483,8 @@ export function OperatorConsolePanel({
             <option value="canceled">Canceled</option>
           </select>
           <select
+            id="operator-filter-publish"
+            name="operator_filter_publish"
             value={draftFilters.publish_status ?? ""}
             onChange={(event) =>
               updateFilter(
@@ -492,6 +503,8 @@ export function OperatorConsolePanel({
             <option value="blocked">Blocked</option>
           </select>
           <select
+            id="operator-filter-risk"
+            name="operator_filter_risk"
             value={draftFilters.review_risk ?? ""}
             onChange={(event) =>
               updateFilter(
@@ -510,6 +523,8 @@ export function OperatorConsolePanel({
             <option value="high">High Risk</option>
           </select>
           <select
+            id="operator-filter-novelty"
+            name="operator_filter_novelty"
             value={draftFilters.novelty_status ?? ""}
             onChange={(event) =>
               updateFilter(
@@ -529,6 +544,8 @@ export function OperatorConsolePanel({
             <option value="missing_context">Missing Context</option>
           </select>
           <select
+            id="operator-filter-budget"
+            name="operator_filter_budget"
             value={draftFilters.budget_status ?? ""}
             onChange={(event) =>
               updateFilter(
@@ -546,6 +563,8 @@ export function OperatorConsolePanel({
             <option value="constrained">Constrained</option>
           </select>
           <select
+            id="operator-filter-priority"
+            name="operator_filter_priority"
             value={draftFilters.queue_priority ?? ""}
             onChange={(event) =>
               updateFilter(
@@ -756,6 +775,8 @@ export function OperatorConsolePanel({
                 <p className="inline-title">Run Controls</p>
                 <div className="button-row">
                   <select
+                    id="operator-control-priority"
+                    name="operator_control_priority"
                     value={controlDraft.queue_priority}
                     onChange={(event) =>
                       setControlDraft((state) => ({
@@ -771,6 +792,8 @@ export function OperatorConsolePanel({
                     <option value="low">Low Priority</option>
                   </select>
                   <input
+                    id="operator-control-rounds"
+                    name="operator_control_rounds"
                     type="number"
                     min={1}
                     step={1}
@@ -786,6 +809,8 @@ export function OperatorConsolePanel({
                     data-testid="operator-control-rounds"
                   />
                   <input
+                    id="operator-control-candidate-limit"
+                    name="operator_control_candidate_limit"
                     type="number"
                     min={1}
                     step={1}
@@ -824,6 +849,8 @@ export function OperatorConsolePanel({
                 <p className="inline-title">Publish Deployment</p>
                 <div className="button-row">
                   <input
+                    id="publish-deployment-id"
+                    name="publish_deployment_id"
                     type="text"
                     value={publishDraft.deployment_id}
                     onChange={(event) =>
@@ -837,6 +864,8 @@ export function OperatorConsolePanel({
                     data-testid="publish-deployment-id"
                   />
                   <input
+                    id="publish-deployment-label"
+                    name="publish_deployment_label"
                     type="text"
                     value={publishDraft.deployment_label}
                     onChange={(event) =>
@@ -850,9 +879,11 @@ export function OperatorConsolePanel({
                     data-testid="publish-deployment-label"
                   />
                   <span className="auth-copy" data-testid="publish-deployment-summary">
-                    {publish?.deployment_ids?.length
+                    {!finalPublishReady
+                      ? "Resolve review loop and citation blockers before final publish export is enabled."
+                      : publish?.deployment_ids?.length
                       ? `Registered in ${publish.deployment_ids.join(", ")}`
-                      : "Export will register the current paper/run/code package into a deployment"}
+                      : "Final export will register the current paper/run/code package into a deployment"}
                   </span>
                 </div>
               </form>
@@ -954,9 +985,11 @@ export function OperatorConsolePanel({
                 <div className="empty-state" data-testid="operator-publication-empty">
                   <p>No publication manifest for the current run.</p>
                   <span>
-                    {publish?.publication_id
+                    {!finalPublishReady
+                      ? "Final publish remains unavailable until the run is citation-grounded and the review loop is clear."
+                      : publish?.publication_id
                       ? "Refresh the run or export publish again if paper assets were changed."
-                      : "Export Publish to materialize a publication manifest and paper assets."}
+                      : "Export Final Publish to materialize a publication manifest and paper assets."}
                   </span>
                 </div>
               )}
@@ -1122,6 +1155,8 @@ export function OperatorConsolePanel({
                   <p className="inline-title">Bridge Import</p>
                   <div className="button-row">
                     <input
+                      id="bridge-import-summary"
+                      name="bridge_import_summary"
                       type="text"
                       value={bridgeImportDraft.summary}
                       onChange={(event) =>
@@ -1135,6 +1170,8 @@ export function OperatorConsolePanel({
                       data-testid="bridge-import-summary"
                     />
                     <input
+                      id="bridge-import-score"
+                      name="bridge_import_score"
                       type="number"
                       step="0.0001"
                       value={bridgeImportDraft.objective_score}
@@ -1149,6 +1186,8 @@ export function OperatorConsolePanel({
                       data-testid="bridge-import-score"
                     />
                     <input
+                      id="bridge-import-metric"
+                      name="bridge_import_metric"
                       type="text"
                       value={bridgeImportDraft.primary_metric}
                       onChange={(event) =>
@@ -1164,6 +1203,8 @@ export function OperatorConsolePanel({
                   </div>
                   <div className="button-row">
                     <input
+                      id="bridge-import-system"
+                      name="bridge_import_system"
                       type="text"
                       value={bridgeImportDraft.objective_system}
                       onChange={(event) =>
@@ -1177,6 +1218,8 @@ export function OperatorConsolePanel({
                       data-testid="bridge-import-system"
                     />
                     <input
+                      id="bridge-import-baseline"
+                      name="bridge_import_baseline"
                       type="text"
                       value={bridgeImportDraft.baseline_system}
                       onChange={(event) =>
@@ -1190,6 +1233,8 @@ export function OperatorConsolePanel({
                       data-testid="bridge-import-baseline"
                     />
                     <input
+                      id="bridge-import-baseline-score"
+                      name="bridge_import_baseline_score"
                       type="number"
                       step="0.0001"
                       value={bridgeImportDraft.baseline_score}
@@ -1205,6 +1250,8 @@ export function OperatorConsolePanel({
                     />
                   </div>
                   <textarea
+                    id="bridge-import-findings"
+                    name="bridge_import_findings"
                     value={bridgeImportDraft.key_findings}
                     onChange={(event) =>
                       setBridgeImportDraft((state) => ({

@@ -78,6 +78,32 @@ def _create_project(client: TestClient, title: str, topic: str) -> str:
     return project_id
 
 
+def _mock_grounded_literature(monkeypatch, *, prefix: str = "paper-grounded") -> None:
+    monkeypatch.setattr(
+        literature_pipeline,
+        "_search_topic_literature",
+        lambda project_id, topic: SearchResult(
+            query=topic,
+            items=[
+                PaperMeta(
+                    id=f"{prefix}-1",
+                    title="Lightweight Reranking Signals for Compact Corpora",
+                    abstract="This paper studies lexical reranking and hard negative retrieval signals.",
+                    year=2024,
+                    source="semantic_scholar",
+                ),
+                PaperMeta(
+                    id=f"{prefix}-2",
+                    title="Benchmarking Compact Retrieval Pipelines",
+                    abstract="This paper evaluates compact retrieval pipelines under reproducible constraints.",
+                    year=2023,
+                    source="semantic_scholar",
+                ),
+            ],
+        ),
+    )
+
+
 def _bridge_result_payload(
     *,
     summary: str = "External bridge execution completed successfully.",
@@ -2547,7 +2573,16 @@ def test_autoresearch_publish_package_marks_final_publish_ready_when_review_and_
         assert run_response.status_code == 200
         run_id = run_response.json()["id"]
 
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        loop = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review-loop").json()
         package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert review["overall_status"] == "ready"
+        assert any(item["severity"] == "info" for item in review["findings"])
+        assert review["revision_plan"] == []
+        assert loop["overall_status"] == "ready"
+        assert loop["open_issue_count"] == 0
+        assert loop["pending_action_count"] == 0
+        assert loop["pending_revision_actions"] == []
         assert package["status"] == "publish_ready"
         assert package["publish_ready"] is True
         assert package["review_bundle_ready"] is True
@@ -2555,6 +2590,7 @@ def test_autoresearch_publish_package_marks_final_publish_ready_when_review_and_
         assert package["completeness_status"] == "complete"
         assert package["missing_required_asset_count"] == 0
         assert package["missing_final_asset_count"] == 0
+        assert package["revision_count"] == 0
         assert package["final_blockers"] == []
     finally:
         client.close()
@@ -2690,7 +2726,7 @@ def test_autoresearch_publish_package_requires_compile_ready_paper_sources(
         client.close()
 
 
-def test_autoresearch_publish_export_materializes_archive(
+def test_autoresearch_publish_export_rejects_non_final_package(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -2709,67 +2745,18 @@ def test_autoresearch_publish_export_materializes_archive(
         run_id = run_response.json()["id"]
 
         export_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/publish/export")
-        assert export_response.status_code == 200
-        export_body = export_response.json()
-        assert export_body["project_id"] == project_id
-        assert export_body["run_id"] == run_id
-        assert export_body["bundle_kind"] == "review_bundle"
-        assert export_body["review_bundle_ready"] is True
-        assert export_body["final_publish_ready"] is False
-        assert export_body["package_fingerprint"]
-        assert export_body["review_round"] == 1
-        assert export_body["review_fingerprint"]
-        assert export_body["download_ready"] is True
-        archive_path = Path(export_body["archive_path"])
-        assert archive_path.is_file()
-        assert export_body["file_name"] == archive_path.name
-        assert Path(export_body["archive_manifest_path"]).is_file()
-        assert export_body["included_asset_count"] >= 1
-        assert export_body["omitted_asset_count"] >= 0
-
-        with ZipFile(archive_path) as archive:
-            names = set(archive.namelist())
-            archive_manifest = json.loads(archive.read("archive_manifest.json").decode("utf-8"))
-        assert "review.json" in names
-        assert "review_loop.json" in names
-        assert "publish_package.json" in names
-        assert "archive_manifest.json" in names
-        assert "run.json" in names
-        assert any(name.endswith("/manifest.json") for name in names)
-        assert any(name.endswith("/artifact.json") for name in names)
-        assert "paper_sources/revision_history.md" in names
-        assert "paper_sources/revision_actions.md" in names
-        assert "paper_sources/paper_revision_action_index.json" in names
-        assert "paper_sources/revision_diff.md" in names
-        assert "paper_sources/paper_revision_diff.json" in names
-        assert "paper_sources/revision_brief.md" in names
-        assert "paper_sources/rewrite_packets/index.json" in names
-        assert "paper_sources/rewrite_packets/results.md" in names
-        assert "paper_sources/build.sh" in names
-        assert "paper_sources/checkpoints/index.json" in names
-        assert archive_manifest["bundle_kind"] == "review_bundle"
-        assert archive_manifest["package_fingerprint"] == export_body["package_fingerprint"]
-        assert archive_manifest["review_round"] == export_body["review_round"]
-        assert archive_manifest["review_fingerprint"] == export_body["review_fingerprint"]
-        assert archive_manifest["review_bundle_ready"] is True
-        assert archive_manifest["final_publish_ready"] is False
-        assert archive_manifest["included_asset_count"] == export_body["included_asset_count"]
-        assert archive_manifest["omitted_asset_count"] == export_body["omitted_asset_count"]
-        assert "archive_manifest.json" in archive_manifest["generated_files"]
-        assert "review_loop.json" in archive_manifest["generated_files"]
+        assert export_response.status_code == 409
+        assert "not final publish ready" in export_response.json()["detail"].lower()
 
         package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
-        assert package["archive_status"] == "current"
-        assert package["archive_ready"] is True
-        assert package["archive_current"] is True
-        assert package["package_fingerprint"] == export_body["package_fingerprint"]
-        assert package["review_round"] == export_body["review_round"]
-        assert package["archive_review_round"] == export_body["review_round"]
-        assert package["archive_review_fingerprint"] == export_body["review_fingerprint"]
+        assert package["status"] == "blocked"
+        assert package["archive_status"] == "missing"
+        assert package["archive_ready"] is False
+        assert package["archive_current"] is False
 
         download_response = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish/download")
-        assert download_response.status_code == 200
-        assert download_response.headers["content-disposition"].endswith('publish_bundle.zip"')
+        assert download_response.status_code == 409
+        assert "not final publish ready" in download_response.json()["detail"].lower()
     finally:
         client.close()
 
@@ -2778,16 +2765,20 @@ def test_autoresearch_publish_archive_turns_stale_after_review_loop_changes(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    _mock_grounded_literature(monkeypatch, prefix="paper-publish-stale")
     client = _configure_test_client(monkeypatch, tmp_path)
     try:
         project_id = _create_project(
             client,
             "Phase 5 Stale Publish Archive Project",
-            "Automatic topic classification for compact CS abstracts",
+            "Compact reranking for cs retrieval",
         )
         run_response = client.post(
             f"/api/projects/{project_id}/auto-research/run",
-            json={"topic": "Automatic topic classification for compact CS abstracts"},
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
         )
         assert run_response.status_code == 200
         run_id = run_response.json()["id"]
@@ -2815,7 +2806,8 @@ def test_autoresearch_publish_archive_turns_stale_after_review_loop_changes(
                             method_hint="Use compact lexical and probabilistic signals for topic classification.",
                             gap_hint="Preserve explicit artifact-grounded reporting while adding citations.",
                         )
-                    ],
+                    ]
+                    + list(run.literature),
                     "paper_markdown": f"""# {run.plan.title}
 
 ## Abstract
@@ -2847,6 +2839,8 @@ The conclusion revisits the strongest supported claim in light of prior work [1]
 
 ## 9. References
 [1] Compact Classification Signals for CS Abstracts. semantic scholar, 2024.
+[2] Lightweight Reranking Signals for Compact Corpora. semantic scholar, 2024.
+[3] Benchmarking Compact Retrieval Pipelines. semantic scholar, 2023.
 """,
                 }
             )
@@ -2959,16 +2953,20 @@ def test_autoresearch_publish_export_writes_publication_manifest_and_code_packag
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    _mock_grounded_literature(monkeypatch, prefix="paper-publication-manifest")
     client = _configure_test_client(monkeypatch, tmp_path)
     try:
         project_id = _create_project(
             client,
             "Phase 7 Publication Manifest Project",
-            "Stable publish manifest for a deployment listing",
+            "Compact reranking for cs retrieval",
         )
         run_response = client.post(
             f"/api/projects/{project_id}/auto-research/run",
-            json={"topic": "Stable publish manifest for a deployment listing"},
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
         )
         assert run_response.status_code == 200
         run_id = run_response.json()["id"]
@@ -2992,6 +2990,7 @@ def test_autoresearch_publish_export_writes_publication_manifest_and_code_packag
         assert manifest_response.status_code == 200
         manifest = manifest_response.json()
         assert manifest["publication_id"] == f"publication_{run_id}"
+        assert manifest["project_title"] == "Phase 7 Publication Manifest Project"
         assert manifest["deployments"][0]["deployment_id"] == "live_alpha"
         assert manifest["deployments"][0]["label"] == "Live Alpha"
         assert manifest["publish_download_path"].endswith("/publish/download")
@@ -3019,16 +3018,20 @@ def test_autoresearch_publication_manifest_surfaces_compiled_paper_outputs(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    _mock_grounded_literature(monkeypatch, prefix="paper-compiled-manifest")
     client = _configure_test_client(monkeypatch, tmp_path)
     try:
         project_id = _create_project(
             client,
             "Phase 7 Compiled Paper Manifest Project",
-            "Stable publish manifest with compiled paper outputs",
+            "Compact reranking for cs retrieval",
         )
         run_response = client.post(
             f"/api/projects/{project_id}/auto-research/run",
-            json={"topic": "Stable publish manifest with compiled paper outputs"},
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
         )
         assert run_response.status_code == 200
         run_id = run_response.json()["id"]
@@ -3088,25 +3091,32 @@ def test_autoresearch_deployment_api_aggregates_publications_across_projects(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    _mock_grounded_literature(monkeypatch, prefix="paper-deployment-aggregate")
     client = _configure_test_client(monkeypatch, tmp_path)
     try:
         first_project_id = _create_project(
             client,
             "Deployment Listing Project A",
-            "Deployment listing aggregation first run",
+            "Compact reranking for cs retrieval",
         )
         second_project_id = _create_project(
             client,
             "Deployment Listing Project B",
-            "Deployment listing aggregation second run",
+            "Compact reranking for cs retrieval",
         )
         first_run = client.post(
             f"/api/projects/{first_project_id}/auto-research/run",
-            json={"topic": "Deployment listing aggregation first run"},
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
         )
         second_run = client.post(
             f"/api/projects/{second_project_id}/auto-research/run",
-            json={"topic": "Deployment listing aggregation second run"},
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
         )
         assert first_run.status_code == 200
         assert second_run.status_code == 200
@@ -3157,25 +3167,32 @@ def test_autoresearch_deployment_api_skips_transient_invalid_run_snapshots(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    _mock_grounded_literature(monkeypatch, prefix="paper-deployment-transient")
     client = _configure_test_client(monkeypatch, tmp_path)
     try:
         stable_project_id = _create_project(
             client,
             "Deployment Stable Project",
-            "Stable deployment listing run",
+            "Compact reranking for cs retrieval",
         )
         transient_project_id = _create_project(
             client,
             "Deployment Transient Project",
-            "Transient deployment listing run",
+            "Compact reranking for cs retrieval",
         )
         stable_run_id = client.post(
             f"/api/projects/{stable_project_id}/auto-research/run",
-            json={"topic": "Stable deployment listing run"},
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
         ).json()["id"]
         transient_run_id = client.post(
             f"/api/projects/{transient_project_id}/auto-research/run",
-            json={"topic": "Transient deployment listing run"},
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
         ).json()["id"]
 
         for project_id, run_id in (
@@ -3271,9 +3288,8 @@ def test_autoresearch_deployment_detail_filters_publications(
             f"/api/projects/{final_project_id}/auto-research/{final_run_id}/publish/export",
             json={"deployment_id": "filtered_batch", "deployment_label": "Filtered Batch"},
         )
-        assert review_export.status_code == 200
+        assert review_export.status_code == 409
         assert final_export.status_code == 200
-        assert review_export.json()["bundle_kind"] == "review_bundle"
         assert final_export.json()["bundle_kind"] == "final_publish_bundle"
 
         filtered_review = client.get(
@@ -3286,15 +3302,13 @@ def test_autoresearch_deployment_detail_filters_publications(
         )
         assert filtered_review.status_code == 200
         review_payload = filtered_review.json()
-        assert review_payload["publication_count"] == 2
-        assert review_payload["filtered_publication_count"] == 1
+        assert review_payload["publication_count"] == 1
+        assert review_payload["filtered_publication_count"] == 0
         assert review_payload["filters"]["search"] == "classification"
         assert review_payload["filters"]["bundle_kind"] == "review_bundle"
         assert review_payload["filters"]["task_family"] == "text_classification"
         assert review_payload["filters"]["final_publish_ready"] is None
-        assert [item["publication"]["run_id"] for item in review_payload["publications"]] == [
-            review_run_id
-        ]
+        assert review_payload["publications"] == []
 
         filtered_final = client.get(
             "/api/auto-research/deployments/filtered_batch",
@@ -3302,7 +3316,7 @@ def test_autoresearch_deployment_detail_filters_publications(
         )
         assert filtered_final.status_code == 200
         final_payload = filtered_final.json()
-        assert final_payload["publication_count"] == 2
+        assert final_payload["publication_count"] == 1
         assert final_payload["filtered_publication_count"] == 1
         assert final_payload["filters"]["final_publish_ready"] is True
         assert [item["publication"]["run_id"] for item in final_payload["publications"]] == [
@@ -3315,7 +3329,7 @@ def test_autoresearch_deployment_detail_filters_publications(
         )
         assert empty_filtered.status_code == 200
         empty_payload = empty_filtered.json()
-        assert empty_payload["publication_count"] == 2
+        assert empty_payload["publication_count"] == 1
         assert empty_payload["filtered_publication_count"] == 0
         assert empty_payload["publications"] == []
     finally:
@@ -3339,9 +3353,6 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         )
         assert run_response.status_code == 200
         run_id = run_response.json()["id"]
-
-        export_response = client.post(f"/api/projects/{project_id}/auto-research/{run_id}/publish/export")
-        assert export_response.status_code == 200
 
         console_response = client.get(f"/api/projects/{project_id}/auto-research/console")
         assert console_response.status_code == 200
@@ -3382,16 +3393,16 @@ def test_autoresearch_operator_console_aggregates_current_run_state(
         assert current["review_loop"]["open_issue_count"] >= 1
         assert current["review_loop"]["pending_action_count"] >= 1
         assert current["publish"]["status"] == "blocked"
-        assert current["publish"]["archive_status"] == "current"
-        assert current["publish"]["archive_current"] is True
+        assert current["publish"]["archive_status"] == "missing"
+        assert current["publish"]["archive_current"] is False
         assert current["actions"]["resume"] is False
         assert current["actions"]["retry"] is True
         assert current["actions"]["cancel"] is False
         assert current["actions"]["refresh_review"] is True
         assert current["actions"]["apply_review_actions"] is True
         assert current["actions"]["rebuild_paper"] is True
-        assert current["actions"]["export_publish"] is True
-        assert current["actions"]["download_publish"] is True
+        assert current["actions"]["export_publish"] is False
+        assert current["actions"]["download_publish"] is False
         assert current["actions"]["update_controls"] is True
     finally:
         client.close()
@@ -5442,6 +5453,47 @@ def test_autoresearch_auto_searches_literature_when_project_has_no_papers(
         papers = client.get(f"/api/projects/{project_id}/papers")
         assert papers.status_code == 200
         assert len(papers.json()) >= 1
+    finally:
+        client.close()
+
+
+def test_autoresearch_falls_back_to_benchmark_context_when_auto_search_returns_no_hits(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    client = _configure_test_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(literature_pipeline, "_search_topic_literature", lambda project_id, topic: None)
+    try:
+        project_id = _create_project(
+            client,
+            "Fallback Literature Project",
+            "Compact reranking for cs retrieval",
+        )
+        response = client.post(
+            f"/api/projects/{project_id}/auto-research/run",
+            json={
+                "topic": "Compact reranking for cs retrieval",
+                "auto_search_literature": True,
+            },
+        )
+        assert response.status_code == 200
+        run_id = response.json()["id"]
+
+        run = client.get(f"/api/projects/{project_id}/auto-research/{run_id}").json()
+        assert run["status"] == "done"
+        assert len(run["literature"]) >= 3
+        assert all(item["source"] == "benchmark_context" for item in run["literature"])
+        assert "## 9. References" in run["paper_markdown"]
+        assert "[1]" in run["paper_markdown"]
+
+        review = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/review").json()
+        assert review["overall_status"] == "ready"
+        assert review["citation_coverage"]["cited_literature_count"] >= 2
+        assert review["novelty_assessment"]["status"] in {"grounded", "incremental"}
+
+        package = client.get(f"/api/projects/{project_id}/auto-research/{run_id}/publish").json()
+        assert package["status"] == "publish_ready"
+        assert package["final_publish_ready"] is True
     finally:
         client.close()
 

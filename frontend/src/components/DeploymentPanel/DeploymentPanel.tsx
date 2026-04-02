@@ -99,6 +99,8 @@ export function DeploymentPanel({
         <>
           <div className="button-row">
             <select
+              id="deployment-select"
+              name="deployment_select"
               value={selectedDeploymentId ?? ""}
               onChange={(event) => onSelectDeployment(event.target.value)}
               disabled={disabled}
@@ -121,6 +123,8 @@ export function DeploymentPanel({
             <>
               <div className="button-row">
                 <input
+                  id="deployment-search-input"
+                  name="deployment_search_input"
                   type="search"
                   value={draftFilters.search ?? ""}
                   onChange={(event) =>
@@ -131,6 +135,8 @@ export function DeploymentPanel({
                   data-testid="deployment-search-input"
                 />
                 <select
+                  id="deployment-final-ready-filter"
+                  name="deployment_final_ready_filter"
                   value={
                     draftFilters.final_publish_ready === null ||
                     draftFilters.final_publish_ready === undefined
@@ -153,6 +159,8 @@ export function DeploymentPanel({
                   <option value="false">Needs final work</option>
                 </select>
                 <select
+                  id="deployment-bundle-kind-filter"
+                  name="deployment_bundle_kind_filter"
                   value={draftFilters.bundle_kind ?? ""}
                   onChange={(event) =>
                     updateFilter(
@@ -170,6 +178,8 @@ export function DeploymentPanel({
                   <option value="final_publish_bundle">Final publish bundle</option>
                 </select>
                 <select
+                  id="deployment-task-family-filter"
+                  name="deployment_task_family_filter"
                   value={draftFilters.task_family ?? ""}
                   onChange={(event) =>
                     updateFilter(

@@ -8,9 +8,7 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("create-project-button")).toBeEnabled({ timeout: 30000 });
 
   await page.getByTestId("project-title-input").fill("Browser E2E Workspace");
-  await page
-    .getByTestId("project-topic-input")
-    .fill("Grounded academic writing workflow with realtime progress");
+  await page.getByTestId("project-topic-input").fill("Compact reranking for cs retrieval");
   await page.getByTestId("create-project-button").click();
 
   await expect(page.getByTestId("current-project-id")).not.toHaveText("Not selected", {
@@ -23,17 +21,11 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("operator-review-loop-summary")).toContainText(/r\d+/, {
     timeout: 60000,
   });
-  await expect(page.getByTestId("operator-console-panel")).toContainText("toy_cs_abstract_topic");
-  await expect(page.getByTestId("operator-console-panel")).toContainText("text classification");
+  await expect(page.getByTestId("operator-console-panel")).toContainText("toy_cs_reranking");
+  await expect(page.getByTestId("operator-console-panel")).toContainText("ir reranking");
   await page.getByTestId("refresh-review-button").click();
   await expect(page.getByTestId("operator-review-loop-detail")).toContainText(/rounds=\d+/);
-  await expect(page.getByTestId("apply-review-actions-button")).toBeEnabled();
-  await page.getByTestId("rebuild-paper-button").click();
-  await expect(page.getByTestId("status-notice")).toContainText("Paper assets rebuilt", {
-    timeout: 60000,
-  });
-  await expect(page.getByTestId("apply-review-actions-button")).toBeEnabled();
-  await page.getByTestId("apply-review-actions-button").click();
+  await expect(page.getByTestId("export-publish-button")).toBeEnabled({ timeout: 60000 });
   await expect(page.getByTestId("publish-deployment-id")).toBeEnabled({ timeout: 60000 });
   await page.getByTestId("publish-deployment-id").fill("browser_batch");
   await page.getByTestId("publish-deployment-label").fill("Browser Batch");
@@ -44,12 +36,9 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("deployment-panel")).toContainText("Browser Batch", {
     timeout: 30000,
   });
-  await expect(page.getByTestId("deployment-panel")).toContainText(
-    "Grounded academic writing workflow with realtime progress",
-    {
-      timeout: 30000,
-    },
-  );
+  await expect(page.getByTestId("deployment-panel")).toContainText("Compact reranking for cs retrieval", {
+    timeout: 30000,
+  });
   await expect(page.getByTestId("operator-publication-summary")).toContainText("Compiled PDF");
   await expect(page.getByTestId("operator-publication-assets")).toContainText("archive=");
 

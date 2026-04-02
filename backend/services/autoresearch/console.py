@@ -44,6 +44,7 @@ def _run_actions(
 ) -> AutoResearchOperatorRunActionsRead:
     active_or_queued = any(job.status in {"queued", "leased", "running"} for job in execution.jobs)
     bridge_waiting = bool(bridge is not None and bridge.current_session is not None and bridge.current_session.status == "waiting_result")
+    final_publish_ready = bool(publish is not None and publish.final_publish_ready)
     return AutoResearchOperatorRunActionsRead(
         resume=run.status != "done" and not bridge_waiting,
         retry=run.status in {"done", "failed", "canceled"},
@@ -57,9 +58,10 @@ def _run_actions(
             and review_loop.pending_action_count > 0
         ),
         rebuild_paper=run.status == "done",
-        export_publish=run.status == "done",
+        export_publish=run.status == "done" and final_publish_ready,
         download_publish=bool(
             publish is not None
+            and publish.final_publish_ready
             and publish.archive_ready
             and publish.archive_current
         ),

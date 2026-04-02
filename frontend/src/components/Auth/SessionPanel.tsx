@@ -123,6 +123,8 @@ export function SessionPanel({
             <label className="field">
               <span className="field-label">Email</span>
               <input
+                id="auth-email-input"
+                name="auth_email"
                 data-testid="auth-email-input"
                 disabled={authBusy || workspaceBusy || !authConfig?.session_enabled}
                 placeholder="student@example.com"
@@ -134,6 +136,8 @@ export function SessionPanel({
             <label className="field">
               <span className="field-label">Display name</span>
               <input
+                id="auth-name-input"
+                name="auth_name"
                 data-testid="auth-name-input"
                 disabled={authBusy || workspaceBusy || !authConfig?.session_enabled}
                 placeholder="Optional"
@@ -145,6 +149,8 @@ export function SessionPanel({
             <label className="field">
               <span className="field-label">Role</span>
               <select
+                id="auth-role-select"
+                name="auth_role"
                 data-testid="auth-role-select"
                 disabled={authBusy || workspaceBusy || !authConfig?.session_enabled}
                 value={role}

@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from config import db as db_module
 from schemas.autoresearch import (
     AutoResearchBundleAssetRead,
     AutoResearchBundleIndexRead,
@@ -41,6 +42,7 @@ from services.autoresearch.repository import (
     run_dir,
     save_run,
 )
+from services.projects.repository import get_project
 from services.autoresearch.writer import PaperWriter
 
 
@@ -989,6 +991,8 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
         actions[index].finding_ids.append(finding_id)
 
     for finding in findings:
+        if finding.severity == "info":
+            continue
         if finding.category == "artifact":
             add_action(
                 key="artifact",
@@ -1163,9 +1167,12 @@ def _build_review_loop(
         for finding_id in action.finding_ids:
             action_titles_by_finding.setdefault(finding_id, []).append(action.title)
 
+    actionable_findings = [
+        item for item in review.findings if item.severity != "info"
+    ]
     current_findings: dict[str, AutoResearchReviewFindingRead] = {
         _loop_issue_id(item.category, item.summary): item
-        for item in review.findings
+        for item in actionable_findings
     }
     current_issue_ids = set(current_findings)
     current_issue_ids_by_finding_id = {
@@ -1275,7 +1282,7 @@ def _build_review_loop(
                 unsupported_claim_risk=review.unsupported_claim_risk,
                 summary=review.summary,
                 review_path=review.persisted_path,
-                finding_ids=[item.id for item in review.findings],
+                finding_ids=[item.id for item in actionable_findings],
                 revision_action_ids=list(current_actions),
                 revision_action_titles=[item.title for item in review.revision_plan],
                 blocker_count=sum(1 for item in review.findings if item.severity == "error"),
@@ -1291,7 +1298,7 @@ def _build_review_loop(
                 unsupported_claim_risk=review.unsupported_claim_risk,
                 summary=review.summary,
                 review_path=review.persisted_path,
-                finding_ids=[item.id for item in review.findings],
+                finding_ids=[item.id for item in actionable_findings],
                 revision_action_ids=list(current_actions),
                 revision_action_titles=[item.title for item in review.revision_plan],
                 blocker_count=sum(1 for item in review.findings if item.severity == "error"),
@@ -1590,6 +1597,15 @@ def _paper_summary(run: AutoResearchRunRead) -> str | None:
     return summary[:280] if summary else None
 
 
+def _project_title(project_id: str) -> str | None:
+    db = db_module.SessionLocal()
+    try:
+        project = get_project(db, project_id)
+        return project.title if project is not None else None
+    finally:
+        db.close()
+
+
 def _bundle_assets_for_code_package(
     package: AutoResearchPublishPackageRead,
 ) -> list[AutoResearchBundleAssetRead]:
@@ -1666,7 +1682,12 @@ def build_publication_manifest(
 ) -> AutoResearchPublicationManifestRead | None:
     run = load_run(project_id, run_id)
     package = build_publish_package(project_id, run_id)
-    if run is None or package is None or not package.archive_ready:
+    if (
+        run is None
+        or package is None
+        or not package.final_publish_ready
+        or not package.archive_ready
+    ):
         return None
     manifest_path = _publication_manifest_path(project_id, run_id)
     existing = _load_publication_manifest(project_id, run_id)
@@ -1693,7 +1714,7 @@ def build_publication_manifest(
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
         project_id=project_id,
-        project_title=None,
+        project_title=_project_title(project_id),
         run_id=run_id,
         topic=run.topic,
         paper_title=_paper_title(run),
@@ -1981,6 +2002,10 @@ def export_publish_package(
     bundle_index = load_run_bundle_index(project_id, run_id)
     if package is None or bundle_index is None:
         return None
+    if not package.final_publish_ready:
+        raise ValueError(
+            "Auto research run is not final publish ready; resolve review and citation blockers before export"
+        )
 
     bundle = _selected_bundle(bundle_index)
     if bundle is None:

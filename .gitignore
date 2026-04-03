@@ -2,7 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 backend/dev.db
-backend/prompts/
 .DS_Store
 *.log
 backend/data/
@@ -12,17 +11,23 @@ backend/*.egg-info/
 frontend/test-results/
 frontend/playwright-report/
 
-# Test files and prompt documents
+# Test files, prompts, migrations
 backend/tests/
 backend/prompts/
 backend/migrations/
-.github/workflows/ai_review.yml
 
-# AI config and prompt files (do not upload)
+# Docs — internal project documents
+docs/
+
+# AI config and prompt files
 AGENTS.md
 SYSTEM_PROMPT.md
 CLAUDE.md
+PROJECT_PLAN.md
 .claude/
+
+# CI workflows
+.github/workflows/ai_review.yml
 
 # IDE / editor
 .idea/

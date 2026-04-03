@@ -2,10 +2,29 @@ __pycache__/
 *.pyc
 .venv/
 backend/dev.db
+backend/prompts/
 .DS_Store
 *.log
 backend/data/
+backend/backend/
 .tmp/
 backend/*.egg-info/
 frontend/test-results/
 frontend/playwright-report/
+
+# Test files and prompt documents
+backend/tests/
+backend/prompts/
+backend/migrations/
+.github/workflows/ai_review.yml
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+!.env.example

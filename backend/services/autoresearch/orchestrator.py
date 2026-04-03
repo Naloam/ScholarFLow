@@ -23,6 +23,7 @@ from services.autoresearch.bridge import AutoResearchExperimentBridgeService, bu
 from services.autoresearch.ingestion import resolve_benchmark
 from services.autoresearch.literature_pipeline import build_fallback_literature_context, gather_literature_context
 from services.autoresearch.planner import ResearchPlanner
+from services.autoresearch.project_flow import gather_project_flow_context
 from services.autoresearch.repair import ExperimentRepairEngine
 from services.autoresearch.repository import (
     paper_bibliography_file_path,
@@ -33,6 +34,7 @@ from services.autoresearch.repository import (
     load_benchmark_snapshot,
     narrative_report_file_path,
     paper_compile_report_file_path,
+    project_context_file_path,
     paper_revision_action_index_file_path,
     paper_revision_diff_file_path,
     paper_latex_file_path,
@@ -52,6 +54,7 @@ from services.autoresearch.runner import AutoExperimentRunner
 from services.autoresearch.writer import PaperWriter
 from services.drafts.repository import create_draft
 from services.projects.repository import set_project_status
+from services.telemetry.context import telemetry_context
 
 
 class AutoResearchExecutionCancelled(RuntimeError):
@@ -913,22 +916,27 @@ class AutoResearchOrchestrator:
             raise ValueError("Selected candidate is missing the persisted artifact required for paper rebuild")
 
         set_project_status(db, project_id, "write")
-        paper_pipeline = self.writer.build_pipeline(
-            run.plan,
-            run.spec,
-            selected_candidate.artifact,
-            literature=run.literature,
-            attempts=selected_candidate.attempts or run.attempts,
-            benchmark_name=run.program.benchmark_name or run.spec.benchmark_name,
-            program=run.program,
-            portfolio=run.portfolio,
-            candidates=run.candidates,
-            paper_plan=run.paper_plan,
-            figure_plan=run.figure_plan,
-            paper_revision_state=run.paper_revision_state,
-        )
+        project_context = gather_project_flow_context(db, project_id)
+        with telemetry_context(project_id=project_id, operation="autoresearch.paper_write"):
+            paper_pipeline = self.writer.build_pipeline(
+                run.plan,
+                run.spec,
+                selected_candidate.artifact,
+                literature=run.literature,
+                attempts=selected_candidate.attempts or run.attempts,
+                benchmark_name=run.program.benchmark_name or run.spec.benchmark_name,
+                program=run.program,
+                portfolio=run.portfolio,
+                candidates=run.candidates,
+                paper_plan=run.paper_plan,
+                figure_plan=run.figure_plan,
+                paper_revision_state=run.paper_revision_state,
+                project_context=project_context,
+                language=run.request.language if run.request is not None else "en",
+            )
         paper_path = paper_file_path(project_id, run_id)
         candidate_paper_path = candidate_paper_file_path(project_id, run_id, selected_candidate.id)
+        project_context_path = project_context_file_path(project_id, run_id)
         narrative_report_path = narrative_report_file_path(project_id, run_id)
         claim_evidence_matrix_path = claim_evidence_matrix_file_path(project_id, run_id)
         paper_plan_path = paper_plan_file_path(project_id, run_id)
@@ -977,6 +985,8 @@ class AutoResearchOrchestrator:
         rebuilt_run = save_run(
             run.model_copy(
                 update={
+                    "project_context": project_context,
+                    "project_context_path": project_context_path,
                     "narrative_report_markdown": paper_pipeline.narrative_report_markdown,
                     "narrative_report_path": narrative_report_path,
                     "claim_evidence_matrix": paper_pipeline.claim_evidence_matrix,
@@ -1024,6 +1034,7 @@ class AutoResearchOrchestrator:
         topic: str,
         task_family_hint: TaskFamily | None = None,
         paper_ids: list[str] | None = None,
+        language: str = "en",
         max_rounds: int = 3,
         candidate_execution_limit: int | None = None,
         benchmark_source: BenchmarkSource | None = None,
@@ -1051,6 +1062,7 @@ class AutoResearchOrchestrator:
                 execution_action in {"resume", "retry"} and self._can_resume_from_checkpoint(run)
             )
             chunk_context = None
+            project_context = gather_project_flow_context(db, project_id)
 
             if restoring_from_checkpoint:
                 benchmark = self._benchmark_from_checkpoint(project_id=project_id, run_id=run_id)
@@ -1117,6 +1129,7 @@ class AutoResearchOrchestrator:
                     benchmark_name=benchmark.benchmark_name,
                     benchmark_description=benchmark.benchmark_description,
                     benchmark_labels=benchmark.payload.get("label_space"),
+                    project_context=project_context,
                 )
                 if not plan.experiment_outline:
                     plan.experiment_outline = [
@@ -1703,17 +1716,21 @@ class AutoResearchOrchestrator:
             paper_latex_path = paper_latex_file_path(project_id, run_id)
             paper_bibliography_path = paper_bibliography_file_path(project_id, run_id)
             paper_sources_manifest_path = paper_sources_manifest_file_path(project_id, run_id)
-            paper_pipeline = self.writer.build_pipeline(
-                winner_plan,
-                winner_spec,
-                winner.artifact,
-                literature=literature,
-                attempts=winner.attempts,
-                benchmark_name=benchmark.benchmark_name,
-                program=program,
-                portfolio=portfolio,
-                candidates=candidates,
-            )
+            project_context_path = project_context_file_path(project_id, run_id)
+            with telemetry_context(project_id=project_id, operation="autoresearch.paper_write"):
+                paper_pipeline = self.writer.build_pipeline(
+                    winner_plan,
+                    winner_spec,
+                    winner.artifact,
+                    literature=literature,
+                    attempts=winner.attempts,
+                    benchmark_name=benchmark.benchmark_name,
+                    program=program,
+                    portfolio=portfolio,
+                    candidates=candidates,
+                    project_context=project_context,
+                    language=language,
+                )
             paper_markdown = paper_pipeline.paper_markdown
             candidates = self._update_candidate(
                 candidates,
@@ -1754,6 +1771,8 @@ class AutoResearchOrchestrator:
                         "spec": winner_spec,
                         "generated_code_path": winner.generated_code_path,
                         "artifact": winner.artifact,
+                        "project_context": project_context,
+                        "project_context_path": project_context_path,
                         "narrative_report_markdown": paper_pipeline.narrative_report_markdown,
                         "narrative_report_path": narrative_report_path,
                         "claim_evidence_matrix": paper_pipeline.claim_evidence_matrix,

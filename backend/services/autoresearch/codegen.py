@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -10,8 +11,10 @@ from services.autoresearch.runtime_contract import missing_runtime_controls, run
 from services.llm.prompting import load_prompt
 from services.llm.response_utils import get_message_content
 
+logger = logging.getLogger(__name__)
 
-PROMPT_PATH = "backend/prompts/autoresearch/codegen/v0.1.0.md"
+
+PROMPT_PATH = "backend/prompts/autoresearch/codegen/v0.1.1.md"
 
 
 class ExperimentCodeGenerator:
@@ -25,12 +28,16 @@ class ExperimentCodeGenerator:
 
     def _is_valid_code(self, code: str | None) -> bool:
         if not code or "__RESULT__" not in code:
+            logger.debug("codegen reject: code empty or missing __RESULT__")
             return False
-        if missing_runtime_controls(code):
+        missing = missing_runtime_controls(code)
+        if missing:
+            logger.warning("codegen reject: missing runtime controls: %s", missing)
             return False
         try:
             compile(code, "<autorresearch>", "exec")
-        except Exception:
+        except SyntaxError as exc:
+            logger.warning("codegen reject: syntax error at line %s: %s", exc.lineno, exc.msg)
             return False
         return True
 
@@ -73,8 +80,15 @@ class ExperimentCodeGenerator:
                 ]
             )
             content = get_message_content(response)
-            return self._extract_code(content)
-        except Exception:
+            if not content:
+                logger.warning("codegen: LLM returned empty content")
+                return None
+            extracted = self._extract_code(content)
+            if extracted is None:
+                logger.warning("codegen: could not extract code block from LLM response (len=%d)", len(content))
+            return extracted
+        except Exception as exc:
+            logger.error("codegen: LLM call failed: %s", exc)
             return None
 
     def generate(
@@ -90,7 +104,12 @@ class ExperimentCodeGenerator:
         strategy = self._strategy_for(spec, round_index)
         llm_code = self._llm_code(plan, spec, benchmark_payload, strategy, goal, prior_attempts)
         if self._is_valid_code(llm_code):
+            logger.info("codegen: using LLM-generated code (strategy=%s, %d lines)", strategy, len(llm_code.splitlines()))
             return strategy, llm_code or ""
+        if llm_code:
+            logger.warning("codegen: LLM code rejected, falling back to template (strategy=%s)", strategy)
+        else:
+            logger.warning("codegen: no LLM code produced, falling back to template (strategy=%s)", strategy)
         return strategy, self._fallback_code(plan, spec, benchmark_payload, strategy)
 
     def _fallback_code(

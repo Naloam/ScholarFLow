@@ -317,6 +317,44 @@ class AutoExperimentRunner:
             outputs=outputs,
         )
 
+    @staticmethod
+    def _normalize_system_results(raw: Any) -> list[dict[str, Any]]:
+        """Convert various LLM output formats into the expected list-of-dicts schema.
+
+        The schema expects: [{"system": str, "metrics": {str: float}}]
+        LLMs may return: {"system_name": {"metric": value}} or other variants.
+        """
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            results: list[dict[str, Any]] = []
+            for system_name, metrics in raw.items():
+                if isinstance(metrics, dict):
+                    results.append({"system": system_name, "metrics": metrics})
+                elif isinstance(metrics, (int, float)):
+                    results.append({"system": system_name, "metrics": {"score": float(metrics)}})
+            return results
+        return []
+
+    @staticmethod
+    def _normalize_list_field(raw: Any) -> list[Any]:
+        """Normalize an LLM output that should be a list but may be a dict or other type."""
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            converted: list[Any] = []
+            for value in raw.values():
+                if isinstance(value, list):
+                    converted.extend(value)
+                elif isinstance(value, dict):
+                    converted.append(value)
+                elif value is not None:
+                    converted.append(value)
+            return converted
+        if raw is None:
+            return []
+        return [raw]
+
     def _build_artifact(self, logs: str, outputs: dict[str, Any]) -> ResultArtifact:
         payload = outputs.get("result")
         if not isinstance(payload, dict):
@@ -354,16 +392,16 @@ class AutoExperimentRunner:
                 if payload.get("objective_score") is not None
                 else None
             ),
-            system_results=payload.get("system_results") or [],
-            aggregate_system_results=payload.get("aggregate_system_results") or [],
-            per_seed_results=payload.get("per_seed_results") or [],
-            sweep_results=payload.get("sweep_results") or [],
-            significance_tests=payload.get("significance_tests") or [],
-            negative_results=payload.get("negative_results") or [],
-            failed_trials=payload.get("failed_trials") or [],
-            anomalous_trials=payload.get("anomalous_trials") or [],
-            acceptance_checks=payload.get("acceptance_checks") or [],
-            tables=payload.get("tables") or [],
+            system_results=self._normalize_system_results(payload.get("system_results")),
+            aggregate_system_results=self._normalize_list_field(payload.get("aggregate_system_results")),
+            per_seed_results=self._normalize_list_field(payload.get("per_seed_results")),
+            sweep_results=self._normalize_list_field(payload.get("sweep_results")),
+            significance_tests=self._normalize_list_field(payload.get("significance_tests")),
+            negative_results=self._normalize_list_field(payload.get("negative_results")),
+            failed_trials=self._normalize_list_field(payload.get("failed_trials")),
+            anomalous_trials=self._normalize_list_field(payload.get("anomalous_trials")),
+            acceptance_checks=self._normalize_list_field(payload.get("acceptance_checks")),
+            tables=self._normalize_list_field(payload.get("tables")),
             logs=logs,
             environment=environment,
             outputs=outputs,

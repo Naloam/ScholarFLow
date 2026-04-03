@@ -49,6 +49,7 @@ PORTFOLIO_FILENAME = "portfolio.json"
 ARTIFACT_FILENAME = "artifact.json"
 CODE_FILENAME = "experiment.py"
 PAPER_FILENAME = "paper.md"
+PROJECT_CONTEXT_FILENAME = "project_context.json"
 NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
@@ -1202,6 +1203,8 @@ def save_run(
             _write_json(candidate_dir / f"{candidate.id}.json", candidate.model_dump(mode="json"))
     if payload.artifact is not None:
         _write_json(base / ARTIFACT_FILENAME, payload.artifact.model_dump(mode="json"))
+    if payload.project_context is not None:
+        _write_json(base / PROJECT_CONTEXT_FILENAME, payload.project_context.model_dump(mode="json"))
     if payload.paper_markdown and materialize_paper_workspace:
         (base / PAPER_FILENAME).write_text(payload.paper_markdown, encoding="utf-8")
     if payload.narrative_report_markdown:
@@ -1383,6 +1386,10 @@ def save_generated_code(
 
 def paper_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_FILENAME)
+
+
+def project_context_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PROJECT_CONTEXT_FILENAME)
 
 
 def narrative_report_file_path(project_id: str, run_id: str) -> str:

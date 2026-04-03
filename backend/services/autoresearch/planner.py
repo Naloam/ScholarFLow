@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 from schemas.autoresearch import (
+    AutoResearchProjectFlowContextRead,
     ExperimentSpec,
     HypothesisCandidate,
     LiteratureInsight,
@@ -92,6 +96,7 @@ class ResearchPlanner:
         topic: str,
         task_family: TaskFamily,
         literature: list[LiteratureInsight],
+        project_context: AutoResearchProjectFlowContextRead | None = None,
         benchmark_name: str | None = None,
         benchmark_description: str | None = None,
         benchmark_labels: list[str] | None = None,
@@ -102,6 +107,7 @@ class ResearchPlanner:
             benchmark_description,
             benchmark_labels,
         )
+        project_summary = project_context.summary if project_context is not None else ""
         title = self._fallback_title(topic, task_family)
         if task_family == "ir_reranking":
             method = "a lexical rarity-aware reranker backed by overlap baselines"
@@ -157,11 +163,21 @@ class ResearchPlanner:
                 f"This study investigates {topic} through a deliberately small but executable "
                 f"{task_family.replace('_', ' ')} benchmark centered on {benchmark_scope}. The goal is to test "
                 "concrete hypotheses while keeping claims tied to preserved execution evidence."
+                + (
+                    f" The run also stays aligned with persisted project flow constraints: {project_summary}"
+                    if project_summary
+                    else ""
+                )
             ),
             motivation=(
                 "The topic needs an executable benchmark that is cheap enough to run repeatedly "
                 "yet structured enough to support hypotheses, baselines, ablations, and "
                 "a result table."
+                + (
+                    f" Existing project materials further constrain the study: {project_summary}"
+                    if project_summary
+                    else ""
+                )
             ),
             proposed_method=(
                 f"We evaluate {method}."
@@ -179,11 +195,21 @@ class ResearchPlanner:
                 "Run the lightweight learned method and one ablation.",
                 "Summarize metrics, logs, and environment metadata into a structured artifact.",
                 "Use project literature to justify the chosen benchmark and method family.",
+                *(
+                    ["Reconcile the selected benchmark study with the persisted project template, draft, evidence, and review state."]
+                    if project_summary
+                    else []
+                ),
             ],
             scope_limits=[
                 "The study is restricted to built-in benchmark families for text classification, tabular classification, and IR reranking.",
                 "The benchmark is intentionally small and does not claim broad external validity.",
                 "No external datasets or large-scale training jobs are included in this study.",
+                *(
+                    [project_summary]
+                    if project_summary
+                    else []
+                ),
             ],
         )
 
@@ -383,6 +409,7 @@ class ResearchPlanner:
         topic: str,
         task_family_hint: TaskFamily | None = None,
         literature: list[LiteratureInsight] | None = None,
+        project_context: AutoResearchProjectFlowContextRead | None = None,
         benchmark_name: str | None = None,
         benchmark_description: str | None = None,
         benchmark_labels: list[str] | None = None,
@@ -393,6 +420,7 @@ class ResearchPlanner:
             topic,
             task_family,
             literature,
+            project_context=project_context,
             benchmark_name=benchmark_name,
             benchmark_description=benchmark_description,
             benchmark_labels=benchmark_labels,
@@ -409,6 +437,7 @@ class ResearchPlanner:
                             f"Task family: {task_family}\n"
                             f"Benchmark context: {{'name': {benchmark_name!r}, 'description': {benchmark_description!r}, 'labels': {benchmark_labels or []!r}}}\n"
                             f"Literature context: {[item.model_dump(mode='json') for item in literature]}\n"
+                            f"Project flow context: {project_context.model_dump(mode='json') if project_context is not None else None}\n"
                             "Return a JSON object for a minimal but realistic computer science "
                             "research plan."
                         ),
@@ -424,14 +453,22 @@ class ResearchPlanner:
             parsed.setdefault("title", fallback.title)
             if self._is_generic_title(parsed.get("title")):
                 parsed["title"] = fallback.title
-            parsed.setdefault("problem_statement", fallback.problem_statement)
-            parsed.setdefault("motivation", fallback.motivation)
-            parsed.setdefault("proposed_method", fallback.proposed_method)
-            parsed.setdefault("research_questions", fallback.research_questions)
-            parsed.setdefault("hypotheses", fallback.hypotheses)
-            parsed.setdefault("planned_contributions", fallback.planned_contributions)
-            parsed.setdefault("experiment_outline", fallback.experiment_outline)
-            parsed.setdefault("scope_limits", fallback.scope_limits)
+            # Normalize LLM outputs: convert non-string fields that expect strings
+            for _key in ("problem_statement", "motivation", "proposed_method"):
+                _val = parsed.get(_key)
+                if isinstance(_val, dict):
+                    parsed[_key] = ". ".join(str(v) for v in _val.values() if v)
+                elif _val is not None and not isinstance(_val, str):
+                    parsed[_key] = str(_val)
+                parsed.setdefault(_key, getattr(fallback, _key))
+            for _list_key in ("research_questions", "hypotheses", "planned_contributions", "experiment_outline", "scope_limits"):
+                _val = parsed.get(_list_key)
+                if isinstance(_val, str):
+                    parsed[_list_key] = [line.lstrip("- 0123456789.) ").strip() for line in _val.split("\n") if line.strip()]
+                elif not isinstance(_val, list):
+                    parsed[_list_key] = getattr(fallback, _list_key)
+                parsed.setdefault(_list_key, getattr(fallback, _list_key))
             return ResearchPlan.model_validate(parsed)
-        except Exception:
+        except Exception as exc:
+            logger.warning("planner: LLM plan failed (%s), using fallback", exc)
             return fallback

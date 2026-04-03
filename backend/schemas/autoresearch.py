@@ -296,6 +296,7 @@ class AutoResearchRunRequest(BaseModel):
 class AutoResearchRunConfig(BaseModel):
     task_family_hint: TaskFamily | None = None
     paper_ids: list[str] | None = None
+    language: str = "en"
     max_rounds: int = 3
     candidate_execution_limit: int | None = None
     queue_priority: AutoResearchQueuePriority = "normal"
@@ -318,6 +319,7 @@ class AutoResearchRunConfig(BaseModel):
         return cls(
             task_family_hint=payload.task_family_hint,
             paper_ids=payload.paper_ids,
+            language=payload.language,
             max_rounds=payload.max_rounds,
             candidate_execution_limit=payload.candidate_execution_limit,
             queue_priority=payload.queue_priority,
@@ -655,6 +657,42 @@ class LiteratureInsight(BaseModel):
     gap_hint: str | None = None
 
 
+class AutoResearchProjectFlowDraftRead(BaseModel):
+    version: int | None = None
+    section: str | None = None
+    excerpt: str | None = None
+    claim_count: int = 0
+    claims: list[str] = Field(default_factory=list)
+
+
+class AutoResearchProjectFlowEvidenceRead(BaseModel):
+    claim_count: int = 0
+    claims: list[str] = Field(default_factory=list)
+    snippets: list[str] = Field(default_factory=list)
+
+
+class AutoResearchProjectFlowReviewRead(BaseModel):
+    latest_draft_version: int | None = None
+    suggestion_count: int = 0
+    suggestions: list[str] = Field(default_factory=list)
+
+
+class AutoResearchProjectFlowContextRead(BaseModel):
+    generated_at: datetime
+    project_title: str | None = None
+    project_topic: str | None = None
+    project_status: str | None = None
+    template_id: str | None = None
+    template_excerpt: str | None = None
+    template_sections: list[str] = Field(default_factory=list)
+    draft: AutoResearchProjectFlowDraftRead | None = None
+    evidence: AutoResearchProjectFlowEvidenceRead | None = None
+    review: AutoResearchProjectFlowReviewRead | None = None
+    api_surface_hints: list[str] = Field(default_factory=list)
+    flow_constraints: list[str] = Field(default_factory=list)
+    summary: str
+
+
 class AutoResearchClaimEvidenceRefRead(BaseModel):
     source_kind: AutoResearchEvidenceSourceKind
     label: str
@@ -970,6 +1008,8 @@ class AutoResearchRunRead(BaseModel):
     plan: ResearchPlan | None = None
     spec: ExperimentSpec | None = None
     literature: list[LiteratureInsight] = Field(default_factory=list)
+    project_context: AutoResearchProjectFlowContextRead | None = None
+    project_context_path: str | None = None
     narrative_report_markdown: str | None = None
     narrative_report_path: str | None = None
     claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead | None = None

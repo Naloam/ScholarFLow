@@ -243,6 +243,7 @@ class AutoResearchExecutionPlane:
             return run.request
         return AutoResearchRunConfig(
             task_family_hint=run.task_family,
+            language="en",
             max_rounds=3,
             queue_priority="normal",
             benchmark=run.benchmark,
@@ -912,6 +913,7 @@ class AutoResearchExecutionPlane:
                 topic=run.topic,
                 task_family_hint=request.task_family_hint,
                 paper_ids=request.paper_ids,
+                language=request.language,
                 max_rounds=request.max_rounds,
                 candidate_execution_limit=request.candidate_execution_limit,
                 benchmark_source=request.benchmark,

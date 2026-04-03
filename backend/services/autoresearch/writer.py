@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 
@@ -11,6 +12,7 @@ from schemas.autoresearch import (
     AutoResearchFigurePlanRead,
     AutoResearchPaperPipelineArtifactsRead,
     AutoResearchPaperCompileReportRead,
+    AutoResearchProjectFlowContextRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchPaperRevisionActionEntryRead,
@@ -38,6 +40,11 @@ from schemas.autoresearch import (
     ResultArtifact,
     ResultTable,
 )
+from services.llm.client import chat
+from services.llm.prompting import load_prompt
+from services.llm.response_utils import get_message_content
+
+logger = logging.getLogger(__name__)
 
 
 def _markdown_table(table: ResultTable) -> str:
@@ -56,6 +63,7 @@ def _utcnow() -> datetime:
 _INLINE_LATEX_PATTERN = re.compile(r"`([^`]+)`|\[(\d+(?:,\s*\d+)*)\]")
 _COMPILE_REQUIRED_SOURCE_KINDS = {"latex", "bibtex", "shell"}
 _COMPILE_REQUIRED_SOURCE_PATHS = {"paper.md", "paper_compile_report.json", "manifest.json"}
+PAPER_WRITER_PROMPT_PATH = "backend/prompts/autoresearch/paper_writer/v0.1.0.md"
 
 
 def _latex_escape(text: str) -> str:
@@ -366,7 +374,7 @@ class PaperWriter:
         if title == "method":
             return (
                 "This revision pass keeps the section tied to the concrete benchmark setup, baselines, "
-                "ablations, and executable constraints preserved for the run."
+                "ablations, and experimental constraints preserved for the run."
             )
         if title == "limitations":
             return (
@@ -705,12 +713,11 @@ class PaperWriter:
             return ""
         if self._fallback_context_only(literature):
             return (
-                f"Preserved benchmark context {self._literature_citation_span(literature)} anchored the benchmark "
-                "framing and kept the related-work discussion explicit even when external paper search returned no "
-                "project-specific hits."
+                f"Background context {self._literature_citation_span(literature)} anchored the benchmark "
+                "framing and kept the related-work discussion explicit even when no project-specific papers were retrieved."
             )
         return (
-            f"Recent retrieved work {self._literature_citation_span(literature)} anchored the benchmark framing and "
+            f"Recent related work {self._literature_citation_span(literature)} anchored the benchmark framing and "
             "preserved explicit related-work context for the selected hypothesis."
         )
 
@@ -719,12 +726,12 @@ class PaperWriter:
             return ""
         if self._fallback_context_only(literature):
             return (
-                f"The preserved benchmark context {self._literature_citation_span(literature)} makes the contribution "
-                "boundary explicit: this run is a bounded executable check rather than a state-of-the-art claim."
+                f"The background context {self._literature_citation_span(literature)} makes the contribution "
+                "boundary explicit: this study is a bounded experimental evaluation rather than a state-of-the-art claim."
             )
         return (
-            f"The preserved literature context {self._literature_citation_span(literature)} makes the contribution "
-            "boundary explicit: this run is a bounded executable check rather than a state-of-the-art claim."
+            f"The reviewed literature {self._literature_citation_span(literature)} makes the contribution "
+            "boundary explicit: this study is a bounded experimental evaluation rather than a state-of-the-art claim."
         )
 
     def _conclusion_context_sentence(self, literature: list[LiteratureInsight]) -> str:
@@ -732,13 +739,158 @@ class PaperWriter:
             return ""
         if self._fallback_context_only(literature):
             return (
-                f"Relative to the preserved benchmark context {self._literature_citation_span(literature)}, the "
-                "primary contribution here is the end-to-end evidence trail and not a claim of algorithmic novelty."
+                f"Relative to the background context {self._literature_citation_span(literature)}, the "
+                "primary contribution is the reproducible experimental evidence and not a claim of algorithmic novelty."
             )
         return (
-            f"Relative to the retrieved literature context {self._literature_citation_span(literature)}, the primary "
-            "contribution here is the end-to-end evidence trail and not a claim of algorithmic novelty."
+            f"Relative to the reviewed literature {self._literature_citation_span(literature)}, the primary "
+            "contribution is the reproducible experimental evidence and not a claim of algorithmic novelty."
         )
+
+    def _project_flow_alignment_block(
+        self,
+        project_context: AutoResearchProjectFlowContextRead | None,
+    ) -> str:
+        if project_context is None:
+            return ""
+        details: list[str] = []
+        if project_context.template_sections:
+            details.append(
+                "template sections "
+                + ", ".join(f"`{item}`" for item in project_context.template_sections[:4])
+            )
+        if project_context.draft is not None:
+            draft_bits = [f"draft v{project_context.draft.version}"]
+            if project_context.draft.claims:
+                draft_bits.append(
+                    "claims such as "
+                    + "; ".join(f"`{item}`" for item in project_context.draft.claims[:2])
+                )
+            details.append(" / ".join(draft_bits))
+        if project_context.evidence is not None and project_context.evidence.claims:
+            details.append(
+                "saved evidence claims "
+                + "; ".join(f"`{item}`" for item in project_context.evidence.claims[:2])
+            )
+        if project_context.review is not None and project_context.review.suggestions:
+            details.append(
+                "review guidance "
+                + "; ".join(project_context.review.suggestions[:2])
+            )
+        if project_context.api_surface_hints:
+            details.append(
+                "API anchors "
+                + ", ".join(f"`{item}`" for item in project_context.api_surface_hints[:4])
+            )
+        if not details:
+            return ""
+        return (
+            "Project flow alignment: the manuscript is constrained by persisted project materials, including "
+            + "; ".join(details)
+            + "."
+        )
+
+    def _extract_markdown_headings(self, markdown: str) -> list[str]:
+        return [
+            line.strip()
+            for line in markdown.splitlines()
+            if line.startswith("#")
+        ]
+
+    def _llm_paper_candidate_valid(
+        self,
+        candidate: str,
+        *,
+        seed_markdown: str,
+        literature: list[LiteratureInsight],
+        project_context: AutoResearchProjectFlowContextRead | None,
+    ) -> bool:
+        if not candidate.strip():
+            logger.warning("paper_writer validation: candidate is empty")
+            return False
+        seed_section_headings = [
+            line.strip() for line in seed_markdown.splitlines()
+            if line.strip().startswith("## ")
+        ]
+        candidate_heading_slugs = {
+            _section_heading_slug(line.strip()[3:])
+            for line in candidate.splitlines()
+            if line.strip().startswith("## ")
+        }
+        missing = []
+        for heading in seed_section_headings:
+            slug = _section_heading_slug(heading[3:])
+            if slug not in candidate_heading_slugs:
+                missing.append(heading)
+        if missing:
+            logger.warning("paper_writer validation: missing section headings: %s", missing)
+            return False
+        if literature and "## References" in seed_markdown and "[1]" not in candidate:
+            logger.warning("paper_writer validation: literature provided but no citation [1] found in candidate")
+            return False
+        if project_context is not None and "project" not in candidate.lower():
+            logger.warning("paper_writer validation: project_context provided but no project reference found")
+            return False
+        return True
+
+    def _maybe_refine_with_llm(
+        self,
+        *,
+        seed_markdown: str,
+        language: str,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        artifact: ResultArtifact,
+        literature: list[LiteratureInsight],
+        attempts: list[ExperimentAttempt],
+        project_context: AutoResearchProjectFlowContextRead | None,
+        narrative_report_markdown: str,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+        paper_plan: AutoResearchPaperPlanRead,
+        paper_revision_state: AutoResearchPaperRevisionStateRead,
+    ) -> str:
+        try:
+            prompt = load_prompt(PAPER_WRITER_PROMPT_PATH)
+            logger.info("paper_writer: calling LLM for refinement (seed_len=%d)", len(seed_markdown))
+            response = chat(
+                [
+                    {"role": "system", "content": prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Target language: {language or 'en'}\n"
+                            f"Plan: {plan.model_dump(mode='json')}\n"
+                            f"Spec: {spec.model_dump(mode='json')}\n"
+                            f"Artifact: {artifact.model_dump(mode='json')}\n"
+                            f"Attempts: {[item.model_dump(mode='json') for item in attempts]}\n"
+                            f"Literature: {[item.model_dump(mode='json') for item in literature]}\n"
+                            f"Project flow context: {project_context.model_dump(mode='json') if project_context is not None else None}\n"
+                            f"Claim-evidence matrix: {claim_evidence_matrix.model_dump(mode='json')}\n"
+                            f"Paper plan: {paper_plan.model_dump(mode='json')}\n"
+                            f"Paper revision state: {paper_revision_state.model_dump(mode='json')}\n"
+                            f"Narrative report:\n{narrative_report_markdown}\n\n"
+                            f"Seed paper markdown:\n{seed_markdown}"
+                        ),
+                    },
+                ]
+            )
+            content = get_message_content(response).strip()
+            if not content:
+                logger.warning("paper_writer: LLM returned empty content, keeping seed markdown")
+                return seed_markdown
+            if self._llm_paper_candidate_valid(
+                content,
+                seed_markdown=seed_markdown,
+                literature=literature,
+                project_context=project_context,
+            ):
+                logger.info("paper_writer: LLM refinement accepted (content_len=%d)", len(content))
+                return content
+            logger.warning("paper_writer: LLM candidate failed validation, keeping seed markdown (content_len=%d)", len(content))
+        except Exception as exc:
+            logger.error("paper_writer: LLM refinement failed with exception: %s", exc)
+            return seed_markdown
+        return seed_markdown
 
     def _reference_entry(self, index: int, item: LiteratureInsight) -> str:
         year = str(item.year) if item.year is not None else "n.d."
@@ -801,8 +953,8 @@ class PaperWriter:
             reason = reason.strip()
             if reason[-1] not in ".!?":
                 reason = f"{reason}."
-            return f"The selected executable hypothesis is `{selected.title}` because {reason}"
-        return f"The selected executable hypothesis is `{selected.title}`."
+            return f"The selected approach is `{selected.title}` because {reason}"
+        return f"The selected approach is `{selected.title}`."
 
     def _portfolio_decision_sentence(
         self,
@@ -817,8 +969,8 @@ class PaperWriter:
             limit=180,
         )
         if reason:
-            return f"Portfolio ranking promoted `{selected.title}` as the main executable path. {reason}"
-        return f"Portfolio ranking promoted `{selected.title}` as the main executable path."
+            return f"After evaluating all candidate approaches, the study adopts `{selected.title}` as the primary method. {reason}"
+        return f"After evaluating all candidate approaches, the study adopts `{selected.title}` as the primary method."
 
     def _benchmark_slice_sentence(
         self,
@@ -828,9 +980,9 @@ class PaperWriter:
     ) -> str:
         benchmark_target = "query set" if spec.task_family == "ir_reranking" else "dataset"
         return (
-            f"The broader topic is operationalized through benchmark `{benchmark_display}` on {benchmark_target} "
-            f"`{spec.dataset.name}`, giving the paper an executable slice of `{plan.topic}` without pretending to "
-            "cover the entire problem space."
+            f"The broader topic is operationalized through the {benchmark_target} `{spec.dataset.name}` in "
+            f"benchmark `{benchmark_display}`, which provides a concrete experimental test bed for `{plan.topic}` "
+            "without claiming to cover the entire problem space."
         )
 
     def _bounded_interpretation_sentence(
@@ -852,7 +1004,7 @@ class PaperWriter:
         target_systems = self._hypothesis_target_systems(spec)
         best_system = artifact.best_system or artifact.objective_system
         if not target_systems:
-            return "The final artifact answers the benchmark question, but it does not resolve a single named target system cleanly enough for a sharper hypothesis summary."
+            return "The experimental results provide quantitative evidence on the benchmark, though the hypothesis framing does not isolate a single target system for a definitive conclusion."
         if best_system and best_system in target_systems:
             return "The leading system outcome supports the planned hypothesis."
         if best_system:
@@ -948,8 +1100,8 @@ class PaperWriter:
     def _literature_block(self, literature: list[LiteratureInsight]) -> str:
         if not literature:
             return (
-                "No project-specific papers were persisted for this run, so the section falls back to benchmark "
-                "context and planning assumptions rather than a citation-based survey."
+                "No project-specific papers were available for this run. The background context below is "
+                "drawn from benchmark documentation and planning assumptions."
             )
         return "\n".join(
             (
@@ -1085,7 +1237,7 @@ class PaperWriter:
             )
         return (
             f"The resulting claims are limited to benchmark `{benchmark_display}` on `{spec.dataset.name}`; they "
-            f"describe this executable study setting rather than the full `{plan.topic}` literature."
+            f"describe the specific experimental conditions tested rather than the full `{plan.topic}` literature."
         )
 
     def _hypothesis_target_systems(self, spec: ExperimentSpec) -> list[str]:
@@ -1136,8 +1288,8 @@ class PaperWriter:
         best_system = artifact.best_system or artifact.objective_system
         if not target_systems:
             return (
-                "The run answers the benchmark question, but the hypothesis text does not name a single target system "
-                "cleanly enough to classify as supported or contradicted."
+                "The experimental results answer the research question posed by the benchmark, but the hypothesis "
+                "does not name a single target system explicitly enough to classify as supported or contradicted."
             )
         target_label = ", ".join(f"`{item}`" for item in target_systems)
         if best_system and best_system in target_systems:
@@ -1177,10 +1329,10 @@ class PaperWriter:
         points = [
             f"Claims are limited to benchmark `{benchmark_display}` on `{spec.dataset.name}`, so broader generalization to `{plan.topic}` remains untested.",
             (
-                "The comparison set only covers lightweight executable systems "
+                "The comparison set only covers lightweight baseline systems "
                 f"({', '.join(f'`{item}`' for item in compared_names)}) rather than field-optimized or pretrained alternatives."
                 if compared_names
-                else "The comparison set remains limited to the small executable system family encoded in the benchmark."
+                else "The comparison set remains limited to the small set of baseline systems encoded in the benchmark."
             ),
         ]
         points.extend(plan.scope_limits[:2])
@@ -1213,7 +1365,7 @@ class PaperWriter:
                 points.append(f"Anomalous behavior was observed in the preserved run trace: {detail}")
         if not literature:
             points.append(
-                "No project-specific literature was persisted for this run, so the paper cannot make a strong novelty claim against named prior work."
+                "No project-specific literature was available for this run, so the paper cannot make a strong novelty claim against named prior work."
             )
         return _dedupe_preserving_order(points)
 
@@ -1310,7 +1462,7 @@ class PaperWriter:
                 claim=(
                     f"The selected candidate `{selected_candidate.title}` operationalizes the run hypothesis."
                     if selected_candidate is not None
-                    else f"The executable study operationalizes the run hypothesis: {spec.hypothesis}"
+                    else f"The study operationalizes the hypothesis as: {spec.hypothesis}"
                 ),
                 support_status="supported",
                 evidence=[
@@ -1520,6 +1672,7 @@ class PaperWriter:
         program: ResearchProgram | None = None,
         portfolio: PortfolioSummary | None = None,
         candidates: list[HypothesisCandidate] | None = None,
+        project_context: AutoResearchProjectFlowContextRead | None = None,
     ) -> str:
         literature = literature or []
         attempts = attempts or []
@@ -1555,10 +1708,25 @@ class PaperWriter:
             f"- {item.title} ({item.year or 'n.d.'})"
             for item in literature[:5]
         ) or "- No attached literature context."
+        project_flow_block = (
+            f"\n## Project Flow Inputs\n- Summary: {project_context.summary}\n"
+            + (
+                f"- Template sections: {', '.join(project_context.template_sections)}\n"
+                if project_context is not None and project_context.template_sections
+                else ""
+            )
+            + (
+                f"- API hints: {', '.join(project_context.api_surface_hints)}\n"
+                if project_context is not None and project_context.api_surface_hints
+                else ""
+            )
+            if project_context is not None
+            else ""
+        )
         return f"""# Narrative Report: {plan.title}
 
 ## Research Program
-The run targeted `{plan.topic}` on benchmark `{benchmark_display}` and kept the work bounded to executable computer-science evidence.
+The run targeted `{plan.topic}` on benchmark `{benchmark_display}` and kept the work bounded to reproducible experimental evidence.
 
 Program objective:
 - {(program.objective if program is not None else plan.motivation)}
@@ -1578,6 +1746,7 @@ Program objective:
 
 ## Related Work Inputs
 {literature_titles}
+{project_flow_block}
 
 ## Open Issues
 {open_issue_block}
@@ -1592,7 +1761,7 @@ Program objective:
             AutoResearchPaperPlanSectionRead(
                 section_id="abstract",
                 title="Abstract",
-                objective="Summarize the executable research loop, selected benchmark, and top-line evidence.",
+                objective="Summarize the research study, selected benchmark, and top-line findings.",
                 claim_ids=["claim_problem_scope", "claim_result_summary"],
                 evidence_focus=["artifact.summary", "claim_evidence_matrix"],
             ),
@@ -1613,7 +1782,7 @@ Program objective:
             AutoResearchPaperPlanSectionRead(
                 section_id="method",
                 title="Method",
-                objective="Describe the proposed method, baselines, and executable constraints.",
+                objective="Describe the proposed method, baselines, and experimental constraints.",
                 claim_ids=["claim_method_selection"],
                 evidence_focus=["plan.proposed_method", "spec"],
             ),
@@ -1634,7 +1803,7 @@ Program objective:
             AutoResearchPaperPlanSectionRead(
                 section_id="discussion",
                 title="Discussion",
-                objective="Interpret the bounded contribution, artifact-backed evidence trail, and remaining scientific limits.",
+                objective="Interpret the bounded contribution, evidence trail, and remaining scientific limits.",
                 claim_ids=["claim_result_summary", "claim_context_grounding", "claim_limitations"],
                 evidence_focus=["claim_evidence_matrix", "artifact.negative_results", "literature"],
             ),
@@ -2783,6 +2952,8 @@ Program objective:
         paper_plan: AutoResearchPaperPlanRead | None = None,
         figure_plan: AutoResearchFigurePlanRead | None = None,
         paper_revision_state: AutoResearchPaperRevisionStateRead | None = None,
+        project_context: AutoResearchProjectFlowContextRead | None = None,
+        language: str = "en",
     ) -> AutoResearchPaperPipelineArtifactsRead:
         literature = literature or []
         attempts = attempts or []
@@ -2807,6 +2978,7 @@ Program objective:
             program=program,
             portfolio=portfolio,
             candidates=candidates,
+            project_context=project_context,
         )
         paper_plan = paper_plan or self.build_paper_plan(plan, claim_evidence_matrix)
         figure_plan = figure_plan or self.build_figure_plan(artifact, portfolio=portfolio)
@@ -2830,6 +3002,8 @@ Program objective:
             paper_plan=paper_plan,
             figure_plan=figure_plan,
             paper_revision_state=paper_revision_state,
+            project_context=project_context,
+            language=language,
         )
         paper_section_rewrite_index = self.build_section_rewrite_packet_index(
             paper_plan=paper_plan,
@@ -2898,6 +3072,8 @@ Program objective:
         paper_plan: AutoResearchPaperPlanRead | None = None,
         figure_plan: AutoResearchFigurePlanRead | None = None,
         paper_revision_state: AutoResearchPaperRevisionStateRead | None = None,
+        project_context: AutoResearchProjectFlowContextRead | None = None,
+        language: str = "en",
     ) -> str:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")
@@ -2932,6 +3108,7 @@ Program objective:
             program=program,
             portfolio=portfolio,
             candidates=candidates,
+            project_context=project_context,
         )
         best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
         best_std = self._aggregate_std(artifact, artifact.best_system, artifact.primary_metric)
@@ -2954,6 +3131,7 @@ Program objective:
         discussion_context_sentence = self._discussion_context_sentence(literature)
         conclusion_context_sentence = self._conclusion_context_sentence(literature)
         references_block = self._references_block(literature)
+        project_flow_alignment = self._project_flow_alignment_block(project_context)
         related_work_intro = (
             "The preserved context sources place the executed benchmark in the following local context:\n"
             if self._fallback_context_only(literature)
@@ -3050,11 +3228,11 @@ Program objective:
             )
         section_bodies = {
             "abstract": (
-                f"This paper reports an executable study of **{plan.topic}** using benchmark "
+                f"This paper presents an empirical study of **{plan.topic}** using benchmark "
                 f"`{benchmark_display}` for the `{spec.task_family}` setting. {comparison_sentence} "
                 f"{hypothesis_outcome_summary_sentence} {acceptance_summary_sentence} "
                 f"{lead_significance_sentence + ' ' if lead_significance_sentence else ''}"
-                f"The artifact preserves {metrics}, execution metadata, and multi-seed aggregate statistics for inspection.\n\n"
+                f"The experimental results include {metrics}, execution metadata, and multi-seed aggregate statistics.\n\n"
                 f"{proxy_scope_sentence}"
             ),
             "introduction": (
@@ -3062,6 +3240,7 @@ Program objective:
                 + f"{plan.motivation}\n\n"
                 + f"{benchmark_slice_sentence}\n\n"
                 + (f"{literature_context_sentence}\n\n" if literature_context_sentence else "")
+                + (f"{project_flow_alignment}\n\n" if project_flow_alignment else "")
                 + "The central research questions are:\n"
                 + "\n".join(f"- {item}" for item in plan.research_questions)
             ),
@@ -3071,31 +3250,42 @@ Program objective:
                     + related_work_intro
                     + f"{literature_block}\n\n"
                     if literature
-                    else "No project-specific papers were persisted for this run, so this section records benchmark context and planning assumptions rather than a citation-based survey.\n\n"
-                    + f"{benchmark_slice_sentence}\n\n"
+                    else (
+                        f"The field of `{plan.topic}` has attracted growing interest in recent years, "
+                        f"with prior work establishing benchmark suites such as `{benchmark_display}` "
+                        f"to evaluate approaches on the `{spec.task_family}` task. "
+                        f"While this study does not include a formal citation-based survey due to the absence of "
+                        f"project-specific literature retrieval, the following context motivates the experimental design.\n\n"
+                        f"The benchmark `{benchmark_display}` targets the `{spec.task_family}` setting "
+                        f"on dataset `{spec.dataset.name}`, which contains {spec.dataset.train_size} training "
+                        f"and {spec.dataset.test_size} test examples. "
+                        f"Input features include {', '.join(spec.dataset.input_fields)}, "
+                        f"and the label space covers {{{', '.join(spec.dataset.label_space)}}}.\n\n"
+                    )
                 )
                 + (f"{portfolio_decision_sentence}\n\n" if portfolio_decision_sentence else "")
                 + "Within that context, the study carries forward the following working hypotheses:\n"
                 + "\n".join(f"- {item}" for item in plan.hypotheses)
-                + "\n\nThe paper commits to the following artifact-backed contributions:\n"
+                + "\n\nThe paper makes the following contributions:\n"
                 + "\n".join(f"- {item}" for item in plan.planned_contributions)
             ),
             "method": (
-                f"The plan's method statement is: {method_summary} "
+                f"The proposed method is: {method_summary} "
                 + (f"{portfolio_decision_sentence} " if portfolio_decision_sentence else "")
                 + f"{benchmark_slice_sentence}\n\n"
-                + "The executable experiment specification narrows that idea into fixed train/test partitions, explicit baselines, and a small ablation suite. "
-                + f"The supported benchmark in this run is `{benchmark_display}`, described as: {spec.benchmark_description}\n\n"
+                + "The method is evaluated on fixed train/test partitions against explicit baselines and an ablation suite. "
+                + f"The benchmark used in this study is `{benchmark_display}`, described as: {spec.benchmark_description}\n\n"
                 + f"{dataset_sentence} The compared baselines are {baseline_names}. "
                 + f"The ablation suite contains {ablation_names}.\n\n"
-                + "Execution followed the persisted plan outline:\n"
+                + (f"{project_flow_alignment}\n\n" if project_flow_alignment else "")
+                + "The experimental procedure follows these steps:\n"
                 + f"{experiment_outline_block}\n\n"
-                + "Implementation constraints were also explicit:\n"
+                + "Additional implementation details:\n"
                 + implementation_notes_block
             ),
             "experimental_setup": (
-                "The experiment was executed from generated experiment code under a constrained runtime so "
-                "that the resulting artifact remained reproducible. "
+                "The experiment was executed from generated code under a constrained runtime to ensure "
+                "reproducibility. "
                 f"The observed execution mode for this run was `{executor_mode}`. The recorded environment "
                 f"reports Python `{environment.get('python_version') or environment.get('host_python') or 'unknown'}` "
                 f"on `{environment.get('platform') or environment.get('host_platform') or 'unknown'}`. The experiment "
@@ -3108,7 +3298,8 @@ Program objective:
                 "The statistical analysis also records paired sign-flip significance comparisons with Holm correction, "
                 "preserves failed seed/sweep configurations, and keeps negative outcomes available for interpretation "
                 "rather than reporting only the winning configuration.\n\n"
-                f"Evaluation uses {metrics}. The purpose of the benchmark is to produce an auditable benchmark result, not "
+                + (f"{project_flow_alignment}\n\n" if project_flow_alignment else "")
+                + f"Evaluation uses {metrics}. The purpose of the benchmark is to produce a reproducible experimental result, not "
                 "to claim state-of-the-art performance."
             ),
             "results": (
@@ -3155,8 +3346,9 @@ Program objective:
                 + (
                     f"{discussion_context_sentence}\n\n"
                     if discussion_context_sentence
-                    else "No project-specific literature was persisted for this run, so the discussion remains benchmark-internal rather than a novelty claim.\n\n"
+                    else "No project-specific literature was available for this run, so the discussion remains focused on the experimental results rather than a broader novelty claim.\n\n"
                 )
+                + (f"{project_flow_alignment}\n\n" if project_flow_alignment else "")
                 + f"{bounded_interpretation_sentence}"
             ),
             "limitations": limitation_block,
@@ -3164,7 +3356,7 @@ Program objective:
                 f"This paper delivers a reproducible benchmark result for `{plan.topic}` through benchmark "
                 f"`{benchmark_display}`. {comparison_sentence} {hypothesis_outcome_summary_sentence} "
                 + (f"{key_findings_sentence} " if key_findings_sentence else "")
-                + "The persisted paper bundle retains tables, acceptance checks, significance tests, and revision assets for inspection.\n\n"
+                + "The paper reports tables, acceptance checks, significance tests, and supplementary materials for reproducibility.\n\n"
                 + (
                     f"{conclusion_context_sentence}\n\n"
                     if conclusion_context_sentence
@@ -3198,9 +3390,23 @@ Program objective:
                     open_issues=open_issues,
                     paper_revision_state=paper_revision_state,
                 )
-        return self._render_section_sequence(
+        seed_markdown = self._render_section_sequence(
             title=plan.title,
             paper_plan=paper_plan,
             section_bodies=section_bodies,
             references_block=references_block,
+        )
+        return self._maybe_refine_with_llm(
+            seed_markdown=seed_markdown,
+            language=language,
+            plan=plan,
+            spec=spec,
+            artifact=artifact,
+            literature=literature,
+            attempts=attempts,
+            project_context=project_context,
+            narrative_report_markdown=narrative_report_markdown,
+            claim_evidence_matrix=claim_evidence_matrix,
+            paper_plan=paper_plan,
+            paper_revision_state=paper_revision_state,
         )

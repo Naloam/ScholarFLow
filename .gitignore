@@ -18,6 +18,12 @@ backend/prompts/
 backend/migrations/
 .github/workflows/ai_review.yml
 
+# AI config and prompt files (do not upload)
+AGENTS.md
+SYSTEM_PROMPT.md
+CLAUDE.md
+.claude/
+
 # IDE / editor
 .idea/
 .vscode/
@@ -28,3 +34,10 @@ backend/migrations/
 .env
 .env.*
 !.env.example
+
+# Playwright MCP sessions
+.playwright-mcp/
+
+# SQLite databases
+*.sqlite3
+*.db

@@ -323,18 +323,64 @@ class AutoExperimentRunner:
 
         The schema expects: [{"system": str, "metrics": {str: float}}]
         LLMs may return: {"system_name": {"metric": value}} or other variants.
+        Nested dict values (e.g. per_class_f1) are flattened to key_subkey format.
         """
+        def _flatten_metrics(metrics: dict[str, Any]) -> dict[str, float]:
+            flat: dict[str, float] = {}
+            for key, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    flat[key] = float(value)
+                elif isinstance(value, dict):
+                    for sub_key, sub_value in value.items():
+                        if isinstance(sub_value, (int, float)):
+                            flat[f"{key}_{sub_key}"] = float(sub_value)
+                elif value is not None:
+                    try:
+                        flat[key] = float(value)
+                    except (TypeError, ValueError):
+                        pass
+            return flat
+
         if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, dict) and "metrics" in item and isinstance(item["metrics"], dict):
+                    item["metrics"] = _flatten_metrics(item["metrics"])
             return raw
         if isinstance(raw, dict):
             results: list[dict[str, Any]] = []
             for system_name, metrics in raw.items():
                 if isinstance(metrics, dict):
-                    results.append({"system": system_name, "metrics": metrics})
+                    results.append({"system": system_name, "metrics": _flatten_metrics(metrics)})
                 elif isinstance(metrics, (int, float)):
                     results.append({"system": system_name, "metrics": {"score": float(metrics)}})
             return results
         return []
+
+    @staticmethod
+    def _normalize_tables(raw: Any) -> list[dict[str, Any]]:
+        """Normalize raw tables into ResultTable-compatible dicts.
+
+        Ensures each table has a 'title', 'columns', and 'rows' with all string values.
+        """
+        if not isinstance(raw, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for index, table in enumerate(raw):
+            if not isinstance(table, dict):
+                continue
+            title = table.get("title") or table.get("name") or f"Table {index + 1}"
+            headers = table.get("headers") or table.get("columns") or []
+            raw_rows = table.get("rows") or table.get("data") or []
+            columns = [str(h) for h in headers]
+            rows: list[list[str]] = []
+            for row in raw_rows:
+                if isinstance(row, (list, tuple)):
+                    rows.append([str(cell) for cell in row])
+                elif isinstance(row, dict):
+                    rows.append([str(row.get(h, "")) for h in headers])
+            if columns and rows:
+                normalized.append({"title": str(title), "columns": columns, "rows": rows})
+        return normalized
 
     @staticmethod
     def _normalize_list_field(raw: Any) -> list[Any]:
@@ -401,7 +447,7 @@ class AutoExperimentRunner:
             failed_trials=self._normalize_list_field(payload.get("failed_trials")),
             anomalous_trials=self._normalize_list_field(payload.get("anomalous_trials")),
             acceptance_checks=self._normalize_list_field(payload.get("acceptance_checks")),
-            tables=self._normalize_list_field(payload.get("tables")),
+            tables=self._normalize_tables(payload.get("tables")),
             logs=logs,
             environment=environment,
             outputs=outputs,

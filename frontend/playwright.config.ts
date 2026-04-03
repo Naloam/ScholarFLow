@@ -14,7 +14,9 @@ const backendBaseUrl = `http://127.0.0.1:${backendPort}`;
 const frontendBaseUrl = `http://127.0.0.1:${frontendPort}`;
 const forceServerStart = process.env.PLAYWRIGHT_FORCE_SERVER_START === "1";
 const authRequired = process.env.AUTH_REQUIRED === "1";
-const authSecret = authRequired ? (process.env.AUTH_SECRET ?? "phase6-secret") : "";
+const authSecret = authRequired
+  ? (process.env.AUTH_SECRET ?? "phase6-secret")
+  : "";
 const apiToken = authRequired ? (process.env.API_TOKEN ?? "") : "";
 const reuseExistingServer =
   !forceServerStart && !process.env.CI && !authRequired;

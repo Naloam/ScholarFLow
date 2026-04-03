@@ -27,14 +27,21 @@ export function WizardPanel({ status }: WizardPanelProps) {
       </div>
 
       <div className="progress-strip">
-        <div className="progress-fill" style={{ width: formatPercent(status?.progress ?? 0) }} />
+        <div
+          className="progress-fill"
+          style={{ width: formatPercent(status?.progress ?? 0) }}
+        />
       </div>
 
       <ul className="timeline">
         {steps.map((step) => (
           <li
             key={step.key}
-            className={step.key === currentPhase ? "timeline-item active" : "timeline-item"}
+            className={
+              step.key === currentPhase
+                ? "timeline-item active"
+                : "timeline-item"
+            }
           >
             <span className="timeline-dot" />
             <div>

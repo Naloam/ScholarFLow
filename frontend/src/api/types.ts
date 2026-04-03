@@ -294,8 +294,12 @@ export type AutoResearchExperimentBridgeConfig = {
 
 export type AutoResearchRunRequest = {
   topic: string;
-  task_family_hint?: "text_classification" | "tabular_classification" | "ir_reranking";
+  task_family_hint?:
+    | "text_classification"
+    | "tabular_classification"
+    | "ir_reranking";
   docker_image?: string | null;
+  language?: string;
   paper_ids?: string[] | null;
   max_rounds?: number;
   candidate_execution_limit?: number | null;
@@ -684,7 +688,11 @@ export type AutoResearchLineageEdge = {
     | "paper_compiled_pdf"
     | "paper_bibliography_output";
   source_id: string;
-  relation: "owns" | "selected_candidate" | "has_asset" | "materialized_to_run_asset";
+  relation:
+    | "owns"
+    | "selected_candidate"
+    | "has_asset"
+    | "materialized_to_run_asset";
   target_kind:
     | "run"
     | "program"
@@ -798,7 +806,14 @@ export type AutoResearchCandidateRegistryEntry = {
   attempt_count: number;
   artifact_status?: string | null;
   manifest_source: "file" | "generated_fallback";
-  decision_outcome?: "pending" | "running" | "leading" | "promoted" | "eliminated" | "failed" | null;
+  decision_outcome?:
+    | "pending"
+    | "running"
+    | "leading"
+    | "promoted"
+    | "eliminated"
+    | "failed"
+    | null;
   decision_reason?: string | null;
   files: AutoResearchCandidateRegistryFiles;
 };
@@ -814,7 +829,14 @@ export type AutoResearchRunLineage = {
 
 export type AutoResearchCandidateLineage = {
   selected: boolean;
-  decision_outcome?: "pending" | "running" | "leading" | "promoted" | "eliminated" | "failed" | null;
+  decision_outcome?:
+    | "pending"
+    | "running"
+    | "leading"
+    | "promoted"
+    | "eliminated"
+    | "failed"
+    | null;
   edges: AutoResearchLineageEdge[];
 };
 
@@ -823,7 +845,11 @@ export type AutoResearchRunRegistry = {
   run_id: string;
   topic: string;
   status: AutoResearchRunStatus;
-  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+  task_family?:
+    | "text_classification"
+    | "tabular_classification"
+    | "ir_reranking"
+    | null;
   program_id?: string | null;
   benchmark_name?: string | null;
   portfolio_status?: "planned" | "running" | "done" | "failed" | null;
@@ -999,7 +1025,13 @@ export type AutoResearchNoveltyAssessment = {
 export type AutoResearchReviewFinding = {
   id: string;
   severity: "info" | "warning" | "error";
-  category: "artifact" | "statistics" | "citation" | "context" | "provenance" | "publish";
+  category:
+    | "artifact"
+    | "statistics"
+    | "citation"
+    | "context"
+    | "provenance"
+    | "publish";
   summary: string;
   detail: string;
   supporting_asset_ids: string[];
@@ -1047,7 +1079,13 @@ export type AutoResearchReviewLoopRound = {
 
 export type AutoResearchReviewLoopIssue = {
   issue_id: string;
-  category: "artifact" | "statistics" | "citation" | "context" | "provenance" | "publish";
+  category:
+    | "artifact"
+    | "statistics"
+    | "citation"
+    | "context"
+    | "provenance"
+    | "publish";
   severity: "info" | "warning" | "error";
   summary: string;
   detail: string;
@@ -1111,7 +1149,12 @@ export type AutoResearchBridgeSession = {
   session_id: string;
   created_at: string;
   updated_at: string;
-  status: "waiting_result" | "result_imported" | "completed" | "failed" | "canceled";
+  status:
+    | "waiting_result"
+    | "result_imported"
+    | "completed"
+    | "failed"
+    | "canceled";
   candidate_id: string;
   candidate_title: string;
   round_index: number;
@@ -1169,7 +1212,13 @@ export type AutoResearchExperimentBridge = {
   enabled: boolean;
   config?: AutoResearchExperimentBridgeConfig | null;
   persisted_path?: string | null;
-  status: "inactive" | "waiting_result" | "result_imported" | "completed" | "failed" | "canceled";
+  status:
+    | "inactive"
+    | "waiting_result"
+    | "result_imported"
+    | "completed"
+    | "failed"
+    | "canceled";
   active_session_id?: string | null;
   latest_session_id?: string | null;
   open_session_count: number;
@@ -1216,7 +1265,11 @@ export type AutoResearchPublicationManifest = {
   updated_at: string;
   selected_candidate_id?: string | null;
   benchmark_name?: string | null;
-  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+  task_family?:
+    | "text_classification"
+    | "tabular_classification"
+    | "ir_reranking"
+    | null;
   package_id: string;
   package_fingerprint?: string | null;
   bundle_kind: "review_bundle" | "final_publish_bundle";
@@ -1255,7 +1308,11 @@ export type AutoResearchDeploymentFilters = {
   search?: string | null;
   final_publish_ready?: boolean | null;
   bundle_kind?: "review_bundle" | "final_publish_bundle" | null;
-  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+  task_family?:
+    | "text_classification"
+    | "tabular_classification"
+    | "ir_reranking"
+    | null;
 };
 
 export type AutoResearchDeploymentSummary = {
@@ -1377,7 +1434,12 @@ export type AutoResearchOperatorConsoleFilters = {
   status?: AutoResearchRunStatus | null;
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   review_risk?: "low" | "medium" | "high" | null;
-  novelty_status?: "missing_context" | "grounded" | "incremental" | "weak" | null;
+  novelty_status?:
+    | "missing_context"
+    | "grounded"
+    | "incremental"
+    | "weak"
+    | null;
   budget_status?: "default" | "constrained" | null;
   queue_priority?: "low" | "normal" | "high" | null;
 };
@@ -1402,7 +1464,11 @@ export type AutoResearchOperatorRunSummary = {
   status: AutoResearchRunStatus;
   created_at: string;
   updated_at: string;
-  task_family?: "text_classification" | "tabular_classification" | "ir_reranking" | null;
+  task_family?:
+    | "text_classification"
+    | "tabular_classification"
+    | "ir_reranking"
+    | null;
   benchmark_name?: string | null;
   selected_candidate_id?: string | null;
   candidate_count: number;
@@ -1410,7 +1476,14 @@ export type AutoResearchOperatorRunSummary = {
   active_count: number;
   failed_count: number;
   eliminated_count: number;
-  latest_job_status?: "queued" | "leased" | "running" | "succeeded" | "failed" | "canceled" | null;
+  latest_job_status?:
+    | "queued"
+    | "leased"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "canceled"
+    | null;
   active_job_id?: string | null;
   cancel_requested: boolean;
   queue_priority: "low" | "normal" | "high";
@@ -1419,9 +1492,22 @@ export type AutoResearchOperatorRunSummary = {
   candidate_execution_limit?: number | null;
   executed_candidate_count: number;
   recovery_count: number;
-  bridge_status?: "inactive" | "waiting_result" | "result_imported" | "completed" | "failed" | "canceled" | null;
+  bridge_status?:
+    | "inactive"
+    | "waiting_result"
+    | "result_imported"
+    | "completed"
+    | "failed"
+    | "canceled"
+    | null;
   bridge_target_label?: string | null;
-  bridge_session_status?: "waiting_result" | "result_imported" | "completed" | "failed" | "canceled" | null;
+  bridge_session_status?:
+    | "waiting_result"
+    | "result_imported"
+    | "completed"
+    | "failed"
+    | "canceled"
+    | null;
   bridge_session_count: number;
   review_round: number;
   open_issue_count: number;
@@ -1430,7 +1516,12 @@ export type AutoResearchOperatorRunSummary = {
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   publish_ready: boolean;
   review_risk?: "low" | "medium" | "high" | null;
-  novelty_status?: "missing_context" | "grounded" | "incremental" | "weak" | null;
+  novelty_status?:
+    | "missing_context"
+    | "grounded"
+    | "incremental"
+    | "weak"
+    | null;
   blocker_count: number;
   revision_count: number;
 };

@@ -9,7 +9,11 @@ type ProjectLauncherProps = {
   healthStatus: string;
   working: boolean;
   authLocked: boolean;
-  onCreate: (payload: { title: string; topic: string; templateId: string }) => Promise<void>;
+  onCreate: (payload: {
+    title: string;
+    topic: string;
+    templateId: string;
+  }) => Promise<void>;
   onOpen: (projectId: string) => Promise<void>;
 };
 
@@ -24,7 +28,9 @@ export function ProjectLauncher({
   onOpen,
 }: ProjectLauncherProps) {
   const [title, setTitle] = useState("Undergraduate Thesis Workspace");
-  const [topic, setTopic] = useState("Graph neural networks in recommender systems");
+  const [topic, setTopic] = useState(
+    "Graph neural networks in recommender systems",
+  );
   const [templateId, setTemplateId] = useState("builtin:general_paper");
   const [existingProjectId, setExistingProjectId] = useState("");
 
@@ -35,7 +41,9 @@ export function ProjectLauncher({
           <p className="eyebrow">Phase 7 Collaboration</p>
           <h2 className="panel-title">Project Launcher</h2>
         </div>
-        <span className={`badge ${healthStatus === "ok" ? "badge-ok" : "badge-warn"}`}>
+        <span
+          className={`badge ${healthStatus === "ok" ? "badge-ok" : "badge-warn"}`}
+        >
           API {healthStatus}
         </span>
       </div>
@@ -74,7 +82,10 @@ export function ProjectLauncher({
         >
           <option value="">No template</option>
           {templates.map((template) => (
-            <option key={template.id ?? template.name} value={template.id ?? ""}>
+            <option
+              key={template.id ?? template.name}
+              value={template.id ?? ""}
+            >
               {template.name}
             </option>
           ))}
@@ -93,11 +104,14 @@ export function ProjectLauncher({
       </div>
 
       {authLocked ? (
-        <div className="inline-card auth-locked" data-testid="project-launcher-locked">
+        <div
+          className="inline-card auth-locked"
+          data-testid="project-launcher-locked"
+        >
           <p className="inline-title">Workspace locked</p>
           <p className="auth-copy">
-            Sign in first. Protected mode blocks project creation and project lookup until a valid
-            session or bearer token is present.
+            Sign in first. Protected mode blocks project creation and project
+            lookup until a valid session or bearer token is present.
           </p>
         </div>
       ) : null}
@@ -128,8 +142,8 @@ export function ProjectLauncher({
         <p className="inline-title">Accessible projects</p>
         {availableProjects.length === 0 ? (
           <p className="auth-copy">
-            No accessible projects yet. Projects you create, open anonymously, or receive through
-            mentor access will appear here.
+            No accessible projects yet. Projects you create, open anonymously,
+            or receive through mentor access will appear here.
           </p>
         ) : (
           <div className="stack">
@@ -145,7 +159,9 @@ export function ProjectLauncher({
                 <article
                   key={project.id}
                   className="feedback-card"
-                  data-testid={index === 0 ? "accessible-project-card" : undefined}
+                  data-testid={
+                    index === 0 ? "accessible-project-card" : undefined
+                  }
                 >
                   <div className="inline-row">
                     <strong>{project.title}</strong>
@@ -171,7 +187,9 @@ export function ProjectLauncher({
 
       <div className="meta-block">
         <span className="meta-label">Current project</span>
-        <code data-testid="current-project-id">{currentProjectId || "Not selected"}</code>
+        <code data-testid="current-project-id">
+          {currentProjectId || "Not selected"}
+        </code>
       </div>
     </section>
   );

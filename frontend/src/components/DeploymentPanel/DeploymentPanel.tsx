@@ -47,14 +47,15 @@ export function DeploymentPanel({
   onClearFilters,
   onOpenPublication,
 }: DeploymentPanelProps) {
-  const [draftFilters, setDraftFilters] = useState<AutoResearchDeploymentFilters>(filters);
+  const [draftFilters, setDraftFilters] =
+    useState<AutoResearchDeploymentFilters>(filters);
   const hasDeployments = Boolean(deploymentList?.deployments.length);
   const hasActiveFilters = Boolean(
     filters.search ||
-      (filters.final_publish_ready !== null &&
-        filters.final_publish_ready !== undefined) ||
-      filters.bundle_kind ||
-      filters.task_family,
+    (filters.final_publish_ready !== null &&
+      filters.final_publish_ready !== undefined) ||
+    filters.bundle_kind ||
+    filters.task_family,
   );
 
   useEffect(() => {
@@ -93,7 +94,10 @@ export function DeploymentPanel({
       {!hasDeployments ? (
         <div className="empty-state">
           <p>No publish deployments yet.</p>
-          <span>Export a publish package to register a paper/run/code package into a deployment.</span>
+          <span>
+            Export a publish package to register a paper/run/code package into a
+            deployment.
+          </span>
         </div>
       ) : (
         <>
@@ -112,7 +116,10 @@ export function DeploymentPanel({
                 </option>
               ))}
             </select>
-            <span className="auth-copy" data-testid="deployment-selection-summary">
+            <span
+              className="auth-copy"
+              data-testid="deployment-selection-summary"
+            >
               {deployment
                 ? `${deployment.filtered_publication_count}/${deployment.publication_count} shown across ${deployment.project_count} projects`
                 : "Select a deployment to inspect publication listings"}
@@ -167,7 +174,8 @@ export function DeploymentPanel({
                       "bundle_kind",
                       event.target.value === ""
                         ? null
-                        : (event.target.value as AutoResearchDeploymentFilters["bundle_kind"]),
+                        : (event.target
+                            .value as AutoResearchDeploymentFilters["bundle_kind"]),
                     )
                   }
                   disabled={disabled}
@@ -175,7 +183,9 @@ export function DeploymentPanel({
                 >
                   <option value="">All bundles</option>
                   <option value="review_bundle">Review bundle</option>
-                  <option value="final_publish_bundle">Final publish bundle</option>
+                  <option value="final_publish_bundle">
+                    Final publish bundle
+                  </option>
                 </select>
                 <select
                   id="deployment-task-family-filter"
@@ -186,15 +196,20 @@ export function DeploymentPanel({
                       "task_family",
                       event.target.value === ""
                         ? null
-                        : (event.target.value as AutoResearchDeploymentFilters["task_family"]),
+                        : (event.target
+                            .value as AutoResearchDeploymentFilters["task_family"]),
                     )
                   }
                   disabled={disabled}
                   data-testid="deployment-task-family-filter"
                 >
                   <option value="">All task families</option>
-                  <option value="text_classification">Text classification</option>
-                  <option value="tabular_classification">Tabular classification</option>
+                  <option value="text_classification">
+                    Text classification
+                  </option>
+                  <option value="tabular_classification">
+                    Tabular classification
+                  </option>
                   <option value="ir_reranking">IR reranking</option>
                 </select>
                 <button
@@ -225,7 +240,8 @@ export function DeploymentPanel({
                 <div>
                   <span className="meta-label">Showing</span>
                   <strong>
-                    {deployment.filtered_publication_count}/{deployment.publication_count}
+                    {deployment.filtered_publication_count}/
+                    {deployment.publication_count}
                   </strong>
                 </div>
                 <div>
@@ -247,14 +263,21 @@ export function DeploymentPanel({
               </div>
 
               {deployment.publications.length === 0 ? (
-                <div className="empty-state" data-testid="deployment-empty-filtered">
+                <div
+                  className="empty-state"
+                  data-testid="deployment-empty-filtered"
+                >
                   <p>No publications match the current filters.</p>
-                  <span>Clear filters or widen the search to inspect the full deployment.</span>
+                  <span>
+                    Clear filters or widen the search to inspect the full
+                    deployment.
+                  </span>
                 </div>
               ) : (
                 <div className="list-block">
                   {deployment.publications.map((item) => {
-                    const compileOutputCount = item.publication.paper_compile_output_paths.length;
+                    const compileOutputCount =
+                      item.publication.paper_compile_output_paths.length;
                     return (
                       <div
                         key={item.publication.publication_id}
@@ -263,27 +286,38 @@ export function DeploymentPanel({
                       >
                         <strong>{item.publication.paper_title}</strong>
                         <small>
-                          project {item.publication.project_title ?? item.publication.project_id} / run{" "}
-                          {item.publication.run_id}
+                          project{" "}
+                          {item.publication.project_title ??
+                            item.publication.project_id}{" "}
+                          / run {item.publication.run_id}
                         </small>
                         <small>
-                          task {formatTaskFamily(item.publication.task_family)} / bundle{" "}
-                          {item.publication.bundle_kind} / final ready{" "}
+                          task {formatTaskFamily(item.publication.task_family)}{" "}
+                          / bundle {item.publication.bundle_kind} / final ready{" "}
                           {item.publication.final_publish_ready ? "yes" : "no"}
                         </small>
                         <small>topic {item.publication.topic}</small>
-                        <small>benchmark {item.publication.benchmark_name}</small>
+                        <small>
+                          benchmark {item.publication.benchmark_name}
+                        </small>
                         <small>
                           listed {formatTimestamp(item.listed_at)} / updated{" "}
                           {formatTimestamp(item.publication.updated_at)}
                         </small>
-                        <small>archive {item.publication.publish_archive_path}</small>
-                        <small>paper {item.publication.paper_path ?? "n/a"}</small>
                         <small>
-                          compiled {item.publication.compiled_paper_path ?? "n/a"} / outputs{" "}
-                          {compileOutputCount}
+                          archive {item.publication.publish_archive_path}
                         </small>
-                        <small>code {item.publication.code_package_path ?? "n/a"}</small>
+                        <small>
+                          paper {item.publication.paper_path ?? "n/a"}
+                        </small>
+                        <small>
+                          compiled{" "}
+                          {item.publication.compiled_paper_path ?? "n/a"} /
+                          outputs {compileOutputCount}
+                        </small>
+                        <small>
+                          code {item.publication.code_package_path ?? "n/a"}
+                        </small>
                         <button
                           type="button"
                           className="ghost-btn"

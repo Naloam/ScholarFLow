@@ -11,11 +11,18 @@ type SessionPanelProps = {
   authBusy: boolean;
   authError: string;
   workspaceBusy: boolean;
-  onSignIn: (payload: { email: string; name: string; role: "student" | "tutor" }) => Promise<void>;
+  onSignIn: (payload: {
+    email: string;
+    name: string;
+    role: "student" | "tutor";
+  }) => Promise<void>;
   onSignOut: () => Promise<void>;
 };
 
-function getStatusLabel(authState: AuthState, authConfig: AuthConfig | null): string {
+function getStatusLabel(
+  authState: AuthState,
+  authConfig: AuthConfig | null,
+): string {
   if (authState === "checking") {
     return "Checking";
   }
@@ -45,9 +52,13 @@ export function SessionPanel({
   const [name, setName] = useState("");
   const [role, setRole] = useState<"student" | "tutor">("student");
   const openWorkspace = !authConfig?.api_protected;
-  const locked = Boolean(authConfig?.api_protected) && authState === "anonymous";
+  const locked =
+    Boolean(authConfig?.api_protected) && authState === "anonymous";
   const canSubmit =
-    !authBusy && !workspaceBusy && Boolean(email.trim()) && Boolean(authConfig?.session_enabled);
+    !authBusy &&
+    !workspaceBusy &&
+    Boolean(email.trim()) &&
+    Boolean(authConfig?.session_enabled);
 
   return (
     <section className="panel" data-testid="auth-panel">
@@ -64,11 +75,15 @@ export function SessionPanel({
       <div className="auth-meta-grid">
         <div className="auth-meta-card">
           <span className="meta-label">Workspace mode</span>
-          <strong>{authConfig?.api_protected ? "Protected API" : "Open API"}</strong>
+          <strong>
+            {authConfig?.api_protected ? "Protected API" : "Open API"}
+          </strong>
         </div>
         <div className="auth-meta-card">
           <span className="meta-label">Session login</span>
-          <strong>{authConfig?.session_enabled ? "Enabled" : "Unavailable"}</strong>
+          <strong>
+            {authConfig?.session_enabled ? "Enabled" : "Unavailable"}
+          </strong>
         </div>
       </div>
 
@@ -96,8 +111,9 @@ export function SessionPanel({
             <div className="inline-card">
               <p className="inline-title">Service token active</p>
               <p className="auth-copy">
-                Requests already carry a configured bearer token. You can still create a user
-                session below if you want project ownership and user-level audit trails.
+                Requests already carry a configured bearer token. You can still
+                create a user session below if you want project ownership and
+                user-level audit trails.
               </p>
             </div>
           ) : null}
@@ -116,8 +132,8 @@ export function SessionPanel({
               {openWorkspace && !authConfig?.session_enabled
                 ? "This workspace is already open. You can create projects anonymously; configure AUTH_SECRET only if you want user-linked sessions."
                 : authConfig?.session_enabled
-                ? "Use an email-based session so new projects are linked to your user identity."
-                : "This server does not expose session login. Configure AUTH_SECRET or provide a bearer token in the frontend."}
+                  ? "Use an email-based session so new projects are linked to your user identity."
+                  : "This server does not expose session login. Configure AUTH_SECRET or provide a bearer token in the frontend."}
             </p>
 
             <label className="field">
@@ -126,7 +142,9 @@ export function SessionPanel({
                 id="auth-email-input"
                 name="auth_email"
                 data-testid="auth-email-input"
-                disabled={authBusy || workspaceBusy || !authConfig?.session_enabled}
+                disabled={
+                  authBusy || workspaceBusy || !authConfig?.session_enabled
+                }
                 placeholder="student@example.com"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -139,7 +157,9 @@ export function SessionPanel({
                 id="auth-name-input"
                 name="auth_name"
                 data-testid="auth-name-input"
-                disabled={authBusy || workspaceBusy || !authConfig?.session_enabled}
+                disabled={
+                  authBusy || workspaceBusy || !authConfig?.session_enabled
+                }
                 placeholder="Optional"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -152,9 +172,13 @@ export function SessionPanel({
                 id="auth-role-select"
                 name="auth_role"
                 data-testid="auth-role-select"
-                disabled={authBusy || workspaceBusy || !authConfig?.session_enabled}
+                disabled={
+                  authBusy || workspaceBusy || !authConfig?.session_enabled
+                }
                 value={role}
-                onChange={(event) => setRole(event.target.value as "student" | "tutor")}
+                onChange={(event) =>
+                  setRole(event.target.value as "student" | "tutor")
+                }
               >
                 <option value="student">Student</option>
                 <option value="tutor">Tutor</option>

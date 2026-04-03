@@ -7,7 +7,9 @@ import { useWorkspaceStore } from "../stores/workspace";
 function getProgressUrl(projectId: string): string {
   const base = new URL(API_BASE_URL);
   const protocol = base.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL(`${protocol}//${base.host}/ws/projects/${projectId}/progress`);
+  const url = new URL(
+    `${protocol}//${base.host}/ws/projects/${projectId}/progress`,
+  );
   const token = getAuthToken();
   if (token) {
     url.searchParams.set("token", token);
@@ -17,8 +19,12 @@ function getProgressUrl(projectId: string): string {
 
 export function useProjectProgress() {
   const currentProjectId = useWorkspaceStore((state) => state.currentProjectId);
-  const applyProgressSnapshot = useWorkspaceStore((state) => state.applyProgressSnapshot);
-  const setConnectionState = useWorkspaceStore((state) => state.setConnectionState);
+  const applyProgressSnapshot = useWorkspaceStore(
+    (state) => state.applyProgressSnapshot,
+  );
+  const setConnectionState = useWorkspaceStore(
+    (state) => state.setConnectionState,
+  );
   const refreshProject = useWorkspaceStore((state) => state.refreshProject);
 
   useEffect(() => {
@@ -83,7 +89,9 @@ export function useProjectProgress() {
         if (!active || socket !== nextSocket) {
           return;
         }
-        const payload = JSON.parse(event.data) as ProjectProgressSnapshot | { error: string };
+        const payload = JSON.parse(event.data) as
+          | ProjectProgressSnapshot
+          | { error: string };
         if ("error" in payload) {
           setConnectionState("disconnected");
           startFallback();
@@ -119,5 +127,10 @@ export function useProjectProgress() {
       }
       socket?.close();
     };
-  }, [applyProgressSnapshot, currentProjectId, refreshProject, setConnectionState]);
+  }, [
+    applyProgressSnapshot,
+    currentProjectId,
+    refreshProject,
+    setConnectionState,
+  ]);
 }

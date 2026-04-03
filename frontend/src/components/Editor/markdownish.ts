@@ -19,8 +19,13 @@ function parseInlineMarkdown(text: string): JSONContent[] {
   let cursor = 0;
 
   while (cursor < text.length) {
-    const token =
-      text.startsWith("***", cursor) ? "***" : text.startsWith("**", cursor) ? "**" : text[cursor] === "*" ? "*" : null;
+    const token = text.startsWith("***", cursor)
+      ? "***"
+      : text.startsWith("**", cursor)
+        ? "**"
+        : text[cursor] === "*"
+          ? "*"
+          : null;
 
     if (!token) {
       const nextToken = text.slice(cursor).search(/\*{1,3}/);
@@ -38,7 +43,11 @@ function parseInlineMarkdown(text: string): JSONContent[] {
     }
 
     const marks: MarkType[] =
-      token === "***" ? ["bold", "italic"] : token === "**" ? ["bold"] : ["italic"];
+      token === "***"
+        ? ["bold", "italic"]
+        : token === "**"
+          ? ["bold"]
+          : ["italic"];
     content.push(textNode(text.slice(cursor + token.length, end), marks));
     cursor = end + token.length;
   }
@@ -190,7 +199,9 @@ function nodeToMarkdown(node?: JSONContent): string[] {
 
   if (node.type === "bulletList") {
     return (node.content ?? []).flatMap((item) => {
-      const paragraph = item.content?.find((child) => child.type === "paragraph");
+      const paragraph = item.content?.find(
+        (child) => child.type === "paragraph",
+      );
       const text = (paragraph?.content ?? []).map(inlineToText).join("");
       return [`- ${text}`];
     });

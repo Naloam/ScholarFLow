@@ -88,7 +88,8 @@ export function OperatorConsolePanel({
   onDownloadCodePackage,
   onUpdateControls,
 }: OperatorConsolePanelProps) {
-  const [draftFilters, setDraftFilters] = useState<AutoResearchOperatorConsoleFilters>(filters);
+  const [draftFilters, setDraftFilters] =
+    useState<AutoResearchOperatorConsoleFilters>(filters);
   const [controlDraft, setControlDraft] = useState({
     queue_priority: "normal" as "low" | "normal" | "high",
     max_rounds: "3",
@@ -136,21 +137,27 @@ export function OperatorConsolePanel({
   const novelty = review?.novelty_assessment ?? null;
   const activeConsole = consoleState;
   const currentPublication =
-    current && publicationManifest?.run_id === current.run.id ? publicationManifest : null;
-  const queueTelemetry = activeConsole?.queue ?? current?.execution.queue ?? null;
-  const workerFleet = activeConsole?.workers ?? current?.execution.workers ?? [];
+    current && publicationManifest?.run_id === current.run.id
+      ? publicationManifest
+      : null;
+  const queueTelemetry =
+    activeConsole?.queue ?? current?.execution.queue ?? null;
+  const workerFleet =
+    activeConsole?.workers ?? current?.execution.workers ?? [];
   const currentSummary =
     activeConsole?.runs.find((run) => run.run_id === current?.run.id) ?? null;
   const hasRuns = Boolean(consoleState && consoleState.run_count > 0);
-  const hasFilteredRuns = Boolean(consoleState && consoleState.filtered_run_count > 0);
+  const hasFilteredRuns = Boolean(
+    consoleState && consoleState.filtered_run_count > 0,
+  );
   const hasActiveFilters = Boolean(
     filters.search ||
-      filters.status ||
-      filters.publish_status ||
-      filters.review_risk ||
-      filters.novelty_status ||
-      filters.budget_status ||
-      filters.queue_priority,
+    filters.status ||
+    filters.publish_status ||
+    filters.review_risk ||
+    filters.novelty_status ||
+    filters.budget_status ||
+    filters.queue_priority,
   );
 
   useEffect(() => {
@@ -169,7 +176,7 @@ export function OperatorConsolePanel({
         currentSummary.candidate_execution_limit !== null &&
         currentSummary.candidate_execution_limit !== undefined
           ? String(currentSummary.candidate_execution_limit)
-      : "",
+          : "",
     });
   }, [
     currentSummary?.run_id,
@@ -209,7 +216,9 @@ export function OperatorConsolePanel({
           <h2 className="panel-title">Operator Console</h2>
         </div>
         <span className="badge badge-soft">
-          {consoleState ? `${consoleState.filtered_run_count}/${consoleState.run_count} shown` : "No runs"}
+          {consoleState
+            ? `${consoleState.filtered_run_count}/${consoleState.run_count} shown`
+            : "No runs"}
         </span>
       </div>
 
@@ -227,7 +236,9 @@ export function OperatorConsolePanel({
                       enabled: true,
                       mode: "manual_async",
                       target_kind: "manual",
-                      target_label: launchDraft.targetLabel.trim() || "external-environment",
+                      target_label:
+                        launchDraft.targetLabel.trim() ||
+                        "external-environment",
                       auto_resume_on_result: true,
                       notification_hooks: [
                         {
@@ -248,7 +259,11 @@ export function OperatorConsolePanel({
                 : undefined,
             )
           }
-          disabled={disabled || !projectTopic || (launchDraft.mode === "bridge" && !launchDraft.targetLabel.trim())}
+          disabled={
+            disabled ||
+            !projectTopic ||
+            (launchDraft.mode === "bridge" && !launchDraft.targetLabel.trim())
+          }
           data-testid="start-autoresearch-button"
         >
           Start Run
@@ -380,7 +395,8 @@ export function OperatorConsolePanel({
                     enabled: true,
                     mode: "manual_async",
                     target_kind: "manual",
-                    target_label: launchDraft.targetLabel.trim() || "external-environment",
+                    target_label:
+                      launchDraft.targetLabel.trim() || "external-environment",
                     auto_resume_on_result: true,
                     notification_hooks: [
                       {
@@ -435,7 +451,10 @@ export function OperatorConsolePanel({
             placeholder="Bridge target label"
             data-testid="operator-launch-bridge-target"
           />
-          <span className="auth-copy" data-testid="operator-launch-profile-detail">
+          <span
+            className="auth-copy"
+            data-testid="operator-launch-profile-detail"
+          >
             {launchDraft.mode === "bridge"
               ? `Manual async bridge to ${launchDraft.targetLabel || "external-environment"}`
               : "Run attempts inline inside the local execution plane"}
@@ -457,7 +476,9 @@ export function OperatorConsolePanel({
             name="operator_filter_search"
             type="search"
             value={draftFilters.search ?? ""}
-            onChange={(event) => updateFilter("search", event.target.value || null)}
+            onChange={(event) =>
+              updateFilter("search", event.target.value || null)
+            }
             placeholder="Search run id or topic"
             disabled={disabled}
             data-testid="operator-filter-search"
@@ -469,7 +490,9 @@ export function OperatorConsolePanel({
             onChange={(event) =>
               updateFilter(
                 "status",
-                (event.target.value ? event.target.value : null) as AutoResearchOperatorConsoleFilters["status"],
+                (event.target.value
+                  ? event.target.value
+                  : null) as AutoResearchOperatorConsoleFilters["status"],
               )
             }
             disabled={disabled}
@@ -604,7 +627,10 @@ export function OperatorConsolePanel({
 
       {activeConsole ? (
         <>
-          <div className="summary-banner operator-summary-grid" data-testid="operator-queue-summary">
+          <div
+            className="summary-banner operator-summary-grid"
+            data-testid="operator-queue-summary"
+          >
             <div>
               <span className="meta-label">Queue Depth</span>
               <strong>{queueTelemetry?.queue_depth ?? 0}</strong>
@@ -612,46 +638,56 @@ export function OperatorConsolePanel({
             <div>
               <span className="meta-label">Active Jobs</span>
               <strong>
-                {(queueTelemetry?.leased_jobs ?? 0) + (queueTelemetry?.running_jobs ?? 0)}
+                {(queueTelemetry?.leased_jobs ?? 0) +
+                  (queueTelemetry?.running_jobs ?? 0)}
               </strong>
             </div>
             <div>
               <span className="meta-label">Queued / Running</span>
               <strong>
-                {queueTelemetry?.queued_jobs ?? 0} / {queueTelemetry?.running_jobs ?? 0}
+                {queueTelemetry?.queued_jobs ?? 0} /{" "}
+                {queueTelemetry?.running_jobs ?? 0}
               </strong>
             </div>
             <div>
               <span className="meta-label">Done / Failed</span>
               <strong>
-                {queueTelemetry?.succeeded_jobs ?? 0} / {queueTelemetry?.failed_jobs ?? 0}
+                {queueTelemetry?.succeeded_jobs ?? 0} /{" "}
+                {queueTelemetry?.failed_jobs ?? 0}
               </strong>
             </div>
             <div>
               <span className="meta-label">Workers</span>
               <strong>
-                {queueTelemetry?.worker_count ?? 0} total / {queueTelemetry?.active_workers ?? 0} active
+                {queueTelemetry?.worker_count ?? 0} total /{" "}
+                {queueTelemetry?.active_workers ?? 0} active
               </strong>
             </div>
             <div>
               <span className="meta-label">Idle / Stale</span>
               <strong>
-                {queueTelemetry?.idle_workers ?? 0} / {queueTelemetry?.stale_workers ?? 0}
+                {queueTelemetry?.idle_workers ?? 0} /{" "}
+                {queueTelemetry?.stale_workers ?? 0}
               </strong>
             </div>
             <div>
               <span className="meta-label">Processed / Recovered</span>
               <strong>
-                {queueTelemetry?.total_processed_jobs ?? 0} / {queueTelemetry?.total_recovered_jobs ?? 0}
+                {queueTelemetry?.total_processed_jobs ?? 0} /{" "}
+                {queueTelemetry?.total_recovered_jobs ?? 0}
               </strong>
             </div>
             <div>
               <span className="meta-label">Last Recovery</span>
-              <strong>{formatTimestamp(queueTelemetry?.last_recovered_at)}</strong>
+              <strong>
+                {formatTimestamp(queueTelemetry?.last_recovered_at)}
+              </strong>
             </div>
             <div>
               <span className="meta-label">Last Finish</span>
-              <strong>{formatTimestamp(queueTelemetry?.last_job_finished_at)}</strong>
+              <strong>
+                {formatTimestamp(queueTelemetry?.last_job_finished_at)}
+              </strong>
             </div>
           </div>
 
@@ -664,23 +700,26 @@ export function OperatorConsolePanel({
                   data-testid={`operator-worker-${worker.worker_id ?? "unknown"}`}
                 >
                   <strong>
-                    {worker.worker_id ?? "worker-unknown"} {worker.stale ? "(stale)" : ""}
+                    {worker.worker_id ?? "worker-unknown"}{" "}
+                    {worker.stale ? "(stale)" : ""}
                   </strong>
                   <small>
-                    status {worker.status} / queue {worker.queue_depth} / processed {worker.processed_jobs} /
-                    recovered {worker.recovered_job_count}
+                    status {worker.status} / queue {worker.queue_depth} /
+                    processed {worker.processed_jobs} / recovered{" "}
+                    {worker.recovered_job_count}
                   </small>
                   <small>
-                    job {worker.current_job_id ?? "idle"} / run {worker.current_run_id ?? "n/a"}
+                    job {worker.current_job_id ?? "idle"} / run{" "}
+                    {worker.current_run_id ?? "n/a"}
                   </small>
                   <small>
-                    heartbeat {formatTimestamp(worker.heartbeat_at)} / lease expires{" "}
-                    {formatTimestamp(worker.lease_expires_at)}
+                    heartbeat {formatTimestamp(worker.heartbeat_at)} / lease
+                    expires {formatTimestamp(worker.lease_expires_at)}
                   </small>
                   <small>
-                    started {formatTimestamp(worker.last_started_at)} / completed{" "}
-                    {formatTimestamp(worker.last_completed_at)} / recovered{" "}
-                    {formatTimestamp(worker.last_recovered_at)}
+                    started {formatTimestamp(worker.last_started_at)} /
+                    completed {formatTimestamp(worker.last_completed_at)} /
+                    recovered {formatTimestamp(worker.last_recovered_at)}
                   </small>
                   <small>lease {worker.current_lease_id ?? "n/a"}</small>
                   <small>error {worker.last_error ?? "n/a"}</small>
@@ -689,7 +728,10 @@ export function OperatorConsolePanel({
             ) : (
               <div className="empty-state">
                 <p>No execution workers registered yet.</p>
-                <span>The queue will populate worker telemetry after the first execution lease.</span>
+                <span>
+                  The queue will populate worker telemetry after the first
+                  execution lease.
+                </span>
               </div>
             )}
           </div>
@@ -700,8 +742,8 @@ export function OperatorConsolePanel({
         <div className="empty-state">
           <p>No auto-research runs yet.</p>
           <span>
-            Start a run for `{projectTopic || "this project"}` to populate execution, candidate, and
-            publish inspection state.
+            Start a run for `{projectTopic || "this project"}` to populate
+            execution, candidate, and publish inspection state.
           </span>
         </div>
       ) : !hasFilteredRuns ? (
@@ -717,7 +759,9 @@ export function OperatorConsolePanel({
                 key={run.run_id}
                 type="button"
                 className={
-                  run.run_id === activeConsole.selected_run_id ? "list-item selected" : "list-item"
+                  run.run_id === activeConsole.selected_run_id
+                    ? "list-item selected"
+                    : "list-item"
                 }
                 onClick={() => onSelectRun(run.run_id)}
                 disabled={disabled}
@@ -730,26 +774,37 @@ export function OperatorConsolePanel({
                 <div className="operator-run-meta">
                   <span className="badge badge-soft">{run.status}</span>
                   <small>
-                    selected {run.selected_count} / failed {run.failed_count} / active {run.active_count}
+                    selected {run.selected_count} / failed {run.failed_count} /
+                    active {run.active_count}
                   </small>
                   <small>
-                    risk {run.review_risk ?? "n/a"} / novelty {run.novelty_status ?? "n/a"} / publish{" "}
+                    risk {run.review_risk ?? "n/a"} / novelty{" "}
+                    {run.novelty_status ?? "n/a"} / publish{" "}
                     {run.publish_status ?? "n/a"}
                   </small>
                   <small>
-                    review r{run.review_round} / open {run.open_issue_count} / pending {run.pending_action_count}
+                    review r{run.review_round} / open {run.open_issue_count} /
+                    pending {run.pending_action_count}
                   </small>
                   <small>
-                    benchmark {run.benchmark_name ?? "n/a"} / family {formatTaskFamily(run.task_family)}
+                    benchmark {run.benchmark_name ?? "n/a"} / family{" "}
+                    {formatTaskFamily(run.task_family)}
                   </small>
                   <small>
-                    budget {run.budget_status} / executed {run.executed_candidate_count}
-                    {run.candidate_execution_limit ? ` / limit ${run.candidate_execution_limit}` : ""}
+                    budget {run.budget_status} / executed{" "}
+                    {run.executed_candidate_count}
+                    {run.candidate_execution_limit
+                      ? ` / limit ${run.candidate_execution_limit}`
+                      : ""}
                   </small>
-                  <small>priority {run.queue_priority} / rounds {run.max_rounds}</small>
+                  <small>
+                    priority {run.queue_priority} / rounds {run.max_rounds}
+                  </small>
                   <small>
                     bridge {run.bridge_status ?? "n/a"}
-                    {run.bridge_target_label ? ` / ${run.bridge_target_label}` : ""}
+                    {run.bridge_target_label
+                      ? ` / ${run.bridge_target_label}`
+                      : ""}
                   </small>
                   <small>recoveries {run.recovery_count}</small>
                 </div>
@@ -766,9 +821,10 @@ export function OperatorConsolePanel({
                   onUpdateControls({
                     queue_priority: controlDraft.queue_priority,
                     max_rounds: Number(controlDraft.max_rounds),
-                    candidate_execution_limit: controlDraft.candidate_execution_limit
-                      ? Number(controlDraft.candidate_execution_limit)
-                      : null,
+                    candidate_execution_limit:
+                      controlDraft.candidate_execution_limit
+                        ? Number(controlDraft.candidate_execution_limit)
+                        : null,
                   });
                 }}
               >
@@ -781,7 +837,10 @@ export function OperatorConsolePanel({
                     onChange={(event) =>
                       setControlDraft((state) => ({
                         ...state,
-                        queue_priority: event.target.value as "low" | "normal" | "high",
+                        queue_priority: event.target.value as
+                          | "low"
+                          | "normal"
+                          | "high",
                       }))
                     }
                     disabled={disabled || !current.actions.update_controls}
@@ -828,7 +887,11 @@ export function OperatorConsolePanel({
                   <button
                     type="submit"
                     className="ghost-btn"
-                    disabled={disabled || !current.actions.update_controls || !controlDraft.max_rounds}
+                    disabled={
+                      disabled ||
+                      !current.actions.update_controls ||
+                      !controlDraft.max_rounds
+                    }
                     data-testid="operator-apply-controls-button"
                   >
                     Apply Controls
@@ -842,7 +905,8 @@ export function OperatorConsolePanel({
                   event.preventDefault();
                   onExportPublish({
                     deployment_id: publishDraft.deployment_id.trim() || null,
-                    deployment_label: publishDraft.deployment_label.trim() || null,
+                    deployment_label:
+                      publishDraft.deployment_label.trim() || null,
                   });
                 }}
               >
@@ -878,12 +942,15 @@ export function OperatorConsolePanel({
                     placeholder="Deployment label"
                     data-testid="publish-deployment-label"
                   />
-                  <span className="auth-copy" data-testid="publish-deployment-summary">
+                  <span
+                    className="auth-copy"
+                    data-testid="publish-deployment-summary"
+                  >
                     {!finalPublishReady
                       ? "Resolve review loop and citation blockers before final publish export is enabled."
                       : publish?.deployment_ids?.length
-                      ? `Registered in ${publish.deployment_ids.join(", ")}`
-                      : "Final export will register the current paper/run/code package into a deployment"}
+                        ? `Registered in ${publish.deployment_ids.join(", ")}`
+                        : "Final export will register the current paper/run/code package into a deployment"}
                   </span>
                 </div>
               </form>
@@ -904,31 +971,53 @@ export function OperatorConsolePanel({
                     </div>
                     <div>
                       <span className="meta-label">Paper Asset</span>
-                      <strong>{currentPublication.paper_path ? "available" : "missing"}</strong>
+                      <strong>
+                        {currentPublication.paper_path
+                          ? "available"
+                          : "missing"}
+                      </strong>
                     </div>
                     <div>
                       <span className="meta-label">Compiled PDF</span>
-                      <strong>{currentPublication.compiled_paper_path ? "available" : "missing"}</strong>
+                      <strong>
+                        {currentPublication.compiled_paper_path
+                          ? "available"
+                          : "missing"}
+                      </strong>
                     </div>
                     <div>
                       <span className="meta-label">Compile Outputs</span>
-                      <strong>{currentPublication.paper_compile_output_paths.length}</strong>
+                      <strong>
+                        {currentPublication.paper_compile_output_paths.length}
+                      </strong>
                     </div>
                     <div>
                       <span className="meta-label">Code Package</span>
-                      <strong>{currentPublication.code_package_path ? "available" : "missing"}</strong>
+                      <strong>
+                        {currentPublication.code_package_path
+                          ? "available"
+                          : "missing"}
+                      </strong>
                     </div>
                     <div>
                       <span className="meta-label">Archive</span>
-                      <strong>{currentPublication.archive_current ? "current" : "stale"}</strong>
+                      <strong>
+                        {currentPublication.archive_current
+                          ? "current"
+                          : "stale"}
+                      </strong>
                     </div>
                     <div>
                       <span className="meta-label">Final Ready</span>
-                      <strong>{currentPublication.final_publish_ready ? "yes" : "no"}</strong>
+                      <strong>
+                        {currentPublication.final_publish_ready ? "yes" : "no"}
+                      </strong>
                     </div>
                     <div>
                       <span className="meta-label">Updated</span>
-                      <strong>{formatTimestamp(currentPublication.updated_at)}</strong>
+                      <strong>
+                        {formatTimestamp(currentPublication.updated_at)}
+                      </strong>
                     </div>
                   </div>
 
@@ -946,7 +1035,9 @@ export function OperatorConsolePanel({
                       type="button"
                       className="ghost-btn"
                       onClick={onDownloadCompiledPaper}
-                      disabled={disabled || !currentPublication.compiled_paper_path}
+                      disabled={
+                        disabled || !currentPublication.compiled_paper_path
+                      }
                       data-testid="download-compiled-paper-button"
                     >
                       Download Compiled PDF
@@ -955,7 +1046,9 @@ export function OperatorConsolePanel({
                       type="button"
                       className="ghost-btn"
                       onClick={onDownloadCodePackage}
-                      disabled={disabled || !currentPublication.code_package_path}
+                      disabled={
+                        disabled || !currentPublication.code_package_path
+                      }
                       data-testid="download-code-package-button"
                     >
                       Download Code Package
@@ -976,20 +1069,25 @@ export function OperatorConsolePanel({
                     <span className="meta-label">Compile Outputs</span>
                     <code data-testid="operator-compile-output-paths">
                       {currentPublication.paper_compile_output_paths.length
-                        ? currentPublication.paper_compile_output_paths.join(" | ")
+                        ? currentPublication.paper_compile_output_paths.join(
+                            " | ",
+                          )
                         : "n/a"}
                     </code>
                   </div>
                 </>
               ) : (
-                <div className="empty-state" data-testid="operator-publication-empty">
+                <div
+                  className="empty-state"
+                  data-testid="operator-publication-empty"
+                >
                   <p>No publication manifest for the current run.</p>
                   <span>
                     {!finalPublishReady
                       ? "Final publish remains unavailable until the run is citation-grounded and the review loop is clear."
                       : publish?.publication_id
-                      ? "Refresh the run or export publish again if paper assets were changed."
-                      : "Export Final Publish to materialize a publication manifest and paper assets."}
+                        ? "Refresh the run or export publish again if paper assets were changed."
+                        : "Export Final Publish to materialize a publication manifest and paper assets."}
                   </span>
                 </div>
               )}
@@ -1002,22 +1100,33 @@ export function OperatorConsolePanel({
                 <div>
                   <span className="meta-label">Benchmark</span>
                   <strong data-testid="operator-current-benchmark">
-                    {currentSummary?.benchmark_name ?? current.registry.benchmark_name ?? "n/a"}
+                    {currentSummary?.benchmark_name ??
+                      current.registry.benchmark_name ??
+                      "n/a"}
                   </strong>
                 </div>
                 <div>
                   <span className="meta-label">Task Family</span>
                   <strong data-testid="operator-current-task-family">
-                    {formatTaskFamily(currentSummary?.task_family ?? current.registry.task_family)}
+                    {formatTaskFamily(
+                      currentSummary?.task_family ??
+                        current.registry.task_family,
+                    )}
                   </strong>
                 </div>
                 <div>
                   <span className="meta-label">Selected Candidate</span>
-                  <strong>{current.registry.selected_candidate_id ?? "n/a"}</strong>
+                  <strong>
+                    {current.registry.selected_candidate_id ?? "n/a"}
+                  </strong>
                 </div>
                 <div>
                   <span className="meta-label">Execution</span>
-                  <strong>{current.execution.active_job_id ?? current.execution.worker?.status ?? "idle"}</strong>
+                  <strong>
+                    {current.execution.active_job_id ??
+                      current.execution.worker?.status ??
+                      "idle"}
+                  </strong>
                 </div>
                 <div>
                   <span className="meta-label">Bridge</span>
@@ -1053,7 +1162,9 @@ export function OperatorConsolePanel({
               <div className="summary-banner operator-summary-grid">
                 <div>
                   <span className="meta-label">Candidates</span>
-                  <strong>{counts?.total_candidates ?? candidateEntries.length}</strong>
+                  <strong>
+                    {counts?.total_candidates ?? candidateEntries.length}
+                  </strong>
                 </div>
                 <div>
                   <span className="meta-label">Failed Candidates</span>
@@ -1104,9 +1215,12 @@ export function OperatorConsolePanel({
               <div className="meta-block">
                 <span className="meta-label">Lineage</span>
                 <code data-testid="operator-lineage-summary">
-                  selected={lineage?.selected_candidate_id ?? "n/a"} artifact_from=
-                  {lineage?.top_level_artifact_candidate_id ?? "n/a"} paper_from=
-                  {lineage?.top_level_paper_candidate_id ?? "n/a"} edges={lineage?.edges.length ?? 0}
+                  selected={lineage?.selected_candidate_id ?? "n/a"}{" "}
+                  artifact_from=
+                  {lineage?.top_level_artifact_candidate_id ?? "n/a"}{" "}
+                  paper_from=
+                  {lineage?.top_level_paper_candidate_id ?? "n/a"} edges=
+                  {lineage?.edges.length ?? 0}
                 </code>
               </div>
 
@@ -1114,8 +1228,10 @@ export function OperatorConsolePanel({
                 <div className="meta-block">
                   <span className="meta-label">Bridge State</span>
                   <p data-testid="operator-bridge-detail">
-                    status={bridge.status} sessions={bridge.session_count} open={bridge.open_session_count} imported=
-                    {bridge.imported_session_count} checkpoints={bridge.checkpoint_count} notifications=
+                    status={bridge.status} sessions={bridge.session_count} open=
+                    {bridge.open_session_count} imported=
+                    {bridge.imported_session_count} checkpoints=
+                    {bridge.checkpoint_count} notifications=
                     {bridge.notification_count}
                     {bridge.current_session
                       ? ` current=${bridge.current_session.session_id} round=${bridge.current_session.round_index} target=${bridge.config?.target_label ?? "n/a"}`
@@ -1123,7 +1239,8 @@ export function OperatorConsolePanel({
                   </p>
                   {bridge.current_session ? (
                     <code data-testid="operator-bridge-session-paths">
-                      handoff={bridge.current_session.handoff_dir} result={bridge.current_session.result_path}
+                      handoff={bridge.current_session.handoff_dir} result=
+                      {bridge.current_session.result_path}
                     </code>
                   ) : null}
                 </div>
@@ -1137,7 +1254,9 @@ export function OperatorConsolePanel({
                     onImportBridgeResult({
                       session_id: bridge?.current_session?.session_id ?? null,
                       summary: bridgeImportDraft.summary,
-                      objective_score: Number(bridgeImportDraft.objective_score),
+                      objective_score: Number(
+                        bridgeImportDraft.objective_score,
+                      ),
                       primary_metric: bridgeImportDraft.primary_metric,
                       objective_system: bridgeImportDraft.objective_system,
                       baseline_system: bridgeImportDraft.baseline_system,
@@ -1165,7 +1284,9 @@ export function OperatorConsolePanel({
                           summary: event.target.value,
                         }))
                       }
-                      disabled={disabled || !current.actions.import_bridge_result}
+                      disabled={
+                        disabled || !current.actions.import_bridge_result
+                      }
                       placeholder="Result summary"
                       data-testid="bridge-import-summary"
                     />
@@ -1181,7 +1302,9 @@ export function OperatorConsolePanel({
                           objective_score: event.target.value,
                         }))
                       }
-                      disabled={disabled || !current.actions.import_bridge_result}
+                      disabled={
+                        disabled || !current.actions.import_bridge_result
+                      }
                       placeholder="Objective score"
                       data-testid="bridge-import-score"
                     />
@@ -1196,7 +1319,9 @@ export function OperatorConsolePanel({
                           primary_metric: event.target.value,
                         }))
                       }
-                      disabled={disabled || !current.actions.import_bridge_result}
+                      disabled={
+                        disabled || !current.actions.import_bridge_result
+                      }
                       placeholder="Primary metric"
                       data-testid="bridge-import-metric"
                     />
@@ -1213,7 +1338,9 @@ export function OperatorConsolePanel({
                           objective_system: event.target.value,
                         }))
                       }
-                      disabled={disabled || !current.actions.import_bridge_result}
+                      disabled={
+                        disabled || !current.actions.import_bridge_result
+                      }
                       placeholder="Objective system"
                       data-testid="bridge-import-system"
                     />
@@ -1228,7 +1355,9 @@ export function OperatorConsolePanel({
                           baseline_system: event.target.value,
                         }))
                       }
-                      disabled={disabled || !current.actions.import_bridge_result}
+                      disabled={
+                        disabled || !current.actions.import_bridge_result
+                      }
                       placeholder="Baseline system"
                       data-testid="bridge-import-baseline"
                     />
@@ -1244,7 +1373,9 @@ export function OperatorConsolePanel({
                           baseline_score: event.target.value,
                         }))
                       }
-                      disabled={disabled || !current.actions.import_bridge_result}
+                      disabled={
+                        disabled || !current.actions.import_bridge_result
+                      }
                       placeholder="Baseline score"
                       data-testid="bridge-import-baseline-score"
                     />
@@ -1270,7 +1401,8 @@ export function OperatorConsolePanel({
                 <div className="meta-block">
                   <span className="meta-label">Novelty Triage</span>
                   <p data-testid="operator-novelty-summary">
-                    {novelty.summary} Top matches={novelty.top_related_work.length} uncovered_claims=
+                    {novelty.summary} Top matches=
+                    {novelty.top_related_work.length} uncovered_claims=
                     {novelty.uncovered_claims.length}
                   </p>
                 </div>
@@ -1280,9 +1412,12 @@ export function OperatorConsolePanel({
                 <div className="meta-block">
                   <span className="meta-label">Review Loop</span>
                   <p data-testid="operator-review-loop-detail">
-                    fingerprint={reviewLoop.latest_review_fingerprint ?? "n/a"} rounds=
-                    {reviewLoop.rounds.length} open={reviewLoop.open_issue_count} resolved=
-                    {reviewLoop.resolved_issue_count} pending={reviewLoop.pending_action_count} completed=
+                    fingerprint={reviewLoop.latest_review_fingerprint ?? "n/a"}{" "}
+                    rounds=
+                    {reviewLoop.rounds.length} open=
+                    {reviewLoop.open_issue_count} resolved=
+                    {reviewLoop.resolved_issue_count} pending=
+                    {reviewLoop.pending_action_count} completed=
                     {reviewLoop.completed_action_count}
                   </p>
                 </div>
@@ -1291,7 +1426,11 @@ export function OperatorConsolePanel({
               <div className="stack">
                 <p className="inline-title">Candidate Comparison</p>
                 {candidateEntries.map((candidate) => (
-                  <div key={candidate.candidate_id} className="evidence-card" data-testid={`operator-candidate-${candidate.candidate_id}`}>
+                  <div
+                    key={candidate.candidate_id}
+                    className="evidence-card"
+                    data-testid={`operator-candidate-${candidate.candidate_id}`}
+                  >
                     <div className="panel-header">
                       <div>
                         <strong>{candidate.title}</strong>
@@ -1300,11 +1439,14 @@ export function OperatorConsolePanel({
                           {candidate.selected ? " · selected" : ""}
                         </p>
                       </div>
-                      <span className="badge badge-soft">{formatScore(candidate.objective_score)}</span>
+                      <span className="badge badge-soft">
+                        {formatScore(candidate.objective_score)}
+                      </span>
                     </div>
                     <p className="auth-copy">
-                      outcome={candidate.decision_outcome ?? "n/a"} · attempts={candidate.attempt_count} ·
-                      artifact={candidate.artifact_status ?? "n/a"}
+                      outcome={candidate.decision_outcome ?? "n/a"} · attempts=
+                      {candidate.attempt_count} · artifact=
+                      {candidate.artifact_status ?? "n/a"}
                     </p>
                   </div>
                 ))}
@@ -1328,17 +1470,26 @@ export function OperatorConsolePanel({
 
               <div className="stack">
                 <p className="inline-title">Revision Actions</p>
-                {reviewLoop && reviewLoop.actions.length > 0 ? reviewLoop.actions.slice(0, 4).map((action) => (
-                  <div key={action.action_id} className="suggestion-card" data-testid={`operator-review-action-${action.action_id}`}>
-                    <strong>
-                      {action.status.toUpperCase()} · {action.priority} · {action.title}
-                    </strong>
-                    <p>
-                      round {action.first_seen_round} {"->"} {action.completed_round ?? action.last_seen_round} · issues=
-                      {action.issue_ids.length}
-                    </p>
-                  </div>
-                )) : (
+                {reviewLoop && reviewLoop.actions.length > 0 ? (
+                  reviewLoop.actions.slice(0, 4).map((action) => (
+                    <div
+                      key={action.action_id}
+                      className="suggestion-card"
+                      data-testid={`operator-review-action-${action.action_id}`}
+                    >
+                      <strong>
+                        {action.status.toUpperCase()} · {action.priority} ·{" "}
+                        {action.title}
+                      </strong>
+                      <p>
+                        round {action.first_seen_round} {"->"}{" "}
+                        {action.completed_round ?? action.last_seen_round} ·
+                        issues=
+                        {action.issue_ids.length}
+                      </p>
+                    </div>
+                  ))
+                ) : (
                   <div className="empty-state">
                     <p>No revision actions yet.</p>
                   </div>
@@ -1348,7 +1499,10 @@ export function OperatorConsolePanel({
           ) : (
             <div className="empty-state">
               <p>No run selected.</p>
-              <span>Select a run to inspect execution, lineage, review, and publish state.</span>
+              <span>
+                Select a run to inspect execution, lineage, review, and publish
+                state.
+              </span>
             </div>
           )}
         </>

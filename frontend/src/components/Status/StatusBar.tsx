@@ -22,11 +22,15 @@ export function StatusBar({
         {projectId ? `Project ${projectId}` : "No project open"}
       </span>
       <span data-testid="status-draft">
-        {selectedDraftVersion ? `Draft v${selectedDraftVersion}` : "No draft selected"}
+        {selectedDraftVersion
+          ? `Draft v${selectedDraftVersion}`
+          : "No draft selected"}
       </span>
       <span data-testid="status-socket">{`Progress socket: ${connectionState}`}</span>
       <span data-testid="status-auth">{authLabel}</span>
-      <span data-testid="status-working">{working ? "Working..." : "Idle"}</span>
+      <span data-testid="status-working">
+        {working ? "Working..." : "Idle"}
+      </span>
     </footer>
   );
 }

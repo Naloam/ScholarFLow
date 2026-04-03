@@ -16,22 +16,38 @@ import { useWorkspaceStore } from "../stores/workspace";
 export function WorkspacePage() {
   const templates = useWorkspaceStore((state) => state.templates);
   const currentProjectId = useWorkspaceStore((state) => state.currentProjectId);
-  const availableProjects = useWorkspaceStore((state) => state.availableProjects);
+  const availableProjects = useWorkspaceStore(
+    (state) => state.availableProjects,
+  );
   const healthStatus = useWorkspaceStore((state) => state.healthStatus);
   const project = useWorkspaceStore((state) => state.project);
   const projectStatus = useWorkspaceStore((state) => state.projectStatus);
   const drafts = useWorkspaceStore((state) => state.drafts);
-  const selectedDraftVersion = useWorkspaceStore((state) => state.selectedDraftVersion);
+  const selectedDraftVersion = useWorkspaceStore(
+    (state) => state.selectedDraftVersion,
+  );
   const editorContent = useWorkspaceStore((state) => state.editorContent);
   const focusedText = useWorkspaceStore((state) => state.focusedText);
   const evidence = useWorkspaceStore((state) => state.evidence);
   const reviews = useWorkspaceStore((state) => state.reviews);
-  const autoResearchConsole = useWorkspaceStore((state) => state.autoResearchConsole);
-  const autoResearchConsoleFilters = useWorkspaceStore((state) => state.autoResearchConsoleFilters);
-  const autoResearchDeploymentList = useWorkspaceStore((state) => state.autoResearchDeploymentList);
-  const selectedAutoResearchDeploymentId = useWorkspaceStore((state) => state.selectedAutoResearchDeploymentId);
-  const autoResearchDeploymentFilters = useWorkspaceStore((state) => state.autoResearchDeploymentFilters);
-  const autoResearchDeployment = useWorkspaceStore((state) => state.autoResearchDeployment);
+  const autoResearchConsole = useWorkspaceStore(
+    (state) => state.autoResearchConsole,
+  );
+  const autoResearchConsoleFilters = useWorkspaceStore(
+    (state) => state.autoResearchConsoleFilters,
+  );
+  const autoResearchDeploymentList = useWorkspaceStore(
+    (state) => state.autoResearchDeploymentList,
+  );
+  const selectedAutoResearchDeploymentId = useWorkspaceStore(
+    (state) => state.selectedAutoResearchDeploymentId,
+  );
+  const autoResearchDeploymentFilters = useWorkspaceStore(
+    (state) => state.autoResearchDeploymentFilters,
+  );
+  const autoResearchDeployment = useWorkspaceStore(
+    (state) => state.autoResearchDeployment,
+  );
   const autoResearchPublicationManifest = useWorkspaceStore(
     (state) => state.autoResearchPublicationManifest,
   );
@@ -53,8 +69,12 @@ export function WorkspacePage() {
   const signOut = useWorkspaceStore((state) => state.signOut);
   const createProject = useWorkspaceStore((state) => state.createProject);
   const loadProject = useWorkspaceStore((state) => state.loadProject);
-  const applyAutoResearchConsoleFilters = useWorkspaceStore((state) => state.applyAutoResearchConsoleFilters);
-  const clearAutoResearchConsoleFilters = useWorkspaceStore((state) => state.clearAutoResearchConsoleFilters);
+  const applyAutoResearchConsoleFilters = useWorkspaceStore(
+    (state) => state.applyAutoResearchConsoleFilters,
+  );
+  const clearAutoResearchConsoleFilters = useWorkspaceStore(
+    (state) => state.clearAutoResearchConsoleFilters,
+  );
   const applyAutoResearchDeploymentFilters = useWorkspaceStore(
     (state) => state.applyAutoResearchDeploymentFilters,
   );
@@ -66,22 +86,54 @@ export function WorkspacePage() {
   const setFocusedText = useWorkspaceStore((state) => state.setFocusedText);
   const saveDraft = useWorkspaceStore((state) => state.saveDraft);
   const generateDraft = useWorkspaceStore((state) => state.generateDraft);
-  const startAutoResearch = useWorkspaceStore((state) => state.startAutoResearch);
-  const selectAutoResearchRun = useWorkspaceStore((state) => state.selectAutoResearchRun);
-  const selectAutoResearchDeployment = useWorkspaceStore((state) => state.selectAutoResearchDeployment);
-  const openAutoResearchPublication = useWorkspaceStore((state) => state.openAutoResearchPublication);
-  const resumeAutoResearch = useWorkspaceStore((state) => state.resumeAutoResearch);
-  const retryAutoResearch = useWorkspaceStore((state) => state.retryAutoResearch);
-  const cancelAutoResearch = useWorkspaceStore((state) => state.cancelAutoResearch);
-  const refreshAutoResearchBridge = useWorkspaceStore((state) => state.refreshAutoResearchBridge);
-  const refreshAutoResearchReviewLoop = useWorkspaceStore((state) => state.refreshAutoResearchReviewLoop);
-  const applyAutoResearchReviewActions = useWorkspaceStore((state) => state.applyAutoResearchReviewActions);
-  const rebuildAutoResearchPaper = useWorkspaceStore((state) => state.rebuildAutoResearchPaper);
-  const updateAutoResearchRunControls = useWorkspaceStore((state) => state.updateAutoResearchRunControls);
-  const importAutoResearchBridgeResult = useWorkspaceStore((state) => state.importAutoResearchBridgeResult);
-  const exportAutoResearchPublish = useWorkspaceStore((state) => state.exportAutoResearchPublish);
-  const downloadAutoResearchPublish = useWorkspaceStore((state) => state.downloadAutoResearchPublish);
-  const downloadAutoResearchPaper = useWorkspaceStore((state) => state.downloadAutoResearchPaper);
+  const startAutoResearch = useWorkspaceStore(
+    (state) => state.startAutoResearch,
+  );
+  const selectAutoResearchRun = useWorkspaceStore(
+    (state) => state.selectAutoResearchRun,
+  );
+  const selectAutoResearchDeployment = useWorkspaceStore(
+    (state) => state.selectAutoResearchDeployment,
+  );
+  const openAutoResearchPublication = useWorkspaceStore(
+    (state) => state.openAutoResearchPublication,
+  );
+  const resumeAutoResearch = useWorkspaceStore(
+    (state) => state.resumeAutoResearch,
+  );
+  const retryAutoResearch = useWorkspaceStore(
+    (state) => state.retryAutoResearch,
+  );
+  const cancelAutoResearch = useWorkspaceStore(
+    (state) => state.cancelAutoResearch,
+  );
+  const refreshAutoResearchBridge = useWorkspaceStore(
+    (state) => state.refreshAutoResearchBridge,
+  );
+  const refreshAutoResearchReviewLoop = useWorkspaceStore(
+    (state) => state.refreshAutoResearchReviewLoop,
+  );
+  const applyAutoResearchReviewActions = useWorkspaceStore(
+    (state) => state.applyAutoResearchReviewActions,
+  );
+  const rebuildAutoResearchPaper = useWorkspaceStore(
+    (state) => state.rebuildAutoResearchPaper,
+  );
+  const updateAutoResearchRunControls = useWorkspaceStore(
+    (state) => state.updateAutoResearchRunControls,
+  );
+  const importAutoResearchBridgeResult = useWorkspaceStore(
+    (state) => state.importAutoResearchBridgeResult,
+  );
+  const exportAutoResearchPublish = useWorkspaceStore(
+    (state) => state.exportAutoResearchPublish,
+  );
+  const downloadAutoResearchPublish = useWorkspaceStore(
+    (state) => state.downloadAutoResearchPublish,
+  );
+  const downloadAutoResearchPaper = useWorkspaceStore(
+    (state) => state.downloadAutoResearchPaper,
+  );
   const downloadAutoResearchCompiledPaper = useWorkspaceStore(
     (state) => state.downloadAutoResearchCompiledPaper,
   );
@@ -90,27 +142,34 @@ export function WorkspacePage() {
   );
   const runReview = useWorkspaceStore((state) => state.runReview);
   const exportDraft = useWorkspaceStore((state) => state.exportDraft);
-  const downloadLatestExport = useWorkspaceStore((state) => state.downloadLatestExport);
+  const downloadLatestExport = useWorkspaceStore(
+    (state) => state.downloadLatestExport,
+  );
   const inviteMentor = useWorkspaceStore((state) => state.inviteMentor);
-  const submitMentorFeedback = useWorkspaceStore((state) => state.submitMentorFeedback);
+  const submitMentorFeedback = useWorkspaceStore(
+    (state) => state.submitMentorFeedback,
+  );
   const submitFeedback = useWorkspaceStore((state) => state.submitFeedback);
-  const authLocked = Boolean(authConfig?.api_protected) && authState === "anonymous";
-  const projectReadOnly = Boolean(project?.user_id && authUser?.id && project.user_id !== authUser.id);
+  const authLocked =
+    Boolean(authConfig?.api_protected) && authState === "anonymous";
+  const projectReadOnly = Boolean(
+    project?.user_id && authUser?.id && project.user_id !== authUser.id,
+  );
   const workspaceBusy = initializing || authBusy || working;
   const launcherBusy = authBusy || working;
-  const betaBusy = authBusy || !currentProjectId || authLocked || projectReadOnly;
-  const authLabel =
-    authUser?.email
-        ? `Auth: ${authUser.email}`
-      : authState === "service"
-        ? "Auth: service token"
-        : authLocked
-          ? authConfig?.session_enabled
-            ? "Auth: sign-in required"
-            : "Auth: bearer token required"
-          : authState === "checking"
-            ? "Auth: checking"
-            : "Auth: anonymous";
+  const betaBusy =
+    authBusy || !currentProjectId || authLocked || projectReadOnly;
+  const authLabel = authUser?.email
+    ? `Auth: ${authUser.email}`
+    : authState === "service"
+      ? "Auth: service token"
+      : authLocked
+        ? authConfig?.session_enabled
+          ? "Auth: sign-in required"
+          : "Auth: bearer token required"
+        : authState === "checking"
+          ? "Auth: checking"
+          : "Auth: anonymous";
 
   return (
     <div className="app-shell" data-testid="workspace-page">
@@ -127,7 +186,8 @@ export function WorkspacePage() {
             {project?.title ?? "No active project"}
           </span>
           <span className="meta-chip" data-testid="header-user-chip">
-            {authUser?.email ?? (authState === "service" ? "Service token" : "Anonymous")}
+            {authUser?.email ??
+              (authState === "service" ? "Service token" : "Anonymous")}
           </span>
         </div>
       </header>
@@ -235,7 +295,11 @@ export function WorkspacePage() {
           />
           <EvidencePanel evidence={evidence} focusedText={focusedText} />
           <ReviewPanel reviews={reviews} analysis={analysis} />
-          <BetaPanel summary={betaSummary} disabled={betaBusy} onSubmit={submitFeedback} />
+          <BetaPanel
+            summary={betaSummary}
+            disabled={betaBusy}
+            onSubmit={submitFeedback}
+          />
         </aside>
       </main>
 

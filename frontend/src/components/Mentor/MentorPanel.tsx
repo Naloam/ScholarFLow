@@ -38,12 +38,26 @@ export function MentorPanel({
 }: MentorPanelProps) {
   const [mentorEmail, setMentorEmail] = useState("mentor@example.com");
   const [mentorName, setMentorName] = useState("Supervisor");
-  const [summary, setSummary] = useState("The draft already has a workable structure and clear scope.");
-  const [strengths, setStrengths] = useState("The introduction and related work sections are easy to follow.");
-  const [concerns, setConcerns] = useState("Evidence support is still thin around the central claims.");
-  const [nextSteps, setNextSteps] = useState("Add stronger citations for the core argument and tighten the method section.");
-  const isOwner = Boolean(authUser?.id && projectOwnerId && authUser.id === projectOwnerId);
-  const canInvite = Boolean(projectId) && isOwner && !disabled && mentorEmail.trim().includes("@");
+  const [summary, setSummary] = useState(
+    "The draft already has a workable structure and clear scope.",
+  );
+  const [strengths, setStrengths] = useState(
+    "The introduction and related work sections are easy to follow.",
+  );
+  const [concerns, setConcerns] = useState(
+    "Evidence support is still thin around the central claims.",
+  );
+  const [nextSteps, setNextSteps] = useState(
+    "Add stronger citations for the core argument and tighten the method section.",
+  );
+  const isOwner = Boolean(
+    authUser?.id && projectOwnerId && authUser.id === projectOwnerId,
+  );
+  const canInvite =
+    Boolean(projectId) &&
+    isOwner &&
+    !disabled &&
+    mentorEmail.trim().includes("@");
   const canReview =
     Boolean(projectId) &&
     !isOwner &&
@@ -69,7 +83,9 @@ export function MentorPanel({
       {!projectId ? (
         <div className="empty-state">
           <p>No project selected.</p>
-          <span>Open a project before inviting a mentor or writing mentor feedback.</span>
+          <span>
+            Open a project before inviting a mentor or writing mentor feedback.
+          </span>
         </div>
       ) : null}
 
@@ -103,7 +119,9 @@ export function MentorPanel({
               className="primary-btn"
               data-testid="mentor-invite-button"
               disabled={!canInvite}
-              onClick={() => void onInvite({ email: mentorEmail, name: mentorName })}
+              onClick={() =>
+                void onInvite({ email: mentorEmail, name: mentorName })
+              }
             >
               Invite Mentor
             </button>
@@ -115,7 +133,8 @@ export function MentorPanel({
         <div className="inline-card">
           <p className="inline-title">Submit mentor review</p>
           <p className="auth-copy">
-            Reviewing draft version {selectedDraftVersion ?? "latest"} in read-only mentor mode.
+            Reviewing draft version {selectedDraftVersion ?? "latest"} in
+            read-only mentor mode.
           </p>
           <label className="field">
             <span className="field-label">Summary</span>
@@ -190,7 +209,9 @@ export function MentorPanel({
         <div className="inline-card">
           <p className="inline-title">Granted mentors</p>
           {mentorAccess.length === 0 ? (
-            <p className="auth-copy">No mentor access granted for this project yet.</p>
+            <p className="auth-copy">
+              No mentor access granted for this project yet.
+            </p>
           ) : (
             <div className="stack">
               {mentorAccess.map((entry, index) => (
@@ -201,7 +222,9 @@ export function MentorPanel({
                 >
                   <strong>{entry.mentor_name || entry.mentor_email}</strong>
                   <p>{entry.mentor_email}</p>
-                  <small>{formatDate(entry.created_at)} · {entry.status}</small>
+                  <small>
+                    {formatDate(entry.created_at)} · {entry.status}
+                  </small>
                 </article>
               ))}
             </div>
@@ -232,7 +255,8 @@ export function MentorPanel({
                     <strong>Next:</strong> {entry.next_steps}
                   </p>
                   <small>
-                    Draft v{entry.draft_version ?? "latest"} · {formatDate(entry.created_at)}
+                    Draft v{entry.draft_version ?? "latest"} ·{" "}
+                    {formatDate(entry.created_at)}
                   </small>
                 </article>
               ))}

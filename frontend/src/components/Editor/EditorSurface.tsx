@@ -18,7 +18,9 @@ type EditorSurfaceProps = {
   onExport: (format: "markdown" | "latex" | "word" | "docx") => Promise<void>;
 };
 
-function currentSelectionText(editor: NonNullable<ReturnType<typeof useEditor>>): string {
+function currentSelectionText(
+  editor: NonNullable<ReturnType<typeof useEditor>>,
+): string {
   const { from, to } = editor.state.selection;
   const direct = editor.state.doc.textBetween(from, to, " ").trim();
   if (direct) {
@@ -131,10 +133,18 @@ export function EditorSurface({
         >
           Export MD
         </button>
-        <button className="ghost-btn" disabled={working || !canEdit} onClick={() => void onExport("latex")}>
+        <button
+          className="ghost-btn"
+          disabled={working || !canEdit}
+          onClick={() => void onExport("latex")}
+        >
           Export TeX
         </button>
-        <button className="ghost-btn" disabled={working || !canEdit} onClick={() => void onExport("word")}>
+        <button
+          className="ghost-btn"
+          disabled={working || !canEdit}
+          onClick={() => void onExport("word")}
+        >
           Export DOCX
         </button>
       </div>
@@ -157,14 +167,18 @@ export function EditorSurface({
         <button
           className="toolbar-btn"
           disabled={!editor || !canEdit}
-          onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
+          onClick={() =>
+            editor?.chain().focus().toggleHeading({ level: 1 }).run()
+          }
         >
           H1
         </button>
         <button
           className="toolbar-btn"
           disabled={!editor || !canEdit}
-          onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
+          onClick={() =>
+            editor?.chain().focus().toggleHeading({ level: 2 }).run()
+          }
         >
           H2
         </button>
@@ -178,8 +192,9 @@ export function EditorSurface({
       </div>
 
       <div className="editor-hint">
-        Citation markers like [1] and unsupported claims like [NEEDS_EVIDENCE] are highlighted by
-        a custom TipTap plugin. The right sidebar stays aligned to the paragraph you are editing.
+        Citation markers like [1] and unsupported claims like [NEEDS_EVIDENCE]
+        are highlighted by a custom TipTap plugin. The right sidebar stays
+        aligned to the paragraph you are editing.
       </div>
 
       <div

@@ -18,7 +18,8 @@ function scoreEvidence(item: EvidenceItem, focusedText: string): number {
 
 export function EvidencePanel({ evidence, focusedText }: EvidencePanelProps) {
   const sortedEvidence = [...evidence].sort(
-    (left, right) => scoreEvidence(right, focusedText) - scoreEvidence(left, focusedText),
+    (left, right) =>
+      scoreEvidence(right, focusedText) - scoreEvidence(left, focusedText),
   );
 
   return (
@@ -41,18 +42,26 @@ export function EvidencePanel({ evidence, focusedText }: EvidencePanelProps) {
       {evidence.length === 0 ? (
         <div className="empty-state">
           <p>No evidence linked yet.</p>
-          <span>Once a draft claim is mapped to chunks, the support trail will appear here.</span>
+          <span>
+            Once a draft claim is mapped to chunks, the support trail will
+            appear here.
+          </span>
         </div>
       ) : (
         <div className="stack">
           {sortedEvidence.slice(0, 8).map((item, index) => (
-            <article key={`${item.claim_text}-${index}`} className="evidence-card">
+            <article
+              key={`${item.claim_text}-${index}`}
+              className="evidence-card"
+            >
               <strong>{item.claim_text}</strong>
               <p>{item.snippet || "No snippet captured"}</p>
               <small>
                 Paper {item.paper_id}
                 {item.section ? ` | ${item.section}` : ""}
-                {item.page !== null && item.page !== undefined ? ` | p.${item.page}` : ""}
+                {item.page !== null && item.page !== undefined
+                  ? ` | p.${item.page}`
+                  : ""}
               </small>
             </article>
           ))}

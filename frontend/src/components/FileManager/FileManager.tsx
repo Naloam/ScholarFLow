@@ -20,7 +20,8 @@ export function FileManager({
   onSelect,
   onDownloadLatestExport,
 }: FileManagerProps) {
-  const latestExportReady = Boolean(latestExportId) && latestExportStatus === "done";
+  const latestExportReady =
+    Boolean(latestExportId) && latestExportStatus === "done";
 
   return (
     <section className="panel" data-testid="file-manager">
@@ -44,7 +45,9 @@ export function FileManager({
               key={draft.version}
               data-testid={`draft-item-v${draft.version}`}
               className={
-                draft.version === selectedDraftVersion ? "list-item selected" : "list-item"
+                draft.version === selectedDraftVersion
+                  ? "list-item selected"
+                  : "list-item"
               }
               onClick={() => onSelect(draft.version)}
             >

@@ -103,7 +103,8 @@ const emptyWorkspaceSlice = {
   selectedAutoResearchDeploymentId: "",
   autoResearchDeploymentFilters: {} as AutoResearchDeploymentFilters,
   autoResearchDeployment: null as AutoResearchDeployment | null,
-  autoResearchPublicationManifest: null as AutoResearchPublicationManifest | null,
+  autoResearchPublicationManifest:
+    null as AutoResearchPublicationManifest | null,
   analysis: null as AnalysisSummary | null,
   betaSummary: null as BetaSummary | null,
   mentorAccess: [] as MentorAccessEntry[],
@@ -149,7 +150,11 @@ type WorkspaceState = {
   working: boolean;
   notice: string;
   bootstrap: () => Promise<void>;
-  signIn: (payload: { email: string; name: string; role: "student" | "tutor" }) => Promise<void>;
+  signIn: (payload: {
+    email: string;
+    name: string;
+    role: "student" | "tutor";
+  }) => Promise<void>;
   signOut: () => Promise<void>;
   createProject: (payload: {
     title: string;
@@ -160,9 +165,13 @@ type WorkspaceState = {
   refreshProject: () => Promise<void>;
   refreshAutoResearchConsole: (runId?: string) => Promise<void>;
   refreshAutoResearchDeployments: (deploymentId?: string) => Promise<void>;
-  applyAutoResearchConsoleFilters: (filters: AutoResearchOperatorConsoleFilters) => Promise<void>;
+  applyAutoResearchConsoleFilters: (
+    filters: AutoResearchOperatorConsoleFilters,
+  ) => Promise<void>;
   clearAutoResearchConsoleFilters: () => Promise<void>;
-  applyAutoResearchDeploymentFilters: (filters: AutoResearchDeploymentFilters) => Promise<void>;
+  applyAutoResearchDeploymentFilters: (
+    filters: AutoResearchDeploymentFilters,
+  ) => Promise<void>;
   clearAutoResearchDeploymentFilters: () => Promise<void>;
   updateAutoResearchRunControls: (payload: {
     max_rounds?: number | null;
@@ -172,7 +181,10 @@ type WorkspaceState = {
   selectDraft: (version: number) => void;
   selectAutoResearchRun: (runId: string) => Promise<void>;
   selectAutoResearchDeployment: (deploymentId: string) => Promise<void>;
-  openAutoResearchPublication: (projectId: string, runId: string) => Promise<void>;
+  openAutoResearchPublication: (
+    projectId: string,
+    runId: string,
+  ) => Promise<void>;
   refreshAutoResearchReviewLoop: () => Promise<void>;
   refreshAutoResearchBridge: () => Promise<void>;
   applyAutoResearchReviewActions: () => Promise<void>;
@@ -182,23 +194,35 @@ type WorkspaceState = {
   applyProgressSnapshot: (snapshot: ProjectProgressSnapshot) => void;
   saveDraft: () => Promise<void>;
   generateDraft: () => Promise<void>;
-  startAutoResearch: (payload?: Partial<AutoResearchRunRequest>) => Promise<void>;
+  startAutoResearch: (
+    payload?: Partial<AutoResearchRunRequest>,
+  ) => Promise<void>;
   resumeAutoResearch: () => Promise<void>;
   retryAutoResearch: () => Promise<void>;
   cancelAutoResearch: () => Promise<void>;
   rebuildAutoResearchPaper: () => Promise<void>;
-  importAutoResearchBridgeResult: (payload: AutoResearchBridgeImportRequest) => Promise<void>;
-  exportAutoResearchPublish: (payload?: AutoResearchPublishExportRequest) => Promise<void>;
+  importAutoResearchBridgeResult: (
+    payload: AutoResearchBridgeImportRequest,
+  ) => Promise<void>;
+  exportAutoResearchPublish: (
+    payload?: AutoResearchPublishExportRequest,
+  ) => Promise<void>;
   downloadAutoResearchPublish: () => Promise<void>;
   downloadAutoResearchPaper: () => Promise<void>;
   downloadAutoResearchCompiledPaper: () => Promise<void>;
   downloadAutoResearchCodePackage: () => Promise<void>;
   runReview: () => Promise<void>;
-  exportDraft: (format: "markdown" | "latex" | "word" | "docx") => Promise<void>;
+  exportDraft: (
+    format: "markdown" | "latex" | "word" | "docx",
+  ) => Promise<void>;
   downloadLatestExport: () => Promise<void>;
   inviteMentor: (payload: CreateMentorAccessPayload) => Promise<void>;
   submitMentorFeedback: (payload: CreateMentorFeedbackPayload) => Promise<void>;
-  submitFeedback: (payload: { rating: number; category: string; comment: string }) => Promise<void>;
+  submitFeedback: (payload: {
+    rating: number;
+    category: string;
+    comment: string;
+  }) => Promise<void>;
 };
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
@@ -206,12 +230,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     Boolean(authConfig?.api_protected);
   const resolveSelectedRunId = (
     consoleState: AutoResearchOperatorConsole | null,
-  ): string | null => consoleState?.selected_run_id ?? consoleState?.current_run?.run.id ?? null;
+  ): string | null =>
+    consoleState?.selected_run_id ?? consoleState?.current_run?.run.id ?? null;
   const shouldLoadPublicationManifest = (
     consoleState: AutoResearchOperatorConsole | null,
   ): boolean => {
     const publish = consoleState?.current_run?.publish;
-    return Boolean(publish && publish.final_publish_ready && publish.archive_ready);
+    return Boolean(
+      publish && publish.final_publish_ready && publish.archive_ready,
+    );
   };
   const loadPublicationManifest = async (
     projectId: string,
@@ -241,11 +268,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       PromiseSettledResult<AutoResearchDeploymentList>,
     ]
   > => {
-    let lastResults: [
-      PromiseSettledResult<{ items: TemplateMeta[] }>,
-      PromiseSettledResult<ProjectListItem[]>,
-      PromiseSettledResult<AutoResearchDeploymentList>,
-    ] | null = null;
+    let lastResults:
+      | [
+          PromiseSettledResult<{ items: TemplateMeta[] }>,
+          PromiseSettledResult<ProjectListItem[]>,
+          PromiseSettledResult<AutoResearchDeploymentList>,
+        ]
+      | null = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const results = await Promise.allSettled([
         api.listTemplates(),
@@ -254,7 +283,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       ]);
       lastResults = results;
       const hasRetryableFailure = results.some(
-        (result) => result.status === "rejected" && !isUnauthorizedError(result.reason),
+        (result) =>
+          result.status === "rejected" && !isUnauthorizedError(result.reason),
       );
       if (!hasRetryableFailure || attempt === 2) {
         return results;
@@ -274,7 +304,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     set((state) => ({
       ...emptyWorkspaceSlice,
       templates:
-        workspaceRequiresToken(state.authConfig) && nextAuthState === "anonymous"
+        workspaceRequiresToken(state.authConfig) &&
+        nextAuthState === "anonymous"
           ? []
           : state.templates,
       authUser: null,
@@ -317,7 +348,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         api.getAuthConfig(),
       ]);
 
-      const authConfig = authConfigResult.status === "fulfilled" ? authConfigResult.value : null;
+      const authConfig =
+        authConfigResult.status === "fulfilled" ? authConfigResult.value : null;
       let authState: AuthState = getAuthToken() ? "service" : "anonymous";
       let authUser: AuthUser | null = null;
       let authError = "";
@@ -348,22 +380,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           : `Backend unavailable: ${getErrorMessage(healthResult.reason)}`;
       const requiresAuth = workspaceRequiresToken(authConfig);
 
-      if (healthResult.status === "fulfilled" && (!requiresAuth || Boolean(getAuthToken()))) {
+      if (
+        healthResult.status === "fulfilled" &&
+        (!requiresAuth || Boolean(getAuthToken()))
+      ) {
         const [templateResult, projectListResult, deploymentListResult] =
           await loadWorkspaceBootstrapData();
         if (templateResult.status === "fulfilled") {
           templates = templateResult.value.items;
           availableProjects =
-            projectListResult.status === "fulfilled" ? projectListResult.value : [];
+            projectListResult.status === "fulfilled"
+              ? projectListResult.value
+              : [];
           autoResearchDeploymentList =
-            deploymentListResult.status === "fulfilled" ? deploymentListResult.value : null;
+            deploymentListResult.status === "fulfilled"
+              ? deploymentListResult.value
+              : null;
           if (authState === "user" && authUser) {
             notice = `Signed in as ${authUser.email}`;
           } else if (authState === "service") {
             notice = "Workspace ready with service token";
           }
         } else {
-          if (isUnauthorizedError(templateResult.reason) && getStoredAuthToken()) {
+          if (
+            isUnauthorizedError(templateResult.reason) &&
+            getStoredAuthToken()
+          ) {
             clearAuthToken();
             authState = getAuthToken() ? "service" : "anonymous";
             authUser = null;
@@ -379,7 +421,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       set({
         initializing: false,
-        healthStatus: healthResult.status === "fulfilled" ? healthResult.value.status : "offline",
+        healthStatus:
+          healthResult.status === "fulfilled"
+            ? healthResult.value.status
+            : "offline",
         templates,
         authConfig,
         authState,
@@ -418,14 +463,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const [templateResult, projectListResult, deploymentListResult] =
           await loadWorkspaceBootstrapData();
         set({
-          templates: templateResult.status === "fulfilled" ? templateResult.value.items : [],
+          templates:
+            templateResult.status === "fulfilled"
+              ? templateResult.value.items
+              : [],
           availableProjects:
-            projectListResult.status === "fulfilled" ? projectListResult.value : [],
+            projectListResult.status === "fulfilled"
+              ? projectListResult.value
+              : [],
           autoResearchDeploymentList:
-            deploymentListResult.status === "fulfilled" ? deploymentListResult.value : null,
+            deploymentListResult.status === "fulfilled"
+              ? deploymentListResult.value
+              : null,
           selectedAutoResearchDeploymentId:
             deploymentListResult.status === "fulfilled"
-              ? deploymentListResult.value.deployments[0]?.deployment_id ?? ""
+              ? (deploymentListResult.value.deployments[0]?.deployment_id ?? "")
               : "",
           autoResearchDeployment: null,
           authState: "user",
@@ -485,7 +537,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         });
         set((state) => {
           const accessMode =
-            state.authState === "user" || state.authState === "service" ? "owner" : "anonymous";
+            state.authState === "user" || state.authState === "service"
+              ? "owner"
+              : "anonymous";
           const optimisticProject: Project = {
             id: response.id,
             title: payload.title,
@@ -499,7 +553,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           };
           const availableProjects = [
             optimisticProjectList,
-            ...state.availableProjects.filter((item) => item.id !== response.id),
+            ...state.availableProjects.filter(
+              (item) => item.id !== response.id,
+            ),
           ];
           return {
             currentProjectId: response.id,
@@ -520,36 +576,51 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     async loadProject(projectId) {
       set({ working: true, notice: "Loading project..." });
       try {
-        const [projectResult, statusResult, draftsResult, evidenceResult, reviewsResult, consoleResult, deploymentListResult, deploymentDetailResult, analysisResult, betaResult, mentorAccessResult, mentorFeedbackResult, projectListResult] =
-          await Promise.allSettled([
-            api.getProject(projectId),
-            api.getProjectStatus(projectId),
-            api.listDrafts(projectId),
-            api.listEvidence(projectId),
-            api.listReviews(projectId),
-            api.getAutoResearchOperatorConsole(projectId, {}),
-            api.listAutoResearchDeployments(),
-            get().selectedAutoResearchDeploymentId
-              ? api.getAutoResearchDeployment(
-                  get().selectedAutoResearchDeploymentId,
-                  normalizeDeploymentFilters(get().autoResearchDeploymentFilters),
-                )
-              : Promise.resolve(null),
-            api.getAnalysisSummary(projectId),
-            api.getBetaSummary(projectId),
-            api.listMentorAccess(projectId),
-            api.listMentorFeedback(projectId),
-            !workspaceRequiresToken(get().authConfig) || Boolean(getAuthToken())
-              ? api.listProjects()
-              : Promise.resolve([] as ProjectListItem[]),
-          ]);
+        const [
+          projectResult,
+          statusResult,
+          draftsResult,
+          evidenceResult,
+          reviewsResult,
+          consoleResult,
+          deploymentListResult,
+          deploymentDetailResult,
+          analysisResult,
+          betaResult,
+          mentorAccessResult,
+          mentorFeedbackResult,
+          projectListResult,
+        ] = await Promise.allSettled([
+          api.getProject(projectId),
+          api.getProjectStatus(projectId),
+          api.listDrafts(projectId),
+          api.listEvidence(projectId),
+          api.listReviews(projectId),
+          api.getAutoResearchOperatorConsole(projectId, {}),
+          api.listAutoResearchDeployments(),
+          get().selectedAutoResearchDeploymentId
+            ? api.getAutoResearchDeployment(
+                get().selectedAutoResearchDeploymentId,
+                normalizeDeploymentFilters(get().autoResearchDeploymentFilters),
+              )
+            : Promise.resolve(null),
+          api.getAnalysisSummary(projectId),
+          api.getBetaSummary(projectId),
+          api.listMentorAccess(projectId),
+          api.listMentorFeedback(projectId),
+          !workspaceRequiresToken(get().authConfig) || Boolean(getAuthToken())
+            ? api.listProjects()
+            : Promise.resolve([] as ProjectListItem[]),
+        ]);
 
         if (projectResult.status !== "fulfilled") {
           throw projectResult.reason;
         }
 
-        const drafts = draftsResult.status === "fulfilled" ? draftsResult.value : [];
-        const autoResearchConsole = consoleResult.status === "fulfilled" ? consoleResult.value : null;
+        const drafts =
+          draftsResult.status === "fulfilled" ? draftsResult.value : [];
+        const autoResearchConsole =
+          consoleResult.status === "fulfilled" ? consoleResult.value : null;
         const autoResearchPublicationManifest = await loadPublicationManifest(
           projectId,
           autoResearchConsole,
@@ -557,7 +628,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const selectedVersion = drafts.length > 0 ? drafts[0].version : null;
         const selectedDraft =
           selectedVersion !== null
-            ? drafts.find((draft) => draft.version === selectedVersion) ?? null
+            ? (drafts.find((draft) => draft.version === selectedVersion) ??
+              null)
             : null;
 
         set({
@@ -567,36 +639,53 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
               ? projectListResult.value
               : get().availableProjects,
           project: projectResult.value,
-          projectStatus: statusResult.status === "fulfilled" ? statusResult.value : null,
+          projectStatus:
+            statusResult.status === "fulfilled" ? statusResult.value : null,
           drafts,
           selectedDraftVersion: selectedVersion,
           editorContent: selectedDraft?.content ?? "",
           isDirty: false,
           focusedText: "",
-          evidence: evidenceResult.status === "fulfilled" ? evidenceResult.value : [],
-          reviews: reviewsResult.status === "fulfilled" ? reviewsResult.value : [],
+          evidence:
+            evidenceResult.status === "fulfilled" ? evidenceResult.value : [],
+          reviews:
+            reviewsResult.status === "fulfilled" ? reviewsResult.value : [],
           autoResearchConsole,
-          autoResearchConsoleFilters:
-            autoResearchConsole?.filters ?? {},
+          autoResearchConsoleFilters: autoResearchConsole?.filters ?? {},
           autoResearchDeploymentList:
-            deploymentListResult.status === "fulfilled" ? deploymentListResult.value : null,
+            deploymentListResult.status === "fulfilled"
+              ? deploymentListResult.value
+              : null,
           selectedAutoResearchDeploymentId:
-            deploymentDetailResult.status === "fulfilled" && deploymentDetailResult.value
+            deploymentDetailResult.status === "fulfilled" &&
+            deploymentDetailResult.value
               ? deploymentDetailResult.value.deployment_id
               : deploymentListResult.status === "fulfilled"
-                ? deploymentListResult.value.deployments[0]?.deployment_id ?? ""
+                ? (deploymentListResult.value.deployments[0]?.deployment_id ??
+                  "")
                 : "",
           autoResearchDeploymentFilters:
-            deploymentDetailResult.status === "fulfilled" && deploymentDetailResult.value
+            deploymentDetailResult.status === "fulfilled" &&
+            deploymentDetailResult.value
               ? deploymentDetailResult.value.filters
               : normalizeDeploymentFilters(get().autoResearchDeploymentFilters),
           autoResearchDeployment:
-            deploymentDetailResult.status === "fulfilled" ? deploymentDetailResult.value : null,
+            deploymentDetailResult.status === "fulfilled"
+              ? deploymentDetailResult.value
+              : null,
           autoResearchPublicationManifest,
-          analysis: analysisResult.status === "fulfilled" ? analysisResult.value : null,
-          betaSummary: betaResult.status === "fulfilled" ? betaResult.value : null,
-          mentorAccess: mentorAccessResult.status === "fulfilled" ? mentorAccessResult.value : [],
-          mentorFeedback: mentorFeedbackResult.status === "fulfilled" ? mentorFeedbackResult.value : [],
+          analysis:
+            analysisResult.status === "fulfilled" ? analysisResult.value : null,
+          betaSummary:
+            betaResult.status === "fulfilled" ? betaResult.value : null,
+          mentorAccess:
+            mentorAccessResult.status === "fulfilled"
+              ? mentorAccessResult.value
+              : [],
+          mentorFeedback:
+            mentorFeedbackResult.status === "fulfilled"
+              ? mentorFeedbackResult.value
+              : [],
           notice: `Project ${projectId} loaded`,
         });
       } catch (error) {
@@ -613,10 +702,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        const selectedRunId = get().autoResearchConsole?.selected_run_id ?? undefined;
-        const filters = normalizeConsoleFilters(get().autoResearchConsoleFilters);
-        const deploymentFilters = normalizeDeploymentFilters(get().autoResearchDeploymentFilters);
-        const [status, drafts, evidence, reviews, autoResearchConsole, autoResearchDeploymentList, autoResearchDeployment, analysis, betaSummary, mentorAccess, mentorFeedback] = await Promise.all([
+        const selectedRunId =
+          get().autoResearchConsole?.selected_run_id ?? undefined;
+        const filters = normalizeConsoleFilters(
+          get().autoResearchConsoleFilters,
+        );
+        const deploymentFilters = normalizeDeploymentFilters(
+          get().autoResearchDeploymentFilters,
+        );
+        const [
+          status,
+          drafts,
+          evidence,
+          reviews,
+          autoResearchConsole,
+          autoResearchDeploymentList,
+          autoResearchDeployment,
+          analysis,
+          betaSummary,
+          mentorAccess,
+          mentorFeedback,
+        ] = await Promise.all([
           api.getProjectStatus(projectId),
           api.listDrafts(projectId),
           api.listEvidence(projectId),
@@ -642,12 +748,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
         const selectedDraftVersion = get().selectedDraftVersion;
         const fallbackVersion =
-          selectedDraftVersion && drafts.some((draft) => draft.version === selectedDraftVersion)
+          selectedDraftVersion &&
+          drafts.some((draft) => draft.version === selectedDraftVersion)
             ? selectedDraftVersion
-            : drafts[0]?.version ?? null;
+            : (drafts[0]?.version ?? null);
         const selectedDraft =
           fallbackVersion !== null
-            ? drafts.find((draft) => draft.version === fallbackVersion) ?? null
+            ? (drafts.find((draft) => draft.version === fallbackVersion) ??
+              null)
             : null;
         const preserveDirty =
           get().isDirty &&
@@ -662,7 +770,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           projectStatus: status,
           drafts,
           selectedDraftVersion: fallbackVersion,
-          editorContent: preserveDirty ? get().editorContent : selectedDraft?.content ?? "",
+          editorContent: preserveDirty
+            ? get().editorContent
+            : (selectedDraft?.content ?? ""),
           evidence,
           reviews,
           autoResearchConsole,
@@ -693,14 +803,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       try {
-        const filters = normalizeConsoleFilters(get().autoResearchConsoleFilters);
-        const console = await api.getAutoResearchOperatorConsole(
-          projectId,
-          {
-            runId: runId ?? get().autoResearchConsole?.selected_run_id ?? undefined,
-            ...filters,
-          },
+        const filters = normalizeConsoleFilters(
+          get().autoResearchConsoleFilters,
         );
+        const console = await api.getAutoResearchOperatorConsole(projectId, {
+          runId:
+            runId ?? get().autoResearchConsole?.selected_run_id ?? undefined,
+          ...filters,
+        });
         const autoResearchPublicationManifest = await loadPublicationManifest(
           projectId,
           console,
@@ -717,20 +827,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     async refreshAutoResearchDeployments(deploymentId) {
       try {
-        const filters = normalizeDeploymentFilters(get().autoResearchDeploymentFilters);
+        const filters = normalizeDeploymentFilters(
+          get().autoResearchDeploymentFilters,
+        );
         const deploymentList = await api.listAutoResearchDeployments();
         const nextDeploymentId =
           deploymentId ??
           get().selectedAutoResearchDeploymentId ??
           deploymentList.deployments[0]?.deployment_id ??
           "";
-        const deployment =
-          nextDeploymentId
-            ? await api.getAutoResearchDeployment(nextDeploymentId, filters).catch(() => null)
-            : null;
+        const deployment = nextDeploymentId
+          ? await api
+              .getAutoResearchDeployment(nextDeploymentId, filters)
+              .catch(() => null)
+          : null;
         set({
           autoResearchDeploymentList: deploymentList,
-          selectedAutoResearchDeploymentId: deployment?.deployment_id ?? nextDeploymentId,
+          selectedAutoResearchDeploymentId:
+            deployment?.deployment_id ?? nextDeploymentId,
           autoResearchDeploymentFilters: deployment?.filters ?? filters,
           autoResearchDeployment: deployment,
         });
@@ -746,7 +860,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
 
       const nextFilters = normalizeConsoleFilters(filters);
-      set({ working: true, notice: "Applying auto-research console filters..." });
+      set({
+        working: true,
+        notice: "Applying auto-research console filters...",
+      });
       try {
         const console = await api.getAutoResearchOperatorConsole(projectId, {
           runId: get().autoResearchConsole?.selected_run_id ?? undefined,
@@ -783,11 +900,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           deploymentList.deployments[0]?.deployment_id ||
           "";
         const deployment = deploymentId
-          ? await api.getAutoResearchDeployment(deploymentId, nextFilters).catch(() => null)
+          ? await api
+              .getAutoResearchDeployment(deploymentId, nextFilters)
+              .catch(() => null)
           : null;
         set({
           autoResearchDeploymentList: deploymentList,
-          selectedAutoResearchDeploymentId: deployment?.deployment_id ?? deploymentId,
+          selectedAutoResearchDeploymentId:
+            deployment?.deployment_id ?? deploymentId,
           autoResearchDeploymentFilters: deployment?.filters ?? nextFilters,
           autoResearchDeployment: deployment,
           notice: deployment
@@ -813,9 +933,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      set({ working: true, notice: `Updating auto-research controls for ${runId}...` });
+      set({
+        working: true,
+        notice: `Updating auto-research controls for ${runId}...`,
+      });
       try {
-        await api.updateAutoResearchRunControls(currentProjectId, runId, payload);
+        await api.updateAutoResearchRunControls(
+          currentProjectId,
+          runId,
+          payload,
+        );
         await get().refreshAutoResearchConsole(runId);
         set({ notice: `Auto-research controls updated for ${runId}` });
       } catch (error) {
@@ -926,14 +1053,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const liveProgress = current.liveProgress;
       const shouldRefresh =
         snapshot.signature !== current.lastProgressSignature &&
-        (
-          snapshot.draft_count !== current.drafts.length ||
+        (snapshot.draft_count !== current.drafts.length ||
           snapshot.evidence_count !== current.evidence.length ||
           snapshot.review_count !== current.reviews.length ||
           snapshot.latest_draft_version !== latestLocalDraftVersion ||
-          snapshot.latest_review_status !== liveProgress?.latest_review_status ||
-          snapshot.latest_export_status !== liveProgress?.latest_export_status
-        );
+          snapshot.latest_review_status !==
+            liveProgress?.latest_review_status ||
+          snapshot.latest_export_status !== liveProgress?.latest_export_status);
 
       set({
         liveProgress: snapshot,
@@ -958,7 +1084,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     async startAutoResearch(payload) {
       const { currentProjectId, project } = get();
       if (!currentProjectId || !project) {
-        set({ notice: "Create or open a project before starting auto-research" });
+        set({
+          notice: "Create or open a project before starting auto-research",
+        });
         return;
       }
 
@@ -966,6 +1094,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       try {
         const response = await api.startAutoResearch(currentProjectId, {
           topic: project.topic ?? project.title,
+          language: "en",
           auto_search_literature: true,
           ...payload,
         });
@@ -1050,7 +1179,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const { currentProjectId, autoResearchConsole } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
       if (!currentProjectId || !runId) {
-        set({ notice: "Select an auto-research run before rebuilding paper assets" });
+        set({
+          notice: "Select an auto-research run before rebuilding paper assets",
+        });
         return;
       }
 
@@ -1072,7 +1203,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const { currentProjectId, autoResearchConsole } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
       if (!currentProjectId || !runId) {
-        set({ notice: "Select an auto-research run before refreshing review state" });
+        set({
+          notice: "Select an auto-research run before refreshing review state",
+        });
         return;
       }
 
@@ -1092,13 +1225,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const { currentProjectId, autoResearchConsole } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
       if (!currentProjectId || !runId) {
-        set({ notice: "Select an auto-research run before refreshing bridge state" });
+        set({
+          notice: "Select an auto-research run before refreshing bridge state",
+        });
         return;
       }
 
       set({ working: true, notice: `Refreshing bridge state for ${runId}...` });
       try {
-        const update = await api.refreshAutoResearchBridge(currentProjectId, runId);
+        const update = await api.refreshAutoResearchBridge(
+          currentProjectId,
+          runId,
+        );
         await sleep(400);
         await get().refreshProject();
         await get().refreshAutoResearchConsole(runId);
@@ -1122,7 +1260,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const runId = currentRun?.run.id;
       const reviewLoop = currentRun?.review_loop;
       if (!currentProjectId || !runId || !reviewLoop) {
-        set({ notice: "Select an auto-research run with review actions before applying revisions" });
+        set({
+          notice:
+            "Select an auto-research run with review actions before applying revisions",
+        });
         return;
       }
       if (reviewLoop.pending_action_count < 1) {
@@ -1130,7 +1271,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
       if (!reviewLoop.latest_review_fingerprint) {
-        set({ notice: "Refresh review state before applying revision actions" });
+        set({
+          notice: "Refresh review state before applying revision actions",
+        });
         return;
       }
 
@@ -1155,13 +1298,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const { currentProjectId, autoResearchConsole } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
       if (!currentProjectId || !runId) {
-        set({ notice: "Select an auto-research run before importing a bridge result" });
+        set({
+          notice:
+            "Select an auto-research run before importing a bridge result",
+        });
         return;
       }
 
       set({ working: true, notice: `Importing bridge result for ${runId}...` });
       try {
-        const update = await api.importAutoResearchBridgeResult(currentProjectId, runId, payload);
+        const update = await api.importAutoResearchBridgeResult(
+          currentProjectId,
+          runId,
+          payload,
+        );
         await sleep(400);
         await get().refreshProject();
         await get().refreshAutoResearchConsole(runId);
@@ -1181,15 +1331,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const { currentProjectId, autoResearchConsole } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
       if (!currentProjectId || !runId) {
-        set({ notice: "Select an auto-research run before exporting publish assets" });
+        set({
+          notice: "Select an auto-research run before exporting publish assets",
+        });
         return;
       }
 
-      set({ working: true, notice: `Exporting publish package for ${runId}...` });
+      set({
+        working: true,
+        notice: `Exporting publish package for ${runId}...`,
+      });
       try {
-        const exportResult = await api.exportAutoResearchPublishPackage(currentProjectId, runId, payload);
+        const exportResult = await api.exportAutoResearchPublishPackage(
+          currentProjectId,
+          runId,
+          payload,
+        );
         await get().refreshAutoResearchConsole(runId);
-        await get().refreshAutoResearchDeployments(exportResult.deployment_id ?? undefined);
+        await get().refreshAutoResearchDeployments(
+          exportResult.deployment_id ?? undefined,
+        );
         set({
           notice: exportResult.deployment_id
             ? `Publish package ${exportResult.file_name} ready in deployment ${exportResult.deployment_id}`
@@ -1212,7 +1373,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       set({ working: true, notice: "Preparing publish bundle download..." });
       try {
-        const fileName = await api.downloadAutoResearchPublishPackage(currentProjectId, runId);
+        const fileName = await api.downloadAutoResearchPublishPackage(
+          currentProjectId,
+          runId,
+        );
         set({ notice: `Downloaded ${fileName}` });
       } catch (error) {
         handleActionError(error, "Publish download failed");
@@ -1222,16 +1386,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     async downloadAutoResearchPaper() {
-      const { currentProjectId, autoResearchConsole, autoResearchPublicationManifest } = get();
+      const {
+        currentProjectId,
+        autoResearchConsole,
+        autoResearchPublicationManifest,
+      } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
-      if (!currentProjectId || !runId || !autoResearchPublicationManifest?.paper_path) {
-        set({ notice: "Current run does not have a published paper asset yet" });
+      if (
+        !currentProjectId ||
+        !runId ||
+        !autoResearchPublicationManifest?.paper_path
+      ) {
+        set({
+          notice: "Current run does not have a published paper asset yet",
+        });
         return;
       }
 
       set({ working: true, notice: "Preparing paper download..." });
       try {
-        const fileName = await api.downloadAutoResearchPaper(currentProjectId, runId);
+        const fileName = await api.downloadAutoResearchPaper(
+          currentProjectId,
+          runId,
+        );
         set({ notice: `Downloaded ${fileName}` });
       } catch (error) {
         handleActionError(error, "Paper download failed");
@@ -1241,16 +1418,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     async downloadAutoResearchCompiledPaper() {
-      const { currentProjectId, autoResearchConsole, autoResearchPublicationManifest } = get();
+      const {
+        currentProjectId,
+        autoResearchConsole,
+        autoResearchPublicationManifest,
+      } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
-      if (!currentProjectId || !runId || !autoResearchPublicationManifest?.compiled_paper_path) {
+      if (
+        !currentProjectId ||
+        !runId ||
+        !autoResearchPublicationManifest?.compiled_paper_path
+      ) {
         set({ notice: "Current run does not have a compiled paper PDF yet" });
         return;
       }
 
       set({ working: true, notice: "Preparing compiled paper download..." });
       try {
-        const fileName = await api.downloadAutoResearchCompiledPaper(currentProjectId, runId);
+        const fileName = await api.downloadAutoResearchCompiledPaper(
+          currentProjectId,
+          runId,
+        );
         set({ notice: `Downloaded ${fileName}` });
       } catch (error) {
         handleActionError(error, "Compiled paper download failed");
@@ -1260,16 +1448,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     async downloadAutoResearchCodePackage() {
-      const { currentProjectId, autoResearchConsole, autoResearchPublicationManifest } = get();
+      const {
+        currentProjectId,
+        autoResearchConsole,
+        autoResearchPublicationManifest,
+      } = get();
       const runId = autoResearchConsole?.current_run?.run.id;
-      if (!currentProjectId || !runId || !autoResearchPublicationManifest?.code_package_path) {
-        set({ notice: "Current run does not have a published code package yet" });
+      if (
+        !currentProjectId ||
+        !runId ||
+        !autoResearchPublicationManifest?.code_package_path
+      ) {
+        set({
+          notice: "Current run does not have a published code package yet",
+        });
         return;
       }
 
       set({ working: true, notice: "Preparing code package download..." });
       try {
-        const fileName = await api.downloadAutoResearchCodePackage(currentProjectId, runId);
+        const fileName = await api.downloadAutoResearchCodePackage(
+          currentProjectId,
+          runId,
+        );
         set({ notice: `Downloaded ${fileName}` });
       } catch (error) {
         handleActionError(error, "Code package download failed");
@@ -1285,11 +1486,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      set({ working: true, notice: `Saving draft v${selectedDraftVersion}...` });
+      set({
+        working: true,
+        notice: `Saving draft v${selectedDraftVersion}...`,
+      });
       try {
-        const updated = await api.updateDraft(currentProjectId, selectedDraftVersion, {
-          content: editorContent,
-        });
+        const updated = await api.updateDraft(
+          currentProjectId,
+          selectedDraftVersion,
+          {
+            content: editorContent,
+          },
+        );
         const drafts = get().drafts.map((draft) =>
           draft.version === selectedDraftVersion ? updated : draft,
         );
@@ -1338,7 +1546,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      set({ working: true, notice: `Running review for draft v${draftVersion}...` });
+      set({
+        working: true,
+        notice: `Running review for draft v${draftVersion}...`,
+      });
       try {
         const previousReviewCount = reviews.length;
         await api.runReview(currentProjectId, draftVersion);
@@ -1380,7 +1591,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     async downloadLatestExport() {
       const { currentProjectId, liveProgress } = get();
       const exportId = liveProgress?.latest_export_id;
-      if (!currentProjectId || !exportId || liveProgress?.latest_export_status !== "done") {
+      if (
+        !currentProjectId ||
+        !exportId ||
+        liveProgress?.latest_export_status !== "done"
+      ) {
         set({ notice: "No completed export is available yet" });
         return;
       }

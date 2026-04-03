@@ -55,8 +55,9 @@ export function ReviewPanel({ reviews, analysis }: ReviewPanelProps) {
         <div className="inline-card">
           <p className="inline-title">Overlap screening</p>
           <p className="auth-copy">
-            Checked {similarity.checked_paragraphs} paragraphs against project evidence snippets and
-            paper abstracts. {similarity.flagged_paragraphs} passages need manual review.
+            Checked {similarity.checked_paragraphs} paragraphs against project
+            evidence snippets and paper abstracts.{" "}
+            {similarity.flagged_paragraphs} passages need manual review.
           </p>
           {similarity.matches.length > 0 ? (
             <div className="stack">
@@ -64,9 +65,14 @@ export function ReviewPanel({ reviews, analysis }: ReviewPanelProps) {
                 <article
                   key={`${match.source_label}-${index}`}
                   className="suggestion-card"
-                  data-testid={index === 0 ? "similarity-match-card" : undefined}
+                  data-testid={
+                    index === 0 ? "similarity-match-card" : undefined
+                  }
                 >
-                  <strong>{Math.round(match.similarity * 100)}% overlap · {match.source_label}</strong>
+                  <strong>
+                    {Math.round(match.similarity * 100)}% overlap ·{" "}
+                    {match.source_label}
+                  </strong>
                   <p>{match.draft_excerpt}</p>
                   <p>{match.source_excerpt}</p>
                 </article>
@@ -74,7 +80,8 @@ export function ReviewPanel({ reviews, analysis }: ReviewPanelProps) {
             </div>
           ) : (
             <p className="auth-copy">
-              No high-overlap passages were flagged by the local similarity screen.
+              No high-overlap passages were flagged by the local similarity
+              screen.
             </p>
           )}
         </div>

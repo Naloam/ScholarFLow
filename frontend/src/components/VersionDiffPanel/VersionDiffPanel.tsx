@@ -11,7 +11,10 @@ type VersionDiffPanelProps = {
   currentContent: string;
 };
 
-function buildDiffRows(previousContent: string, currentContent: string): DiffRow[] {
+function buildDiffRows(
+  previousContent: string,
+  currentContent: string,
+): DiffRow[] {
   const previousLines = previousContent.split("\n");
   const currentLines = currentContent.split("\n");
 
@@ -77,8 +80,12 @@ export function VersionDiffPanel({
     );
   }
 
-  const sortedDrafts = [...drafts].sort((left, right) => right.version - left.version);
-  const currentDraft = sortedDrafts.find((draft) => draft.version === selectedDraftVersion) ?? null;
+  const sortedDrafts = [...drafts].sort(
+    (left, right) => right.version - left.version,
+  );
+  const currentDraft =
+    sortedDrafts.find((draft) => draft.version === selectedDraftVersion) ??
+    null;
   const previousDraft =
     [...sortedDrafts]
       .reverse()
@@ -97,7 +104,10 @@ export function VersionDiffPanel({
         </div>
         <div className="empty-state">
           <p>No earlier version to compare.</p>
-          <span>Generate another draft version to unlock side-by-side review history.</span>
+          <span>
+            Generate another draft version to unlock side-by-side review
+            history.
+          </span>
         </div>
       </section>
     );
@@ -119,7 +129,10 @@ export function VersionDiffPanel({
 
       <div className="diff-stack">
         {rows.slice(0, 80).map((row, index) => (
-          <article key={`${row.type}-${index}-${row.text}`} className={`diff-row diff-${row.type}`}>
+          <article
+            key={`${row.type}-${index}-${row.text}`}
+            className={`diff-row diff-${row.type}`}
+          >
             <span className="diff-prefix">
               {row.type === "added" ? "+" : row.type === "removed" ? "-" : "="}
             </span>

@@ -124,13 +124,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const data = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
   if (!response.ok) {
     const detail =
-      (data && typeof data.detail === "string" && data.detail) || response.statusText;
+      (data && typeof data.detail === "string" && data.detail) ||
+      response.statusText;
     throw new ApiError(response.status, detail || "Request failed");
   }
   return data as T;
 }
 
-function parseDownloadFilename(contentDisposition: string | null, fallback: string): string {
+function parseDownloadFilename(
+  contentDisposition: string | null,
+  fallback: string,
+): string {
   if (!contentDisposition) {
     return fallback;
   }
@@ -232,14 +236,21 @@ export const api = {
     return request(`/api/projects/${projectId}/drafts`);
   },
 
-  updateDraft(projectId: string, version: number, payload: UpdateDraftPayload): Promise<Draft> {
+  updateDraft(
+    projectId: string,
+    version: number,
+    payload: UpdateDraftPayload,
+  ): Promise<Draft> {
     return request(`/api/projects/${projectId}/drafts/${version}`, {
       method: "PUT",
       body: JSON.stringify(payload),
     });
   },
 
-  generateDraft(projectId: string, payload: GenerateDraftPayload): Promise<IdResponse> {
+  generateDraft(
+    projectId: string,
+    payload: GenerateDraftPayload,
+  ): Promise<IdResponse> {
     return request(`/api/projects/${projectId}/drafts/generate`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -280,7 +291,10 @@ export const api = {
     return request(`/api/projects/${projectId}/mentor/access`);
   },
 
-  createMentorAccess(projectId: string, payload: CreateMentorAccessPayload): Promise<MentorAccessEntry> {
+  createMentorAccess(
+    projectId: string,
+    payload: CreateMentorAccessPayload,
+  ): Promise<MentorAccessEntry> {
     return request(`/api/projects/${projectId}/mentor/access`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -291,14 +305,20 @@ export const api = {
     return request(`/api/projects/${projectId}/mentor/feedback`);
   },
 
-  createMentorFeedback(projectId: string, payload: CreateMentorFeedbackPayload): Promise<MentorFeedbackEntry> {
+  createMentorFeedback(
+    projectId: string,
+    payload: CreateMentorFeedbackPayload,
+  ): Promise<MentorFeedbackEntry> {
     return request(`/api/projects/${projectId}/mentor/feedback`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  exportDraft(projectId: string, format: "markdown" | "latex" | "word" | "docx"): Promise<IdResponse> {
+  exportDraft(
+    projectId: string,
+    format: "markdown" | "latex" | "word" | "docx",
+  ): Promise<IdResponse> {
     return request(`/api/projects/${projectId}/export`, {
       method: "POST",
       body: JSON.stringify({ format }),
@@ -316,14 +336,20 @@ export const api = {
     );
   },
 
-  startAutoResearch(projectId: string, payload: AutoResearchRunRequest): Promise<IdResponse> {
+  startAutoResearch(
+    projectId: string,
+    payload: AutoResearchRunRequest,
+  ): Promise<IdResponse> {
     return request(`/api/projects/${projectId}/auto-research/run`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  getAutoResearchRun(projectId: string, runId: string): Promise<AutoResearchRun> {
+  getAutoResearchRun(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchRun> {
     return request(`/api/projects/${projectId}/auto-research/${runId}`);
   },
 
@@ -332,24 +358,41 @@ export const api = {
     runId: string,
     payload: AutoResearchRunControlPatch,
   ): Promise<AutoResearchRunControlUpdate> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/controls`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/controls`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      },
+    );
   },
 
-  getAutoResearchExecution(projectId: string, runId: string): Promise<AutoResearchExecution> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/execution`);
+  getAutoResearchExecution(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExecution> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/execution`,
+    );
   },
 
-  getAutoResearchBridge(projectId: string, runId: string): Promise<AutoResearchExperimentBridge> {
+  getAutoResearchBridge(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExperimentBridge> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/bridge`);
   },
 
-  refreshAutoResearchBridge(projectId: string, runId: string): Promise<AutoResearchBridgeUpdate> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/bridge/refresh`, {
-      method: "POST",
-    });
+  refreshAutoResearchBridge(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchBridgeUpdate> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/bridge/refresh`,
+      {
+        method: "POST",
+      },
+    );
   },
 
   importAutoResearchBridgeResult(
@@ -357,15 +400,18 @@ export const api = {
     runId: string,
     payload: AutoResearchBridgeImportRequest,
   ): Promise<AutoResearchBridgeUpdate> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/bridge/import`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/bridge/import`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
   },
 
   getAutoResearchOperatorConsole(
     projectId: string,
-    options?: ({ runId?: string } & AutoResearchOperatorConsoleFilters),
+    options?: { runId?: string } & AutoResearchOperatorConsoleFilters,
   ): Promise<AutoResearchOperatorConsole> {
     const params = new URLSearchParams();
     if (options?.runId) {
@@ -396,8 +442,13 @@ export const api = {
     return request(`/api/projects/${projectId}/auto-research/console${query}`);
   },
 
-  getAutoResearchRegistry(projectId: string, runId: string): Promise<AutoResearchRunRegistry> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/registry`);
+  getAutoResearchRegistry(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchRunRegistry> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/registry`,
+    );
   },
 
   getAutoResearchCandidateRegistry(
@@ -410,26 +461,50 @@ export const api = {
     );
   },
 
-  getAutoResearchBundleIndex(projectId: string, runId: string): Promise<AutoResearchBundleIndex> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/registry/bundles`);
+  getAutoResearchBundleIndex(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchBundleIndex> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/registry/bundles`,
+    );
   },
 
-  getAutoResearchRegistryViews(projectId: string, runId: string): Promise<AutoResearchRunRegistryViews> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/registry/views`);
+  getAutoResearchRegistryViews(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchRunRegistryViews> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/registry/views`,
+    );
   },
 
-  getAutoResearchRunReview(projectId: string, runId: string): Promise<AutoResearchRunReview> {
+  getAutoResearchRunReview(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchRunReview> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/review`);
   },
 
-  getAutoResearchReviewLoop(projectId: string, runId: string): Promise<AutoResearchReviewLoop> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/review-loop`);
+  getAutoResearchReviewLoop(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchReviewLoop> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/review-loop`,
+    );
   },
 
-  refreshAutoResearchReviewLoop(projectId: string, runId: string): Promise<AutoResearchReviewLoop> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/review-loop/refresh`, {
-      method: "POST",
-    });
+  refreshAutoResearchReviewLoop(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchReviewLoop> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/review-loop/refresh`,
+      {
+        method: "POST",
+      },
+    );
   },
 
   applyAutoResearchReviewLoop(
@@ -437,19 +512,31 @@ export const api = {
     runId: string,
     payload: AutoResearchReviewLoopApplyRequest,
   ): Promise<AutoResearchReviewLoopApply> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/review-loop/apply`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/review-loop/apply`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
   },
 
-  rebuildAutoResearchPaper(projectId: string, runId: string): Promise<AutoResearchRun> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/paper/rebuild`, {
-      method: "POST",
-    });
+  rebuildAutoResearchPaper(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchRun> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/paper/rebuild`,
+      {
+        method: "POST",
+      },
+    );
   },
 
-  getAutoResearchPublishPackage(projectId: string, runId: string): Promise<AutoResearchPublishPackage> {
+  getAutoResearchPublishPackage(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchPublishPackage> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/publish`);
   },
 
@@ -457,7 +544,9 @@ export const api = {
     projectId: string,
     runId: string,
   ): Promise<AutoResearchPublicationManifest> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/publish/manifest`);
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/publish/manifest`,
+    );
   },
 
   exportAutoResearchPublishPackage(
@@ -465,13 +554,19 @@ export const api = {
     runId: string,
     payload?: AutoResearchPublishExportRequest,
   ): Promise<AutoResearchPublishExport> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/publish/export`, {
-      method: "POST",
-      body: JSON.stringify(payload ?? {}),
-    });
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/publish/export`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+    );
   },
 
-  downloadAutoResearchPublishPackage(projectId: string, runId: string): Promise<string> {
+  downloadAutoResearchPublishPackage(
+    projectId: string,
+    runId: string,
+  ): Promise<string> {
     return download(
       `/api/projects/${projectId}/auto-research/${runId}/publish/download`,
       `${runId}-publish_bundle.zip`,
@@ -485,14 +580,20 @@ export const api = {
     );
   },
 
-  downloadAutoResearchCompiledPaper(projectId: string, runId: string): Promise<string> {
+  downloadAutoResearchCompiledPaper(
+    projectId: string,
+    runId: string,
+  ): Promise<string> {
     return download(
       `/api/projects/${projectId}/auto-research/${runId}/publish/paper/compiled/download`,
       `${runId}-paper.pdf`,
     );
   },
 
-  downloadAutoResearchCodePackage(projectId: string, runId: string): Promise<string> {
+  downloadAutoResearchCodePackage(
+    projectId: string,
+    runId: string,
+  ): Promise<string> {
     return download(
       `/api/projects/${projectId}/auto-research/${runId}/publish/code/download`,
       `${runId}-code_package.zip`,
@@ -511,7 +612,10 @@ export const api = {
     if (filters?.search) {
       params.set("search", filters.search);
     }
-    if (filters?.final_publish_ready !== null && filters?.final_publish_ready !== undefined) {
+    if (
+      filters?.final_publish_ready !== null &&
+      filters?.final_publish_ready !== undefined
+    ) {
       params.set("final_publish_ready", String(filters.final_publish_ready));
     }
     if (filters?.bundle_kind) {

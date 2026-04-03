@@ -6,13 +6,19 @@ import { formatDate } from "../../utils/format";
 type BetaPanelProps = {
   summary: BetaSummary | null;
   disabled: boolean;
-  onSubmit: (payload: { rating: number; category: string; comment: string }) => Promise<void>;
+  onSubmit: (payload: {
+    rating: number;
+    category: string;
+    comment: string;
+  }) => Promise<void>;
 };
 
 export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
   const [rating, setRating] = useState("5");
   const [category, setCategory] = useState("usability");
-  const [comment, setComment] = useState("Flow is coherent and ready for beta testing.");
+  const [comment, setComment] = useState(
+    "Flow is coherent and ready for beta testing.",
+  );
   const recentEvents = summary?.performance.recent_events ?? [];
   const feedback = summary?.feedback ?? [];
   const canSubmit = !disabled && comment.trim().length >= 4;
@@ -32,12 +38,16 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
       <div className="beta-metric-grid">
         <article className="metric-card">
           <span className="meta-label">Total tokens</span>
-          <strong data-testid="beta-total-tokens">{summary?.performance.total_tokens ?? 0}</strong>
+          <strong data-testid="beta-total-tokens">
+            {summary?.performance.total_tokens ?? 0}
+          </strong>
         </article>
         <article className="metric-card">
           <span className="meta-label">Avg latency</span>
           <strong data-testid="beta-average-latency">
-            {summary ? `${Math.round(summary.performance.average_latency_ms)} ms` : "0 ms"}
+            {summary
+              ? `${Math.round(summary.performance.average_latency_ms)} ms`
+              : "0 ms"}
           </strong>
         </article>
         <article className="metric-card">
@@ -123,7 +133,9 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
         <div className="inline-card">
           <p className="inline-title">Recent performance events</p>
           {recentEvents.length === 0 ? (
-            <p className="auth-copy">No model telemetry yet. Generate a draft or run review first.</p>
+            <p className="auth-copy">
+              No model telemetry yet. Generate a draft or run review first.
+            </p>
           ) : (
             <div className="stack">
               {recentEvents.map((event, index) => (
@@ -134,7 +146,8 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
                 >
                   <strong>{event.operation ?? event.source}</strong>
                   <p className="auth-copy">
-                    {event.model} · {event.total_tokens} tokens · {event.duration_ms} ms
+                    {event.model} · {event.total_tokens} tokens ·{" "}
+                    {event.duration_ms} ms
                   </p>
                 </article>
               ))}
@@ -145,7 +158,9 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
         <div className="inline-card">
           <p className="inline-title">Feedback log</p>
           {feedback.length === 0 ? (
-            <p className="auth-copy">No beta feedback submitted for this project yet.</p>
+            <p className="auth-copy">
+              No beta feedback submitted for this project yet.
+            </p>
           ) : (
             <div className="stack">
               {feedback.map((entry, index) => (
@@ -158,7 +173,9 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
                     {entry.rating}/5 · {entry.category}
                   </strong>
                   <p>{entry.comment}</p>
-                  <small>{formatDate(entry.created_at)} · {entry.status}</small>
+                  <small>
+                    {formatDate(entry.created_at)} · {entry.status}
+                  </small>
                 </article>
               ))}
             </div>

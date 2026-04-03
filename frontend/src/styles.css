@@ -4,8 +4,16 @@
   line-height: 1.5;
   font-weight: 400;
   background:
-    radial-gradient(circle at top left, rgba(16, 120, 92, 0.16), transparent 28%),
-    radial-gradient(circle at top right, rgba(221, 115, 44, 0.18), transparent 22%),
+    radial-gradient(
+      circle at top left,
+      rgba(16, 120, 92, 0.16),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at top right,
+      rgba(221, 115, 44, 0.18),
+      transparent 22%
+    ),
     linear-gradient(135deg, #f6efe2 0%, #e8efe8 48%, #faf7f0 100%);
   color: #1b2b26;
   font-synthesis: none;
@@ -185,7 +193,9 @@ button {
   border-radius: 999px;
   padding: 11px 16px;
   border: 0;
-  transition: transform 120ms ease, opacity 120ms ease;
+  transition:
+    transform 120ms ease,
+    opacity 120ms ease;
 }
 
 .primary-btn {

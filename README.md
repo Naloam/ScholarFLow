@@ -1,6 +1,88 @@
 # ScholarFlow
 
-ScholarFlow is being developed as a FARS-style auto-research system for computer-science research. The goal is a repeatable loop from topic -> portfolio of hypotheses -> executable experiments -> grounded artifacts -> paper draft -> review and publish surfaces.
+ScholarFlow is an AI-powered auto-research platform that orchestrates the full academic research lifecycle — from topic formulation through experiment execution to paper drafting and review — inside a single workspace.
+
+## Quick Start
+
+### 1. Prerequisites
+
+- Python 3.12+
+- Node.js 18+
+- An LLM API key (DeepSeek, OpenAI, or any litellm-compatible provider)
+
+### 2. Configure Environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at minimum one LLM provider:
+
+```bash
+# Option A — DeepSeek (recommended, cost-effective)
+DEEPSEEK_API_KEY=sk-your-key-here
+LLM_MODEL=deepseek/deepseek-chat
+LLM_API_BASE=https://api.deepseek.com
+
+# Option B — OpenAI
+OPENAI_API_KEY=sk-your-key-here
+LLM_MODEL=openai/gpt-4o-mini
+
+# Database — SQLite works for local dev
+DATABASE_URL=sqlite:///backend/dev.db
+```
+
+### 3. Install Dependencies
+
+```bash
+# Backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+
+# Frontend
+cd frontend && npm install && cd ..
+```
+
+### 4. Start Servers
+
+```bash
+# Terminal 1 — Backend (port 8000)
+cd backend && PYTHONPATH=. python -m uvicorn main:app --reload
+
+# Terminal 2 — Frontend (port 5173)
+cd frontend && npm run dev
+```
+
+Open **http://localhost:5173** in your browser.
+
+### 5. Use the Workspace
+
+The ScholarFlow workspace guides you through a phased research workflow:
+
+| Phase | Panel                               | What You Do                                                                                                     |
+| ----- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 1     | **Project Launcher** (left sidebar) | Enter a title, topic, and template. Click **Create Project**.                                                   |
+| 2     | **Research Roadmap** (left sidebar) | Review the auto-generated research plan and hypotheses.                                                         |
+| 3     | **Editor Surface** (center)         | Click **Generate Draft** to produce a full paper outline via LLM. Edit with the rich-text editor (TipTap).      |
+| 4     | **File Manager** (left sidebar)     | Save drafts, track versions. Click **Download Latest Export** for Markdown.                                     |
+| 5     | **Review Panel** (right sidebar)    | Click **Run Review** to check evidence coverage, flag `[NEEDS_EVIDENCE]` markers, and get similarity screening. |
+| 6     | **Operator Console** (center-right) | Click **Start Run** to launch a full auto-research pipeline: plan → codegen → execute → paper generation.       |
+| 7     | **Deployments** (right sidebar)     | Export and download final publish bundles.                                                                      |
+
+**Typical workflow:** Create Project → Generate Draft → Edit → Save → Run Review → Start Run → Download Final Publish.
+
+### 6. Configuration Options
+
+Key environment variables (see `.env.example` for the full list):
+
+| Variable        | Default                    | Description                                              |
+| --------------- | -------------------------- | -------------------------------------------------------- |
+| `LLM_MODEL`     | `gpt-4o-mini`              | litellm model identifier (e.g. `deepseek/deepseek-chat`) |
+| `LLM_API_BASE`  | —                          | API base URL for non-OpenAI providers                    |
+| `DATABASE_URL`  | `sqlite:///backend/dev.db` | PostgreSQL or SQLite connection string                   |
+| `AUTH_REQUIRED` | `false`                    | Enable session authentication                            |
+| `DATA_DIR`      | `backend/data`             | Directory for project data storage                       |
 
 ## Document Map
 

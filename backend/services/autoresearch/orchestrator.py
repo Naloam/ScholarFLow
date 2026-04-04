@@ -980,7 +980,7 @@ class AutoResearchOrchestrator:
             project_id,
             paper_pipeline.paper_markdown,
             claims=[],
-            section="autorresearch_v0",
+            section="autoresearch_v0",
         )
         rebuilt_run = save_run(
             run.model_copy(
@@ -1760,7 +1760,7 @@ class AutoResearchOrchestrator:
                 project_id,
                 paper_markdown,
                 claims=[],
-                section="autorresearch_v0",
+                section="autoresearch_v0",
             )
             set_project_status(db, project_id, "edit")
             completed = save_run(

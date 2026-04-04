@@ -1301,9 +1301,9 @@ class AutoExperimentRunner:
                 )
                 detail = (
                     f"`{target_system or 'unknown'}` mean {metric_name}="
-                    f"{target_score if target_score is not None else float('nan'):.4f} "
+                    f"{target_score:.4f} " if target_score is not None else f"`{target_system or 'unknown'}` {metric_name}=n/a "
                     f"vs `{baseline_name}`="
-                    f"{baseline_score if baseline_score is not None else float('nan'):.4f}"
+                    f"{baseline_score:.4f}" if baseline_score is not None else f"vs `{baseline_name}`=n/a"
                 )
             elif rule.kind == "significance_test_reporting":
                 comparison_scope = rule.comparison_scope or "system"

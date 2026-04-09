@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { ProjectListItem, TemplateMeta } from "../../api/types";
 
@@ -27,6 +28,7 @@ export function ProjectLauncher({
   onCreate,
   onOpen,
 }: ProjectLauncherProps) {
+  const { t } = useTranslation();
   const [title, setTitle] = useState("Undergraduate Thesis Workspace");
   const [topic, setTopic] = useState(
     "Graph neural networks in recommender systems",
@@ -38,18 +40,18 @@ export function ProjectLauncher({
     <section className="panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Phase 7 Collaboration</p>
-          <h2 className="panel-title">Project Launcher</h2>
+          <p className="eyebrow">{t("project.eyebrow")}</p>
+          <h2 className="panel-title">{t("project.title")}</h2>
         </div>
         <span
           className={`badge ${healthStatus === "ok" ? "badge-ok" : "badge-warn"}`}
         >
-          API {healthStatus}
+          {healthStatus === "ok" ? t("project.apiOk") : t("project.apiWarn")}
         </span>
       </div>
 
       <label className="field">
-        <span className="field-label">Project title</span>
+        <span className="field-label">{t("project.projectTitle")}</span>
         <input
           id="project-title-input"
           name="project_title"
@@ -60,7 +62,7 @@ export function ProjectLauncher({
       </label>
 
       <label className="field">
-        <span className="field-label">Topic</span>
+        <span className="field-label">{t("project.topic")}</span>
         <textarea
           id="project-topic-input"
           name="project_topic"
@@ -72,7 +74,7 @@ export function ProjectLauncher({
       </label>
 
       <label className="field">
-        <span className="field-label">Template</span>
+        <span className="field-label">{t("project.template")}</span>
         <select
           id="project-template-select"
           name="project_template"
@@ -80,7 +82,7 @@ export function ProjectLauncher({
           value={templateId}
           onChange={(event) => setTemplateId(event.target.value)}
         >
-          <option value="">No template</option>
+          <option value="">{t("project.noTemplate")}</option>
           {templates.map((template) => (
             <option
               key={template.id ?? template.name}
@@ -99,7 +101,7 @@ export function ProjectLauncher({
           disabled={working || authLocked}
           onClick={() => void onCreate({ title, topic, templateId })}
         >
-          Create Project
+          {t("project.createProject")}
         </button>
       </div>
 
@@ -108,22 +110,19 @@ export function ProjectLauncher({
           className="inline-card auth-locked"
           data-testid="project-launcher-locked"
         >
-          <p className="inline-title">Workspace locked</p>
-          <p className="auth-copy">
-            Sign in first. Protected mode blocks project creation and project
-            lookup until a valid session or bearer token is present.
-          </p>
+          <p className="inline-title">{t("project.workspaceLocked")}</p>
+          <p className="auth-copy">{t("project.workspaceLockedCopy")}</p>
         </div>
       ) : null}
 
       <div className="inline-card">
-        <p className="inline-title">Open existing project</p>
+        <p className="inline-title">{t("project.openExisting")}</p>
         <div className="inline-row">
           <input
             id="open-project-input"
             name="open_project_id"
             data-testid="open-project-input"
-            placeholder="Paste project id"
+            placeholder={t("project.pasteProjectId")}
             value={existingProjectId}
             onChange={(event) => setExistingProjectId(event.target.value)}
           />
@@ -133,28 +132,25 @@ export function ProjectLauncher({
             disabled={working || authLocked || !existingProjectId.trim()}
             onClick={() => void onOpen(existingProjectId.trim())}
           >
-            Open
+            {t("project.open")}
           </button>
         </div>
       </div>
 
       <div className="inline-card">
-        <p className="inline-title">Accessible projects</p>
+        <p className="inline-title">{t("project.accessibleProjects")}</p>
         {availableProjects.length === 0 ? (
-          <p className="auth-copy">
-            No accessible projects yet. Projects you create, open anonymously,
-            or receive through mentor access will appear here.
-          </p>
+          <p className="auth-copy">{t("project.noProjectsCopy")}</p>
         ) : (
           <div className="stack">
             {availableProjects.map((project, index) => {
               const isCurrent = project.id === currentProjectId;
               const accessLabel =
                 project.access_mode === "mentor"
-                  ? "Mentor read-only"
+                  ? t("project.mentorReadonly")
                   : project.access_mode === "anonymous"
-                    ? "Open workspace"
-                    : "Project owner";
+                    ? t("project.openWorkspace")
+                    : t("project.projectOwner");
               return (
                 <article
                   key={project.id}
@@ -167,7 +163,7 @@ export function ProjectLauncher({
                     <strong>{project.title}</strong>
                     <span className="badge badge-soft">{accessLabel}</span>
                   </div>
-                  <p>{project.topic || "No topic set"}</p>
+                  <p>{project.topic || t("project.noTopic")}</p>
                   <small>{project.id}</small>
                   <div className="button-row">
                     <button
@@ -175,7 +171,7 @@ export function ProjectLauncher({
                       disabled={working}
                       onClick={() => void onOpen(project.id)}
                     >
-                      {isCurrent ? "Opened" : "Open"}
+                      {isCurrent ? t("project.opened") : t("project.open")}
                     </button>
                   </div>
                 </article>
@@ -186,9 +182,9 @@ export function ProjectLauncher({
       </div>
 
       <div className="meta-block">
-        <span className="meta-label">Current project</span>
+        <span className="meta-label">{t("project.currentProject")}</span>
         <code data-testid="current-project-id">
-          {currentProjectId || "Not selected"}
+          {currentProjectId || t("project.notSelected")}
         </code>
       </div>
     </section>

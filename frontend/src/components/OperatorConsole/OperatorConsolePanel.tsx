@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   AutoResearchBridgeImportRequest,
@@ -7,6 +8,8 @@ import type {
   AutoResearchPublicationManifest,
   AutoResearchRunRequest,
 } from "../../api/types";
+
+type TabKey = "overview" | "controls" | "execution" | "review";
 
 type OperatorConsolePanelProps = {
   consoleState: AutoResearchOperatorConsole | null;
@@ -88,6 +91,8 @@ export function OperatorConsolePanel({
   onDownloadCodePackage,
   onUpdateControls,
 }: OperatorConsolePanelProps) {
+  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [draftFilters, setDraftFilters] =
     useState<AutoResearchOperatorConsoleFilters>(filters);
   const [controlDraft, setControlDraft] = useState({
@@ -208,1070 +213,800 @@ export function OperatorConsolePanel({
     }));
   }
 
+  const bridgePayload: AutoResearchBridgeImportRequest = {
+    session_id: bridge?.current_session?.session_id ?? null,
+    summary: bridgeImportDraft.summary,
+    objective_score: Number(bridgeImportDraft.objective_score),
+    primary_metric: bridgeImportDraft.primary_metric,
+    objective_system: bridgeImportDraft.objective_system,
+    baseline_system: bridgeImportDraft.baseline_system,
+    baseline_score: bridgeImportDraft.baseline_score
+      ? Number(bridgeImportDraft.baseline_score)
+      : null,
+    key_findings: bridgeImportDraft.key_findings
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    notes: bridgeImportDraft.notes || null,
+  };
+
+  const bridgeLaunchPayload: Partial<AutoResearchRunRequest> = {
+    max_rounds: 1,
+    candidate_execution_limit: 1,
+    experiment_bridge: {
+      enabled: true,
+      mode: "manual_async",
+      target_kind: "manual",
+      target_label: launchDraft.targetLabel.trim() || "external-environment",
+      auto_resume_on_result: true,
+      notification_hooks: [
+        {
+          channel: "console",
+          target: null,
+          events: [
+            "session_created",
+            "result_imported",
+            "resume_enqueued",
+            "run_completed",
+            "run_failed",
+            "run_canceled",
+          ],
+        },
+      ],
+    },
+  };
+
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: "overview", label: t("operator.tabOverview") },
+    { key: "controls", label: t("operator.tabControls") },
+    { key: "execution", label: t("operator.tabExecution") },
+    { key: "review", label: t("operator.tabReviewPublish") },
+  ];
+
   return (
     <section className="panel" data-testid="operator-console-panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Phase 6</p>
-          <h2 className="panel-title">Operator Console</h2>
+          <p className="eyebrow">{t("operator.eyebrow")}</p>
+          <h2 className="panel-title">{t("operator.title")}</h2>
         </div>
         <span className="badge badge-soft">
           {consoleState
             ? `${consoleState.filtered_run_count}/${consoleState.run_count} shown`
-            : "No runs"}
+            : t("operator.noRuns")}
         </span>
       </div>
 
-      <div className="button-row">
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={() =>
-            onStartRun(
-              launchDraft.mode === "bridge"
-                ? {
-                    max_rounds: 1,
-                    candidate_execution_limit: 1,
-                    experiment_bridge: {
-                      enabled: true,
-                      mode: "manual_async",
-                      target_kind: "manual",
-                      target_label:
-                        launchDraft.targetLabel.trim() ||
-                        "external-environment",
-                      auto_resume_on_result: true,
-                      notification_hooks: [
-                        {
-                          channel: "console",
-                          target: null,
-                          events: [
-                            "session_created",
-                            "result_imported",
-                            "resume_enqueued",
-                            "run_completed",
-                            "run_failed",
-                            "run_canceled",
-                          ],
-                        },
-                      ],
-                    },
-                  }
-                : undefined,
-            )
-          }
-          disabled={
-            disabled ||
-            !projectTopic ||
-            (launchDraft.mode === "bridge" && !launchDraft.targetLabel.trim())
-          }
-          data-testid="start-autoresearch-button"
-        >
-          Start Run
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onResume}
-          disabled={disabled || !current?.actions.resume}
-          data-testid="resume-autoresearch-button"
-        >
-          Resume
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onRetry}
-          disabled={disabled || !current?.actions.retry}
-          data-testid="retry-autoresearch-button"
-        >
-          Retry
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onCancel}
-          disabled={disabled || !current?.actions.cancel}
-          data-testid="cancel-autoresearch-button"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onRefreshBridge}
-          disabled={disabled || !current?.actions.refresh_bridge}
-          data-testid="refresh-bridge-button"
-        >
-          Refresh Bridge
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onRefreshReview}
-          disabled={disabled || !current?.actions.refresh_review}
-          data-testid="refresh-review-button"
-        >
-          Refresh Review
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={() =>
-            onImportBridgeResult({
-              session_id: bridge?.current_session?.session_id ?? null,
-              summary: bridgeImportDraft.summary,
-              objective_score: Number(bridgeImportDraft.objective_score),
-              primary_metric: bridgeImportDraft.primary_metric,
-              objective_system: bridgeImportDraft.objective_system,
-              baseline_system: bridgeImportDraft.baseline_system,
-              baseline_score: bridgeImportDraft.baseline_score
-                ? Number(bridgeImportDraft.baseline_score)
-                : null,
-              key_findings: bridgeImportDraft.key_findings
-                .split("\n")
-                .map((item) => item.trim())
-                .filter(Boolean),
-              notes: bridgeImportDraft.notes || null,
-            })
-          }
-          disabled={disabled || !current?.actions.import_bridge_result}
-          data-testid="import-bridge-result-button"
-        >
-          Import Bridge Result
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onApplyReviewActions}
-          disabled={disabled || !current?.actions.apply_review_actions}
-          data-testid="apply-review-actions-button"
-        >
-          Apply Review Actions
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onRebuildPaper}
-          disabled={disabled || !current?.actions.rebuild_paper}
-          data-testid="rebuild-paper-button"
-        >
-          Rebuild Paper
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={() =>
-            onExportPublish({
-              deployment_id: publishDraft.deployment_id.trim() || null,
-              deployment_label: publishDraft.deployment_label.trim() || null,
-            })
-          }
-          disabled={disabled || !current?.actions.export_publish}
-          data-testid="export-publish-button"
-        >
-          Export Final Publish
-        </button>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={onDownloadPublish}
-          disabled={disabled || !current?.actions.download_publish}
-          data-testid="download-publish-button"
-        >
-          Download Final Publish
-        </button>
+      <div className="tab-bar">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className={`tab ${activeTab === tab.key ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      <form
-        className="stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onStartRun(
-            launchDraft.mode === "bridge"
-              ? {
-                  max_rounds: 1,
-                  candidate_execution_limit: 1,
-                  experiment_bridge: {
-                    enabled: true,
-                    mode: "manual_async",
-                    target_kind: "manual",
-                    target_label:
-                      launchDraft.targetLabel.trim() || "external-environment",
-                    auto_resume_on_result: true,
-                    notification_hooks: [
-                      {
-                        channel: "console",
-                        target: null,
-                        events: [
-                          "session_created",
-                          "result_imported",
-                          "resume_enqueued",
-                          "run_completed",
-                          "run_failed",
-                          "run_canceled",
-                        ],
-                      },
-                    ],
-                  },
-                }
-              : undefined,
-          );
-        }}
-      >
-        <p className="inline-title">Launch Profile</p>
-        <div className="button-row">
-          <select
-            id="operator-launch-mode"
-            name="operator_launch_mode"
-            value={launchDraft.mode}
-            onChange={(event) =>
-              setLaunchDraft((state) => ({
-                ...state,
-                mode: event.target.value as "inline" | "bridge",
-              }))
-            }
-            disabled={disabled}
-            data-testid="operator-launch-mode"
-          >
-            <option value="inline">Inline Execution</option>
-            <option value="bridge">Bridge Handoff</option>
-          </select>
-          <input
-            id="operator-launch-bridge-target"
-            name="operator_launch_bridge_target"
-            type="text"
-            value={launchDraft.targetLabel}
-            onChange={(event) =>
-              setLaunchDraft((state) => ({
-                ...state,
-                targetLabel: event.target.value,
-              }))
-            }
-            disabled={disabled || launchDraft.mode !== "bridge"}
-            placeholder="Bridge target label"
-            data-testid="operator-launch-bridge-target"
-          />
-          <span
-            className="auth-copy"
-            data-testid="operator-launch-profile-detail"
-          >
-            {launchDraft.mode === "bridge"
-              ? `Manual async bridge to ${launchDraft.targetLabel || "external-environment"}`
-              : "Run attempts inline inside the local execution plane"}
-          </span>
-        </div>
-      </form>
-
-      <form
-        className="stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onApplyFilters(draftFilters);
-        }}
-      >
-        <p className="inline-title">Run Filters</p>
-        <div className="button-row">
-          <input
-            id="operator-filter-search"
-            name="operator_filter_search"
-            type="search"
-            value={draftFilters.search ?? ""}
-            onChange={(event) =>
-              updateFilter("search", event.target.value || null)
-            }
-            placeholder="Search run id or topic"
-            disabled={disabled}
-            data-testid="operator-filter-search"
-          />
-          <select
-            id="operator-filter-status"
-            name="operator_filter_status"
-            value={draftFilters.status ?? ""}
-            onChange={(event) =>
-              updateFilter(
-                "status",
-                (event.target.value
-                  ? event.target.value
-                  : null) as AutoResearchOperatorConsoleFilters["status"],
-              )
-            }
-            disabled={disabled}
-            data-testid="operator-filter-status"
-          >
-            <option value="">All Statuses</option>
-            <option value="queued">Queued</option>
-            <option value="running">Running</option>
-            <option value="done">Done</option>
-            <option value="failed">Failed</option>
-            <option value="canceled">Canceled</option>
-          </select>
-          <select
-            id="operator-filter-publish"
-            name="operator_filter_publish"
-            value={draftFilters.publish_status ?? ""}
-            onChange={(event) =>
-              updateFilter(
-                "publish_status",
-                (event.target.value
-                  ? event.target.value
-                  : null) as AutoResearchOperatorConsoleFilters["publish_status"],
-              )
-            }
-            disabled={disabled}
-            data-testid="operator-filter-publish"
-          >
-            <option value="">All Publish States</option>
-            <option value="publish_ready">Publish Ready</option>
-            <option value="revision_required">Revision Required</option>
-            <option value="blocked">Blocked</option>
-          </select>
-          <select
-            id="operator-filter-risk"
-            name="operator_filter_risk"
-            value={draftFilters.review_risk ?? ""}
-            onChange={(event) =>
-              updateFilter(
-                "review_risk",
-                (event.target.value
-                  ? event.target.value
-                  : null) as AutoResearchOperatorConsoleFilters["review_risk"],
-              )
-            }
-            disabled={disabled}
-            data-testid="operator-filter-risk"
-          >
-            <option value="">All Review Risks</option>
-            <option value="low">Low Risk</option>
-            <option value="medium">Medium Risk</option>
-            <option value="high">High Risk</option>
-          </select>
-          <select
-            id="operator-filter-novelty"
-            name="operator_filter_novelty"
-            value={draftFilters.novelty_status ?? ""}
-            onChange={(event) =>
-              updateFilter(
-                "novelty_status",
-                (event.target.value
-                  ? event.target.value
-                  : null) as AutoResearchOperatorConsoleFilters["novelty_status"],
-              )
-            }
-            disabled={disabled}
-            data-testid="operator-filter-novelty"
-          >
-            <option value="">All Novelty States</option>
-            <option value="grounded">Grounded</option>
-            <option value="incremental">Incremental</option>
-            <option value="weak">Weak</option>
-            <option value="missing_context">Missing Context</option>
-          </select>
-          <select
-            id="operator-filter-budget"
-            name="operator_filter_budget"
-            value={draftFilters.budget_status ?? ""}
-            onChange={(event) =>
-              updateFilter(
-                "budget_status",
-                (event.target.value
-                  ? event.target.value
-                  : null) as AutoResearchOperatorConsoleFilters["budget_status"],
-              )
-            }
-            disabled={disabled}
-            data-testid="operator-filter-budget"
-          >
-            <option value="">All Budget Modes</option>
-            <option value="default">Default</option>
-            <option value="constrained">Constrained</option>
-          </select>
-          <select
-            id="operator-filter-priority"
-            name="operator_filter_priority"
-            value={draftFilters.queue_priority ?? ""}
-            onChange={(event) =>
-              updateFilter(
-                "queue_priority",
-                (event.target.value
-                  ? event.target.value
-                  : null) as AutoResearchOperatorConsoleFilters["queue_priority"],
-              )
-            }
-            disabled={disabled}
-            data-testid="operator-filter-priority"
-          >
-            <option value="">All Priorities</option>
-            <option value="high">High</option>
-            <option value="normal">Normal</option>
-            <option value="low">Low</option>
-          </select>
-          <button
-            type="submit"
-            className="ghost-btn"
-            disabled={disabled}
-            data-testid="operator-apply-filters-button"
-          >
-            Apply
-          </button>
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={onClearFilters}
-            disabled={disabled || !hasActiveFilters}
-            data-testid="operator-clear-filters-button"
-          >
-            Clear
-          </button>
-        </div>
-      </form>
-
-      {activeConsole ? (
+      {/* ── Overview Tab ── */}
+      {activeTab === "overview" && (
         <>
-          <div
-            className="summary-banner operator-summary-grid"
-            data-testid="operator-queue-summary"
-          >
-            <div>
-              <span className="meta-label">Queue Depth</span>
-              <strong>{queueTelemetry?.queue_depth ?? 0}</strong>
-            </div>
-            <div>
-              <span className="meta-label">Active Jobs</span>
-              <strong>
-                {(queueTelemetry?.leased_jobs ?? 0) +
-                  (queueTelemetry?.running_jobs ?? 0)}
-              </strong>
-            </div>
-            <div>
-              <span className="meta-label">Queued / Running</span>
-              <strong>
-                {queueTelemetry?.queued_jobs ?? 0} /{" "}
-                {queueTelemetry?.running_jobs ?? 0}
-              </strong>
-            </div>
-            <div>
-              <span className="meta-label">Done / Failed</span>
-              <strong>
-                {queueTelemetry?.succeeded_jobs ?? 0} /{" "}
-                {queueTelemetry?.failed_jobs ?? 0}
-              </strong>
-            </div>
-            <div>
-              <span className="meta-label">Workers</span>
-              <strong>
-                {queueTelemetry?.worker_count ?? 0} total /{" "}
-                {queueTelemetry?.active_workers ?? 0} active
-              </strong>
-            </div>
-            <div>
-              <span className="meta-label">Idle / Stale</span>
-              <strong>
-                {queueTelemetry?.idle_workers ?? 0} /{" "}
-                {queueTelemetry?.stale_workers ?? 0}
-              </strong>
-            </div>
-            <div>
-              <span className="meta-label">Processed / Recovered</span>
-              <strong>
-                {queueTelemetry?.total_processed_jobs ?? 0} /{" "}
-                {queueTelemetry?.total_recovered_jobs ?? 0}
-              </strong>
-            </div>
-            <div>
-              <span className="meta-label">Last Recovery</span>
-              <strong>
-                {formatTimestamp(queueTelemetry?.last_recovered_at)}
-              </strong>
-            </div>
-            <div>
-              <span className="meta-label">Last Finish</span>
-              <strong>
-                {formatTimestamp(queueTelemetry?.last_job_finished_at)}
-              </strong>
-            </div>
+          <div className="button-row">
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() =>
+                onStartRun(
+                  launchDraft.mode === "bridge"
+                    ? bridgeLaunchPayload
+                    : undefined,
+                )
+              }
+              disabled={
+                disabled ||
+                !projectTopic ||
+                (launchDraft.mode === "bridge" &&
+                  !launchDraft.targetLabel.trim())
+              }
+              data-testid="start-autoresearch-button"
+            >
+              {t("operator.startRun")}
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onResume}
+              disabled={disabled || !current?.actions.resume}
+              data-testid="resume-autoresearch-button"
+            >
+              {t("operator.resume")}
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onRetry}
+              disabled={disabled || !current?.actions.retry}
+              data-testid="retry-autoresearch-button"
+            >
+              {t("operator.retry")}
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onCancel}
+              disabled={disabled || !current?.actions.cancel}
+              data-testid="cancel-autoresearch-button"
+            >
+              {t("operator.cancel")}
+            </button>
           </div>
 
-          <div className="list-block" data-testid="operator-worker-fleet">
-            {workerFleet.length ? (
-              workerFleet.map((worker) => (
-                <div
-                  key={worker.worker_id ?? "worker-unknown"}
-                  className="evidence-card"
-                  data-testid={`operator-worker-${worker.worker_id ?? "unknown"}`}
+          {!hasRuns ? (
+            <div className="empty-state">
+              <p>{t("operator.noRunsTitle")}</p>
+              <span>
+                {t("operator.noRunsDetail", {
+                  topic: projectTopic || "this project",
+                })}
+              </span>
+            </div>
+          ) : !hasFilteredRuns ? (
+            <div className="empty-state">
+              <p>{t("operator.noFilteredTitle")}</p>
+              <span>{t("operator.noFilteredDetail")}</span>
+            </div>
+          ) : (
+            <div className="list-block operator-run-list">
+              {activeConsole?.runs.map((run) => (
+                <button
+                  key={run.run_id}
+                  type="button"
+                  className={
+                    run.run_id === activeConsole.selected_run_id
+                      ? "list-item selected"
+                      : "list-item"
+                  }
+                  onClick={() => onSelectRun(run.run_id)}
+                  disabled={disabled}
+                  data-testid={`operator-run-${run.run_id}`}
                 >
-                  <strong>
-                    {worker.worker_id ?? "worker-unknown"}{" "}
-                    {worker.stale ? "(stale)" : ""}
-                  </strong>
-                  <small>
-                    status {worker.status} / queue {worker.queue_depth} /
-                    processed {worker.processed_jobs} / recovered{" "}
-                    {worker.recovered_job_count}
-                  </small>
-                  <small>
-                    job {worker.current_job_id ?? "idle"} / run{" "}
-                    {worker.current_run_id ?? "n/a"}
-                  </small>
-                  <small>
-                    heartbeat {formatTimestamp(worker.heartbeat_at)} / lease
-                    expires {formatTimestamp(worker.lease_expires_at)}
-                  </small>
-                  <small>
-                    started {formatTimestamp(worker.last_started_at)} /
-                    completed {formatTimestamp(worker.last_completed_at)} /
-                    recovered {formatTimestamp(worker.last_recovered_at)}
-                  </small>
-                  <small>lease {worker.current_lease_id ?? "n/a"}</small>
-                  <small>error {worker.last_error ?? "n/a"}</small>
-                </div>
-              ))
-            ) : (
-              <div className="empty-state">
-                <p>No execution workers registered yet.</p>
-                <span>
-                  The queue will populate worker telemetry after the first
-                  execution lease.
+                  <div>
+                    <strong>{run.run_id}</strong>
+                    <small>{run.topic}</small>
+                  </div>
+                  <div className="operator-run-meta">
+                    <span className="badge badge-soft">{run.status}</span>
+                    <small>
+                      selected {run.selected_count} / failed {run.failed_count}{" "}
+                      / active {run.active_count}
+                    </small>
+                    <small>
+                      risk {run.review_risk ?? "n/a"} / novelty{" "}
+                      {run.novelty_status ?? "n/a"} / publish{" "}
+                      {run.publish_status ?? "n/a"}
+                    </small>
+                    <small>
+                      benchmark {run.benchmark_name ?? "n/a"} / family{" "}
+                      {formatTaskFamily(run.task_family)}
+                    </small>
+                    <small>
+                      priority {run.queue_priority} / rounds {run.max_rounds}
+                    </small>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {current && (
+            <div className="summary-banner operator-summary-grid">
+              <div>
+                <span className="meta-label">{t("operator.runStatus")}</span>
+                <strong>{current.run.status}</strong>
+              </div>
+              <div>
+                <span className="meta-label">{t("operator.benchmark")}</span>
+                <strong data-testid="operator-current-benchmark">
+                  {currentSummary?.benchmark_name ??
+                    current.registry.benchmark_name ??
+                    "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">{t("operator.taskFamily")}</span>
+                <strong data-testid="operator-current-task-family">
+                  {formatTaskFamily(
+                    currentSummary?.task_family ?? current.registry.task_family,
+                  )}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.selectedCandidate")}
+                </span>
+                <strong>
+                  {current.registry.selected_candidate_id ?? "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">{t("operator.bridge")}</span>
+                <strong data-testid="operator-bridge-summary">
+                  {bridge
+                    ? `${bridge.status}${bridge.current_session ? ` / ${bridge.current_session.status}` : ""}`
+                    : t("operator.disabled")}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">{t("operator.publish")}</span>
+                <strong>{publish?.status ?? t("operator.notBuilt")}</strong>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Controls Tab ── */}
+      {activeTab === "controls" && (
+        <>
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onStartRun(
+                launchDraft.mode === "bridge" ? bridgeLaunchPayload : undefined,
+              );
+            }}
+          >
+            <p className="inline-title">{t("operator.launchProfile")}</p>
+            <div className="button-row">
+              <select
+                id="operator-launch-mode"
+                name="operator_launch_mode"
+                value={launchDraft.mode}
+                onChange={(event) =>
+                  setLaunchDraft((state) => ({
+                    ...state,
+                    mode: event.target.value as "inline" | "bridge",
+                  }))
+                }
+                disabled={disabled}
+                data-testid="operator-launch-mode"
+              >
+                <option value="inline">{t("operator.inlineExecution")}</option>
+                <option value="bridge">{t("operator.bridgeHandoff")}</option>
+              </select>
+              <input
+                id="operator-launch-bridge-target"
+                name="operator_launch_bridge_target"
+                type="text"
+                value={launchDraft.targetLabel}
+                onChange={(event) =>
+                  setLaunchDraft((state) => ({
+                    ...state,
+                    targetLabel: event.target.value,
+                  }))
+                }
+                disabled={disabled || launchDraft.mode !== "bridge"}
+                placeholder={t("operator.bridgeTargetPlaceholder")}
+                data-testid="operator-launch-bridge-target"
+              />
+              <span
+                className="auth-copy"
+                data-testid="operator-launch-profile-detail"
+              >
+                {launchDraft.mode === "bridge"
+                  ? t("operator.bridgeDetail", {
+                      target: launchDraft.targetLabel || "external-environment",
+                    })
+                  : t("operator.inlineDetail")}
+              </span>
+            </div>
+          </form>
+
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onApplyFilters(draftFilters);
+            }}
+          >
+            <p className="inline-title">{t("operator.runFilters")}</p>
+            <div className="button-row">
+              <input
+                id="operator-filter-search"
+                name="operator_filter_search"
+                type="search"
+                value={draftFilters.search ?? ""}
+                onChange={(event) =>
+                  updateFilter("search", event.target.value || null)
+                }
+                placeholder={t("operator.filterPlaceholder")}
+                disabled={disabled}
+                data-testid="operator-filter-search"
+              />
+              <select
+                id="operator-filter-status"
+                name="operator_filter_status"
+                value={draftFilters.status ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "status",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["status"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-status"
+              >
+                <option value="">{t("operator.allStatuses")}</option>
+                <option value="queued">{t("operator.queued")}</option>
+                <option value="running">{t("operator.running")}</option>
+                <option value="done">{t("operator.done")}</option>
+                <option value="failed">{t("operator.failed")}</option>
+                <option value="canceled">{t("operator.canceled")}</option>
+              </select>
+              <select
+                id="operator-filter-publish"
+                name="operator_filter_publish"
+                value={draftFilters.publish_status ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "publish_status",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["publish_status"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-publish"
+              >
+                <option value="">{t("operator.allPublishStates")}</option>
+                <option value="publish_ready">
+                  {t("operator.publishReady")}
+                </option>
+                <option value="revision_required">
+                  {t("operator.revisionRequired")}
+                </option>
+                <option value="blocked">{t("operator.blocked")}</option>
+              </select>
+              <select
+                id="operator-filter-risk"
+                name="operator_filter_risk"
+                value={draftFilters.review_risk ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "review_risk",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["review_risk"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-risk"
+              >
+                <option value="">{t("operator.allReviewRisks")}</option>
+                <option value="low">{t("operator.lowRisk")}</option>
+                <option value="medium">{t("operator.mediumRisk")}</option>
+                <option value="high">{t("operator.highRisk")}</option>
+              </select>
+              <select
+                id="operator-filter-novelty"
+                name="operator_filter_novelty"
+                value={draftFilters.novelty_status ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "novelty_status",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["novelty_status"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-novelty"
+              >
+                <option value="">{t("operator.allNoveltyStates")}</option>
+                <option value="grounded">{t("operator.grounded")}</option>
+                <option value="incremental">{t("operator.incremental")}</option>
+                <option value="weak">{t("operator.weak")}</option>
+                <option value="missing_context">
+                  {t("operator.missingContext")}
+                </option>
+              </select>
+              <select
+                id="operator-filter-budget"
+                name="operator_filter_budget"
+                value={draftFilters.budget_status ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "budget_status",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["budget_status"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-budget"
+              >
+                <option value="">{t("operator.allBudgetModes")}</option>
+                <option value="default">{t("operator.defaultBudget")}</option>
+                <option value="constrained">
+                  {t("operator.constrainedBudget")}
+                </option>
+              </select>
+              <select
+                id="operator-filter-priority"
+                name="operator_filter_priority"
+                value={draftFilters.queue_priority ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "queue_priority",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["queue_priority"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-priority"
+              >
+                <option value="">{t("operator.allPriorities")}</option>
+                <option value="high">{t("operator.highPriority")}</option>
+                <option value="normal">{t("operator.normalPriority")}</option>
+                <option value="low">{t("operator.lowPriority")}</option>
+              </select>
+              <button
+                type="submit"
+                className="ghost-btn"
+                disabled={disabled}
+                data-testid="operator-apply-filters-button"
+              >
+                {t("operator.apply")}
+              </button>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={onClearFilters}
+                disabled={disabled || !hasActiveFilters}
+                data-testid="operator-clear-filters-button"
+              >
+                {t("operator.clear")}
+              </button>
+            </div>
+          </form>
+
+          {current && (
+            <form
+              className="stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onUpdateControls({
+                  queue_priority: controlDraft.queue_priority,
+                  max_rounds: Number(controlDraft.max_rounds),
+                  candidate_execution_limit:
+                    controlDraft.candidate_execution_limit
+                      ? Number(controlDraft.candidate_execution_limit)
+                      : null,
+                });
+              }}
+            >
+              <p className="inline-title">{t("operator.runControls")}</p>
+              <div className="button-row">
+                <select
+                  id="operator-control-priority"
+                  name="operator_control_priority"
+                  value={controlDraft.queue_priority}
+                  onChange={(event) =>
+                    setControlDraft((state) => ({
+                      ...state,
+                      queue_priority: event.target.value as
+                        | "low"
+                        | "normal"
+                        | "high",
+                    }))
+                  }
+                  disabled={disabled || !current.actions.update_controls}
+                  data-testid="operator-control-priority"
+                >
+                  <option value="high">{t("operator.highPriority")}</option>
+                  <option value="normal">{t("operator.normalPriority")}</option>
+                  <option value="low">{t("operator.lowPriority")}</option>
+                </select>
+                <input
+                  id="operator-control-rounds"
+                  name="operator_control_rounds"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={controlDraft.max_rounds}
+                  onChange={(event) =>
+                    setControlDraft((state) => ({
+                      ...state,
+                      max_rounds: event.target.value,
+                    }))
+                  }
+                  disabled={disabled || !current.actions.update_controls}
+                  placeholder={t("operator.maxRoundsPlaceholder")}
+                  data-testid="operator-control-rounds"
+                />
+                <input
+                  id="operator-control-candidate-limit"
+                  name="operator_control_candidate_limit"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={controlDraft.candidate_execution_limit}
+                  onChange={(event) =>
+                    setControlDraft((state) => ({
+                      ...state,
+                      candidate_execution_limit: event.target.value,
+                    }))
+                  }
+                  disabled={disabled || !current.actions.update_controls}
+                  placeholder={t("operator.candidateLimitPlaceholder")}
+                  data-testid="operator-control-candidate-limit"
+                />
+                <button
+                  type="submit"
+                  className="ghost-btn"
+                  disabled={
+                    disabled ||
+                    !current.actions.update_controls ||
+                    !controlDraft.max_rounds
+                  }
+                  data-testid="operator-apply-controls-button"
+                >
+                  {t("operator.applyControls")}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {current && (
+            <form
+              className="stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onExportPublish({
+                  deployment_id: publishDraft.deployment_id.trim() || null,
+                  deployment_label:
+                    publishDraft.deployment_label.trim() || null,
+                });
+              }}
+            >
+              <p className="inline-title">{t("operator.publishDeployment")}</p>
+              <div className="button-row">
+                <input
+                  id="publish-deployment-id"
+                  name="publish_deployment_id"
+                  type="text"
+                  value={publishDraft.deployment_id}
+                  onChange={(event) =>
+                    setPublishDraft((state) => ({
+                      ...state,
+                      deployment_id: event.target.value,
+                    }))
+                  }
+                  disabled={disabled || !current.actions.export_publish}
+                  placeholder={t("operator.deploymentIdPlaceholder")}
+                  data-testid="publish-deployment-id"
+                />
+                <input
+                  id="publish-deployment-label"
+                  name="publish_deployment_label"
+                  type="text"
+                  value={publishDraft.deployment_label}
+                  onChange={(event) =>
+                    setPublishDraft((state) => ({
+                      ...state,
+                      deployment_label: event.target.value,
+                    }))
+                  }
+                  disabled={disabled || !current.actions.export_publish}
+                  placeholder={t("operator.deploymentLabelPlaceholder")}
+                  data-testid="publish-deployment-label"
+                />
+                <span
+                  className="auth-copy"
+                  data-testid="publish-deployment-summary"
+                >
+                  {!finalPublishReady
+                    ? t("operator.publishNotReady")
+                    : publish?.deployment_ids?.length
+                      ? t("operator.publishRegistered", {
+                          deployments: publish.deployment_ids.join(", "),
+                        })
+                      : t("operator.publishExportDetail")}
                 </span>
               </div>
-            )}
-          </div>
+            </form>
+          )}
         </>
-      ) : null}
+      )}
 
-      {!hasRuns ? (
-        <div className="empty-state">
-          <p>No auto-research runs yet.</p>
-          <span>
-            Start a run for `{projectTopic || "this project"}` to populate
-            execution, candidate, and publish inspection state.
-          </span>
-        </div>
-      ) : !hasFilteredRuns ? (
-        <div className="empty-state">
-          <p>No runs match the current console filters.</p>
-          <span>Clear filters or widen the search to resume triage.</span>
-        </div>
-      ) : (
+      {/* ── Execution Tab ── */}
+      {activeTab === "execution" && (
         <>
-          <div className="list-block operator-run-list">
-            {activeConsole?.runs.map((run) => (
-              <button
-                key={run.run_id}
-                type="button"
-                className={
-                  run.run_id === activeConsole.selected_run_id
-                    ? "list-item selected"
-                    : "list-item"
-                }
-                onClick={() => onSelectRun(run.run_id)}
-                disabled={disabled}
-                data-testid={`operator-run-${run.run_id}`}
-              >
-                <div>
-                  <strong>{run.run_id}</strong>
-                  <small>{run.topic}</small>
-                </div>
-                <div className="operator-run-meta">
-                  <span className="badge badge-soft">{run.status}</span>
-                  <small>
-                    selected {run.selected_count} / failed {run.failed_count} /
-                    active {run.active_count}
-                  </small>
-                  <small>
-                    risk {run.review_risk ?? "n/a"} / novelty{" "}
-                    {run.novelty_status ?? "n/a"} / publish{" "}
-                    {run.publish_status ?? "n/a"}
-                  </small>
-                  <small>
-                    review r{run.review_round} / open {run.open_issue_count} /
-                    pending {run.pending_action_count}
-                  </small>
-                  <small>
-                    benchmark {run.benchmark_name ?? "n/a"} / family{" "}
-                    {formatTaskFamily(run.task_family)}
-                  </small>
-                  <small>
-                    budget {run.budget_status} / executed{" "}
-                    {run.executed_candidate_count}
-                    {run.candidate_execution_limit
-                      ? ` / limit ${run.candidate_execution_limit}`
-                      : ""}
-                  </small>
-                  <small>
-                    priority {run.queue_priority} / rounds {run.max_rounds}
-                  </small>
-                  <small>
-                    bridge {run.bridge_status ?? "n/a"}
-                    {run.bridge_target_label
-                      ? ` / ${run.bridge_target_label}`
-                      : ""}
-                  </small>
-                  <small>recoveries {run.recovery_count}</small>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {current ? (
+          {activeConsole ? (
             <>
-              <form
-                className="stack"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  onUpdateControls({
-                    queue_priority: controlDraft.queue_priority,
-                    max_rounds: Number(controlDraft.max_rounds),
-                    candidate_execution_limit:
-                      controlDraft.candidate_execution_limit
-                        ? Number(controlDraft.candidate_execution_limit)
-                        : null,
-                  });
-                }}
+              <div
+                className="summary-banner operator-summary-grid"
+                data-testid="operator-queue-summary"
               >
-                <p className="inline-title">Run Controls</p>
-                <div className="button-row">
-                  <select
-                    id="operator-control-priority"
-                    name="operator_control_priority"
-                    value={controlDraft.queue_priority}
-                    onChange={(event) =>
-                      setControlDraft((state) => ({
-                        ...state,
-                        queue_priority: event.target.value as
-                          | "low"
-                          | "normal"
-                          | "high",
-                      }))
-                    }
-                    disabled={disabled || !current.actions.update_controls}
-                    data-testid="operator-control-priority"
-                  >
-                    <option value="high">High Priority</option>
-                    <option value="normal">Normal Priority</option>
-                    <option value="low">Low Priority</option>
-                  </select>
-                  <input
-                    id="operator-control-rounds"
-                    name="operator_control_rounds"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={controlDraft.max_rounds}
-                    onChange={(event) =>
-                      setControlDraft((state) => ({
-                        ...state,
-                        max_rounds: event.target.value,
-                      }))
-                    }
-                    disabled={disabled || !current.actions.update_controls}
-                    placeholder="Max rounds"
-                    data-testid="operator-control-rounds"
-                  />
-                  <input
-                    id="operator-control-candidate-limit"
-                    name="operator_control_candidate_limit"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={controlDraft.candidate_execution_limit}
-                    onChange={(event) =>
-                      setControlDraft((state) => ({
-                        ...state,
-                        candidate_execution_limit: event.target.value,
-                      }))
-                    }
-                    disabled={disabled || !current.actions.update_controls}
-                    placeholder="Candidate limit"
-                    data-testid="operator-control-candidate-limit"
-                  />
-                  <button
-                    type="submit"
-                    className="ghost-btn"
-                    disabled={
-                      disabled ||
-                      !current.actions.update_controls ||
-                      !controlDraft.max_rounds
-                    }
-                    data-testid="operator-apply-controls-button"
-                  >
-                    Apply Controls
-                  </button>
-                </div>
-              </form>
-
-              <form
-                className="stack"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  onExportPublish({
-                    deployment_id: publishDraft.deployment_id.trim() || null,
-                    deployment_label:
-                      publishDraft.deployment_label.trim() || null,
-                  });
-                }}
-              >
-                <p className="inline-title">Publish Deployment</p>
-                <div className="button-row">
-                  <input
-                    id="publish-deployment-id"
-                    name="publish_deployment_id"
-                    type="text"
-                    value={publishDraft.deployment_id}
-                    onChange={(event) =>
-                      setPublishDraft((state) => ({
-                        ...state,
-                        deployment_id: event.target.value,
-                      }))
-                    }
-                    disabled={disabled || !current.actions.export_publish}
-                    placeholder="Deployment id"
-                    data-testid="publish-deployment-id"
-                  />
-                  <input
-                    id="publish-deployment-label"
-                    name="publish_deployment_label"
-                    type="text"
-                    value={publishDraft.deployment_label}
-                    onChange={(event) =>
-                      setPublishDraft((state) => ({
-                        ...state,
-                        deployment_label: event.target.value,
-                      }))
-                    }
-                    disabled={disabled || !current.actions.export_publish}
-                    placeholder="Deployment label"
-                    data-testid="publish-deployment-label"
-                  />
-                  <span
-                    className="auth-copy"
-                    data-testid="publish-deployment-summary"
-                  >
-                    {!finalPublishReady
-                      ? "Resolve review loop and citation blockers before final publish export is enabled."
-                      : publish?.deployment_ids?.length
-                        ? `Registered in ${publish.deployment_ids.join(", ")}`
-                        : "Final export will register the current paper/run/code package into a deployment"}
-                  </span>
-                </div>
-              </form>
-
-              {currentPublication ? (
-                <>
-                  <div
-                    className="summary-banner operator-summary-grid"
-                    data-testid="operator-publication-summary"
-                  >
-                    <div>
-                      <span className="meta-label">Publication</span>
-                      <strong>{currentPublication.publication_id}</strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Bundle</span>
-                      <strong>{currentPublication.bundle_kind}</strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Paper Asset</span>
-                      <strong>
-                        {currentPublication.paper_path
-                          ? "available"
-                          : "missing"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Compiled PDF</span>
-                      <strong>
-                        {currentPublication.compiled_paper_path
-                          ? "available"
-                          : "missing"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Compile Outputs</span>
-                      <strong>
-                        {currentPublication.paper_compile_output_paths.length}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Code Package</span>
-                      <strong>
-                        {currentPublication.code_package_path
-                          ? "available"
-                          : "missing"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Archive</span>
-                      <strong>
-                        {currentPublication.archive_current
-                          ? "current"
-                          : "stale"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Final Ready</span>
-                      <strong>
-                        {currentPublication.final_publish_ready ? "yes" : "no"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="meta-label">Updated</span>
-                      <strong>
-                        {formatTimestamp(currentPublication.updated_at)}
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={onDownloadPaper}
-                      disabled={disabled || !currentPublication.paper_path}
-                      data-testid="download-paper-button"
-                    >
-                      Download Paper
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={onDownloadCompiledPaper}
-                      disabled={
-                        disabled || !currentPublication.compiled_paper_path
-                      }
-                      data-testid="download-compiled-paper-button"
-                    >
-                      Download Compiled PDF
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={onDownloadCodePackage}
-                      disabled={
-                        disabled || !currentPublication.code_package_path
-                      }
-                      data-testid="download-code-package-button"
-                    >
-                      Download Code Package
-                    </button>
-                  </div>
-
-                  <div className="meta-block">
-                    <span className="meta-label">Publication Assets</span>
-                    <code data-testid="operator-publication-assets">
-                      archive={currentPublication.publish_archive_path} | paper=
-                      {currentPublication.paper_path ?? "n/a"} | compiled=
-                      {currentPublication.compiled_paper_path ?? "n/a"} | code=
-                      {currentPublication.code_package_path ?? "n/a"}
-                    </code>
-                  </div>
-
-                  <div className="meta-block">
-                    <span className="meta-label">Compile Outputs</span>
-                    <code data-testid="operator-compile-output-paths">
-                      {currentPublication.paper_compile_output_paths.length
-                        ? currentPublication.paper_compile_output_paths.join(
-                            " | ",
-                          )
-                        : "n/a"}
-                    </code>
-                  </div>
-                </>
-              ) : (
-                <div
-                  className="empty-state"
-                  data-testid="operator-publication-empty"
-                >
-                  <p>No publication manifest for the current run.</p>
-                  <span>
-                    {!finalPublishReady
-                      ? "Final publish remains unavailable until the run is citation-grounded and the review loop is clear."
-                      : publish?.publication_id
-                        ? "Refresh the run or export publish again if paper assets were changed."
-                        : "Export Final Publish to materialize a publication manifest and paper assets."}
-                  </span>
-                </div>
-              )}
-
-              <div className="summary-banner operator-summary-grid">
                 <div>
-                  <span className="meta-label">Run Status</span>
-                  <strong>{current.run.status}</strong>
+                  <span className="meta-label">{t("operator.queueDepth")}</span>
+                  <strong>{queueTelemetry?.queue_depth ?? 0}</strong>
                 </div>
                 <div>
-                  <span className="meta-label">Benchmark</span>
-                  <strong data-testid="operator-current-benchmark">
-                    {currentSummary?.benchmark_name ??
-                      current.registry.benchmark_name ??
-                      "n/a"}
-                  </strong>
-                </div>
-                <div>
-                  <span className="meta-label">Task Family</span>
-                  <strong data-testid="operator-current-task-family">
-                    {formatTaskFamily(
-                      currentSummary?.task_family ??
-                        current.registry.task_family,
-                    )}
-                  </strong>
-                </div>
-                <div>
-                  <span className="meta-label">Selected Candidate</span>
+                  <span className="meta-label">{t("operator.activeJobs")}</span>
                   <strong>
-                    {current.registry.selected_candidate_id ?? "n/a"}
+                    {(queueTelemetry?.leased_jobs ?? 0) +
+                      (queueTelemetry?.running_jobs ?? 0)}
                   </strong>
                 </div>
                 <div>
-                  <span className="meta-label">Execution</span>
+                  <span className="meta-label">
+                    {t("operator.queuedRunning")}
+                  </span>
                   <strong>
-                    {current.execution.active_job_id ??
-                      current.execution.worker?.status ??
-                      "idle"}
+                    {queueTelemetry?.queued_jobs ?? 0} /{" "}
+                    {queueTelemetry?.running_jobs ?? 0}
                   </strong>
                 </div>
                 <div>
-                  <span className="meta-label">Bridge</span>
-                  <strong data-testid="operator-bridge-summary">
-                    {bridge
-                      ? `${bridge.status}${bridge.current_session ? ` / ${bridge.current_session.status}` : ""}`
-                      : "disabled"}
+                  <span className="meta-label">{t("operator.doneFailed")}</span>
+                  <strong>
+                    {queueTelemetry?.succeeded_jobs ?? 0} /{" "}
+                    {queueTelemetry?.failed_jobs ?? 0}
                   </strong>
                 </div>
                 <div>
-                  <span className="meta-label">Bridge Target</span>
-                  <strong>{bridge?.config?.target_label ?? "n/a"}</strong>
+                  <span className="meta-label">{t("operator.workers")}</span>
+                  <strong>
+                    {queueTelemetry?.worker_count ?? 0} total /{" "}
+                    {queueTelemetry?.active_workers ?? 0} active
+                  </strong>
                 </div>
                 <div>
-                  <span className="meta-label">Publish</span>
-                  <strong>{publish?.status ?? "not built"}</strong>
+                  <span className="meta-label">{t("operator.idleStale")}</span>
+                  <strong>
+                    {queueTelemetry?.idle_workers ?? 0} /{" "}
+                    {queueTelemetry?.stale_workers ?? 0}
+                  </strong>
                 </div>
                 <div>
-                  <span className="meta-label">Archive</span>
-                  <strong data-testid="operator-publish-archive-detail">
-                    {publish
-                      ? `${publish.archive_status} / review r${publish.review_round}${
-                          publish.archive_review_round !== null &&
-                          publish.archive_review_round !== undefined
-                            ? ` / export r${publish.archive_review_round}`
-                            : ""
-                        }`
-                      : "n/a"}
+                  <span className="meta-label">
+                    {t("operator.processedRecovered")}
+                  </span>
+                  <strong>
+                    {queueTelemetry?.total_processed_jobs ?? 0} /{" "}
+                    {queueTelemetry?.total_recovered_jobs ?? 0}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.lastRecovery")}
+                  </span>
+                  <strong>
+                    {formatTimestamp(queueTelemetry?.last_recovered_at)}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">{t("operator.lastFinish")}</span>
+                  <strong>
+                    {formatTimestamp(queueTelemetry?.last_job_finished_at)}
                   </strong>
                 </div>
               </div>
 
-              <div className="summary-banner operator-summary-grid">
-                <div>
-                  <span className="meta-label">Candidates</span>
-                  <strong>
-                    {counts?.total_candidates ?? candidateEntries.length}
-                  </strong>
-                </div>
-                <div>
-                  <span className="meta-label">Failed Candidates</span>
-                  <strong>{counts?.failed ?? 0}</strong>
-                </div>
-                <div>
-                  <span className="meta-label">Review Risk</span>
-                  <strong>{review?.unsupported_claim_risk ?? "n/a"}</strong>
-                </div>
-                <div>
-                  <span className="meta-label">Novelty</span>
-                  <strong>{novelty?.status ?? "n/a"}</strong>
-                </div>
-                <div>
-                  <span className="meta-label">Budget</span>
-                  <strong>
-                    {currentSummary
-                      ? `${currentSummary.budget_status} (${currentSummary.executed_candidate_count}${
-                          currentSummary.candidate_execution_limit
-                            ? `/${currentSummary.candidate_execution_limit}`
-                            : ""
-                        } candidates, ${currentSummary.max_rounds} rounds)`
-                      : "n/a"}
-                  </strong>
-                </div>
-                <div>
-                  <span className="meta-label">Priority</span>
-                  <strong>{currentSummary?.queue_priority ?? "normal"}</strong>
-                </div>
-                <div>
-                  <span className="meta-label">Recoveries</span>
-                  <strong>{currentSummary?.recovery_count ?? 0}</strong>
-                </div>
-                <div>
-                  <span className="meta-label">Review Loop</span>
-                  <strong data-testid="operator-review-loop-summary">
-                    {reviewLoop
-                      ? `r${reviewLoop.current_round} / open ${reviewLoop.open_issue_count} / pending ${reviewLoop.pending_action_count}`
-                      : "n/a"}
-                  </strong>
-                </div>
-                <div>
-                  <span className="meta-label">Completed Actions</span>
-                  <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
-                </div>
+              <div className="list-block" data-testid="operator-worker-fleet">
+                {workerFleet.length ? (
+                  workerFleet.map((worker) => (
+                    <div
+                      key={worker.worker_id ?? "worker-unknown"}
+                      className="evidence-card"
+                      data-testid={`operator-worker-${worker.worker_id ?? "unknown"}`}
+                    >
+                      <strong>
+                        {worker.worker_id ?? "worker-unknown"}{" "}
+                        {worker.stale ? t("operator.staleLabel") : ""}
+                      </strong>
+                      <small>
+                        status {worker.status} / queue {worker.queue_depth} /
+                        processed {worker.processed_jobs} / recovered{" "}
+                        {worker.recovered_job_count}
+                      </small>
+                      <small>
+                        job {worker.current_job_id ?? "idle"} / run{" "}
+                        {worker.current_run_id ?? "n/a"}
+                      </small>
+                      <small>
+                        heartbeat {formatTimestamp(worker.heartbeat_at)} / lease
+                        expires {formatTimestamp(worker.lease_expires_at)}
+                      </small>
+                      <small>
+                        started {formatTimestamp(worker.last_started_at)} /
+                        completed {formatTimestamp(worker.last_completed_at)} /
+                        recovered {formatTimestamp(worker.last_recovered_at)}
+                      </small>
+                      <small>lease {worker.current_lease_id ?? "n/a"}</small>
+                      <small>error {worker.last_error ?? "n/a"}</small>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-state">
+                    <p>{t("operator.noWorkersTitle")}</p>
+                    <span>{t("operator.noWorkersDetail")}</span>
+                  </div>
+                )}
               </div>
+            </>
+          ) : (
+            <div className="empty-state">
+              <p>{t("operator.noRunsTitle")}</p>
+              <span>
+                {t("operator.noRunsDetail", {
+                  topic: projectTopic || "this project",
+                })}
+              </span>
+            </div>
+          )}
 
-              <div className="meta-block">
-                <span className="meta-label">Lineage</span>
-                <code data-testid="operator-lineage-summary">
-                  selected={lineage?.selected_candidate_id ?? "n/a"}{" "}
-                  artifact_from=
-                  {lineage?.top_level_artifact_candidate_id ?? "n/a"}{" "}
-                  paper_from=
-                  {lineage?.top_level_paper_candidate_id ?? "n/a"} edges=
-                  {lineage?.edges.length ?? 0}
+          {current && bridge && (
+            <div className="meta-block">
+              <span className="meta-label">{t("operator.bridgeState")}</span>
+              <p data-testid="operator-bridge-detail">
+                status={bridge.status} sessions={bridge.session_count} open=
+                {bridge.open_session_count} imported=
+                {bridge.imported_session_count} checkpoints=
+                {bridge.checkpoint_count} notifications=
+                {bridge.notification_count}
+                {bridge.current_session
+                  ? ` current=${bridge.current_session.session_id} round=${bridge.current_session.round_index} target=${bridge.config?.target_label ?? "n/a"}`
+                  : ""}
+              </p>
+              {bridge.current_session ? (
+                <code data-testid="operator-bridge-session-paths">
+                  handoff={bridge.current_session.handoff_dir} result=
+                  {bridge.current_session.result_path}
                 </code>
-              </div>
-
-              {bridge ? (
-                <div className="meta-block">
-                  <span className="meta-label">Bridge State</span>
-                  <p data-testid="operator-bridge-detail">
-                    status={bridge.status} sessions={bridge.session_count} open=
-                    {bridge.open_session_count} imported=
-                    {bridge.imported_session_count} checkpoints=
-                    {bridge.checkpoint_count} notifications=
-                    {bridge.notification_count}
-                    {bridge.current_session
-                      ? ` current=${bridge.current_session.session_id} round=${bridge.current_session.round_index} target=${bridge.config?.target_label ?? "n/a"}`
-                      : ""}
-                  </p>
-                  {bridge.current_session ? (
-                    <code data-testid="operator-bridge-session-paths">
-                      handoff={bridge.current_session.handoff_dir} result=
-                      {bridge.current_session.result_path}
-                    </code>
-                  ) : null}
-                </div>
               ) : null}
+            </div>
+          )}
+
+          {current && (
+            <>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onRefreshBridge}
+                  disabled={disabled || !current.actions.refresh_bridge}
+                  data-testid="refresh-bridge-button"
+                >
+                  {t("operator.refreshBridge")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => onImportBridgeResult(bridgePayload)}
+                  disabled={disabled || !current.actions.import_bridge_result}
+                  data-testid="import-bridge-result-button"
+                >
+                  {t("operator.importBridgeResult")}
+                </button>
+              </div>
 
               {current.actions.import_bridge_result ? (
                 <form
                   className="stack"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    onImportBridgeResult({
-                      session_id: bridge?.current_session?.session_id ?? null,
-                      summary: bridgeImportDraft.summary,
-                      objective_score: Number(
-                        bridgeImportDraft.objective_score,
-                      ),
-                      primary_metric: bridgeImportDraft.primary_metric,
-                      objective_system: bridgeImportDraft.objective_system,
-                      baseline_system: bridgeImportDraft.baseline_system,
-                      baseline_score: bridgeImportDraft.baseline_score
-                        ? Number(bridgeImportDraft.baseline_score)
-                        : null,
-                      key_findings: bridgeImportDraft.key_findings
-                        .split("\n")
-                        .map((item) => item.trim())
-                        .filter(Boolean),
-                      notes: bridgeImportDraft.notes || null,
-                    });
+                    onImportBridgeResult(bridgePayload);
                   }}
                 >
-                  <p className="inline-title">Bridge Import</p>
+                  <p className="inline-title">{t("operator.bridgeImport")}</p>
                   <div className="button-row">
                     <input
                       id="bridge-import-summary"
@@ -1287,7 +1022,7 @@ export function OperatorConsolePanel({
                       disabled={
                         disabled || !current.actions.import_bridge_result
                       }
-                      placeholder="Result summary"
+                      placeholder={t("operator.resultSummaryPlaceholder")}
                       data-testid="bridge-import-summary"
                     />
                     <input
@@ -1305,7 +1040,7 @@ export function OperatorConsolePanel({
                       disabled={
                         disabled || !current.actions.import_bridge_result
                       }
-                      placeholder="Objective score"
+                      placeholder={t("operator.objectiveScorePlaceholder")}
                       data-testid="bridge-import-score"
                     />
                     <input
@@ -1322,7 +1057,7 @@ export function OperatorConsolePanel({
                       disabled={
                         disabled || !current.actions.import_bridge_result
                       }
-                      placeholder="Primary metric"
+                      placeholder={t("operator.primaryMetricPlaceholder")}
                       data-testid="bridge-import-metric"
                     />
                   </div>
@@ -1341,7 +1076,7 @@ export function OperatorConsolePanel({
                       disabled={
                         disabled || !current.actions.import_bridge_result
                       }
-                      placeholder="Objective system"
+                      placeholder={t("operator.objectiveSystemPlaceholder")}
                       data-testid="bridge-import-system"
                     />
                     <input
@@ -1358,7 +1093,7 @@ export function OperatorConsolePanel({
                       disabled={
                         disabled || !current.actions.import_bridge_result
                       }
-                      placeholder="Baseline system"
+                      placeholder={t("operator.baselineSystemPlaceholder")}
                       data-testid="bridge-import-baseline"
                     />
                     <input
@@ -1376,7 +1111,7 @@ export function OperatorConsolePanel({
                       disabled={
                         disabled || !current.actions.import_bridge_result
                       }
-                      placeholder="Baseline score"
+                      placeholder={t("operator.baselineScorePlaceholder")}
                       data-testid="bridge-import-baseline-score"
                     />
                   </div>
@@ -1391,15 +1126,244 @@ export function OperatorConsolePanel({
                       }))
                     }
                     disabled={disabled || !current.actions.import_bridge_result}
-                    placeholder="One key finding per line"
+                    placeholder={t("operator.findingsPlaceholder")}
                     data-testid="bridge-import-findings"
                   />
                 </form>
               ) : null}
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── Review & Publish Tab ── */}
+      {activeTab === "review" && (
+        <>
+          {!current ? (
+            <div className="empty-state">
+              <p>{t("operator.noRunSelectedTitle")}</p>
+              <span>{t("operator.noRunSelectedDetail")}</span>
+            </div>
+          ) : (
+            <>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onRefreshReview}
+                  disabled={disabled || !current.actions.refresh_review}
+                  data-testid="refresh-review-button"
+                >
+                  {t("operator.refreshReview")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onApplyReviewActions}
+                  disabled={disabled || !current.actions.apply_review_actions}
+                  data-testid="apply-review-actions-button"
+                >
+                  {t("operator.applyReviewActions")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onRebuildPaper}
+                  disabled={disabled || !current.actions.rebuild_paper}
+                  data-testid="rebuild-paper-button"
+                >
+                  {t("operator.rebuildPaper")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() =>
+                    onExportPublish({
+                      deployment_id: publishDraft.deployment_id.trim() || null,
+                      deployment_label:
+                        publishDraft.deployment_label.trim() || null,
+                    })
+                  }
+                  disabled={disabled || !current.actions.export_publish}
+                  data-testid="export-publish-button"
+                >
+                  {t("operator.exportFinalPublish")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onDownloadPublish}
+                  disabled={disabled || !current.actions.download_publish}
+                  data-testid="download-publish-button"
+                >
+                  {t("operator.downloadFinalPublish")}
+                </button>
+              </div>
+
+              <div className="summary-banner operator-summary-grid">
+                <div>
+                  <span className="meta-label">{t("operator.candidates")}</span>
+                  <strong>
+                    {counts?.total_candidates ?? candidateEntries.length}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.failedCandidates")}
+                  </span>
+                  <strong>{counts?.failed ?? 0}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">{t("operator.reviewRisk")}</span>
+                  <strong>{review?.unsupported_claim_risk ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">{t("operator.novelty")}</span>
+                  <strong>{novelty?.status ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span className="meta-label">{t("operator.budget")}</span>
+                  <strong>
+                    {currentSummary
+                      ? `${currentSummary.budget_status} (${currentSummary.executed_candidate_count}${
+                          currentSummary.candidate_execution_limit
+                            ? `/${currentSummary.candidate_execution_limit}`
+                            : ""
+                        } candidates, ${currentSummary.max_rounds} rounds)`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">{t("operator.reviewLoop")}</span>
+                  <strong data-testid="operator-review-loop-summary">
+                    {reviewLoop
+                      ? `r${reviewLoop.current_round} / open ${reviewLoop.open_issue_count} / pending ${reviewLoop.pending_action_count}`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.completedActions")}
+                  </span>
+                  <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
+                </div>
+              </div>
+
+              {currentPublication ? (
+                <>
+                  <div
+                    className="summary-banner operator-summary-grid"
+                    data-testid="operator-publication-summary"
+                  >
+                    <div>
+                      <span className="meta-label">
+                        {t("operator.publication")}
+                      </span>
+                      <strong>{currentPublication.publication_id}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">{t("operator.bundle")}</span>
+                      <strong>{currentPublication.bundle_kind}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">
+                        {t("operator.paperAsset")}
+                      </span>
+                      <strong>
+                        {currentPublication.paper_path
+                          ? t("operator.available")
+                          : t("operator.missing")}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">
+                        {t("operator.compiledPdf")}
+                      </span>
+                      <strong>
+                        {currentPublication.compiled_paper_path
+                          ? t("operator.available")
+                          : t("operator.missing")}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">
+                        {t("operator.finalReady")}
+                      </span>
+                      <strong>
+                        {currentPublication.final_publish_ready
+                          ? t("operator.yes")
+                          : t("operator.no")}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onDownloadPaper}
+                      disabled={disabled || !currentPublication.paper_path}
+                      data-testid="download-paper-button"
+                    >
+                      {t("operator.downloadPaper")}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onDownloadCompiledPaper}
+                      disabled={
+                        disabled || !currentPublication.compiled_paper_path
+                      }
+                      data-testid="download-compiled-paper-button"
+                    >
+                      {t("operator.downloadCompiledPdf")}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onDownloadCodePackage}
+                      disabled={
+                        disabled || !currentPublication.code_package_path
+                      }
+                      data-testid="download-code-package-button"
+                    >
+                      {t("operator.downloadCodePackage")}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div
+                  className="empty-state"
+                  data-testid="operator-publication-empty"
+                >
+                  <p>{t("operator.noPublicationTitle")}</p>
+                  <span>
+                    {!finalPublishReady
+                      ? t("operator.noPublicationNotReady")
+                      : publish?.publication_id
+                        ? t("operator.noPublicationRefresh")
+                        : t("operator.noPublicationExport")}
+                  </span>
+                </div>
+              )}
+
+              <div className="meta-block">
+                <span className="meta-label">{t("operator.lineage")}</span>
+                <code data-testid="operator-lineage-summary">
+                  selected={lineage?.selected_candidate_id ?? "n/a"}{" "}
+                  artifact_from=
+                  {lineage?.top_level_artifact_candidate_id ?? "n/a"}{" "}
+                  paper_from=
+                  {lineage?.top_level_paper_candidate_id ?? "n/a"} edges=
+                  {lineage?.edges.length ?? 0}
+                </code>
+              </div>
 
               {novelty ? (
                 <div className="meta-block">
-                  <span className="meta-label">Novelty Triage</span>
+                  <span className="meta-label">
+                    {t("operator.noveltyTriage")}
+                  </span>
                   <p data-testid="operator-novelty-summary">
                     {novelty.summary} Top matches=
                     {novelty.top_related_work.length} uncovered_claims=
@@ -1410,7 +1374,7 @@ export function OperatorConsolePanel({
 
               {reviewLoop ? (
                 <div className="meta-block">
-                  <span className="meta-label">Review Loop</span>
+                  <span className="meta-label">{t("operator.reviewLoop")}</span>
                   <p data-testid="operator-review-loop-detail">
                     fingerprint={reviewLoop.latest_review_fingerprint ?? "n/a"}{" "}
                     rounds=
@@ -1424,7 +1388,9 @@ export function OperatorConsolePanel({
               ) : null}
 
               <div className="stack">
-                <p className="inline-title">Candidate Comparison</p>
+                <p className="inline-title">
+                  {t("operator.candidateComparison")}
+                </p>
                 {candidateEntries.map((candidate) => (
                   <div
                     key={candidate.candidate_id}
@@ -1436,7 +1402,9 @@ export function OperatorConsolePanel({
                         <strong>{candidate.title}</strong>
                         <p className="auth-copy">
                           {candidate.candidate_id} · {candidate.status}
-                          {candidate.selected ? " · selected" : ""}
+                          {candidate.selected
+                            ? ` · ${t("operator.selected")}`
+                            : ""}
                         </p>
                       </div>
                       <span className="badge badge-soft">
@@ -1453,7 +1421,7 @@ export function OperatorConsolePanel({
               </div>
 
               <div className="stack">
-                <p className="inline-title">Top Findings</p>
+                <p className="inline-title">{t("operator.topFindings")}</p>
                 {review?.findings?.slice(0, 3).map((finding) => (
                   <div key={finding.id} className="suggestion-card">
                     <strong>
@@ -1463,13 +1431,13 @@ export function OperatorConsolePanel({
                   </div>
                 )) ?? (
                   <div className="empty-state">
-                    <p>No review findings yet.</p>
+                    <p>{t("operator.noReviewFindings")}</p>
                   </div>
                 )}
               </div>
 
               <div className="stack">
-                <p className="inline-title">Revision Actions</p>
+                <p className="inline-title">{t("operator.revisionActions")}</p>
                 {reviewLoop && reviewLoop.actions.length > 0 ? (
                   reviewLoop.actions.slice(0, 4).map((action) => (
                     <div
@@ -1491,19 +1459,11 @@ export function OperatorConsolePanel({
                   ))
                 ) : (
                   <div className="empty-state">
-                    <p>No revision actions yet.</p>
+                    <p>{t("operator.noRevisionActions")}</p>
                   </div>
                 )}
               </div>
             </>
-          ) : (
-            <div className="empty-state">
-              <p>No run selected.</p>
-              <span>
-                Select a run to inspect execution, lineage, review, and publish
-                state.
-              </span>
-            </div>
           )}
         </>
       )}

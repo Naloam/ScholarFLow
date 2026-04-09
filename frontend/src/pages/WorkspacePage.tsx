@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import { BetaPanel } from "../components/Beta/BetaPanel";
 import { MentorPanel } from "../components/Mentor/MentorPanel";
 import { SessionPanel } from "../components/Auth/SessionPanel";
@@ -11,9 +13,12 @@ import { OperatorConsolePanel } from "../components/OperatorConsole/OperatorCons
 import { ReviewPanel } from "../components/ReviewPanel/ReviewPanel";
 import { StatusBar } from "../components/Status/StatusBar";
 import { VersionDiffPanel } from "../components/VersionDiffPanel/VersionDiffPanel";
+import { LanguageSwitcher } from "../components/LanguageSwitcher/LanguageSwitcher";
+import { CollapsiblePanel } from "../components/shared/CollapsiblePanel";
 import { useWorkspaceStore } from "../stores/workspace";
 
 export function WorkspacePage() {
+  const { t } = useTranslation();
   const templates = useWorkspaceStore((state) => state.templates);
   const currentProjectId = useWorkspaceStore((state) => state.currentProjectId);
   const availableProjects = useWorkspaceStore(
@@ -175,66 +180,104 @@ export function WorkspacePage() {
     <div className="app-shell" data-testid="workspace-page">
       <header className="app-header">
         <div>
-          <p className="eyebrow">ScholarFlow</p>
-          <h1>Operator Console Workspace</h1>
+          <p className="eyebrow">{t("header.eyebrow")}</p>
+          <h1>{t("header.title")}</h1>
         </div>
         <div className="header-meta">
           <span className="meta-chip" data-testid="header-phase-chip">
-            {projectStatus?.phase ?? "Phase 6"}
+            {projectStatus?.phase ?? t("header.phase")}
           </span>
           <span className="meta-chip" data-testid="header-project-chip">
-            {project?.title ?? "No active project"}
+            {project?.title ?? t("header.noProject")}
           </span>
           <span className="meta-chip" data-testid="header-user-chip">
             {authUser?.email ??
-              (authState === "service" ? "Service token" : "Anonymous")}
+              (authState === "service"
+                ? t("header.serviceToken")
+                : t("header.anonymous"))}
           </span>
+          <LanguageSwitcher />
         </div>
       </header>
 
       <main className="workspace-grid">
         <aside className="workspace-column workspace-column-left">
-          <SessionPanel
-            authConfig={authConfig}
-            authState={authState}
-            authUser={authUser}
-            authBusy={authBusy}
-            authError={authError}
-            workspaceBusy={workspaceBusy}
-            onSignIn={signIn}
-            onSignOut={signOut}
-          />
-          <MentorPanel
-            projectId={currentProjectId}
-            projectOwnerId={project?.user_id}
-            selectedDraftVersion={selectedDraftVersion}
-            authUser={authUser}
-            mentorAccess={mentorAccess}
-            mentorFeedback={mentorFeedback}
-            disabled={workspaceBusy}
-            onInvite={inviteMentor}
-            onSubmitFeedback={submitMentorFeedback}
-          />
-          <ProjectLauncher
-            templates={templates}
-            currentProjectId={currentProjectId}
-            availableProjects={availableProjects}
-            healthStatus={healthStatus}
-            working={launcherBusy}
-            authLocked={authLocked}
-            onCreate={createProject}
-            onOpen={loadProject}
-          />
-          <WizardPanel status={projectStatus} />
-          <FileManager
-            drafts={drafts}
-            selectedDraftVersion={selectedDraftVersion}
-            latestExportId={liveProgress?.latest_export_id}
-            latestExportStatus={liveProgress?.latest_export_status}
-            downloading={workspaceBusy}
-            onSelect={selectDraft}
-            onDownloadLatestExport={downloadLatestExport}
-          />
+          <CollapsiblePanel
+            eyebrow={t("session.eyebrow")}
+            title={t("session.title")}
+            defaultOpen={authState !== "user" && authState !== "service"}
+            data-testid="collapsible-session"
+          >
+            <SessionPanel
+              authConfig={authConfig}
+              authState={authState}
+              authUser={authUser}
+              authBusy={authBusy}
+              authError={authError}
+              workspaceBusy={workspaceBusy}
+              onSignIn={signIn}
+              onSignOut={signOut}
+            />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("mentor.eyebrow")}
+            title={t("mentor.title")}
+            defaultOpen={false}
+            data-testid="collapsible-mentor"
+          >
+            <MentorPanel
+              projectId={currentProjectId}
+              projectOwnerId={project?.user_id}
+              selectedDraftVersion={selectedDraftVersion}
+              authUser={authUser}
+              mentorAccess={mentorAccess}
+              mentorFeedback={mentorFeedback}
+              disabled={workspaceBusy}
+              onInvite={inviteMentor}
+              onSubmitFeedback={submitMentorFeedback}
+            />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("project.eyebrow")}
+            title={t("project.title")}
+            defaultOpen={!currentProjectId}
+            data-testid="collapsible-project"
+          >
+            <ProjectLauncher
+              templates={templates}
+              currentProjectId={currentProjectId}
+              availableProjects={availableProjects}
+              healthStatus={healthStatus}
+              working={launcherBusy}
+              authLocked={authLocked}
+              onCreate={createProject}
+              onOpen={loadProject}
+            />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("wizard.eyebrow")}
+            title={t("wizard.title")}
+            defaultOpen={false}
+            data-testid="collapsible-wizard"
+          >
+            <WizardPanel status={projectStatus} />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("fileManager.eyebrow")}
+            title={t("fileManager.title")}
+            defaultOpen={true}
+            data-testid="collapsible-files"
+          >
+            <FileManager
+              drafts={drafts}
+              selectedDraftVersion={selectedDraftVersion}
+              latestExportId={liveProgress?.latest_export_id}
+              latestExportStatus={liveProgress?.latest_export_status}
+              downloading={workspaceBusy}
+              onSelect={selectDraft}
+              onDownloadLatestExport={downloadLatestExport}
+            />
+          </CollapsiblePanel>
         </aside>
 
         <section className="workspace-column workspace-column-center">
@@ -263,43 +306,85 @@ export function WorkspacePage() {
             onDownloadCodePackage={downloadAutoResearchCodePackage}
             onUpdateControls={updateAutoResearchRunControls}
           />
-          <EditorSurface
-            content={editorContent}
-            canEdit={Boolean(currentProjectId) && !projectReadOnly}
-            working={working}
-            onChange={setEditorContent}
-            onFocusText={setFocusedText}
-            onSave={saveDraft}
-            onGenerate={generateDraft}
-            onReview={runReview}
-            onExport={exportDraft}
-          />
-          <VersionDiffPanel
-            drafts={drafts}
-            selectedDraftVersion={selectedDraftVersion}
-            currentContent={editorContent}
-          />
+          <CollapsiblePanel
+            eyebrow={t("editor.eyebrow")}
+            title={t("editor.title")}
+            defaultOpen={true}
+            data-testid="collapsible-editor"
+          >
+            <EditorSurface
+              content={editorContent}
+              canEdit={Boolean(currentProjectId) && !projectReadOnly}
+              working={working}
+              onChange={setEditorContent}
+              onFocusText={setFocusedText}
+              onSave={saveDraft}
+              onGenerate={generateDraft}
+              onReview={runReview}
+              onExport={exportDraft}
+            />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("versionDiff.eyebrow")}
+            title={t("versionDiff.title")}
+            defaultOpen={false}
+            data-testid="collapsible-diff"
+          >
+            <VersionDiffPanel
+              drafts={drafts}
+              selectedDraftVersion={selectedDraftVersion}
+              currentContent={editorContent}
+            />
+          </CollapsiblePanel>
         </section>
 
         <aside className="workspace-column workspace-column-right">
-          <DeploymentPanel
-            deploymentList={autoResearchDeploymentList}
-            deployment={autoResearchDeployment}
-            selectedDeploymentId={selectedAutoResearchDeploymentId}
-            filters={autoResearchDeploymentFilters}
-            disabled={workspaceBusy || authLocked}
-            onSelectDeployment={selectAutoResearchDeployment}
-            onApplyFilters={applyAutoResearchDeploymentFilters}
-            onClearFilters={clearAutoResearchDeploymentFilters}
-            onOpenPublication={openAutoResearchPublication}
-          />
-          <EvidencePanel evidence={evidence} focusedText={focusedText} />
-          <ReviewPanel reviews={reviews} analysis={analysis} />
-          <BetaPanel
-            summary={betaSummary}
-            disabled={betaBusy}
-            onSubmit={submitFeedback}
-          />
+          <CollapsiblePanel
+            eyebrow={t("deployment.eyebrow")}
+            title={t("deployment.title")}
+            defaultOpen={false}
+            data-testid="collapsible-deployment"
+          >
+            <DeploymentPanel
+              deploymentList={autoResearchDeploymentList}
+              deployment={autoResearchDeployment}
+              selectedDeploymentId={selectedAutoResearchDeploymentId}
+              filters={autoResearchDeploymentFilters}
+              disabled={workspaceBusy || authLocked}
+              onSelectDeployment={selectAutoResearchDeployment}
+              onApplyFilters={applyAutoResearchDeploymentFilters}
+              onClearFilters={clearAutoResearchDeploymentFilters}
+              onOpenPublication={openAutoResearchPublication}
+            />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("evidence.eyebrow")}
+            title={t("evidence.title")}
+            defaultOpen={true}
+            data-testid="collapsible-evidence"
+          >
+            <EvidencePanel evidence={evidence} focusedText={focusedText} />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("review.eyebrow")}
+            title={t("review.title")}
+            defaultOpen={true}
+            data-testid="collapsible-review"
+          >
+            <ReviewPanel reviews={reviews} analysis={analysis} />
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            eyebrow={t("beta.eyebrow")}
+            title={t("beta.title")}
+            defaultOpen={false}
+            data-testid="collapsible-beta"
+          >
+            <BetaPanel
+              summary={betaSummary}
+              disabled={betaBusy}
+              onSubmit={submitFeedback}
+            />
+          </CollapsiblePanel>
         </aside>
       </main>
 

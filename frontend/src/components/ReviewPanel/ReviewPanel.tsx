@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { AnalysisSummary, ReviewReport } from "../../api/types";
 import { formatPercent } from "../../utils/format";
 
@@ -17,47 +18,51 @@ const scoreOrder: Array<keyof ReviewReport["scores"]> = [
 ];
 
 export function ReviewPanel({ reviews, analysis }: ReviewPanelProps) {
+  const { t } = useTranslation();
   const latest = reviews[0];
   const similarity = analysis?.similarity;
   const similarityLabel =
     similarity?.status === "high"
-      ? "High overlap"
+      ? t("review.highOverlap")
       : similarity?.status === "warning"
-        ? "Needs review"
-        : "Clear";
+        ? t("review.needsReview")
+        : t("review.clear");
 
   return (
     <section className="panel" data-testid="review-panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Virtual Advisor</p>
-          <h2 className="panel-title">Review Panel</h2>
+          <p className="eyebrow">{t("review.eyebrow")}</p>
+          <h2 className="panel-title">{t("review.title")}</h2>
         </div>
-        <span className="badge badge-soft">{reviews.length} reports</span>
+        <span className="badge badge-soft">
+          {t("review.reportCount", { count: reviews.length })}
+        </span>
       </div>
 
       <div className="summary-banner">
         <div>
-          <span className="meta-label">Evidence coverage</span>
+          <span className="meta-label">{t("review.evidenceCoverage")}</span>
           <strong>{formatPercent(analysis?.evidence_coverage)}</strong>
         </div>
         <div>
-          <span className="meta-label">Needs evidence</span>
+          <span className="meta-label">{t("review.needsEvidence")}</span>
           <strong>{analysis?.needs_evidence_count ?? 0}</strong>
         </div>
         <div>
-          <span className="meta-label">Similarity screen</span>
+          <span className="meta-label">{t("review.similarityScreen")}</span>
           <strong>{similarityLabel}</strong>
         </div>
       </div>
 
       {similarity ? (
         <div className="inline-card">
-          <p className="inline-title">Overlap screening</p>
+          <p className="inline-title">{t("review.overlapScreening")}</p>
           <p className="auth-copy">
-            Checked {similarity.checked_paragraphs} paragraphs against project
-            evidence snippets and paper abstracts.{" "}
-            {similarity.flagged_paragraphs} passages need manual review.
+            {t("review.overlapDetail", {
+              checked: similarity.checked_paragraphs,
+              flagged: similarity.flagged_paragraphs,
+            })}
           </p>
           {similarity.matches.length > 0 ? (
             <div className="stack">
@@ -79,18 +84,15 @@ export function ReviewPanel({ reviews, analysis }: ReviewPanelProps) {
               ))}
             </div>
           ) : (
-            <p className="auth-copy">
-              No high-overlap passages were flagged by the local similarity
-              screen.
-            </p>
+            <p className="auth-copy">{t("review.noHighOverlap")}</p>
           )}
         </div>
       ) : null}
 
       {!latest ? (
         <div className="empty-state">
-          <p>No review report yet.</p>
-          <span>Use Run Review after generating a draft.</span>
+          <p>{t("review.noReviewTitle")}</p>
+          <span>{t("review.noReviewDetail")}</span>
         </div>
       ) : (
         <>

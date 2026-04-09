@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { Draft } from "../../api/types";
 
 type DiffRow = {
@@ -63,18 +64,20 @@ export function VersionDiffPanel({
   selectedDraftVersion,
   currentContent,
 }: VersionDiffPanelProps) {
+  const { t } = useTranslation();
+
   if (selectedDraftVersion === null) {
     return (
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Versioning</p>
-            <h2 className="panel-title">Draft Diff</h2>
+            <p className="eyebrow">{t("versionDiff.eyebrow")}</p>
+            <h2 className="panel-title">{t("versionDiff.title")}</h2>
           </div>
         </div>
         <div className="empty-state">
-          <p>No draft selected.</p>
-          <span>Generate a draft first to inspect version changes.</span>
+          <p>{t("versionDiff.noDraftTitle")}</p>
+          <span>{t("versionDiff.noDraftDetail")}</span>
         </div>
       </section>
     );
@@ -97,17 +100,14 @@ export function VersionDiffPanel({
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Versioning</p>
-            <h2 className="panel-title">Draft Diff</h2>
+            <p className="eyebrow">{t("versionDiff.eyebrow")}</p>
+            <h2 className="panel-title">{t("versionDiff.title")}</h2>
           </div>
           <span className="badge badge-soft">v{selectedDraftVersion}</span>
         </div>
         <div className="empty-state">
-          <p>No earlier version to compare.</p>
-          <span>
-            Generate another draft version to unlock side-by-side review
-            history.
-          </span>
+          <p>{t("versionDiff.noPreviousTitle")}</p>
+          <span>{t("versionDiff.noPreviousDetail")}</span>
         </div>
       </section>
     );
@@ -119,8 +119,8 @@ export function VersionDiffPanel({
     <section className="panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Versioning</p>
-          <h2 className="panel-title">Draft Diff</h2>
+          <p className="eyebrow">{t("versionDiff.eyebrow")}</p>
+          <h2 className="panel-title">{t("versionDiff.title")}</h2>
         </div>
         <span className="badge badge-soft">
           {`v${previousDraft.version} -> v${selectedDraftVersion}`}

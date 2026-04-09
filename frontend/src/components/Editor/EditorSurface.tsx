@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
+import { useTranslation } from "react-i18next";
 
 import { MarkerHighlighter } from "./MarkerHighlighter";
 import { documentToMarkdown, markdownToDocument } from "./markdownish";
@@ -49,13 +50,14 @@ export function EditorSurface({
   onReview,
   onExport,
 }: EditorSurfaceProps) {
+  const { t } = useTranslation();
   const lastSerialized = useRef(content);
 
   const editor = useEditor({
     extensions: [
       StarterKit,
       Placeholder.configure({
-        placeholder: "Draft content will appear here...",
+        placeholder: t("editor.placeholder"),
       }),
       MarkerHighlighter,
     ],
@@ -94,10 +96,10 @@ export function EditorSurface({
     <section className="panel panel-editor" data-testid="editor-surface">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Workspace Core</p>
-          <h2 className="panel-title">Editor Surface</h2>
+          <p className="eyebrow">{t("editor.eyebrow")}</p>
+          <h2 className="panel-title">{t("editor.title")}</h2>
         </div>
-        <span className="badge badge-soft">TipTap live</span>
+        <span className="badge badge-soft">{t("editor.badge")}</span>
       </div>
 
       <div className="button-row">
@@ -107,7 +109,7 @@ export function EditorSurface({
           disabled={working || !canEdit}
           onClick={() => void onGenerate()}
         >
-          Generate Draft
+          {t("editor.generateDraft")}
         </button>
         <button
           className="ghost-btn"
@@ -115,7 +117,7 @@ export function EditorSurface({
           disabled={working || !canEdit}
           onClick={() => void onSave()}
         >
-          Save Draft
+          {t("editor.saveDraft")}
         </button>
         <button
           className="ghost-btn"
@@ -123,7 +125,7 @@ export function EditorSurface({
           disabled={working || !canEdit}
           onClick={() => void onReview()}
         >
-          Run Review
+          {t("editor.runReview")}
         </button>
         <button
           className="ghost-btn"
@@ -131,21 +133,21 @@ export function EditorSurface({
           disabled={working || !canEdit}
           onClick={() => void onExport("markdown")}
         >
-          Export MD
+          {t("editor.exportMd")}
         </button>
         <button
           className="ghost-btn"
           disabled={working || !canEdit}
           onClick={() => void onExport("latex")}
         >
-          Export TeX
+          {t("editor.exportTex")}
         </button>
         <button
           className="ghost-btn"
           disabled={working || !canEdit}
           onClick={() => void onExport("word")}
         >
-          Export DOCX
+          {t("editor.exportDocx")}
         </button>
       </div>
 
@@ -155,14 +157,14 @@ export function EditorSurface({
           disabled={!editor || !canEdit}
           onClick={() => editor?.chain().focus().toggleBold().run()}
         >
-          Bold
+          {t("editor.bold")}
         </button>
         <button
           className="toolbar-btn"
           disabled={!editor || !canEdit}
           onClick={() => editor?.chain().focus().toggleItalic().run()}
         >
-          Italic
+          {t("editor.italic")}
         </button>
         <button
           className="toolbar-btn"
@@ -171,7 +173,7 @@ export function EditorSurface({
             editor?.chain().focus().toggleHeading({ level: 1 }).run()
           }
         >
-          H1
+          {t("editor.h1")}
         </button>
         <button
           className="toolbar-btn"
@@ -180,22 +182,18 @@ export function EditorSurface({
             editor?.chain().focus().toggleHeading({ level: 2 }).run()
           }
         >
-          H2
+          {t("editor.h2")}
         </button>
         <button
           className="toolbar-btn"
           disabled={!editor || !canEdit}
           onClick={() => editor?.chain().focus().toggleBulletList().run()}
         >
-          List
+          {t("editor.list")}
         </button>
       </div>
 
-      <div className="editor-hint">
-        Citation markers like [1] and unsupported claims like [NEEDS_EVIDENCE]
-        are highlighted by a custom TipTap plugin. The right sidebar stays
-        aligned to the paragraph you are editing.
-      </div>
+      <div className="editor-hint">{t("editor.hint")}</div>
 
       <div
         className={canEdit ? "editor-prose" : "editor-prose editor-readonly"}

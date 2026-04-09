@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { BetaSummary } from "../../api/types";
 import { formatDate } from "../../utils/format";
@@ -14,6 +15,7 @@ type BetaPanelProps = {
 };
 
 export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
+  const { t } = useTranslation();
   const [rating, setRating] = useState("5");
   const [category, setCategory] = useState("usability");
   const [comment, setComment] = useState(
@@ -27,8 +29,8 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
     <section className="panel" data-testid="beta-panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Phase 6 Readout</p>
-          <h2 className="panel-title">Beta Panel</h2>
+          <p className="eyebrow">{t("beta.eyebrow")}</p>
+          <h2 className="panel-title">{t("beta.title")}</h2>
         </div>
         <span className="badge badge-soft" data-testid="beta-feedback-count">
           {summary?.feedback_count ?? 0} feedback
@@ -37,13 +39,13 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
 
       <div className="beta-metric-grid">
         <article className="metric-card">
-          <span className="meta-label">Total tokens</span>
+          <span className="meta-label">{t("beta.totalTokens")}</span>
           <strong data-testid="beta-total-tokens">
             {summary?.performance.total_tokens ?? 0}
           </strong>
         </article>
         <article className="metric-card">
-          <span className="meta-label">Avg latency</span>
+          <span className="meta-label">{t("beta.avgLatency")}</span>
           <strong data-testid="beta-average-latency">
             {summary
               ? `${Math.round(summary.performance.average_latency_ms)} ms`
@@ -51,23 +53,25 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
           </strong>
         </article>
         <article className="metric-card">
-          <span className="meta-label">Estimated cost</span>
+          <span className="meta-label">{t("beta.estimatedCost")}</span>
           <strong data-testid="beta-estimated-cost">
             ${summary?.performance.estimated_cost_usd.toFixed(4) ?? "0.0000"}
           </strong>
         </article>
         <article className="metric-card">
-          <span className="meta-label">Avg rating</span>
+          <span className="meta-label">{t("beta.avgRating")}</span>
           <strong data-testid="beta-average-rating">
-            {summary?.average_rating ? `${summary.average_rating}/5` : "N/A"}
+            {summary?.average_rating
+              ? `${summary.average_rating}/5`
+              : t("beta.na")}
           </strong>
         </article>
       </div>
 
       <div className="inline-card">
-        <p className="inline-title">Submit beta feedback</p>
+        <p className="inline-title">{t("beta.submitBetaFeedback")}</p>
         <label className="field">
-          <span className="field-label">Rating</span>
+          <span className="field-label">{t("beta.rating")}</span>
           <select
             id="beta-rating-input"
             name="beta_rating"
@@ -76,15 +80,15 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
             value={rating}
             onChange={(event) => setRating(event.target.value)}
           >
-            <option value="5">5 - Ready</option>
-            <option value="4">4 - Mostly ready</option>
-            <option value="3">3 - Needs polish</option>
-            <option value="2">2 - Blocked</option>
-            <option value="1">1 - Broken</option>
+            <option value="5">{t("beta.rating5")}</option>
+            <option value="4">{t("beta.rating4")}</option>
+            <option value="3">{t("beta.rating3")}</option>
+            <option value="2">{t("beta.rating2")}</option>
+            <option value="1">{t("beta.rating1")}</option>
           </select>
         </label>
         <label className="field">
-          <span className="field-label">Category</span>
+          <span className="field-label">{t("beta.category")}</span>
           <select
             id="beta-category-input"
             name="beta_category"
@@ -93,14 +97,14 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
             value={category}
             onChange={(event) => setCategory(event.target.value)}
           >
-            <option value="usability">Usability</option>
-            <option value="quality">Quality</option>
-            <option value="performance">Performance</option>
-            <option value="bug">Bug</option>
+            <option value="usability">{t("beta.usability")}</option>
+            <option value="quality">{t("beta.quality")}</option>
+            <option value="performance">{t("beta.performance")}</option>
+            <option value="bug">{t("beta.bug")}</option>
           </select>
         </label>
         <label className="field">
-          <span className="field-label">Comment</span>
+          <span className="field-label">{t("beta.comment")}</span>
           <textarea
             id="beta-comment-input"
             name="beta_comment"
@@ -124,18 +128,16 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
               })
             }
           >
-            Send Feedback
+            {t("beta.sendFeedback")}
           </button>
         </div>
       </div>
 
       <div className="stack">
         <div className="inline-card">
-          <p className="inline-title">Recent performance events</p>
+          <p className="inline-title">{t("beta.recentEvents")}</p>
           {recentEvents.length === 0 ? (
-            <p className="auth-copy">
-              No model telemetry yet. Generate a draft or run review first.
-            </p>
+            <p className="auth-copy">{t("beta.noTelemetry")}</p>
           ) : (
             <div className="stack">
               {recentEvents.map((event, index) => (
@@ -156,11 +158,9 @@ export function BetaPanel({ summary, disabled, onSubmit }: BetaPanelProps) {
         </div>
 
         <div className="inline-card">
-          <p className="inline-title">Feedback log</p>
+          <p className="inline-title">{t("beta.feedbackLog")}</p>
           {feedback.length === 0 ? (
-            <p className="auth-copy">
-              No beta feedback submitted for this project yet.
-            </p>
+            <p className="auth-copy">{t("beta.noBetaFeedback")}</p>
           ) : (
             <div className="stack">
               {feedback.map((entry, index) => (

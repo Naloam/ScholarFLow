@@ -1,12 +1,19 @@
+import { useTranslation } from "react-i18next";
+
 import type { ProjectStatus } from "../../api/types";
 import { formatPercent } from "../../utils/format";
 
-const steps = [
-  { key: "Phase 2", label: "Search and Evidence" },
-  { key: "Phase 3", label: "Execution and Drafts" },
-  { key: "Phase 4", label: "Registry and Lineage" },
-  { key: "Phase 5", label: "Review and Publish" },
-  { key: "Phase 6", label: "Operator Console" },
+type Step = {
+  key: string;
+  labelKey: string;
+};
+
+const steps: Step[] = [
+  { key: "Phase 2", labelKey: "wizard.phase2Label" },
+  { key: "Phase 3", labelKey: "wizard.phase3Label" },
+  { key: "Phase 4", labelKey: "wizard.phase4Label" },
+  { key: "Phase 5", labelKey: "wizard.phase5Label" },
+  { key: "Phase 6", labelKey: "wizard.phase6Label" },
 ];
 
 type WizardPanelProps = {
@@ -14,14 +21,16 @@ type WizardPanelProps = {
 };
 
 export function WizardPanel({ status }: WizardPanelProps) {
+  const { t } = useTranslation();
+
   const currentPhase = status?.phase ?? "Phase 6";
 
   return (
     <section className="panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Workflow</p>
-          <h2 className="panel-title">Research Roadmap</h2>
+          <p className="eyebrow">{t("wizard.eyebrow")}</p>
+          <h2 className="panel-title">{t("wizard.title")}</h2>
         </div>
         <span className="badge badge-soft">{status?.status ?? "init"}</span>
       </div>
@@ -46,7 +55,7 @@ export function WizardPanel({ status }: WizardPanelProps) {
             <span className="timeline-dot" />
             <div>
               <strong>{step.key}</strong>
-              <p>{step.label}</p>
+              <p>{t(step.labelKey)}</p>
             </div>
           </li>
         ))}

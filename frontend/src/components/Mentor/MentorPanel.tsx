@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   AuthUser,
@@ -36,6 +37,7 @@ export function MentorPanel({
   onInvite,
   onSubmitFeedback,
 }: MentorPanelProps) {
+  const { t } = useTranslation();
   const [mentorEmail, setMentorEmail] = useState("mentor@example.com");
   const [mentorName, setMentorName] = useState("Supervisor");
   const [summary, setSummary] = useState(
@@ -72,8 +74,8 @@ export function MentorPanel({
     <section className="panel" data-testid="mentor-panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Phase 7 Collaboration</p>
-          <h2 className="panel-title">Mentor Panel</h2>
+          <p className="eyebrow">{t("mentor.eyebrow")}</p>
+          <h2 className="panel-title">{t("mentor.title")}</h2>
         </div>
         <span className="badge badge-soft" data-testid="mentor-access-count">
           {mentorAccess.length} mentors
@@ -82,18 +84,16 @@ export function MentorPanel({
 
       {!projectId ? (
         <div className="empty-state">
-          <p>No project selected.</p>
-          <span>
-            Open a project before inviting a mentor or writing mentor feedback.
-          </span>
+          <p>{t("mentor.noProjectTitle")}</p>
+          <span>{t("mentor.noProjectDetail")}</span>
         </div>
       ) : null}
 
       {projectId && isOwner ? (
         <div className="inline-card">
-          <p className="inline-title">Invite a mentor</p>
+          <p className="inline-title">{t("mentor.inviteMentor")}</p>
           <label className="field">
-            <span className="field-label">Mentor email</span>
+            <span className="field-label">{t("mentor.mentorEmail")}</span>
             <input
               id="mentor-email-input"
               name="mentor_email"
@@ -104,7 +104,7 @@ export function MentorPanel({
             />
           </label>
           <label className="field">
-            <span className="field-label">Display name</span>
+            <span className="field-label">{t("mentor.displayName")}</span>
             <input
               id="mentor-name-input"
               name="mentor_name"
@@ -123,7 +123,7 @@ export function MentorPanel({
                 void onInvite({ email: mentorEmail, name: mentorName })
               }
             >
-              Invite Mentor
+              {t("mentor.inviteMentorButton")}
             </button>
           </div>
         </div>
@@ -131,13 +131,14 @@ export function MentorPanel({
 
       {projectId && canReview ? (
         <div className="inline-card">
-          <p className="inline-title">Submit mentor review</p>
+          <p className="inline-title">{t("mentor.submitReview")}</p>
           <p className="auth-copy">
-            Reviewing draft version {selectedDraftVersion ?? "latest"} in
-            read-only mentor mode.
+            {selectedDraftVersion
+              ? t("mentor.reviewingDraft", { version: selectedDraftVersion })
+              : t("mentor.reviewingDraftLatest")}
           </p>
           <label className="field">
-            <span className="field-label">Summary</span>
+            <span className="field-label">{t("mentor.summary")}</span>
             <textarea
               id="mentor-summary-input"
               name="mentor_summary"
@@ -149,7 +150,7 @@ export function MentorPanel({
             />
           </label>
           <label className="field">
-            <span className="field-label">Strengths</span>
+            <span className="field-label">{t("mentor.strengths")}</span>
             <textarea
               id="mentor-strengths-input"
               name="mentor_strengths"
@@ -161,7 +162,7 @@ export function MentorPanel({
             />
           </label>
           <label className="field">
-            <span className="field-label">Concerns</span>
+            <span className="field-label">{t("mentor.concerns")}</span>
             <textarea
               id="mentor-concerns-input"
               name="mentor_concerns"
@@ -173,7 +174,7 @@ export function MentorPanel({
             />
           </label>
           <label className="field">
-            <span className="field-label">Next steps</span>
+            <span className="field-label">{t("mentor.nextSteps")}</span>
             <textarea
               id="mentor-next-steps-input"
               name="mentor_next_steps"
@@ -199,7 +200,7 @@ export function MentorPanel({
                 })
               }
             >
-              Submit Mentor Feedback
+              {t("mentor.submitFeedback")}
             </button>
           </div>
         </div>
@@ -207,11 +208,9 @@ export function MentorPanel({
 
       <div className="stack">
         <div className="inline-card">
-          <p className="inline-title">Granted mentors</p>
+          <p className="inline-title">{t("mentor.grantedMentors")}</p>
           {mentorAccess.length === 0 ? (
-            <p className="auth-copy">
-              No mentor access granted for this project yet.
-            </p>
+            <p className="auth-copy">{t("mentor.noMentorAccess")}</p>
           ) : (
             <div className="stack">
               {mentorAccess.map((entry, index) => (
@@ -232,9 +231,9 @@ export function MentorPanel({
         </div>
 
         <div className="inline-card">
-          <p className="inline-title">Mentor feedback log</p>
+          <p className="inline-title">{t("mentor.feedbackLog")}</p>
           {mentorFeedback.length === 0 ? (
-            <p className="auth-copy">No mentor feedback submitted yet.</p>
+            <p className="auth-copy">{t("mentor.noFeedback")}</p>
           ) : (
             <div className="stack">
               {mentorFeedback.map((entry, index) => (
@@ -246,13 +245,15 @@ export function MentorPanel({
                   <strong>{entry.mentor_name || entry.mentor_email}</strong>
                   <p>{entry.summary}</p>
                   <p>
-                    <strong>Strengths:</strong> {entry.strengths}
+                    <strong>{t("mentor.strengthsLabel")}</strong>{" "}
+                    {entry.strengths}
                   </p>
                   <p>
-                    <strong>Concerns:</strong> {entry.concerns}
+                    <strong>{t("mentor.concernsLabel")}</strong>{" "}
+                    {entry.concerns}
                   </p>
                   <p>
-                    <strong>Next:</strong> {entry.next_steps}
+                    <strong>{t("mentor.nextLabel")}</strong> {entry.next_steps}
                   </p>
                   <small>
                     Draft v{entry.draft_version ?? "latest"} ·{" "}

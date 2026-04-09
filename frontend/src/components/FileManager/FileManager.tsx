@@ -1,5 +1,6 @@
 import type { Draft } from "../../api/types";
 import { formatDate } from "../../utils/format";
+import { useTranslation } from "react-i18next";
 
 type FileManagerProps = {
   drafts: Draft[];
@@ -20,6 +21,7 @@ export function FileManager({
   onSelect,
   onDownloadLatestExport,
 }: FileManagerProps) {
+  const { t } = useTranslation();
   const latestExportReady =
     Boolean(latestExportId) && latestExportStatus === "done";
 
@@ -27,16 +29,16 @@ export function FileManager({
     <section className="panel" data-testid="file-manager">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Draft Inventory</p>
-          <h2 className="panel-title">File Manager</h2>
+          <p className="eyebrow">{t("fileManager.eyebrow")}</p>
+          <h2 className="panel-title">{t("fileManager.title")}</h2>
         </div>
         <span className="badge badge-soft">{drafts.length} drafts</span>
       </div>
 
       {drafts.length === 0 ? (
         <div className="empty-state">
-          <p>No drafts yet.</p>
-          <span>Use the Generate Draft action to seed the workspace.</span>
+          <p>{t("fileManager.noDraftsTitle")}</p>
+          <span>{t("fileManager.noDraftsDetail")}</span>
         </div>
       ) : (
         <div className="list-block">
@@ -51,7 +53,9 @@ export function FileManager({
               }
               onClick={() => onSelect(draft.version)}
             >
-              <span>Draft v{draft.version}</span>
+              <span>
+                {t("fileManager.draftVersion", { version: draft.version })}
+              </span>
               <small>{formatDate(draft.created_at)}</small>
             </button>
           ))}
@@ -59,13 +63,13 @@ export function FileManager({
       )}
 
       <div className="inline-card" data-testid="export-center">
-        <p className="inline-title">Export Center</p>
+        <p className="inline-title">{t("fileManager.exportCenter")}</p>
         <p className="auth-copy" data-testid="latest-export-status">
           {latestExportReady
             ? `Latest export ${latestExportId} is ready`
             : latestExportStatus
               ? `Latest export status: ${latestExportStatus}`
-              : "No completed export yet."}
+              : t("fileManager.noCompletedExport")}
         </p>
         <div className="button-row">
           <button
@@ -74,7 +78,7 @@ export function FileManager({
             disabled={!latestExportReady || downloading}
             onClick={() => void onDownloadLatestExport()}
           >
-            Download Latest Export
+            {t("fileManager.downloadLatestExport")}
           </button>
         </div>
       </div>

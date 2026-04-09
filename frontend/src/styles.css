@@ -685,3 +685,155 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* Collapsible Panel */
+.panel-header {
+  cursor: pointer;
+  border-radius: 26px 26px 0 0;
+  transition: background 150ms ease;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.panel-toggle-header:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.panel-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 0.65rem;
+  color: #56736b;
+  transition: transform 200ms ease;
+  transform: rotate(-90deg);
+}
+
+.panel-chevron-open {
+  transform: rotate(0deg);
+}
+
+.panel-body {
+  overflow: hidden;
+  transition:
+    max-height 300ms ease,
+    opacity 200ms ease;
+}
+
+.panel-body-open {
+  max-height: 9999px;
+  opacity: 1;
+}
+
+.panel-body-closed {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* Tabs */
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(34, 65, 56, 0.1);
+  padding-bottom: 0;
+}
+
+.tab {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: #56736b;
+  border-radius: 12px 12px 0 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
+}
+
+.tab:hover {
+  color: #1b2b26;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.tab.active {
+  color: #1b2b26;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 -2px 0 #208a6b;
+}
+
+/* Language Switcher */
+.language-switcher {
+  cursor: pointer;
+  border: 1px solid rgba(32, 138, 107, 0.2);
+  transition:
+    background 150ms ease,
+    border-color 150ms ease;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.language-switcher:hover {
+  background: rgba(32, 138, 107, 0.14);
+  border-color: rgba(32, 138, 107, 0.36);
+}
+
+/* Focus visible */
+.primary-btn:focus-visible,
+.ghost-btn:focus-visible,
+.toolbar-btn:focus-visible,
+.tab:focus-visible {
+  outline: 2px solid #208a6b;
+  outline-offset: 2px;
+}
+
+/* Working indicator */
+.status-bar[data-working="true"] {
+  animation: status-pulse 2s ease infinite;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* Mobile sticky status */
+@media (max-width: 900px) {
+  .status-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 100;
+  }
+
+  .tab-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Phase chip highlight */
+.meta-chip-phase {
+  background: rgba(32, 130, 93, 0.14);
+  color: #135841;
+}
+
+.meta-chip-auth {
+  background: rgba(255, 255, 255, 0.4);
+  color: #56736b;
+  font-weight: 500;
+}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   AutoResearchDeployment,
@@ -47,6 +48,7 @@ export function DeploymentPanel({
   onClearFilters,
   onOpenPublication,
 }: DeploymentPanelProps) {
+  const { t } = useTranslation();
   const [draftFilters, setDraftFilters] =
     useState<AutoResearchDeploymentFilters>(filters);
   const hasDeployments = Boolean(deploymentList?.deployments.length);
@@ -81,23 +83,20 @@ export function DeploymentPanel({
     <section className="panel" data-testid="deployment-panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Workstream E</p>
-          <h2 className="panel-title">Deployments</h2>
+          <p className="eyebrow">{t("deployment.eyebrow")}</p>
+          <h2 className="panel-title">{t("deployment.title")}</h2>
         </div>
         <span className="badge badge-soft">
           {deploymentList
             ? `${deploymentList.deployment_count} deployments / ${deploymentList.publication_count} publications`
-            : "No deployments"}
+            : t("deployment.noDeployments")}
         </span>
       </div>
 
       {!hasDeployments ? (
         <div className="empty-state">
-          <p>No publish deployments yet.</p>
-          <span>
-            Export a publish package to register a paper/run/code package into a
-            deployment.
-          </span>
+          <p>{t("deployment.noDeploymentsTitle")}</p>
+          <span>{t("deployment.noDeploymentsDetail")}</span>
         </div>
       ) : (
         <>
@@ -122,7 +121,7 @@ export function DeploymentPanel({
             >
               {deployment
                 ? `${deployment.filtered_publication_count}/${deployment.publication_count} shown across ${deployment.project_count} projects`
-                : "Select a deployment to inspect publication listings"}
+                : t("deployment.selectDeployment")}
             </span>
           </div>
 
@@ -137,7 +136,7 @@ export function DeploymentPanel({
                   onChange={(event) =>
                     updateFilter("search", event.target.value || null)
                   }
-                  placeholder="Search publication, topic, run, benchmark"
+                  placeholder={t("deployment.searchPlaceholder")}
                   disabled={disabled}
                   data-testid="deployment-search-input"
                 />
@@ -161,9 +160,11 @@ export function DeploymentPanel({
                   disabled={disabled}
                   data-testid="deployment-final-ready-filter"
                 >
-                  <option value="">All readiness</option>
-                  <option value="true">Final ready only</option>
-                  <option value="false">Needs final work</option>
+                  <option value="">{t("deployment.allReadiness")}</option>
+                  <option value="true">{t("deployment.finalReadyOnly")}</option>
+                  <option value="false">
+                    {t("deployment.needsFinalWork")}
+                  </option>
                 </select>
                 <select
                   id="deployment-bundle-kind-filter"

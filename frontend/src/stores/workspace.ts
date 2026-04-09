@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import i18next from "i18next";
+
 import {
   api,
   clearAuthToken,
@@ -110,7 +112,7 @@ const emptyWorkspaceSlice = {
   mentorAccess: [] as MentorAccessEntry[],
   mentorFeedback: [] as MentorFeedbackEntry[],
   working: false,
-  notice: "Workspace idle",
+  notice: i18next.t("notices.workspaceIdle"),
 };
 
 type WorkspaceState = {
@@ -318,10 +320,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
   const handleActionError = (error: unknown, prefix: string) => {
     if (isUnauthorizedError(error) && getStoredAuthToken()) {
-      expireSession("Session expired. Sign in again.");
+      expireSession(i18next.t("notices.sessionExpired"));
       return;
     }
-    set({ notice: `${prefix}: ${getErrorMessage(error)}` });
+    set({
+      notice: i18next.t("notices.actionFailed", {
+        prefix,
+        error: getErrorMessage(error),
+      }),
+    });
   };
 
   return {
@@ -340,7 +347,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         initializing: true,
         authState: "checking",
         authError: "",
-        notice: "Loading workspace...",
+        notice: i18next.t("notices.loadingWorkspace"),
       });
 
       const [healthResult, authConfigResult] = await Promise.allSettled([
@@ -363,11 +370,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         } else if (isUnauthorizedError(currentUserResult.reason)) {
           clearAuthToken();
           authState = getAuthToken() ? "service" : "anonymous";
-          authError = "Session expired. Sign in again.";
+          authError = i18next.t("notices.sessionExpired");
         } else {
           clearAuthToken();
           authState = getAuthToken() ? "service" : "anonymous";
-          authError = `Could not restore session: ${getErrorMessage(currentUserResult.reason)}`;
+          authError = i18next.t("notices.couldNotRestoreSession", {
+            error: getErrorMessage(currentUserResult.reason),
+          });
         }
       }
 
@@ -376,8 +385,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       let autoResearchDeploymentList: AutoResearchDeploymentList | null = null;
       let notice =
         healthResult.status === "fulfilled"
-          ? "Backend reachable"
-          : `Backend unavailable: ${getErrorMessage(healthResult.reason)}`;
+          ? i18next.t("notices.backendReachable")
+          : i18next.t("notices.backendUnavailable", {
+              error: getErrorMessage(healthResult.reason),
+            });
       const requiresAuth = workspaceRequiresToken(authConfig);
 
       if (
@@ -397,9 +408,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
               ? deploymentListResult.value
               : null;
           if (authState === "user" && authUser) {
-            notice = `Signed in as ${authUser.email}`;
+            notice = i18next.t("notices.signedInAs", { email: authUser.email });
           } else if (authState === "service") {
-            notice = "Workspace ready with service token";
+            notice = i18next.t("notices.workspaceReadyService");
           }
         } else {
           if (
@@ -409,14 +420,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             clearAuthToken();
             authState = getAuthToken() ? "service" : "anonymous";
             authUser = null;
-            authError = "Session expired. Sign in again.";
+            authError = i18next.t("notices.sessionExpired");
           }
-          notice = `Workspace bootstrap failed: ${getErrorMessage(templateResult.reason)}`;
+          notice = i18next.t("notices.workspaceBootstrapFailed", {
+            error: getErrorMessage(templateResult.reason),
+          });
         }
       } else if (requiresAuth) {
         notice = authConfig?.session_enabled
-          ? "Sign in to access the workspace"
-          : "Workspace access is locked until a bearer token is configured in the frontend";
+          ? i18next.t("notices.signInToAccess")
+          : i18next.t("notices.workspaceLocked");
       }
 
       set({
@@ -444,15 +457,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const email = payload.email.trim();
       const name = payload.name.trim();
       if (!email) {
-        set({ authError: "Email is required" });
+        set({ authError: i18next.t("notices.emailRequired") });
         return;
       }
       if (!get().authConfig?.session_enabled) {
-        set({ authError: "Session login is not enabled on this server" });
+        set({
+          authError: i18next.t("notices.sessionNotEnabled"),
+        });
         return;
       }
 
-      set({ authBusy: true, authError: "", notice: "Signing in..." });
+      set({
+        authBusy: true,
+        authError: "",
+        notice: i18next.t("notices.signingIn"),
+      });
       try {
         const session = await api.createSession({
           email,
@@ -486,8 +505,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           authError: "",
           notice:
             templateResult.status === "fulfilled"
-              ? `Signed in as ${session.user.email}`
-              : `Signed in as ${session.user.email}, but template bootstrap failed`,
+              ? i18next.t("notices.signedInAs", { email: session.user.email })
+              : `${i18next.t("notices.signedInAs", { email: session.user.email })} (template bootstrap failed)`,
         });
         if (templateResult.status !== "fulfilled") {
           set({ authError: getErrorMessage(templateResult.reason) });
@@ -499,7 +518,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           authUser: null,
           authState: getAuthToken() ? "service" : "anonymous",
           authError: getErrorMessage(error),
-          notice: `Sign in failed: ${getErrorMessage(error)}`,
+          notice: i18next.t("notices.signInFailed", {
+            error: getErrorMessage(error),
+          }),
         });
       }
     },

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { AuthConfig, AuthUser } from "../../api/types";
 
@@ -22,20 +23,23 @@ type SessionPanelProps = {
 function getStatusLabel(
   authState: AuthState,
   authConfig: AuthConfig | null,
+  t: (key: string) => string,
 ): string {
   if (authState === "checking") {
-    return "Checking";
+    return t("session.checking");
   }
   if (authState === "user") {
-    return "Signed in";
+    return t("session.signedIn");
   }
   if (authState === "service") {
-    return "Service token";
+    return t("session.serviceToken");
   }
   if (authConfig?.api_protected) {
-    return authConfig.session_enabled ? "Sign-in required" : "Token required";
+    return authConfig.session_enabled
+      ? t("session.signinRequired")
+      : t("session.tokenRequired");
   }
-  return "Anonymous";
+  return t("session.anonymous");
 }
 
 export function SessionPanel({
@@ -48,6 +52,7 @@ export function SessionPanel({
   onSignIn,
   onSignOut,
 }: SessionPanelProps) {
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState<"student" | "tutor">("student");
@@ -64,35 +69,39 @@ export function SessionPanel({
     <section className="panel" data-testid="auth-panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Access Control</p>
-          <h2 className="panel-title">Session</h2>
+          <p className="eyebrow">{t("session.eyebrow")}</p>
+          <h2 className="panel-title">{t("session.title")}</h2>
         </div>
         <span className="badge badge-soft" data-testid="auth-mode-chip">
-          {getStatusLabel(authState, authConfig)}
+          {getStatusLabel(authState, authConfig, t)}
         </span>
       </div>
 
       <div className="auth-meta-grid">
         <div className="auth-meta-card">
-          <span className="meta-label">Workspace mode</span>
+          <span className="meta-label">{t("session.workspaceMode")}</span>
           <strong>
-            {authConfig?.api_protected ? "Protected API" : "Open API"}
+            {authConfig?.api_protected
+              ? t("session.protectedApi")
+              : t("session.openApi")}
           </strong>
         </div>
         <div className="auth-meta-card">
-          <span className="meta-label">Session login</span>
+          <span className="meta-label">{t("session.sessionLogin")}</span>
           <strong>
-            {authConfig?.session_enabled ? "Enabled" : "Unavailable"}
+            {authConfig?.session_enabled
+              ? t("session.enabled")
+              : t("session.unavailable")}
           </strong>
         </div>
       </div>
 
       {authUser ? (
         <div className="inline-card">
-          <p className="inline-title">Active user</p>
+          <p className="inline-title">{t("session.activeUser")}</p>
           <strong data-testid="auth-user-email">{authUser.email}</strong>
           <p className="auth-copy">
-            {authUser.name || "Unnamed user"} · {authUser.role}
+            {authUser.name || t("session.unnamedUser")} · {authUser.role}
           </p>
           <div className="button-row">
             <button
@@ -101,7 +110,7 @@ export function SessionPanel({
               disabled={authBusy || workspaceBusy}
               onClick={() => void onSignOut()}
             >
-              Sign out
+              {t("session.signOut")}
             </button>
           </div>
         </div>
@@ -109,12 +118,8 @@ export function SessionPanel({
         <>
           {authState === "service" ? (
             <div className="inline-card">
-              <p className="inline-title">Service token active</p>
-              <p className="auth-copy">
-                Requests already carry a configured bearer token. You can still
-                create a user session below if you want project ownership and
-                user-level audit trails.
-              </p>
+              <p className="inline-title">{t("session.serviceTokenActive")}</p>
+              <p className="auth-copy">{t("session.serviceTokenCopy")}</p>
             </div>
           ) : null}
 
@@ -122,22 +127,22 @@ export function SessionPanel({
             <p className="inline-title">
               {locked
                 ? authConfig?.session_enabled
-                  ? "Sign in to unlock the workspace"
-                  : "Provide a bearer token to unlock the workspace"
+                  ? t("session.lockedSessionTitle")
+                  : t("session.lockedTokenTitle")
                 : openWorkspace
-                  ? "Anonymous access active"
-                  : "Create a session"}
+                  ? t("session.openAccessTitle")
+                  : t("session.createSessionTitle")}
             </p>
             <p className="auth-copy">
               {openWorkspace && !authConfig?.session_enabled
-                ? "This workspace is already open. You can create projects anonymously; configure AUTH_SECRET only if you want user-linked sessions."
+                ? t("session.openAccessCopy")
                 : authConfig?.session_enabled
-                  ? "Use an email-based session so new projects are linked to your user identity."
-                  : "This server does not expose session login. Configure AUTH_SECRET or provide a bearer token in the frontend."}
+                  ? t("session.lockedSessionCopy")
+                  : t("session.lockedTokenCopy")}
             </p>
 
             <label className="field">
-              <span className="field-label">Email</span>
+              <span className="field-label">{t("session.emailLabel")}</span>
               <input
                 id="auth-email-input"
                 name="auth_email"
@@ -152,7 +157,7 @@ export function SessionPanel({
             </label>
 
             <label className="field">
-              <span className="field-label">Display name</span>
+              <span className="field-label">{t("session.nameLabel")}</span>
               <input
                 id="auth-name-input"
                 name="auth_name"
@@ -160,14 +165,14 @@ export function SessionPanel({
                 disabled={
                   authBusy || workspaceBusy || !authConfig?.session_enabled
                 }
-                placeholder="Optional"
+                placeholder={t("session.namePlaceholder")}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
 
             <label className="field">
-              <span className="field-label">Role</span>
+              <span className="field-label">{t("session.roleLabel")}</span>
               <select
                 id="auth-role-select"
                 name="auth_role"
@@ -180,8 +185,8 @@ export function SessionPanel({
                   setRole(event.target.value as "student" | "tutor")
                 }
               >
-                <option value="student">Student</option>
-                <option value="tutor">Tutor</option>
+                <option value="student">{t("session.student")}</option>
+                <option value="tutor">{t("session.tutor")}</option>
               </select>
             </label>
 
@@ -192,7 +197,7 @@ export function SessionPanel({
                 disabled={!canSubmit}
                 onClick={() => void onSignIn({ email, name, role })}
               >
-                Sign in
+                {t("session.signIn")}
               </button>
             </div>
           </div>

@@ -79,7 +79,10 @@ class AutoResearchOrchestrator:
 
     def _artifact_score(self, artifact: ResultArtifact) -> float:
         if artifact.objective_score is not None:
-            return float(artifact.objective_score)
+            try:
+                return float(artifact.objective_score)
+            except (TypeError, ValueError):
+                pass
         if artifact.best_system:
             for item in artifact.system_results:
                 if item.system == artifact.best_system:

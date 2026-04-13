@@ -401,6 +401,37 @@ class AutoExperimentRunner:
             return []
         return [raw]
 
+    def _normalize_sweep_results(self, sweeps: list[Any]) -> list[dict[str, Any]]:
+        """Fix sweep result format issues from LLM-generated experiment code."""
+        fixed = []
+        for item in sweeps:
+            if not isinstance(item, dict):
+                continue
+            ci = item.get("objective_score_confidence_interval")
+            if isinstance(ci, (list, tuple)) and len(ci) >= 2:
+                item["objective_score_confidence_interval"] = {
+                    "lower": float(ci[0]),
+                    "upper": float(ci[1]),
+                }
+            elif ci is not None and not isinstance(ci, dict):
+                item.pop("objective_score_confidence_interval", None)
+            fixed.append(item)
+        return fixed
+
+    def _normalize_significance_tests(self, tests: list[Any]) -> list[dict[str, Any]]:
+        """Fix significance test format issues from LLM-generated experiment code."""
+        fixed = []
+        for item in tests:
+            if not isinstance(item, dict):
+                continue
+            item.setdefault("scope", "selected_sweep")
+            item.setdefault("candidate", "")
+            item.setdefault("comparator", "")
+            item.setdefault("effect_size", None)
+            item.setdefault("detail", "")
+            fixed.append(item)
+        return fixed
+
     def _build_artifact(self, logs: str, outputs: dict[str, Any]) -> ResultArtifact:
         payload = outputs.get("result")
         if not isinstance(payload, dict):
@@ -434,15 +465,15 @@ class AutoExperimentRunner:
                 else None
             ),
             objective_score=(
-                float(payload.get("objective_score"))
-                if payload.get("objective_score") is not None
+                float(payload["objective_score"])
+                if payload.get("objective_score") is not None and not isinstance(payload["objective_score"], dict)
                 else None
             ),
             system_results=self._normalize_system_results(payload.get("system_results")),
             aggregate_system_results=self._normalize_list_field(payload.get("aggregate_system_results")),
             per_seed_results=self._normalize_list_field(payload.get("per_seed_results")),
-            sweep_results=self._normalize_list_field(payload.get("sweep_results")),
-            significance_tests=self._normalize_list_field(payload.get("significance_tests")),
+            sweep_results=self._normalize_sweep_results(self._normalize_list_field(payload.get("sweep_results"))),
+            significance_tests=self._normalize_significance_tests(self._normalize_list_field(payload.get("significance_tests"))),
             negative_results=self._normalize_list_field(payload.get("negative_results")),
             failed_trials=self._normalize_list_field(payload.get("failed_trials")),
             anomalous_trials=self._normalize_list_field(payload.get("anomalous_trials")),

@@ -394,6 +394,13 @@ class AblationSpec(BaseModel):
     description: str
 
 
+class ConceptualFramework(BaseModel):
+    core_concepts: list[str] = Field(default_factory=list)
+    theoretical_basis: str | None = None
+    assumptions: list[str] = Field(default_factory=list)
+    expected_mechanism: str | None = None
+
+
 class ResearchPlan(BaseModel):
     topic: str
     title: str
@@ -406,6 +413,10 @@ class ResearchPlan(BaseModel):
     planned_contributions: list[str] = Field(default_factory=list)
     experiment_outline: list[str] = Field(default_factory=list)
     scope_limits: list[str] = Field(default_factory=list)
+    conceptual_framework: ConceptualFramework | None = None
+    literature_gaps_addressed: list[str] = Field(default_factory=list)
+    novelty_statement: str | None = None
+    contribution_statements: list[str] = Field(default_factory=list)
 
 
 class AcceptanceRule(BaseModel):
@@ -664,6 +675,53 @@ class LiteratureInsight(BaseModel):
     insight: str
     method_hint: str | None = None
     gap_hint: str | None = None
+    thematic_group: str | None = None
+    methodological_detail: str | None = None
+    limitation: str | None = None
+    relevance: str | None = None
+
+
+class LiteratureTheme(BaseModel):
+    theme_id: str
+    label: str
+    description: str
+    paper_ids: list[str] = Field(default_factory=list)
+    consensus: str | None = None
+    tension: str | None = None
+    relevance_to_current: str | None = None
+
+
+class ResearchGap(BaseModel):
+    gap_id: str
+    description: str
+    evidence_from: list[str] = Field(default_factory=list)
+    gap_type: Literal["methodological", "empirical", "theoretical", "evaluation"] = "empirical"
+    opportunity: str | None = None
+
+
+class LiteratureSynthesis(BaseModel):
+    themes: list[LiteratureTheme] = Field(default_factory=list)
+    gaps: list[ResearchGap] = Field(default_factory=list)
+    positioning: str | None = None
+    novelty_claim: str | None = None
+    insights: list[LiteratureInsight] = Field(default_factory=list)
+
+
+class HypothesisResolution(BaseModel):
+    hypothesis: str
+    resolution: Literal["supported", "contradicted", "inconclusive"] = "inconclusive"
+    evidence: str = ""
+
+
+class NarrativeAnalysis(BaseModel):
+    story_arc: str = ""
+    surprising_findings: list[str] = Field(default_factory=list)
+    hypothesis_resolutions: list[HypothesisResolution] = Field(default_factory=list)
+    key_argument: str = ""
+    evidence_chain: list[str] = Field(default_factory=list)
+    recommended_emphasis: list[str] = Field(default_factory=list)
+    alternative_explanations: list[str] = Field(default_factory=list)
+    connections_to_literature: list[str] = Field(default_factory=list)
 
 
 class AutoResearchProjectFlowDraftRead(BaseModel):
@@ -733,6 +791,8 @@ class AutoResearchPaperPlanSectionRead(BaseModel):
     objective: str
     claim_ids: list[str] = Field(default_factory=list)
     evidence_focus: list[str] = Field(default_factory=list)
+    narrative_guidance: str | None = None
+    emphasis: Literal["standard", "expanded", "brief"] = "standard"
 
 
 class AutoResearchPaperPlanRead(BaseModel):
@@ -1017,6 +1077,8 @@ class AutoResearchRunRead(BaseModel):
     plan: ResearchPlan | None = None
     spec: ExperimentSpec | None = None
     literature: list[LiteratureInsight] = Field(default_factory=list)
+    literature_synthesis: LiteratureSynthesis | None = None
+    narrative_analysis: NarrativeAnalysis | None = None
     project_context: AutoResearchProjectFlowContextRead | None = None
     project_context_path: str | None = None
     narrative_report_markdown: str | None = None

@@ -9,9 +9,11 @@ logger = logging.getLogger(__name__)
 
 from schemas.autoresearch import (
     AutoResearchProjectFlowContextRead,
+    ConceptualFramework,
     ExperimentSpec,
     HypothesisCandidate,
     LiteratureInsight,
+    LiteratureSynthesis,
     PortfolioSummary,
     ResearchPlan,
     ResearchProgram,
@@ -23,7 +25,8 @@ from services.llm.prompting import load_prompt
 from services.llm.response_utils import get_message_content
 
 
-PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.1.2.md"
+PROMPT_PATH = "backend/prompts/autoresearch/planner/v0.2.0.md"
+CONCEPTUAL_FRAMEWORK_PROMPT_PATH = "backend/prompts/autoresearch/conceptual_framework/v0.1.0.md"
 
 
 class ResearchPlanner:
@@ -82,6 +85,59 @@ class ResearchPlanner:
             return ""
         return " ".join(method_hints[:2])
 
+    def _build_conceptual_framework(
+        self,
+        *,
+        topic: str,
+        task_family: str,
+        proposed_method: str,
+        hypotheses: list[str],
+        literature_synthesis: LiteratureSynthesis | None,
+    ) -> ConceptualFramework | None:
+        """Build a conceptual framework via LLM, grounding the method in theory."""
+        prompt_text = load_prompt(CONCEPTUAL_FRAMEWORK_PROMPT_PATH)
+        if not prompt_text:
+            return None
+
+        themes_text = ""
+        if literature_synthesis and literature_synthesis.themes:
+            themes_text = "\n".join(
+                f"- {t.label}: {t.description}" for t in literature_synthesis.themes
+            )
+        gaps_text = ""
+        if literature_synthesis and literature_synthesis.gaps:
+            gaps_text = "\n".join(
+                f"- [{g.gap_id}] {g.description}" for g in literature_synthesis.gaps
+            )
+
+        user_msg = (
+            f"## Topic\n{topic}\n\n"
+            f"## Task Family\n{task_family}\n\n"
+            f"## Proposed Method\n{proposed_method}\n\n"
+            f"## Hypotheses\n" + "\n".join(f"- {h}" for h in hypotheses) + "\n\n"
+        )
+        if themes_text:
+            user_msg += f"## Literature Themes\n{themes_text}\n\n"
+        if gaps_text:
+            user_msg += f"## Literature Gaps\n{gaps_text}\n\n"
+
+        try:
+            response = chat(
+                [
+                    {"role": "system", "content": prompt_text},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.3,
+            )
+            content = get_message_content(response)
+            parsed = self._parse_json(content)
+            if not parsed:
+                return None
+            return ConceptualFramework.model_validate(parsed)
+        except Exception as exc:
+            logger.warning("conceptual framework LLM call failed: %s", exc)
+            return None
+
     def _parse_json(self, text: str) -> dict[str, Any] | None:
         if not text:
             return None
@@ -102,6 +158,7 @@ class ResearchPlanner:
         benchmark_name: str | None = None,
         benchmark_description: str | None = None,
         benchmark_labels: list[str] | None = None,
+        literature_synthesis: LiteratureSynthesis | None = None,
     ) -> ResearchPlan:
         literature_phrase = self._literature_method_phrase(literature)
         benchmark_scope = self._benchmark_scope_phrase(
@@ -172,6 +229,36 @@ class ResearchPlanner:
                 "An artifact-grounded analysis that reports only executed experimental evidence.",
             ]
 
+        # Derive gap-driven hypotheses when synthesis is available
+        gap_hypotheses = []
+        gap_ids_addressed: list[str] = []
+        novelty_stmt: str | None = None
+        if literature_synthesis and literature_synthesis.gaps:
+            for gap in literature_synthesis.gaps[:2]:
+                gap_hypotheses.append(
+                    f"If [{gap.gap_id}] is a real gap, then addressing it with {method.split('backed')[0].strip()} should yield measurable improvement because {gap.opportunity or 'it targets an untested condition'}."
+                )
+                gap_ids_addressed.append(gap.gap_id)
+            if literature_synthesis.novelty_claim:
+                novelty_stmt = literature_synthesis.novelty_claim
+
+        final_hypotheses = hypothesis + gap_hypotheses
+        if not final_hypotheses:
+            final_hypotheses = hypothesis
+        final_hypotheses += [item.gap_hint for item in literature[:2] if item.gap_hint]
+        # deduplicate while preserving order
+        seen: set[str] = set()
+        unique_hypotheses: list[str] = []
+        for h in final_hypotheses:
+            if h not in seen:
+                seen.add(h)
+                unique_hypotheses.append(h)
+
+        contribution_stmts = [
+            f"We provide {c.lower().rstrip('.')} which addresses the need for reproducible benchmarking on {benchmark_scope}."
+            for c in contributions[:2]
+        ]
+
         return ResearchPlan(
             topic=topic,
             title=title,
@@ -201,10 +288,7 @@ class ResearchPlanner:
                 + (f" The proposal is conditioned on literature cues: {literature_phrase}" if literature_phrase else "")
             ),
             research_questions=questions,
-            hypotheses=(
-                hypothesis
-                + [item.gap_hint for item in literature[:2] if item.gap_hint]
-            ),
+            hypotheses=unique_hypotheses,
             planned_contributions=contributions,
             experiment_outline=[
                 "Instantiate a built in benchmark and split it into train and test partitions.",
@@ -228,6 +312,9 @@ class ResearchPlanner:
                     else []
                 ),
             ],
+            literature_gaps_addressed=gap_ids_addressed,
+            novelty_statement=novelty_stmt,
+            contribution_statements=contribution_stmts,
         )
 
     def _portfolio_templates(self, plan: ResearchPlan) -> list[dict[str, Any]]:
@@ -430,6 +517,7 @@ class ResearchPlanner:
         benchmark_name: str | None = None,
         benchmark_description: str | None = None,
         benchmark_labels: list[str] | None = None,
+        literature_synthesis: LiteratureSynthesis | None = None,
     ) -> ResearchPlan:
         literature = literature or []
         task_family = infer_task_family(topic, task_family_hint)
@@ -441,9 +529,30 @@ class ResearchPlanner:
             benchmark_name=benchmark_name,
             benchmark_description=benchmark_description,
             benchmark_labels=benchmark_labels,
+            literature_synthesis=literature_synthesis,
         )
         try:
             prompt = load_prompt(PROMPT_PATH)
+            # Build literature synthesis context for the prompt
+            lit_synthesis_text = ""
+            if literature_synthesis:
+                if literature_synthesis.themes:
+                    themes = "\n".join(
+                        f"  - {t.label}: {t.description} (consensus: {t.consensus})"
+                        for t in literature_synthesis.themes
+                    )
+                    lit_synthesis_text += f"\nLiterature themes:\n{themes}\n"
+                if literature_synthesis.gaps:
+                    gaps = "\n".join(
+                        f"  - [{g.gap_id}] ({g.gap_type}) {g.description}"
+                        for g in literature_synthesis.gaps
+                    )
+                    lit_synthesis_text += f"\nResearch gaps:\n{gaps}\n"
+                if literature_synthesis.positioning:
+                    lit_synthesis_text += f"\nPositioning: {literature_synthesis.positioning}\n"
+                if literature_synthesis.novelty_claim:
+                    lit_synthesis_text += f"\nSuggested novelty: {literature_synthesis.novelty_claim}\n"
+
             response = chat(
                 [
                     {"role": "system", "content": prompt},
@@ -454,9 +563,9 @@ class ResearchPlanner:
                             f"Task family: {task_family}\n"
                             f"Benchmark context: {{'name': {benchmark_name!r}, 'description': {benchmark_description!r}, 'labels': {benchmark_labels or []!r}}}\n"
                             f"Literature context: {[item.model_dump(mode='json') for item in literature]}\n"
+                            f"{lit_synthesis_text}"
                             f"Project flow context: {project_context.model_dump(mode='json') if project_context is not None else None}\n"
-                            "Return a JSON object for a minimal but realistic computer science "
-                            "research plan."
+                            "Return a JSON object for a gap-driven research plan."
                         ),
                     },
                 ]
@@ -471,21 +580,52 @@ class ResearchPlanner:
             if self._is_generic_title(parsed.get("title")):
                 parsed["title"] = fallback.title
             # Normalize LLM outputs: convert non-string fields that expect strings
-            for _key in ("problem_statement", "motivation", "proposed_method"):
+            for _key in ("problem_statement", "motivation", "proposed_method", "novelty_statement"):
                 _val = parsed.get(_key)
                 if isinstance(_val, dict):
                     parsed[_key] = ". ".join(str(v) for v in _val.values() if v)
                 elif _val is not None and not isinstance(_val, str):
                     parsed[_key] = str(_val)
                 parsed.setdefault(_key, getattr(fallback, _key))
-            for _list_key in ("research_questions", "hypotheses", "planned_contributions", "experiment_outline", "scope_limits"):
+            for _list_key in ("research_questions", "hypotheses", "planned_contributions", "experiment_outline", "scope_limits", "literature_gaps_addressed", "contribution_statements"):
                 _val = parsed.get(_list_key)
                 if isinstance(_val, str):
                     parsed[_list_key] = [line.lstrip("- 0123456789.) ").strip() for line in _val.split("\n") if line.strip()]
                 elif not isinstance(_val, list):
                     parsed[_list_key] = getattr(fallback, _list_key)
                 parsed.setdefault(_list_key, getattr(fallback, _list_key))
-            return ResearchPlan.model_validate(parsed)
+            # Handle conceptual_framework: parse if dict, else None
+            cf_raw = parsed.get("conceptual_framework")
+            if isinstance(cf_raw, dict):
+                try:
+                    parsed["conceptual_framework"] = ConceptualFramework.model_validate(cf_raw)
+                except Exception:
+                    parsed["conceptual_framework"] = None
+            else:
+                parsed["conceptual_framework"] = None
+
+            plan = ResearchPlan.model_validate(parsed)
+
+            # If LLM didn't produce a conceptual framework, try to build one
+            if plan.conceptual_framework is None:
+                plan.conceptual_framework = self._build_conceptual_framework(
+                    topic=topic,
+                    task_family=task_family,
+                    proposed_method=plan.proposed_method,
+                    hypotheses=plan.hypotheses,
+                    literature_synthesis=literature_synthesis,
+                )
+
+            return plan
         except Exception as exc:
             logger.warning("planner: LLM plan failed (%s), using fallback", exc)
+            # Still try to build conceptual framework for the fallback
+            if fallback.conceptual_framework is None:
+                fallback.conceptual_framework = self._build_conceptual_framework(
+                    topic=topic,
+                    task_family=task_family,
+                    proposed_method=fallback.proposed_method,
+                    hypotheses=fallback.hypotheses,
+                    literature_synthesis=literature_synthesis,
+                )
             return fallback

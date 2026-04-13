@@ -22,6 +22,7 @@ from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment
 from services.autoresearch.bridge import AutoResearchExperimentBridgeService, build_bridge_state
 from services.autoresearch.ingestion import resolve_benchmark
 from services.autoresearch.literature_pipeline import build_fallback_literature_context, gather_literature_context
+from services.autoresearch.narrative_analyst import analyze as analyze_narrative
 from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.project_flow import gather_project_flow_context
 from services.autoresearch.repair import ExperimentRepairEngine
@@ -1022,6 +1023,17 @@ class AutoResearchOrchestrator:
         set_project_status(db, project_id, "write")
         project_context = gather_project_flow_context(db, project_id)
         with telemetry_context(project_id=project_id, operation="autoresearch.paper_write"):
+            # Generate narrative analysis for rebuild
+            narrative_analysis = None
+            try:
+                narrative_analysis = analyze_narrative(
+                    plan=run.plan,
+                    artifact=selected_candidate.artifact,
+                    literature_synthesis=getattr(run, "literature_synthesis", None),
+                )
+            except Exception as exc:
+                logger.warning("orchestrator: narrative analysis (rebuild) failed: %s", exc)
+
             paper_pipeline = self.writer.build_pipeline(
                 run.plan,
                 run.spec,
@@ -1037,6 +1049,8 @@ class AutoResearchOrchestrator:
                 paper_revision_state=run.paper_revision_state,
                 project_context=project_context,
                 language=run.request.language if run.request is not None else "en",
+                literature_synthesis=getattr(run, "literature_synthesis", None),
+                narrative_analysis=narrative_analysis,
             )
         paper_path = paper_file_path(project_id, run_id)
         candidate_paper_path = candidate_paper_file_path(project_id, run_id, selected_candidate.id)
@@ -1209,13 +1223,14 @@ class AutoResearchOrchestrator:
                     task_family_hint=task_family_hint,
                     benchmark_source=benchmark_source,
                 )
-                _papers, literature, chunk_context = gather_literature_context(
+                _papers, literature, chunk_context, literature_synthesis = gather_literature_context(
                     db=db,
                     project_id=project_id,
                     topic=topic,
                     paper_ids=paper_ids,
                     auto_search=auto_search_literature,
                     auto_fetch=auto_fetch_literature,
+                    task_family=benchmark.task_family,
                 )
                 if auto_search_literature and not literature:
                     literature = build_fallback_literature_context(
@@ -1237,6 +1252,7 @@ class AutoResearchOrchestrator:
                     benchmark_description=benchmark.benchmark_description,
                     benchmark_labels=benchmark.payload.get("label_space"),
                     project_context=project_context,
+                    literature_synthesis=literature_synthesis,
                 )
                 if not plan.experiment_outline:
                     plan.experiment_outline = [
@@ -1843,6 +1859,17 @@ class AutoResearchOrchestrator:
             paper_sources_manifest_path = paper_sources_manifest_file_path(project_id, run_id)
             project_context_path = project_context_file_path(project_id, run_id)
             with telemetry_context(project_id=project_id, operation="autoresearch.paper_write"):
+                # Generate narrative analysis before paper writing
+                narrative_analysis = None
+                try:
+                    narrative_analysis = analyze_narrative(
+                        plan=winner_plan,
+                        artifact=winner.artifact,
+                        literature_synthesis=literature_synthesis,
+                    )
+                except Exception as exc:
+                    logger.warning("orchestrator: narrative analysis failed: %s", exc)
+
                 paper_pipeline = self.writer.build_pipeline(
                     winner_plan,
                     winner_spec,
@@ -1855,6 +1882,8 @@ class AutoResearchOrchestrator:
                     candidates=candidates,
                     project_context=project_context,
                     language=language,
+                    literature_synthesis=literature_synthesis,
+                    narrative_analysis=narrative_analysis,
                 )
             paper_markdown = paper_pipeline.paper_markdown
             candidates = self._update_candidate(

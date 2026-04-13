@@ -7,6 +7,9 @@ from pathlib import Path
 
 from schemas.autoresearch import (
     AutoResearchClaimEvidenceEntryRead,
+    ConceptualFramework,
+    LiteratureSynthesis,
+    NarrativeAnalysis,
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
     AutoResearchFigurePlanItemRead,
@@ -73,6 +76,20 @@ PAPER_WRITER_PROMPT_PATH = "backend/prompts/autoresearch/paper_writer/v0.1.0.md"
 PAPER_WRITER_SECTION_PROMPT_PATH = "backend/prompts/autoresearch/paper_writer/v0.2.0.md"
 PAPER_SELF_REVIEW_PROMPT_PATH = "backend/prompts/autoresearch/paper_self_review/v0.1.0.md"
 PAPER_REVISION_PROMPT_PATH = "backend/prompts/autoresearch/paper_revision/v0.1.0.md"
+
+_SECTION_PROMPT_DIR = "backend/prompts/autoresearch/paper_writer/sections"
+
+_SECTION_PROMPT_MAP: dict[str, str] = {
+    "abstract": f"{_SECTION_PROMPT_DIR}/abstract/v0.1.0.md",
+    "introduction": f"{_SECTION_PROMPT_DIR}/introduction/v0.1.0.md",
+    "related_work": f"{_SECTION_PROMPT_DIR}/related_work/v0.1.0.md",
+    "method": f"{_SECTION_PROMPT_DIR}/method/v0.1.0.md",
+    "experimental_setup": f"{_SECTION_PROMPT_DIR}/experimental_setup/v0.1.0.md",
+    "results": f"{_SECTION_PROMPT_DIR}/results/v0.1.0.md",
+    "discussion": f"{_SECTION_PROMPT_DIR}/discussion/v0.1.0.md",
+    "limitations": f"{_SECTION_PROMPT_DIR}/limitations/v0.1.0.md",
+    "conclusion": f"{_SECTION_PROMPT_DIR}/conclusion/v0.1.0.md",
+}
 
 
 def _latex_escape(text: str) -> str:
@@ -908,6 +925,8 @@ class PaperWriter:
         claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
         paper_plan: AutoResearchPaperPlanRead,
         paper_revision_state: AutoResearchPaperRevisionStateRead,
+        literature_synthesis: LiteratureSynthesis | None = None,
+        narrative_analysis: NarrativeAnalysis | None = None,
     ) -> str:
         refined = seed_markdown
         try:
@@ -950,15 +969,28 @@ class PaperWriter:
         except Exception as exc:
             logger.error("paper_writer: LLM refinement failed with exception: %s", exc)
 
-        # --- Self-review + revision loop ---
-        refined = self._self_review_and_revise(
-            refined,
-            plan=plan,
-            artifact=artifact,
-            literature=literature,
-            seed_markdown=seed_markdown,
-            project_context=project_context,
-        )
+        # --- Multi-perspective review + revision loop (fallback to self-review) ---
+        try:
+            refined = self._multi_perspective_review(
+                refined,
+                plan=plan,
+                artifact=artifact,
+                literature=literature,
+                literature_synthesis=literature_synthesis,
+                narrative_analysis=narrative_analysis,
+                seed_markdown=seed_markdown,
+                project_context=project_context,
+            )
+        except Exception as exc:
+            logger.warning("multi_perspective_review failed, falling back to self-review: %s", exc)
+            refined = self._self_review_and_revise(
+                refined,
+                plan=plan,
+                artifact=artifact,
+                literature=literature,
+                seed_markdown=seed_markdown,
+                project_context=project_context,
+            )
         return refined
 
     def _self_review_and_revise(
@@ -1039,6 +1071,243 @@ class PaperWriter:
                 break
         return current
 
+    def _multi_perspective_review(
+        self,
+        paper_markdown: str,
+        *,
+        plan: ResearchPlan,
+        artifact: ResultArtifact,
+        literature: list[LiteratureInsight],
+        literature_synthesis: LiteratureSynthesis | None = None,
+        narrative_analysis: NarrativeAnalysis | None = None,
+        seed_markdown: str = "",
+        project_context: AutoResearchProjectFlowContextRead | None = None,
+        max_rounds: int = 2,
+    ) -> str:
+        """Multi-perspective review with 4 specialized reviewers, then targeted revision."""
+        writer_model = settings.llm_writer_model
+        current = paper_markdown
+
+        # Map section slugs to content for reviewer scoping
+        sections = self._split_sections(current)
+
+        reviewer_configs = [
+            {
+                "name": "methodologist",
+                "prompt_path": "backend/prompts/autoresearch/reviewers/methodologist/v0.1.0.md",
+                "section_keys": ["method", "experimental_setup", "results"],
+                "context": self._build_methodology_context(plan, artifact),
+            },
+            {
+                "name": "domain_expert",
+                "prompt_path": "backend/prompts/autoresearch/reviewers/domain_expert/v0.1.0.md",
+                "section_keys": ["introduction", "related_work", "discussion"],
+                "context": self._build_domain_context(plan, literature_synthesis),
+            },
+            {
+                "name": "critical_reader",
+                "prompt_path": "backend/prompts/autoresearch/reviewers/critical_reader/v0.1.0.md",
+                "section_keys": ["results", "discussion", "conclusion"],
+                "context": self._build_critical_context(narrative_analysis),
+            },
+            {
+                "name": "writing_quality",
+                "prompt_path": "backend/prompts/autoresearch/reviewers/writing_quality/v0.1.0.md",
+                "section_keys": None,  # full paper
+                "context": "",
+            },
+        ]
+
+        for round_idx in range(max_rounds):
+            all_issues: list[dict] = []
+
+            for config in reviewer_configs:
+                try:
+                    prompt_text = load_prompt(config["prompt_path"])
+                    if not prompt_text:
+                        continue
+
+                    # Extract relevant sections for this reviewer
+                    if config["section_keys"] is None:
+                        review_content = current
+                    else:
+                        review_parts = []
+                        for key in config["section_keys"]:
+                            if key in sections:
+                                review_parts.append(f"## {key.replace('_', ' ').title()}\n\n{sections[key]}")
+                        review_content = "\n\n".join(review_parts) if review_parts else current
+
+                    user_msg = f"## Paper Content\n{review_content}\n\n{config['context']}"
+
+                    response = chat(
+                        [
+                            {"role": "system", "content": prompt_text},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        model=writer_model,
+                        temperature=0.2,
+                    )
+                    review_text = get_message_content(response).strip()
+                    if not review_text:
+                        continue
+
+                    # Parse issues from JSON response
+                    import json as _json
+                    try:
+                        review_data = _json.loads(review_text)
+                    except _json.JSONDecodeError:
+                        import re as _re
+                        m = _re.search(r"```(?:json)?\s*\n(.*?)\n```", review_text, _re.DOTALL)
+                        if m:
+                            try:
+                                review_data = _json.loads(m.group(1))
+                            except _json.JSONDecodeError:
+                                logger.warning("multi_review: %s response not parseable", config["name"])
+                                continue
+                        else:
+                            continue
+
+                    for issue in review_data.get("issues", []):
+                        issue["reviewer"] = config["name"]
+                        all_issues.append(issue)
+
+                    logger.info(
+                        "multi_review: round %d, %s found %d issues (score=%s)",
+                        round_idx + 1, config["name"],
+                        len(review_data.get("issues", [])),
+                        review_data.get("score", "?"),
+                    )
+                except Exception as exc:
+                    logger.warning("multi_review: %s failed: %s", config["name"], exc)
+                    continue
+
+            if not all_issues:
+                logger.info("multi_review: round %d, no issues found, stopping", round_idx + 1)
+                break
+
+            # Sort by severity: critical > major > minor
+            severity_order = {"critical": 0, "major": 1, "minor": 2}
+            all_issues.sort(key=lambda x: severity_order.get(x.get("severity", "minor"), 2))
+
+            # Deduplicate similar issues
+            seen_descs: set[str] = set()
+            unique_issues: list[dict] = []
+            for issue in all_issues:
+                desc = issue.get("description", "")[:100]
+                if desc not in seen_descs:
+                    seen_descs.add(desc)
+                    unique_issues.append(issue)
+
+            critical_count = sum(1 for i in unique_issues if i.get("severity") == "critical")
+            major_count = sum(1 for i in unique_issues if i.get("severity") == "major")
+            logger.info(
+                "multi_review: round %d aggregated %d issues (%d critical, %d major, %d minor)",
+                round_idx + 1, len(unique_issues), critical_count, major_count,
+                len(unique_issues) - critical_count - major_count,
+            )
+
+            # Apply revision
+            try:
+                rev_prompt = load_prompt("backend/prompts/autoresearch/paper_revision/v0.2.0.md")
+                if not rev_prompt:
+                    rev_prompt = load_prompt(PAPER_REVISION_PROMPT_PATH)
+
+                feedback_text = "\n\n".join(
+                    f"[{i.get('reviewer', '?')}/{i.get('severity', '?')}] "
+                    f"Section: {i.get('section', '?')}\n"
+                    f"Issue: {i.get('description', '')}\n"
+                    f"Suggestion: {i.get('suggestion', '')}"
+                    for i in unique_issues
+                )
+
+                narrative_text = ""
+                if narrative_analysis:
+                    narrative_text = f"Story arc: {narrative_analysis.story_arc}\nKey argument: {narrative_analysis.key_argument}"
+
+                rev_filled = (
+                    rev_prompt
+                    .replace("{{review_feedback}}", feedback_text)
+                    .replace("{{paper_content}}", current)
+                    if "{{paper_content}}" in rev_prompt
+                    else rev_prompt
+                )
+
+                user_msg_parts = [f"## Paper Content\n{current}", f"\n## Review Feedback\n{feedback_text}"]
+                if narrative_text:
+                    user_msg_parts.append(f"\n## Narrative Context\n{narrative_text}")
+
+                rev_response = chat(
+                    [
+                        {"role": "system", "content": rev_filled},
+                        {"role": "user", "content": "\n".join(user_msg_parts)},
+                    ],
+                    model=writer_model,
+                )
+                revised = get_message_content(rev_response).strip()
+                if not revised or len(revised) < len(current) * 0.5:
+                    logger.warning(
+                        "multi_review: revision round %d insufficient output, keeping current",
+                        round_idx + 1,
+                    )
+                    break
+                if self._llm_paper_candidate_valid(
+                    revised,
+                    seed_markdown=seed_markdown,
+                    literature=literature,
+                    project_context=project_context,
+                ):
+                    current = revised
+                    logger.info("multi_review: revision round %d accepted (%d chars)", round_idx + 1, len(current))
+                else:
+                    logger.warning("multi_review: revision round %d failed validation", round_idx + 1)
+                    break
+            except Exception as exc:
+                logger.error("multi_review: revision round %d failed: %s", round_idx + 1, exc)
+                break
+
+        return current
+
+    def _split_sections(self, markdown: str) -> dict[str, str]:
+        """Split paper markdown into sections by ## headings."""
+        import re as _re
+        sections: dict[str, str] = {}
+        parts = _re.split(r"^##\s+", markdown, flags=_re.MULTILINE)
+        for part in parts[1:]:  # skip content before first heading
+            lines = part.split("\n", 1)
+            title = lines[0].strip().lower().replace(" ", "_")
+            content = lines[1].strip() if len(lines) > 1 else ""
+            sections[title] = content
+        return sections
+
+    def _build_methodology_context(self, plan: ResearchPlan, artifact: ResultArtifact) -> str:
+        parts = [f"Research plan method: {plan.proposed_method}"]
+        if plan.conceptual_framework:
+            cf = plan.conceptual_framework
+            parts.append(f"Assumptions: {'; '.join(cf.assumptions)}")
+            parts.append(f"Expected mechanism: {cf.expected_mechanism}")
+        if artifact.objective_score is not None:
+            parts.append(f"Best system: {artifact.best_system}, score: {artifact.objective_score:.4f}")
+        return "\n".join(parts)
+
+    def _build_domain_context(self, plan: ResearchPlan, synthesis: LiteratureSynthesis | None) -> str:
+        parts = [f"Topic: {plan.topic}", f"Novelty: {plan.novelty_statement or 'N/A'}"]
+        if synthesis:
+            if synthesis.themes:
+                parts.append("Themes: " + "; ".join(t.label for t in synthesis.themes))
+            if synthesis.gaps:
+                parts.append("Gaps: " + "; ".join(g.description[:80] for g in synthesis.gaps))
+        return "\n".join(parts)
+
+    def _build_critical_context(self, narrative: NarrativeAnalysis | None) -> str:
+        if not narrative:
+            return ""
+        parts = []
+        if narrative.key_argument:
+            parts.append(f"Key argument: {narrative.key_argument}")
+        if narrative.alternative_explanations:
+            parts.append("Alternative explanations: " + "; ".join(narrative.alternative_explanations))
+        return "\n".join(parts)
+
     def _write_section_with_llm(
         self,
         section_title: str,
@@ -1053,32 +1322,70 @@ class PaperWriter:
         figure_context: str = "",
         section_guidance: str = "",
         topic: str = "",
+        section_slug: str = "",
+        narrative_context: str = "",
+        conceptual_framework_context: str = "",
     ) -> str | None:
         try:
-            prompt_template = load_prompt(PAPER_WRITER_SECTION_PROMPT_PATH)
-            prompt = (
-                prompt_template
-                .replace("{{section_name}}", section_title)
-                .replace("{{section_objective}}", section_objective)
-                .replace("{{evidence_context}}", evidence_context)
-                .replace("{{prev_section_name}}", prev_section_name)
-                .replace("{{prev_section_summary}}", prev_section_summary)
-                .replace("{{next_section_name}}", next_section_name)
-                .replace("{{next_section_summary}}", next_section_summary)
-                .replace("{{literature_context}}", literature_context)
-                .replace("{{figure_context}}", figure_context)
-                .replace("{{section_guidance}}", section_guidance)
-                .replace("{{topic}}", topic)
-            )
+            # Try dedicated section prompt first, fall back to generic
+            slug = section_slug or _section_slug(section_title)
+            prompt_path = _SECTION_PROMPT_MAP.get(slug, PAPER_WRITER_SECTION_PROMPT_PATH)
+            prompt_template = load_prompt(prompt_path)
+            if not prompt_template:
+                prompt_template = load_prompt(PAPER_WRITER_SECTION_PROMPT_PATH)
+
+            # Build context object for the user message
+            context_parts = []
+            if evidence_context:
+                context_parts.append(f"## Evidence\n{evidence_context}")
+            if literature_context:
+                context_parts.append(f"\n## Literature\n{literature_context}")
+            if figure_context:
+                context_parts.append(f"\n## Figures\n{figure_context}")
+            if narrative_context:
+                context_parts.append(f"\n## Narrative Analysis\n{narrative_context}")
+            if conceptual_framework_context:
+                context_parts.append(f"\n## Conceptual Framework\n{conceptual_framework_context}")
+            if prev_section_summary:
+                context_parts.append(f"\n## Previous Section ({prev_section_name})\n{prev_section_summary}")
+            if next_section_summary:
+                context_parts.append(f"\n## Next Section ({next_section_name})\n{next_section_summary}")
+            if section_guidance:
+                context_parts.append(f"\n## Section Guidance\n{section_guidance}")
+
+            user_content = "\n".join(context_parts)
+
+            # For dedicated section prompts, use them as system prompt
+            # and pass context as user message
+            if prompt_path != PAPER_WRITER_SECTION_PROMPT_PATH:
+                system_content = prompt_template
+            else:
+                # Legacy generic prompt with template variables
+                system_content = (
+                    prompt_template
+                    .replace("{{section_name}}", section_title)
+                    .replace("{{section_objective}}", section_objective)
+                    .replace("{{evidence_context}}", evidence_context)
+                    .replace("{{prev_section_name}}", prev_section_name)
+                    .replace("{{prev_section_summary}}", prev_section_summary)
+                    .replace("{{next_section_name}}", next_section_name)
+                    .replace("{{next_section_summary}}", next_section_summary)
+                    .replace("{{literature_context}}", literature_context)
+                    .replace("{{figure_context}}", figure_context)
+                    .replace("{{section_guidance}}", section_guidance)
+                    .replace("{{topic}}", topic)
+                )
+                user_content = f"Write the {section_title} section now."
+
             writer_model = settings.llm_writer_model
             logger.info(
-                "paper_writer: generating section '%s' with model=%s",
-                section_title, writer_model or "default",
+                "paper_writer: generating section '%s' (slug=%s) with model=%s, prompt=%s",
+                section_title, slug, writer_model or "default", prompt_path,
             )
             response = chat(
                 [
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": f"Write the {section_title} section now."},
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_content},
                 ],
                 model=writer_model,
             )
@@ -1156,9 +1463,13 @@ class PaperWriter:
         literature: list[LiteratureInsight],
         *,
         figure_paths: dict[str, str] | None = None,
+        literature_synthesis: LiteratureSynthesis | None = None,
+        narrative_analysis: NarrativeAnalysis | None = None,
     ) -> dict[str, str]:
         figure_paths = figure_paths or {}
         section_slugs = [_section_slug(s.title) for s in paper_plan.sections]
+
+        # Build enriched literature context
         literature_context_block = ""
         if literature:
             lit_items = []
@@ -1169,6 +1480,64 @@ class PaperWriter:
                 else:
                     lit_items.append(parts[0])
             literature_context_block = "## Available literature\n" + "\n".join(f"- {s}" for s in lit_items)
+
+        # Enrich literature context with synthesis themes when available
+        if literature_synthesis and literature_synthesis.themes:
+            theme_lines = []
+            for t in literature_synthesis.themes:
+                line = f"- Theme: {t.label} — {t.description}"
+                if t.consensus:
+                    line += f" (Consensus: {t.consensus})"
+                if t.tension:
+                    line += f" (Tension: {t.tension})"
+                theme_lines.append(line)
+            literature_context_block += "\n\n## Literature Synthesis — Themes\n" + "\n".join(theme_lines)
+
+        if literature_synthesis and literature_synthesis.gaps:
+            gap_lines = [f"- [{g.gap_id}] ({g.gap_type}) {g.description}" for g in literature_synthesis.gaps]
+            literature_context_block += "\n\n## Research Gaps\n" + "\n".join(gap_lines)
+
+        if literature_synthesis and literature_synthesis.novelty_claim:
+            literature_context_block += f"\n\n## Novelty Claim\n{literature_synthesis.novelty_claim}"
+
+        # Build narrative context
+        narrative_context = ""
+        if narrative_analysis:
+            parts = []
+            if narrative_analysis.story_arc:
+                parts.append(f"Story arc: {narrative_analysis.story_arc}")
+            if narrative_analysis.key_argument:
+                parts.append(f"Key argument: {narrative_analysis.key_argument}")
+            if narrative_analysis.surprising_findings:
+                parts.append("Surprising findings: " + "; ".join(narrative_analysis.surprising_findings))
+            if narrative_analysis.hypothesis_resolutions:
+                res_lines = [
+                    f"- {r.hypothesis}: {r.resolution} (evidence: {r.evidence})"
+                    for r in narrative_analysis.hypothesis_resolutions
+                ]
+                parts.append("Hypothesis resolutions:\n" + "\n".join(res_lines))
+            if narrative_analysis.evidence_chain:
+                parts.append("Evidence chain: " + " → ".join(narrative_analysis.evidence_chain))
+            if narrative_analysis.alternative_explanations:
+                parts.append("Alternative explanations: " + "; ".join(narrative_analysis.alternative_explanations))
+            if narrative_analysis.connections_to_literature:
+                parts.append("Connections to literature: " + "; ".join(narrative_analysis.connections_to_literature))
+            narrative_context = "\n".join(parts)
+
+        # Build conceptual framework context
+        cf_context = ""
+        if plan.conceptual_framework:
+            cf = plan.conceptual_framework
+            cf_parts = []
+            if cf.core_concepts:
+                cf_parts.append("Core concepts: " + ", ".join(cf.core_concepts))
+            if cf.theoretical_basis:
+                cf_parts.append(f"Theoretical basis: {cf.theoretical_basis}")
+            if cf.assumptions:
+                cf_parts.append("Assumptions: " + "; ".join(cf.assumptions))
+            if cf.expected_mechanism:
+                cf_parts.append(f"Expected mechanism: {cf.expected_mechanism}")
+            cf_context = "\n".join(cf_parts)
 
         generated: dict[str, str] = {}
         for idx, section in enumerate(paper_plan.sections):
@@ -1191,6 +1560,27 @@ class PaperWriter:
                 fig_lines = [f"![{name}]({path})" for name, path in figure_paths.items()]
                 fig_block = "## Figures available for embedding\n" + "\n".join(fig_lines)
 
+            # Build per-section narrative guidance
+            section_narrative_guidance = ""
+            if narrative_analysis:
+                if slug == "results" and narrative_analysis.hypothesis_resolutions:
+                    section_narrative_guidance = (
+                        "Organize results by hypothesis resolution: "
+                        + "; ".join(f"{r.hypothesis} → {r.resolution}" for r in narrative_analysis.hypothesis_resolutions)
+                    )
+                elif slug == "discussion" and narrative_analysis.alternative_explanations:
+                    section_narrative_guidance = (
+                        "Address alternative explanations: "
+                        + "; ".join(narrative_analysis.alternative_explanations)
+                    )
+                elif slug == "related_work" and literature_synthesis and literature_synthesis.themes:
+                    section_narrative_guidance = (
+                        "Organize by themes: "
+                        + "; ".join(t.label for t in literature_synthesis.themes)
+                    )
+                elif slug == "introduction" and plan.novelty_statement:
+                    section_narrative_guidance = f"Highlight novelty: {plan.novelty_statement}"
+
             content = self._write_section_with_llm(
                 section_title=section.title,
                 section_objective=objective,
@@ -1199,10 +1589,13 @@ class PaperWriter:
                 prev_section_summary=prev_summary,
                 next_section_name=next_slug.replace("_", " ").title() if next_slug else "",
                 next_section_summary=next_summary,
-                literature_context=literature_context_block if slug in ("related_work", "introduction", "discussion") else "",
+                literature_context=literature_context_block if slug in ("related_work", "introduction", "discussion", "abstract") else "",
                 figure_context=fig_block,
-                section_guidance=self._build_section_guidance(slug),
+                section_guidance=section_narrative_guidance or self._build_section_guidance(slug),
                 topic=plan.topic,
+                section_slug=slug,
+                narrative_context=narrative_context if slug in ("results", "discussion", "introduction", "conclusion", "abstract") else "",
+                conceptual_framework_context=cf_context if slug in ("method", "introduction", "discussion") else "",
             )
             if content is not None:
                 generated[slug] = content
@@ -3519,6 +3912,8 @@ Program objective:
         project_context: AutoResearchProjectFlowContextRead | None = None,
         language: str = "en",
         run_dir: Path | None = None,
+        literature_synthesis: LiteratureSynthesis | None = None,
+        narrative_analysis: NarrativeAnalysis | None = None,
     ) -> AutoResearchPaperPipelineArtifactsRead:
         literature = literature or []
         attempts = attempts or []
@@ -3583,6 +3978,8 @@ Program objective:
             project_context=project_context,
             language=language,
             generated_figure_paths=generated_figure_paths or None,
+            literature_synthesis=literature_synthesis,
+            narrative_analysis=narrative_analysis,
         )
         paper_section_rewrite_index = self.build_section_rewrite_packet_index(
             paper_plan=paper_plan,
@@ -3654,6 +4051,8 @@ Program objective:
         project_context: AutoResearchProjectFlowContextRead | None = None,
         language: str = "en",
         generated_figure_paths: dict[str, str] | None = None,
+        literature_synthesis: LiteratureSynthesis | None = None,
+        narrative_analysis: NarrativeAnalysis | None = None,
     ) -> str:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")
@@ -3973,6 +4372,8 @@ Program objective:
             claim_evidence_matrix,
             literature,
             figure_paths=generated_figure_paths,
+            literature_synthesis=literature_synthesis,
+            narrative_analysis=narrative_analysis,
         )
         all_slugs = [_section_slug(s.title) for s in paper_plan.sections]
         llm_covered = [s for s in all_slugs if s in llm_sections]
@@ -4002,6 +4403,8 @@ Program objective:
                 claim_evidence_matrix=claim_evidence_matrix,
                 paper_plan=paper_plan,
                 paper_revision_state=paper_revision_state,
+                literature_synthesis=literature_synthesis,
+                narrative_analysis=narrative_analysis,
             )
 
         logger.info("paper_writer: LLM section generation insufficient (%d/%d), falling back to seed template", len(llm_covered), len(all_slugs))
@@ -4018,4 +4421,6 @@ Program objective:
             claim_evidence_matrix=claim_evidence_matrix,
             paper_plan=paper_plan,
             paper_revision_state=paper_revision_state,
+            literature_synthesis=literature_synthesis,
+            narrative_analysis=narrative_analysis,
         )

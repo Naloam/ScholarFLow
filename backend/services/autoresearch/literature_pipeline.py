@@ -7,11 +7,12 @@ from datetime import datetime
 from agents.fetcher_agent import FetcherAgent
 from agents.reader_agent import ReaderAgent
 from agents.search_agent import SearchAgent
-from schemas.autoresearch import LiteratureInsight
+from schemas.autoresearch import LiteratureInsight, LiteratureSynthesis
 from schemas.agents import FetchItem, FetchResult, ReadResult
 from schemas.papers import PaperMeta
 from schemas.search import SearchResult
 from services.autoresearch.literature import derive_literature_insights
+from services.autoresearch.literature_synthesizer import synthesize as synthesize_literature
 from services.embedding.embeddings import embed_texts
 from services.embedding.vector_index import add_vectors
 from services.papers.repository import list_papers, upsert_papers_from_search
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _search_topic_literature(project_id: str, topic: str) -> SearchResult | None:
     try:
         agent = SearchAgent()
-        result = agent.run({"query": topic, "limit": 15})
+        result = agent.run({"query": topic, "limit": 25})
         return SearchResult(**result["result"])
     except Exception as exc:
         logger.warning("literature search failed for topic=%r: %s", topic, exc)
@@ -103,7 +104,7 @@ def build_fallback_literature_context(
     ]
 
 
-def _fetch_chunk_context(db, project_id: str, papers: list[PaperMeta], max_papers: int = 5) -> dict[str, list[str]]:
+def _fetch_chunk_context(db, project_id: str, papers: list[PaperMeta], max_papers: int = 10) -> dict[str, list[str]]:
     fetcher = FetcherAgent()
     reader = ReaderAgent()
     chunk_context: dict[str, list[str]] = {}
@@ -140,7 +141,8 @@ def gather_literature_context(
     paper_ids: list[str] | None,
     auto_search: bool,
     auto_fetch: bool,
-):
+    task_family: str = "text_classification",
+) -> tuple[list, list[LiteratureInsight], dict[str, list[str]], LiteratureSynthesis | None]:
     papers = list_papers(db, project_id)
     if paper_ids:
         paper_id_set = set(paper_ids)
@@ -159,4 +161,17 @@ def gather_literature_context(
 
     chunk_context = _fetch_chunk_context(db, project_id, papers) if auto_fetch and papers else {}
     insights = derive_literature_insights(papers, chunk_context=chunk_context)
-    return papers, insights, chunk_context
+
+    synthesis: LiteratureSynthesis | None = None
+    try:
+        synthesis = synthesize_literature(
+            papers=papers,
+            chunk_context=chunk_context,
+            existing_insights=insights,
+            topic=topic,
+            task_family=task_family,
+        )
+    except Exception as exc:
+        logger.warning("Literature synthesis failed, continuing without it: %s", exc)
+
+    return papers, insights, chunk_context, synthesis

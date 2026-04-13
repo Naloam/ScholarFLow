@@ -922,6 +922,9 @@ class AutoResearchExecutionPlane:
                 auto_fetch_literature=request.auto_fetch_literature,
                 docker_image=request.docker_image,
                 execution_action=job.action,
+                execution_mode=request.execution_mode,
+                hill_climb_time_budget_minutes=request.hill_climb_time_budget_minutes,
+                hill_climb_max_iterations=request.hill_climb_max_iterations,
                 should_cancel=lambda: self._is_cancel_requested(job.id, job.lease_id),
             )
         finally:

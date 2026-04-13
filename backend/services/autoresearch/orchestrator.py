@@ -51,6 +51,7 @@ from services.autoresearch.repository import (
     save_run,
 )
 from services.autoresearch.runner import AutoExperimentRunner
+from services.autoresearch.hill_climber import ExperimentHillClimber
 from services.autoresearch.writer import PaperWriter
 from services.drafts.repository import create_draft
 from services.projects.repository import set_project_status
@@ -284,6 +285,109 @@ class AutoResearchOrchestrator:
             if candidate.status == "done" and candidate.artifact is not None:
                 return candidate
         return None
+
+    def _run_hill_climbing(
+        self,
+        *,
+        winner: HypothesisCandidate,
+        winner_plan,
+        winner_spec,
+        project_id: str,
+        run_id: str,
+        benchmark,
+        execution_backend,
+        time_budget_minutes: int,
+        max_iterations: int,
+        should_cancel: Callable[[], bool] | None,
+    ) -> HypothesisCandidate:
+        """Run hill-climbing optimization on the winning candidate's code."""
+        import json
+        from pathlib import Path
+        from services.autoresearch.hill_climber import ExperimentHillClimber
+
+        if not winner.attempts or not winner.attempts[-1].code_path:
+            logger.warning("hill_climbing: no code path for winner, skipping")
+            return winner
+
+        code_path = Path(winner.attempts[-1].code_path)
+        if not code_path.exists():
+            logger.warning("hill_climbing: code file not found: %s", code_path)
+            return winner
+
+        initial_code = code_path.read_text(encoding="utf-8")
+
+        def execute_candidate_code(code: str):
+            self._raise_if_cancelled(should_cancel)
+            import tempfile
+            from services.autoresearch.sandbox import SandboxAgent
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
+                tmp.write(code)
+                tmp_path = tmp.name
+            try:
+                sandbox = SandboxAgent()
+                result = sandbox.run(
+                    code_path=tmp_path,
+                    benchmark_payload=benchmark.payload,
+                    execution_backend=execution_backend,
+                )
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+            return result
+
+        climber = ExperimentHillClimber(
+            execute_fn=execute_candidate_code,
+            primary_metric=winner.artifact.primary_metric,
+            time_budget_seconds=time_budget_minutes * 60,
+            max_iterations=max_iterations,
+        )
+        climb_result = climber.run(
+            initial_code=initial_code,
+            baseline_artifact=winner.artifact,
+        )
+
+        if climb_result.best_artifact is not None and climb_result.improvements > 0:
+            logger.info(
+                "hill_climbing: %d improvements over %d iterations (%.4f -> %.4f)",
+                climb_result.improvements,
+                len(climb_result.iterations),
+                climb_result.iterations[0].baseline_score if climb_result.iterations else 0.0,
+                climb_result.best_artifact.objective_score,
+            )
+            # Save best code
+            best_code_path = code_path.parent / f"{code_path.stem}_hill_climb_best.py"
+            best_code_path.write_text(climb_result.best_code, encoding="utf-8")
+
+            # Save iteration history
+            history_path = code_path.parent / "hill_climb_history.json"
+            history_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "iteration": it.iteration,
+                            "description": it.description,
+                            "status": it.status,
+                            "candidate_score": it.candidate_score,
+                            "baseline_score": it.baseline_score,
+                            "elapsed_seconds": it.elapsed_seconds,
+                        }
+                        for it in climb_result.iterations
+                    ],
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            winner = winner.model_copy(
+                update={
+                    "artifact": climb_result.best_artifact,
+                    "attempts": winner.attempts,  # keep original attempts
+                    "score": climb_result.best_artifact.objective_score,
+                }
+            )
+        else:
+            logger.info("hill_climbing: no improvements found, keeping original result")
+
+        return winner
 
     def _portfolio_progress_summary(
         self,
@@ -1043,6 +1147,9 @@ class AutoResearchOrchestrator:
         auto_fetch_literature: bool = False,
         docker_image: str | None = None,
         execution_action: AutoResearchJobAction = "run",
+        execution_mode: str = "portfolio",
+        hill_climb_time_budget_minutes: int = 10,
+        hill_climb_max_iterations: int = 30,
         should_cancel: Callable[[], bool] | None = None,
     ) -> AutoResearchRunRead:
         run = load_run(project_id, run_id)
@@ -1670,6 +1777,24 @@ class AutoResearchOrchestrator:
 
             winner_plan = self.planner.candidate_plan(plan, winner)
             winner_spec = self.planner.candidate_spec(spec, winner)
+
+            # --- Hill-climbing iterative optimization ---
+            if execution_mode == "hill_climbing" and winner.artifact is not None:
+                winner = self._run_hill_climbing(
+                    winner=winner,
+                    winner_plan=winner_plan,
+                    winner_spec=winner_spec,
+                    project_id=project_id,
+                    run_id=run_id,
+                    benchmark=benchmark,
+                    execution_backend=effective_backend,
+                    time_budget_minutes=hill_climb_time_budget_minutes,
+                    max_iterations=hill_climb_max_iterations,
+                    should_cancel=should_cancel,
+                )
+                winner_plan = self.planner.candidate_plan(plan, winner)
+                winner_spec = self.planner.candidate_spec(spec, winner)
+
             portfolio = portfolio.model_copy(
                 update={
                     "status": "done",

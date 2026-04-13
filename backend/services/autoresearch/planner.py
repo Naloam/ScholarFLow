@@ -39,6 +39,8 @@ class ResearchPlanner:
             return f"{topic_title}: Lightweight Retrieval Signals"
         if task_family == "tabular_classification":
             return f"{topic_title}: Stable Tabular Baselines"
+        if task_family == "llm_evaluation":
+            return f"{topic_title}: LLM Prompting Strategy Comparison"
         return f"{topic_title}: Lightweight Lexical Baselines"
 
     def _is_generic_title(self, title: str | None) -> bool:
@@ -138,6 +140,21 @@ class ResearchPlanner:
                 f"A reproducible tabular benchmark scoped to {benchmark_scope}.",
                 "A baseline comparison between majority, threshold, and lightweight linear models.",
                 "An artifact-grounded analysis of the executed experiment variants.",
+            ]
+        elif task_family == "llm_evaluation":
+            method = "a prompting strategy comparison backed by zero-shot and few-shot baselines"
+            questions = [
+                f"How do different prompting strategies compare on {benchmark_scope}?",
+                "Does providing few-shot examples improve classification over zero-shot approaches?",
+            ]
+            hypothesis = [
+                "Few-shot prompting with label-relevant examples will outperform zero-shot classification.",
+                "Rule-based keyword matching will provide a competitive baseline for structured tasks.",
+            ]
+            contributions = [
+                f"A reproducible LLM evaluation benchmark scoped to {benchmark_scope}.",
+                "A comparison between zero-shot, few-shot, and rule-based classification strategies.",
+                "An artifact-grounded analysis of prompting strategy effectiveness.",
             ]
         else:
             method = "a lexical probabilistic classifier backed by majority and keyword baselines"

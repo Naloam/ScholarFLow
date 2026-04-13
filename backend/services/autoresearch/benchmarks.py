@@ -1225,6 +1225,12 @@ def default_search_strategies(task_family: TaskFamily) -> list[str]:
             "perceptron_unscaled_search",
             "perceptron_scaled_search",
         ]
+    if task_family == "llm_evaluation":
+        return [
+            "zero_shot_search",
+            "few_shot_search",
+            "rule_based_search",
+        ]
     return [
         "keyword_rule_search",
         "naive_bayes_limited_vocab_search",
@@ -1424,6 +1430,36 @@ def build_experiment_spec(
             f"the hand written threshold rule on `{resolved.benchmark_name}`."
         )
         input_fields = dataset_payload["feature_names"]
+        query_fields = []
+        candidate_count = None
+    elif task_family == "llm_evaluation":
+        label_space = dataset_payload.get("label_space") or sorted(
+            {
+                item["label"]
+                for item in [*dataset_payload.get("train", []), *dataset_payload.get("test", [])]
+                if item.get("label")
+            }
+        )
+        baselines = [
+            BaselineSpec(name="zero_shot", description="Zero-shot classification using no examples."),
+            BaselineSpec(name="few_shot", description="Few-shot classification using example-based heuristics."),
+            BaselineSpec(name="rule_based", description="Rule-based keyword matching classifier."),
+        ]
+        metrics = [
+            MetricSpec(name="accuracy", goal="maximize", description="Classification accuracy."),
+            MetricSpec(name="f1", goal="maximize", description="Token-level F1 score."),
+        ]
+        ablations = []
+        notes = [
+            "Evaluate different prompting strategies against structured test examples.",
+            "Compare zero-shot, few-shot, and rule-based approaches.",
+            "Report accuracy and F1 on the held-out examples.",
+        ]
+        hypothesis = (
+            "Few-shot prompting with example-based heuristics should outperform "
+            f"zero-shot and rule-based baselines on `{resolved.benchmark_name}`."
+        )
+        input_fields = ["input"]
         query_fields = []
         candidate_count = None
     else:

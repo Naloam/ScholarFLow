@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 from schemas.autoresearch import (
     AutoResearchClaimEvidenceEntryRead,
@@ -43,6 +44,8 @@ from schemas.autoresearch import (
 from services.llm.client import chat
 from services.llm.prompting import load_prompt
 from services.llm.response_utils import get_message_content
+from config.settings import settings
+from services.autoresearch.figure_generator import FigureGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +64,15 @@ def _utcnow() -> datetime:
 
 
 _INLINE_LATEX_PATTERN = re.compile(r"`([^`]+)`|\[(\d+(?:,\s*\d+)*)\]")
+_BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_PATTERN = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 _COMPILE_REQUIRED_SOURCE_KINDS = {"latex", "bibtex", "shell"}
 _COMPILE_REQUIRED_SOURCE_PATHS = {"paper.md", "paper_compile_report.json", "manifest.json"}
 PAPER_WRITER_PROMPT_PATH = "backend/prompts/autoresearch/paper_writer/v0.1.0.md"
+PAPER_WRITER_SECTION_PROMPT_PATH = "backend/prompts/autoresearch/paper_writer/v0.2.0.md"
+PAPER_SELF_REVIEW_PROMPT_PATH = "backend/prompts/autoresearch/paper_self_review/v0.1.0.md"
+PAPER_REVISION_PROMPT_PATH = "backend/prompts/autoresearch/paper_revision/v0.1.0.md"
 
 
 def _latex_escape(text: str) -> str:
@@ -105,6 +114,16 @@ def _excerpt(text: str, *, limit: int = 280) -> str | None:
 
 
 def _render_inline_latex(text: str) -> str:
+    # Handle images first: ![alt](path) -> \includegraphics
+    text = _IMAGE_PATTERN.sub(
+        lambda m: r"\includegraphics[width=0.9\linewidth]{" + m.group(2) + "}",
+        text,
+    )
+    # Handle bold: **text** -> \textbf{text}
+    text = _BOLD_PATTERN.sub(lambda m: r"\textbf{" + m.group(1) + "}", text)
+    # Handle italic: *text* -> \textit{text} (not ** or inside \textbf)
+    text = _ITALIC_PATTERN.sub(lambda m: r"\textit{" + m.group(1) + "}", text)
+    # Handle inline code and citations
     segments: list[str] = []
     cursor = 0
     for match in _INLINE_LATEX_PATTERN.finditer(text):
@@ -170,6 +189,80 @@ def _latex_table_block(rows: list[list[str]]) -> list[str]:
         ]
     )
     return rendered
+
+
+def _collect_list_items(
+    lines: list[str], start: int, prefix: str, *, ordered: bool = False,
+) -> tuple[list[tuple[int, str]], int]:
+    """Collect list items with their indentation level."""
+    items: list[tuple[int, str]] = []
+    index = start
+    while index < len(lines):
+        line = lines[index]
+        if not line.strip():
+            # blank line might separate list blocks
+            if index + 1 < len(lines) and (lines[index + 1].strip().startswith("- ") or re.match(r"^\d+\.\s+", lines[index + 1].strip())):
+                index += 1
+                continue
+            break
+        if ordered:
+            m = re.match(r"^(\s*)(\d+\.\s+)(.*)", line)
+            if not m:
+                break
+            indent = len(m.group(1))
+            text = m.group(3).strip()
+        else:
+            m = re.match(r"^(\s*)- (.*)", line)
+            if not m:
+                break
+            indent = len(m.group(1))
+            text = m.group(2).strip()
+        level = indent // 2
+        items.append((level, text))
+        index += 1
+    return items, index
+
+
+def _latex_itemize(items: list[tuple[int, str]]) -> list[str]:
+    """Render nested itemize from (level, text) pairs."""
+    if not items:
+        return []
+    lines: list[str] = []
+    prev_level = -1
+    for level, text in items:
+        while level > prev_level:
+            lines.append(r"\begin{itemize}")
+            prev_level += 1
+        while level < prev_level:
+            lines.append(r"\end{itemize}")
+            prev_level -= 1
+        lines.append(r"\item " + _render_inline_latex(text))
+        prev_level = level
+    while prev_level >= 0:
+        lines.append(r"\end{itemize}")
+        prev_level -= 1
+    return lines
+
+
+def _latex_enumerate(items: list[tuple[int, str]]) -> list[str]:
+    """Render nested enumerate from (level, text) pairs."""
+    if not items:
+        return []
+    lines: list[str] = []
+    prev_level = -1
+    for level, text in items:
+        while level > prev_level:
+            lines.append(r"\begin{enumerate}")
+            prev_level += 1
+        while level < prev_level:
+            lines.append(r"\end{enumerate}")
+            prev_level -= 1
+        lines.append(r"\item " + _render_inline_latex(text))
+        prev_level = level
+    while prev_level >= 0:
+        lines.append(r"\end{enumerate}")
+        prev_level -= 1
+    return lines
 
 
 def _dedupe_preserving_order(items: list[str]) -> list[str]:
@@ -816,6 +909,7 @@ class PaperWriter:
         paper_plan: AutoResearchPaperPlanRead,
         paper_revision_state: AutoResearchPaperRevisionStateRead,
     ) -> str:
+        refined = seed_markdown
         try:
             prompt = load_prompt(PAPER_WRITER_PROMPT_PATH)
             logger.info("paper_writer: calling LLM for refinement (seed_len=%d)", len(seed_markdown))
@@ -839,25 +933,280 @@ class PaperWriter:
                             f"Seed paper markdown:\n{seed_markdown}"
                         ),
                     },
-                ]
+                ],
+                model=settings.llm_writer_model,
             )
             content = get_message_content(response).strip()
-            if not content:
-                logger.warning("paper_writer: LLM returned empty content, keeping seed markdown")
-                return seed_markdown
-            if self._llm_paper_candidate_valid(
+            if content and self._llm_paper_candidate_valid(
                 content,
                 seed_markdown=seed_markdown,
                 literature=literature,
                 project_context=project_context,
             ):
                 logger.info("paper_writer: LLM refinement accepted (content_len=%d)", len(content))
-                return content
-            logger.warning("paper_writer: LLM candidate failed validation, keeping seed markdown (content_len=%d)", len(content))
+                refined = content
+            elif content:
+                logger.warning("paper_writer: LLM candidate failed validation, keeping seed markdown (content_len=%d)", len(content))
         except Exception as exc:
             logger.error("paper_writer: LLM refinement failed with exception: %s", exc)
-            return seed_markdown
-        return seed_markdown
+
+        # --- Self-review + revision loop ---
+        refined = self._self_review_and_revise(
+            refined,
+            plan=plan,
+            artifact=artifact,
+            literature=literature,
+            seed_markdown=seed_markdown,
+            project_context=project_context,
+        )
+        return refined
+
+    def _self_review_and_revise(
+        self,
+        paper_markdown: str,
+        *,
+        plan: ResearchPlan,
+        artifact: ResultArtifact,
+        literature: list[LiteratureInsight],
+        seed_markdown: str,
+        project_context: AutoResearchProjectFlowContextRead | None,
+        max_rounds: int = 2,
+    ) -> str:
+        writer_model = settings.llm_writer_model
+        current = paper_markdown
+        for round_idx in range(max_rounds):
+            try:
+                review_prompt = load_prompt(PAPER_SELF_REVIEW_PROMPT_PATH)
+                review_prompt_filled = review_prompt.replace("{{paper_content}}", current)
+                logger.info("paper_writer: self-review round %d/%d (len=%d)", round_idx + 1, max_rounds, len(current))
+                review_response = chat(
+                    [
+                        {"role": "system", "content": review_prompt_filled},
+                        {"role": "user", "content": "Provide your structured review now."},
+                    ],
+                    model=writer_model,
+                )
+                review_text = get_message_content(review_response).strip()
+                if not review_text:
+                    logger.warning("paper_writer: self-review round %d returned empty, stopping", round_idx + 1)
+                    break
+
+                # Check if revision is needed
+                if '"overall_verdict": "accept"' in review_text.lower():
+                    logger.info("paper_writer: self-review round %d verdict=accept, stopping", round_idx + 1)
+                    break
+
+                # Apply revision
+                rev_prompt = load_prompt(PAPER_REVISION_PROMPT_PATH)
+                evidence_summary = (
+                    f"Best system: {artifact.best_system}, "
+                    f"primary metric ({artifact.primary_metric}): {artifact.objective_score:.4f}\n"
+                    f"Key findings: {'; '.join(artifact.key_findings[:5])}\n"
+                ) if artifact.objective_score is not None else "No score available."
+                rev_prompt_filled = (
+                    rev_prompt
+                    .replace("{{review_feedback}}", review_text)
+                    .replace("{{evidence_data}}", evidence_summary)
+                    .replace("{{paper_content}}", current)
+                )
+                rev_response = chat(
+                    [
+                        {"role": "system", "content": rev_prompt_filled},
+                        {"role": "user", "content": "Revise the paper now."},
+                    ],
+                    model=writer_model,
+                )
+                revised = get_message_content(rev_response).strip()
+                if not revised or len(revised) < len(current) * 0.5:
+                    logger.warning(
+                        "paper_writer: revision round %d produced insufficient output (%d chars), keeping current",
+                        round_idx + 1, len(revised) if revised else 0,
+                    )
+                    break
+                if self._llm_paper_candidate_valid(
+                    revised,
+                    seed_markdown=seed_markdown,
+                    literature=literature,
+                    project_context=project_context,
+                ):
+                    current = revised
+                    logger.info("paper_writer: revision round %d accepted (%d chars)", round_idx + 1, len(current))
+                else:
+                    logger.warning("paper_writer: revision round %d failed validation, keeping current", round_idx + 1)
+                    break
+            except Exception as exc:
+                logger.error("paper_writer: self-review/revision round %d failed: %s", round_idx + 1, exc)
+                break
+        return current
+
+    def _write_section_with_llm(
+        self,
+        section_title: str,
+        section_objective: str,
+        *,
+        evidence_context: str,
+        prev_section_name: str = "",
+        prev_section_summary: str = "",
+        next_section_name: str = "",
+        next_section_summary: str = "",
+        literature_context: str = "",
+        figure_context: str = "",
+        section_guidance: str = "",
+        topic: str = "",
+    ) -> str | None:
+        try:
+            prompt_template = load_prompt(PAPER_WRITER_SECTION_PROMPT_PATH)
+            prompt = (
+                prompt_template
+                .replace("{{section_name}}", section_title)
+                .replace("{{section_objective}}", section_objective)
+                .replace("{{evidence_context}}", evidence_context)
+                .replace("{{prev_section_name}}", prev_section_name)
+                .replace("{{prev_section_summary}}", prev_section_summary)
+                .replace("{{next_section_name}}", next_section_name)
+                .replace("{{next_section_summary}}", next_section_summary)
+                .replace("{{literature_context}}", literature_context)
+                .replace("{{figure_context}}", figure_context)
+                .replace("{{section_guidance}}", section_guidance)
+                .replace("{{topic}}", topic)
+            )
+            writer_model = settings.llm_writer_model
+            logger.info(
+                "paper_writer: generating section '%s' with model=%s",
+                section_title, writer_model or "default",
+            )
+            response = chat(
+                [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Write the {section_title} section now."},
+                ],
+                model=writer_model,
+            )
+            content = get_message_content(response).strip()
+            if not content or len(content) < 50:
+                logger.warning(
+                    "paper_writer: section '%s' LLM output too short (%d chars), skipping",
+                    section_title, len(content),
+                )
+                return None
+            logger.info(
+                "paper_writer: section '%s' generated successfully (%d chars)",
+                section_title, len(content),
+            )
+            return content
+        except Exception as exc:
+            logger.error("paper_writer: section '%s' generation failed: %s", section_title, exc)
+            return None
+
+    def _build_evidence_context_for_section(
+        self,
+        section: AutoResearchPaperPlanSectionRead,
+        artifact: ResultArtifact,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+    ) -> str:
+        claim_ids = getattr(section, "claim_ids", None) or []
+        relevant_claims = [
+            entry for entry in claim_evidence_matrix.entries
+            if not claim_ids or entry.claim_id in claim_ids
+        ]
+        parts: list[str] = []
+        for claim in relevant_claims:
+            evidence_details = "; ".join(
+                f"{ref.label}: {ref.detail}" for ref in claim.evidence
+            )
+            parts.append(
+                f"- [{claim.support_status}] {claim.claim}\n  Evidence: {evidence_details}"
+            )
+        if not parts:
+            parts.append("- No specific claims assigned. Use general experimental data.")
+        if artifact.tables:
+            table_summaries = []
+            for table in artifact.tables[:3]:
+                cols = ", ".join(table.columns[:5])
+                table_summaries.append(f"Table '{table.title}': columns=[{cols}], {len(table.rows)} rows")
+            parts.append("\nAvailable result tables:\n" + "\n".join(f"- {s}" for s in table_summaries))
+        if artifact.best_system and artifact.objective_score is not None:
+            parts.append(
+                f"\nBest system: {artifact.best_system}, "
+                f"objective score ({artifact.primary_metric}): {artifact.objective_score:.4f}"
+            )
+        return "\n".join(parts)
+
+    def _build_section_guidance(self, section_slug: str) -> str:
+        guidance_map: dict[str, str] = {
+            "abstract": "State the problem, method, key result, and significance in 150-250 words. End with the broader impact.",
+            "introduction": "Present the problem and motivation as a narrative. State research questions naturally within the flow. Do NOT list them as a numbered list unless essential.",
+            "related_work": "Survey prior work thematically, grouping by approach. If no external literature is available, discuss the problem domain and methodological background. Conclude by identifying the gap this work addresses.",
+            "method": "Describe the approach as a coherent methodology. Cover data, models, training procedure, and evaluation criteria. Frame it as a contribution.",
+            "experimental_setup": "Concisely describe the experimental conditions: environment, seeds, metrics, statistical tests. Keep technical but brief.",
+            "results": "Present findings with tables, then interpret them. Do NOT just list numbers — explain what they mean. Highlight statistical significance where applicable.",
+            "discussion": "Interpret results in context. Compare with expectations and prior work. Acknowledge limitations naturally, not as a bullet list.",
+            "limitations": "Discuss scope constraints, negative results, and untested conditions honestly. This section builds credibility.",
+            "conclusion": "Summarize key findings and their implications. Outline concrete future directions. Do NOT end with a generic 'Future work should extend to larger datasets' sentence.",
+        }
+        return guidance_map.get(section_slug, "Write clear, evidence-grounded academic prose.")
+
+    def _write_full_paper_with_llm(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        artifact: ResultArtifact,
+        paper_plan: AutoResearchPaperPlanRead,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+        literature: list[LiteratureInsight],
+        *,
+        figure_paths: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        figure_paths = figure_paths or {}
+        section_slugs = [_section_slug(s.title) for s in paper_plan.sections]
+        literature_context_block = ""
+        if literature:
+            lit_items = []
+            for i, item in enumerate(literature, 1):
+                parts = [f"[{i}] {item.title}"]
+                if item.insight:
+                    lit_items.append(f"{parts[0]}: {item.insight}")
+                else:
+                    lit_items.append(parts[0])
+            literature_context_block = "## Available literature\n" + "\n".join(f"- {s}" for s in lit_items)
+
+        generated: dict[str, str] = {}
+        for idx, section in enumerate(paper_plan.sections):
+            slug = _section_slug(section.title)
+            objective = (
+                section.objectives
+                if hasattr(section, "objectives") and section.objectives
+                else f"Write the {section.title} section of the paper."
+            )
+            evidence = self._build_evidence_context_for_section(
+                section, artifact, claim_evidence_matrix,
+            )
+            prev_slug = section_slugs[idx - 1] if idx > 0 else ""
+            next_slug = section_slugs[idx + 1] if idx < len(section_slugs) - 1 else ""
+            prev_summary = _excerpt(generated.get(prev_slug, ""), limit=200) or "This is the first section."
+            next_summary = "Follows with the next section." if next_slug else "This is the final section."
+
+            fig_block = ""
+            if slug == "results" and figure_paths:
+                fig_lines = [f"![{name}]({path})" for name, path in figure_paths.items()]
+                fig_block = "## Figures available for embedding\n" + "\n".join(fig_lines)
+
+            content = self._write_section_with_llm(
+                section_title=section.title,
+                section_objective=objective,
+                evidence_context=evidence,
+                prev_section_name=prev_slug.replace("_", " ").title() if prev_slug else "",
+                prev_section_summary=prev_summary,
+                next_section_name=next_slug.replace("_", " ").title() if next_slug else "",
+                next_section_summary=next_summary,
+                literature_context=literature_context_block if slug in ("related_work", "introduction", "discussion") else "",
+                figure_context=fig_block,
+                section_guidance=self._build_section_guidance(slug),
+                topic=plan.topic,
+            )
+            if content is not None:
+                generated[slug] = content
+        return generated
 
     def _reference_entry(self, index: int, item: LiteratureInsight) -> str:
         year = str(item.year) if item.year is not None else "n.d."
@@ -1389,6 +1738,231 @@ class PaperWriter:
                 return f"The run also flags anomalous behavior for follow-up, including: {detail}"
         return ""
 
+    def _interpret_results(
+        self,
+        artifact: ResultArtifact,
+        spec: ExperimentSpec,
+        best_metric: float | None,
+        baseline_metric: float | None,
+        baseline_system: str | None,
+    ) -> str:
+        parts: list[str] = []
+        if best_metric is not None and artifact.best_system:
+            if baseline_metric is not None and best_metric > baseline_metric:
+                delta = best_metric - baseline_metric
+                parts.append(
+                    f"The proposed method ({artifact.best_system}) outperforms the "
+                    f"baseline ({baseline_system}) by {delta:.4f} on {artifact.primary_metric}. "
+                    f"This improvement {'is statistically significant' if artifact.significance_tests and any(t.significant for t in artifact.significance_tests) else 'warrants further statistical validation'}."
+                )
+            elif baseline_metric is not None:
+                delta = baseline_metric - (best_metric or 0)
+                parts.append(
+                    f"The proposed method ({artifact.best_system}) did not outperform the "
+                    f"baseline ({baseline_system}), trailing by {delta:.4f} on {artifact.primary_metric}. "
+                    "This suggests the approach may need fundamental revision."
+                )
+            else:
+                parts.append(
+                    f"The best system ({artifact.best_system}) achieved "
+                    f"{artifact.primary_metric}={best_metric:.4f}. No explicit baseline comparison is available."
+                )
+        else:
+            parts.append("No definitive result metric was recorded.")
+
+        if artifact.negative_results:
+            parts.append(
+                f"Notable negative result: {artifact.negative_results[0].detail[:200]}."
+            )
+        if artifact.per_seed_results and len(artifact.per_seed_results) >= 2:
+            parts.append(
+                f"Results are based on {len(artifact.per_seed_results)} seeds, providing multi-seed stability evidence."
+            )
+        return "\n".join(parts) if parts else "No result interpretation available."
+
+    def _hypothesis_validation_block(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        artifact: ResultArtifact,
+        best_metric: float | None,
+        baseline_metric: float | None,
+    ) -> str:
+        lines: list[str] = []
+        for i, hypothesis in enumerate(plan.hypotheses, 1):
+            if best_metric is not None and baseline_metric is not None:
+                if best_metric > baseline_metric:
+                    verdict = "SUPPORTED"
+                elif best_metric < baseline_metric:
+                    verdict = "CONTRADICTED"
+                else:
+                    verdict = "INCONCLUSIVE"
+            else:
+                verdict = "UNTESTABLE"
+            lines.append(f"- **H{i}**: {hypothesis} → **{verdict}**")
+        if not lines:
+            lines.append("- No explicit hypotheses were recorded.")
+        return "\n".join(lines)
+
+    def _key_findings_block(
+        self,
+        artifact: ResultArtifact,
+        plan: ResearchPlan,
+    ) -> str:
+        lines: list[str] = []
+        for finding in artifact.key_findings[:5]:
+            lines.append(f"- {finding}")
+        if artifact.tables:
+            lines.append(f"- {len(artifact.tables)} result tables generated with cross-system comparisons.")
+        if artifact.failed_trials:
+            lines.append(f"- {len(artifact.failed_trials)} configurations failed, providing negative evidence.")
+        if not lines:
+            lines.append("- No structured findings beyond the artifact summary.")
+        return "\n".join(lines)
+
+    def _dynamic_result_claims(
+        self,
+        artifact: ResultArtifact,
+        spec: ExperimentSpec,
+        plan: ResearchPlan,
+    ) -> list[AutoResearchClaimEvidenceEntryRead]:
+        """Generate claims driven by actual experimental outcomes rather than fixed templates."""
+        claims: list[AutoResearchClaimEvidenceEntryRead] = []
+        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        baseline_system = spec.baselines[0].name if spec.baselines else None
+        baseline_metric = self._aggregate_metric(artifact, baseline_system, artifact.primary_metric) if baseline_system else None
+
+        # Claim 1: primary result — adapted to positive / mixed / negative
+        result_evidence = [
+            AutoResearchClaimEvidenceRefRead(
+                source_kind="artifact",
+                label="Artifact summary",
+                detail=artifact.summary,
+            ),
+            AutoResearchClaimEvidenceRefRead(
+                source_kind="artifact",
+                label="Key findings",
+                detail="; ".join(artifact.key_findings) or "No explicit key findings recorded.",
+            ),
+        ]
+        if artifact.tables:
+            result_evidence.append(
+                AutoResearchClaimEvidenceRefRead(
+                    source_kind="artifact",
+                    label="Result tables",
+                    detail=", ".join(table.title for table in artifact.tables),
+                )
+            )
+
+        if best_metric is not None and artifact.best_system:
+            if baseline_metric is not None and best_metric > baseline_metric:
+                claim_text = (
+                    f"The proposed method ({artifact.best_system}) outperforms the strongest baseline "
+                    f"({baseline_system}) on {artifact.primary_metric} "
+                    f"({best_metric:.4f} vs {baseline_metric:.4f})."
+                )
+                support = "supported"
+            elif baseline_metric is not None and best_metric < baseline_metric:
+                claim_text = (
+                    f"The proposed method ({artifact.best_system}) does not outperform the baseline "
+                    f"({baseline_system}) on {artifact.primary_metric} "
+                    f"({best_metric:.4f} vs {baseline_metric:.4f}), suggesting the hypothesis requires revision."
+                )
+                support = "partial"
+            else:
+                claim_text = (
+                    f"The best system ({artifact.best_system}) achieved {artifact.primary_metric}={best_metric:.4f}."
+                )
+                support = "supported"
+        else:
+            claim_text = "The experimental results were collected and analyzed."
+            support = "partial"
+
+        claims.append(
+            AutoResearchClaimEvidenceEntryRead(
+                claim_id="claim_primary_result",
+                category="result",
+                section_hint="Results",
+                claim=claim_text,
+                support_status=support,
+                evidence=result_evidence,
+            )
+        )
+
+        # Claim 2: significance — only if we have tests
+        if artifact.significance_tests:
+            sig_tests = [t for t in artifact.significance_tests if t.significant]
+            top_test = artifact.significance_tests[0]
+            p_value = top_test.adjusted_p_value if top_test.adjusted_p_value is not None else top_test.p_value
+            sig_claim = (
+                f"The improvement of {top_test.candidate} over {top_test.comparator} is "
+                f"{'statistically significant' if sig_tests else 'not statistically significant'} "
+                f"(adjusted p={p_value:.4f}, effect size={top_test.effect_size:.4f})."
+            )
+            claims.append(
+                AutoResearchClaimEvidenceEntryRead(
+                    claim_id="claim_significance",
+                    category="result",
+                    section_hint="Results",
+                    claim=sig_claim,
+                    support_status="supported" if sig_tests else "partial",
+                    evidence=[
+                        AutoResearchClaimEvidenceRefRead(
+                            source_kind="artifact",
+                            label="Significance test",
+                            detail=top_test.detail,
+                        ),
+                    ],
+                )
+            )
+
+        # Claim 3: robustness — driven by seed count
+        seed_count = len(artifact.per_seed_results)
+        if seed_count >= 2:
+            claims.append(
+                AutoResearchClaimEvidenceEntryRead(
+                    claim_id="claim_robustness",
+                    category="result",
+                    section_hint="Experimental Setup",
+                    claim=(
+                        f"Results are robust across {seed_count} independent seeds, "
+                        f"strengthening confidence in the observed effects."
+                    ),
+                    support_status="supported",
+                    evidence=[
+                        AutoResearchClaimEvidenceRefRead(
+                            source_kind="artifact",
+                            label="Per-seed results",
+                            detail=f"{seed_count} completed seed artifacts.",
+                        ),
+                    ],
+                )
+            )
+
+        # Claim 4: negative results — only if they exist
+        if artifact.negative_results:
+            neg = artifact.negative_results[0]
+            neg_detail = neg.detail if len(neg.detail) < 160 else neg.detail[:157] + "..."
+            claims.append(
+                AutoResearchClaimEvidenceEntryRead(
+                    claim_id="claim_negative_evidence",
+                    category="result",
+                    section_hint="Discussion",
+                    claim=f"Not all configurations succeeded: {neg_detail}",
+                    support_status="partial",
+                    evidence=[
+                        AutoResearchClaimEvidenceRefRead(
+                            source_kind="artifact",
+                            label="Negative result",
+                            detail=neg_detail,
+                        ),
+                    ],
+                    gaps=["Negative results warrant further investigation."],
+                )
+            )
+
+        return claims
+
     def _claim_entries(
         self,
         plan: ResearchPlan,
@@ -1597,6 +2171,14 @@ class PaperWriter:
                 ],
             )
         )
+
+        # Merge dynamic result-driven claims (dedup by claim_id)
+        existing_ids = {e.claim_id for e in entries}
+        for dynamic_claim in self._dynamic_result_claims(artifact, spec, plan):
+            if dynamic_claim.claim_id not in existing_ids:
+                entries.append(dynamic_claim)
+                existing_ids.add(dynamic_claim.claim_id)
+
         return entries
 
     def build_claim_evidence_matrix(
@@ -1650,6 +2232,9 @@ class PaperWriter:
         attempts = attempts or []
         candidates = candidates or []
         benchmark_display = benchmark_name or spec.benchmark_name
+        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        baseline_system = spec.baselines[0].name if spec.baselines else None
+        baseline_metric = self._aggregate_metric(artifact, baseline_system, artifact.primary_metric) if baseline_system else None
         claim_lines = []
         for entry in claim_evidence_matrix.entries:
             evidence_lines = "\n".join(
@@ -1695,6 +2280,9 @@ class PaperWriter:
             if project_context is not None
             else ""
         )
+        result_interpretation = self._interpret_results(artifact, spec, best_metric, baseline_metric, baseline_system)
+        hypothesis_validation = self._hypothesis_validation_block(plan, spec, artifact, best_metric, baseline_metric)
+        findings_block = self._key_findings_block(artifact, plan)
         return f"""# Narrative Report: {plan.title}
 
 ## Research Program
@@ -1712,6 +2300,15 @@ Program objective:
 - Best system: `{artifact.best_system or 'unknown'}`
 - Key findings: {"; ".join(artifact.key_findings) or "No explicit key findings recorded."}
 - Search / repair rounds: {len(attempts)}
+
+## Result Interpretation
+{result_interpretation}
+
+## Hypothesis Validation
+{hypothesis_validation}
+
+## Key Research Findings
+{findings_block}
 
 ## Claim-Evidence Commitments
 {chr(10).join(claim_lines)}
@@ -2665,24 +3262,14 @@ Program objective:
                 body.append("")
                 index += 1
                 continue
-            if stripped.startswith("- "):
-                items: list[str] = []
-                while index < len(raw_lines) and raw_lines[index].strip().startswith("- "):
-                    items.append(raw_lines[index].strip()[2:].strip())
-                    index += 1
-                body.append(r"\begin{itemize}")
-                body.extend(r"\item " + _render_inline_latex(item) for item in items)
-                body.append(r"\end{itemize}")
+            if stripped.startswith("- ") or raw_lines[index].startswith("  - "):
+                items, index = _collect_list_items(raw_lines, index, "- ")
+                body.extend(_latex_itemize(items))
                 body.append("")
                 continue
             if re.match(r"^\d+\.\s+", stripped):
-                items = []
-                while index < len(raw_lines) and re.match(r"^\d+\.\s+", raw_lines[index].strip()):
-                    items.append(re.sub(r"^\d+\.\s+", "", raw_lines[index].strip()))
-                    index += 1
-                body.append(r"\begin{enumerate}")
-                body.extend(r"\item " + _render_inline_latex(item) for item in items)
-                body.append(r"\end{enumerate}")
+                items, index = _collect_list_items(raw_lines, index, None, ordered=True)
+                body.extend(_latex_enumerate(items))
                 body.append("")
                 continue
             body.append(_render_inline_latex(stripped))
@@ -2702,6 +3289,11 @@ Program objective:
                 r"\usepackage[utf8]{inputenc}",
                 r"\usepackage[T1]{fontenc}",
                 r"\usepackage{hyperref}",
+                r"\usepackage{graphicx}",
+                r"\usepackage{booktabs}",
+                r"\usepackage{amsmath}",
+                r"\usepackage{amssymb}",
+                r"\usepackage{enumitem}",
                 r"\title{" + _latex_escape(title) + "}",
                 r"\date{}",
                 r"\begin{document}",
@@ -2926,6 +3518,7 @@ Program objective:
         paper_revision_state: AutoResearchPaperRevisionStateRead | None = None,
         project_context: AutoResearchProjectFlowContextRead | None = None,
         language: str = "en",
+        run_dir: Path | None = None,
     ) -> AutoResearchPaperPipelineArtifactsRead:
         literature = literature or []
         attempts = attempts or []
@@ -2959,6 +3552,19 @@ Program objective:
             paper_plan=paper_plan,
             figure_plan=figure_plan,
         )
+
+        # Generate figures if run_dir is available
+        generated_figure_paths: dict[str, str] = {}
+        if run_dir is not None:
+            try:
+                fig_gen = FigureGenerator(run_dir)
+                figures = fig_gen.generate_figures(artifact)
+                for fig in figures:
+                    generated_figure_paths[fig.title] = fig.relative_path
+                logger.info("build_pipeline: generated %d figures", len(figures))
+            except Exception as exc:
+                logger.error("build_pipeline: figure generation failed: %s", exc)
+
         paper_markdown = self.write(
             plan,
             spec,
@@ -2976,6 +3582,7 @@ Program objective:
             paper_revision_state=paper_revision_state,
             project_context=project_context,
             language=language,
+            generated_figure_paths=generated_figure_paths or None,
         )
         paper_section_rewrite_index = self.build_section_rewrite_packet_index(
             paper_plan=paper_plan,
@@ -3046,6 +3653,7 @@ Program objective:
         paper_revision_state: AutoResearchPaperRevisionStateRead | None = None,
         project_context: AutoResearchProjectFlowContextRead | None = None,
         language: str = "en",
+        generated_figure_paths: dict[str, str] | None = None,
     ) -> str:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")
@@ -3355,6 +3963,48 @@ Program objective:
             section_bodies=section_bodies,
             references_block=references_block,
         )
+
+        # --- LLM-first section generation (fallback to seed template) ---
+        llm_sections = self._write_full_paper_with_llm(
+            plan,
+            spec,
+            artifact,
+            paper_plan,
+            claim_evidence_matrix,
+            literature,
+            figure_paths=generated_figure_paths,
+        )
+        all_slugs = [_section_slug(s.title) for s in paper_plan.sections]
+        llm_covered = [s for s in all_slugs if s in llm_sections]
+        if len(llm_covered) >= len(all_slugs) // 2 + 1:
+            merged_bodies = dict(section_bodies)
+            merged_bodies.update(llm_sections)
+            llm_markdown = self._render_section_sequence(
+                title=plan.title,
+                paper_plan=paper_plan,
+                section_bodies=merged_bodies,
+                references_block=references_block,
+            )
+            logger.info(
+                "paper_writer: using LLM-generated sections (%d/%d), fallback template for rest",
+                len(llm_covered), len(all_slugs),
+            )
+            return self._maybe_refine_with_llm(
+                seed_markdown=llm_markdown,
+                language=language,
+                plan=plan,
+                spec=spec,
+                artifact=artifact,
+                literature=literature,
+                attempts=attempts,
+                project_context=project_context,
+                narrative_report_markdown=narrative_report_markdown,
+                claim_evidence_matrix=claim_evidence_matrix,
+                paper_plan=paper_plan,
+                paper_revision_state=paper_revision_state,
+            )
+
+        logger.info("paper_writer: LLM section generation insufficient (%d/%d), falling back to seed template", len(llm_covered), len(all_slugs))
         return self._maybe_refine_with_llm(
             seed_markdown=seed_markdown,
             language=language,

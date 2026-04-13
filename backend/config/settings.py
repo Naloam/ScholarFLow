@@ -55,6 +55,7 @@ class Settings(BaseModel):
         or os.getenv("DEEPSEEK_API_KEY")
     )
     llm_model: str | None = os.getenv("LLM_MODEL") or os.getenv("SCHOLARFLOW_LLM_MODEL")
+    llm_writer_model: str | None = os.getenv("LLM_WRITER_MODEL") or os.getenv("SCHOLARFLOW_LLM_WRITER_MODEL")
     llm_api_base: str | None = os.getenv("LLM_API_BASE") or os.getenv("OPENAI_API_BASE")
     grobid_url: str = os.getenv("GROBID_URL", "http://localhost:8070")
     sandbox_backend: str = os.getenv("SANDBOX_BACKEND", "auto")

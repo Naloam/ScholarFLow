@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking"]
+TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking", "llm_evaluation"]
 BenchmarkKind = Literal[
     "builtin",
     "remote_csv",
@@ -284,6 +284,9 @@ class AutoResearchRunRequest(BaseModel):
     experiment_bridge: AutoResearchExperimentBridgeConfig | None = None
     auto_search_literature: bool = False
     auto_fetch_literature: bool = False
+    execution_mode: str = "portfolio"  # portfolio | hill_climbing
+    hill_climb_time_budget_minutes: int = 10
+    hill_climb_max_iterations: int = 30
 
     @field_validator("candidate_execution_limit")
     @classmethod
@@ -306,6 +309,9 @@ class AutoResearchRunConfig(BaseModel):
     auto_search_literature: bool = False
     auto_fetch_literature: bool = False
     docker_image: str | None = None
+    execution_mode: str = "portfolio"
+    hill_climb_time_budget_minutes: int = 10
+    hill_climb_max_iterations: int = 30
 
     @field_validator("candidate_execution_limit")
     @classmethod
@@ -329,6 +335,9 @@ class AutoResearchRunConfig(BaseModel):
             auto_search_literature=payload.auto_search_literature,
             auto_fetch_literature=payload.auto_fetch_literature,
             docker_image=payload.docker_image,
+            execution_mode=payload.execution_mode,
+            hill_climb_time_budget_minutes=payload.hill_climb_time_budget_minutes,
+            hill_climb_max_iterations=payload.hill_climb_max_iterations,
         )
 
 

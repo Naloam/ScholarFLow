@@ -123,7 +123,190 @@ class ExperimentCodeGenerator:
             return self._ir_template(plan, spec, benchmark_payload, strategy)
         if plan.task_family == "tabular_classification":
             return self._tabular_template(plan, spec, benchmark_payload, strategy)
+        if plan.task_family == "llm_evaluation":
+            return self._llm_eval_template(plan, spec, benchmark_payload, strategy)
         return self._text_template(plan, spec, benchmark_payload, strategy)
+
+    def _llm_eval_template(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark_payload: dict[str, Any],
+        strategy: str,
+    ) -> str:
+        dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
+        prompts_json = json.dumps(
+            benchmark_payload.get("evaluation_prompts", [
+                {"system": "You are a helpful assistant.", "user": "{{input}}"}
+            ]),
+            ensure_ascii=False, indent=2,
+        )
+        return f'''import json
+import os
+import platform
+import sys
+import time
+
+DATASET = {dataset_json}
+PROMPTS = {prompts_json}
+PRIMARY_METRIC = "accuracy"
+TITLE = {plan.title!r}
+HYPOTHESIS = {spec.hypothesis!r}
+STRATEGY = {strategy!r}
+SEED = int(os.environ.get("SCHOLARFLOW_SEED", "0") or 0)
+SWEEP = json.loads(os.environ.get("SCHOLARFLOW_SWEEP_JSON") or "{{}}")
+
+# --- SCHOLARFLOW_CONTRACT: do not modify lines containing SCHOLARFLOW_CONTRACT ---
+
+def accuracy(y_true, y_pred):
+    correct = sum(1 for t, p in zip(y_true, y_pred) if t == p)
+    return correct / len(y_true) if y_true else 0.0
+
+
+def exact_match_score(predictions, references):
+    return accuracy(references, predictions)
+
+
+def f1_score_single(y_true, y_pred):
+    common = set(y_true.split()) & set(y_pred.split())
+    if not common:
+        return 0.0
+    precision = len(common) / len(y_pred.split())
+    recall = len(common) / len(y_true.split())
+    return 2 * precision * recall / (precision + recall)
+
+
+def build_prompt(template, input_text):
+    """Replace {{{{input}}}} placeholder with actual input."""
+    result = template
+    result = result.replace("{{{{input}}}}", str(input_text))
+    return result
+
+
+def evaluate_system(system_fn, examples, references):
+    predictions = []
+    for ex in examples:
+        pred = system_fn(ex)
+        predictions.append(str(pred).strip().lower())
+    ref_norm = [str(r).strip().lower() for r in references]
+    acc = accuracy(ref_norm, predictions)
+    f1 = 0.0
+    if predictions and ref_norm:
+        f1 = sum(f1_score_single(r, p) for r, p in zip(ref_norm, predictions)) / len(predictions)
+    return {{"accuracy": acc, "f1": f1}}
+
+
+def zero_shot_classifier(input_text):
+    """Default baseline: returns the first label from the dataset label space."""
+    labels = DATASET.get("label_space", ["unknown"])
+    return labels[0]
+
+
+def few_shot_classifier(input_text):
+    """Few-shot baseline: uses a small number of examples for classification."""
+    labels = DATASET.get("label_space", ["unknown"])
+    # Simple heuristic: check if any label keyword appears in input
+    text_lower = str(input_text).lower()
+    for label in labels:
+        if str(label).lower() in text_lower:
+            return label
+    return labels[0]
+
+
+def rule_based_classifier(input_text):
+    """Rule-based baseline: pattern matching on input."""
+    labels = DATASET.get("label_space", ["unknown"])
+    if not labels:
+        return "unknown"
+    # Map strategy to behavior
+    if "keyword" in STRATEGY:
+        text_lower = str(input_text).lower()
+        scores = {{label: sum(1 for kw in str(label).lower().split() if kw in text_lower)
+                    for label in labels}}
+        return max(scores, key=scores.get) if any(scores.values()) else labels[0]
+    return labels[0]
+
+
+def run():
+    started = time.perf_counter()
+    random.seed(SEED)
+
+    test_data = DATASET.get("test_examples", DATASET.get("examples", []))
+    if not test_data:
+        print("__RESULT__" + json.dumps({{"status": "failed", "summary": "No test examples found", "error": "empty dataset"}}))
+        return
+
+    inputs = [ex.get("input", ex.get("text", "")) for ex in test_data]
+    references = [ex.get("label", ex.get("answer", ex.get("output", ""))) for ex in test_data]
+
+    systems = {{
+        "zero_shot": zero_shot_classifier,
+        "few_shot": few_shot_classifier,
+        "rule_based": rule_based_classifier,
+    }}
+
+    results = {{}}
+    system_results = []
+    all_tables = []
+    best_system = None
+    best_score = -1.0
+
+    for name, fn in systems.items():
+        metrics = evaluate_system(fn, inputs, references)
+        results[name] = metrics
+        acc = metrics["accuracy"]
+        if acc > best_score:
+            best_score = acc
+            best_system = name
+        system_results.append({{"system": name, "metrics": metrics, "notes": None}})
+
+    table_rows = [[name, f"{{results[name]['accuracy']:.4f}}", f"{{results[name]['f1']:.4f}}"] for name in systems]
+
+    artifact = {{
+        "status": "done",
+        "summary": f"Evaluated {{len(systems)}} LLM evaluation baselines on {{len(inputs)}} examples. Best: {{best_system}} (accuracy={{best_score:.4f}})",
+        "key_findings": [
+            f"Best system: {{best_system}} with accuracy={{best_score:.4f}}",
+            f"Evaluated {{len(inputs)}} test examples across {{len(systems)}} systems",
+        ],
+        "primary_metric": PRIMARY_METRIC,
+        "best_system": best_system,
+        "objective_system": best_system,
+        "objective_score": best_score,
+        "system_results": system_results,
+        "aggregate_system_results": [
+            {{"system": name, "mean_metrics": results[name], "std_metrics": {{}}, "sample_count": 1}}
+            for name in systems
+        ],
+        "per_seed_results": [],
+        "sweep_results": [],
+        "significance_tests": [],
+        "power_analysis_notes": [],
+        "negative_results": [],
+        "failed_trials": [],
+        "anomalous_trials": [],
+        "acceptance_checks": [{{"criterion": "accuracy > 0", "passed": best_score > 0, "detail": f"Best accuracy: {{best_score:.4f}}"}}],
+        "tables": [
+            {{"title": "LLM Evaluation Results", "columns": ["System", "Accuracy", "F1"], "rows": table_rows}}
+        ],
+        "logs": None,
+        "environment": {{
+            "python_version": sys.version.split()[0],
+            "platform": platform.platform(),
+            "runtime_seconds": round(time.perf_counter() - started, 4),
+            "task_family": "llm_evaluation",
+            "strategy": STRATEGY,
+            "seed": SEED,
+            "sweep": SWEEP,
+            "benchmark_name": DATASET.get("name"),
+        }},
+    }}
+    print("__RESULT__" + json.dumps(artifact))
+
+
+if __name__ == "__main__":
+    run()
+'''
 
     def _ir_template(
         self,

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def _search_topic_literature(project_id: str, topic: str) -> SearchResult | None:
     try:
         agent = SearchAgent()
-        result = agent.run({"query": topic, "limit": 6})
+        result = agent.run({"query": topic, "limit": 15})
         return SearchResult(**result["result"])
     except Exception as exc:
         logger.warning("literature search failed for topic=%r: %s", topic, exc)
@@ -61,50 +61,49 @@ def build_fallback_literature_context(
         f"Prior work in {family_label} has established the value of comparing lightweight baseline methods "
         f"against learned models under controlled conditions, particularly for small-scale benchmark evaluation."
     )
-    _year = datetime.now().year
     return [
         LiteratureInsight(
             paper_id=f"{benchmark_slug}_scope_context",
-            title=f"Automated Analysis of {topic_label} under the {family_label} Paradigm",
-            year=_year,
+            title=f"[Context Summary] {family_label.title()} Task Scope for {topic_label}",
+            year=None,
             source="benchmark_context",
             insight=scope_insight,
             method_hint=(
-                f"Compare multiple classification approaches with proper statistical grounding for "
+                f"Compare multiple approaches with proper statistical grounding for "
                 f"{family_label} tasks."
             ),
             gap_hint=(
-                f"Identify which method characteristics contribute most to accurate classification on {dataset_label}."
+                f"Identify which method characteristics contribute most to performance on {dataset_label}."
             ),
         ),
         LiteratureInsight(
             paper_id=f"{benchmark_slug}_benchmark_context",
-            title=f"The {benchmark_name} Benchmark for {family_label.title()} Evaluation",
-            year=_year,
+            title=f"[Context Summary] {benchmark_name} Benchmark Description",
+            year=None,
             source="benchmark_context",
             insight=benchmark_insight,
-            method_hint=f"Include both rule-based and probabilistic baselines for meaningful comparison.",
+            method_hint="Include both simple baselines and learned models for meaningful comparison.",
             gap_hint=(
                 f"Determine the performance ceiling of simple methods on {dataset_label} before applying complex models."
             ),
         ),
         LiteratureInsight(
             paper_id=f"{benchmark_slug}_execution_context",
-            title=f"Baseline and Learned Method Comparisons for {dataset_label}",
-            year=_year,
+            title=f"[Context Summary] Baseline Comparison Strategy for {dataset_label}",
+            year=None,
             source="benchmark_context",
             insight=dataset_insight,
             method_hint=(
                 "Report multi-seed aggregate statistics with confidence intervals for reproducibility."
             ),
             gap_hint=(
-                f"Characterize the conditions under which lightweight methods suffice for {topic_label} classification."
+                f"Characterize the conditions under which lightweight methods suffice for {topic_label}."
             ),
         ),
     ]
 
 
-def _fetch_chunk_context(db, project_id: str, papers: list[PaperMeta], max_papers: int = 2) -> dict[str, list[str]]:
+def _fetch_chunk_context(db, project_id: str, papers: list[PaperMeta], max_papers: int = 5) -> dict[str, list[str]]:
     fetcher = FetcherAgent()
     reader = ReaderAgent()
     chunk_context: dict[str, list[str]] = {}

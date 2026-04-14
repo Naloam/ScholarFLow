@@ -1003,6 +1003,10 @@ class AutoResearchOrchestrator:
         run = load_run(project_id, run_id)
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
+        if run.status not in ("done", "failed"):
+            raise ValueError("Paper pipeline rebuild requires a completed or failed auto research run")
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
         if run.status != "done":
             raise ValueError("Paper pipeline rebuild requires a completed auto research run")
         if run.program is None or run.plan is None or run.spec is None or run.portfolio is None or run.artifact is None:
@@ -1054,6 +1058,7 @@ class AutoResearchOrchestrator:
                 language=run.request.language if run.request is not None else "en",
                 literature_synthesis=getattr(run, "literature_synthesis", None),
                 narrative_analysis=narrative_analysis,
+                run_dir=Path(settings.data_dir) / "projects" / project_id / "autorresearch" / "runs" / run_id,
             )
         paper_path = paper_file_path(project_id, run_id)
         candidate_paper_path = candidate_paper_file_path(project_id, run_id, selected_candidate.id)

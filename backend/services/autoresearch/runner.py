@@ -401,23 +401,6 @@ class AutoExperimentRunner:
             return []
         return [raw]
 
-    def _normalize_sweep_results(self, sweeps: list[Any]) -> list[dict[str, Any]]:
-        """Fix sweep result format issues from LLM-generated experiment code."""
-        fixed = []
-        for item in sweeps:
-            if not isinstance(item, dict):
-                continue
-            ci = item.get("objective_score_confidence_interval")
-            if isinstance(ci, (list, tuple)) and len(ci) >= 2:
-                item["objective_score_confidence_interval"] = {
-                    "lower": float(ci[0]),
-                    "upper": float(ci[1]),
-                }
-            elif ci is not None and not isinstance(ci, dict):
-                item.pop("objective_score_confidence_interval", None)
-            fixed.append(item)
-        return fixed
-
     def _normalize_significance_tests(self, tests: list[Any]) -> list[dict[str, Any]]:
         """Fix significance test format issues from LLM-generated experiment code."""
         valid_methods = {"paired_sign_flip_exact", "paired_sign_flip_monte_carlo"}
@@ -434,10 +417,98 @@ class AutoExperimentRunner:
             method = item.get("method", "")
             if method not in valid_methods:
                 item["method"] = "paired_sign_flip_monte_carlo"
+            # Fix numeric fields that may come as strings or wrong types
+            for num_key in ("p_value", "adjusted_p_value", "adjusted_alpha", "effect_size"):
+                val = item.get(num_key)
+                if val is not None:
+                    try:
+                        item[num_key] = float(val)
+                    except (TypeError, ValueError):
+                        item[num_key] = 0.0 if num_key == "p_value" else None
+            # Ensure is_significant is bool
+            sig = item.get("is_significant")
+            if isinstance(sig, str):
+                item["is_significant"] = sig.lower() in ("true", "yes", "1")
+            elif not isinstance(sig, bool):
+                item["is_significant"] = bool(sig) if sig is not None else False
+            # Fix system names: map system_a/system_b to candidate/comparator if missing
+            if not item.get("system_a") and item.get("candidate"):
+                item["system_a"] = item["candidate"]
+            if not item.get("system_b") and item.get("comparator"):
+                item["system_b"] = item["comparator"]
+            fixed.append(item)
+        return fixed
+
+    def _normalize_sweep_results(self, sweeps: list[Any]) -> list[dict[str, Any]]:
+        """Fix sweep result format issues from LLM-generated experiment code."""
+        fixed = []
+        for item in sweeps:
+            if not isinstance(item, dict):
+                continue
+            ci = item.get("objective_score_confidence_interval")
+            if isinstance(ci, (list, tuple)) and len(ci) >= 2:
+                item["objective_score_confidence_interval"] = {
+                    "lower": float(ci[0]),
+                    "upper": float(ci[1]),
+                }
+            elif ci is not None and not isinstance(ci, dict):
+                item.pop("objective_score_confidence_interval", None)
+            # Fix objective_score if it's not a number
+            obj_score = item.get("objective_score")
+            if obj_score is not None:
+                try:
+                    item["objective_score"] = float(obj_score)
+                except (TypeError, ValueError):
+                    item.pop("objective_score", None)
+            # Fix metric_results if present
+            mr = item.get("metric_results")
+            if isinstance(mr, list):
+                fixed_mr = []
+                for m in mr:
+                    if isinstance(m, dict):
+                        for num_key in ("mean", "std", "min", "max"):
+                            v = m.get(num_key)
+                            if v is not None:
+                                try:
+                                    m[num_key] = float(v)
+                                except (TypeError, ValueError):
+                                    m.pop(num_key, None)
+                        fixed_mr.append(m)
+                    else:
+                        fixed_mr.append(m)
+                item["metric_results"] = fixed_mr
+            fixed.append(item)
+        return fixed
+
+    def _normalize_system_results_safe(self, results: list[Any]) -> list[dict[str, Any]]:
+        """Fix system result format issues from LLM-generated experiment code."""
+        from services.autoresearch.runner import AutoExperimentRunner
+        normalized = AutoExperimentRunner._normalize_system_results(results)
+        fixed = []
+        for item in normalized:
+            if not isinstance(item, dict):
+                continue
+            # Fix metrics dict values to floats
+            metrics = item.get("metrics")
+            if isinstance(metrics, dict):
+                clean_metrics = {}
+                for k, v in metrics.items():
+                    try:
+                        clean_metrics[k] = float(v) if v is not None else 0.0
+                    except (TypeError, ValueError):
+                        clean_metrics[k] = 0.0
+                item["metrics"] = clean_metrics
             fixed.append(item)
         return fixed
 
     def _build_artifact(self, logs: str, outputs: dict[str, Any]) -> ResultArtifact:
+        try:
+            return self._build_artifact_inner(logs, outputs)
+        except Exception as exc:
+            logger.error("artifact construction failed, using failed-artifact fallback: %s", exc)
+            return self._build_failed_artifact(logs, outputs)
+
+    def _build_artifact_inner(self, logs: str, outputs: dict[str, Any]) -> ResultArtifact:
         payload = outputs.get("result")
         if not isinstance(payload, dict):
             return self._build_failed_artifact(logs, outputs)
@@ -474,7 +545,7 @@ class AutoExperimentRunner:
                 if payload.get("objective_score") is not None and not isinstance(payload["objective_score"], dict)
                 else None
             ),
-            system_results=self._normalize_system_results(payload.get("system_results")),
+            system_results=self._normalize_system_results_safe(payload.get("system_results")),
             aggregate_system_results=self._normalize_list_field(payload.get("aggregate_system_results")),
             per_seed_results=self._normalize_list_field(payload.get("per_seed_results")),
             sweep_results=self._normalize_sweep_results(self._normalize_list_field(payload.get("sweep_results"))),

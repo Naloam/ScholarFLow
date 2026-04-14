@@ -26,37 +26,90 @@ def _artifact_summary(artifact: ResultArtifact) -> str:
     """Build a concise text summary of experiment results for the LLM."""
     parts: list[str] = []
 
-    if artifact.system_metrics:
-        parts.append("## System Metrics")
-        for sm in artifact.system_metrics:
+    # System results (each has system name + metrics dict)
+    if artifact.system_results:
+        parts.append("## System Results")
+        for sr in artifact.system_results:
             metrics_str = ", ".join(
-                f"{m.metric}={m.mean:.4f}±{m.std:.4f}" for m in sm.metrics
+                f"{k}={v:.4f}" if isinstance(v, (int, float)) else f"{k}={v}"
+                for k, v in (sr.metrics or {}).items()
             )
-            parts.append(f"- {sm.system_name}: {metrics_str}")
+            parts.append(f"- {sr.system}: {metrics_str}")
 
+    # Aggregate results
+    if artifact.aggregate_system_results:
+        parts.append("\n## Aggregate Results")
+        for ag in artifact.aggregate_system_results:
+            metrics_str = ", ".join(
+                f"{k}={v:.4f}" if isinstance(v, (int, float)) else f"{k}={v}"
+                for k, v in (ag.metrics or {}).items()
+            )
+            parts.append(f"- {ag.system}: {metrics_str}")
+
+    # Sweep results
+    if artifact.sweep_results:
+        parts.append("\n## Sweep Results")
+        for sweep in artifact.sweep_results:
+            sweep_name = getattr(sweep, 'sweep_name', '') or getattr(sweep, 'name', '') or 'sweep'
+            parts.append(f"- Sweep: {sweep_name}")
+            if hasattr(sweep, 'metric_results') and sweep.metric_results:
+                for mr in sweep.metric_results:
+                    mean_val = getattr(mr, 'mean', None)
+                    std_val = getattr(mr, 'std', None)
+                    metric = getattr(mr, 'metric', 'score')
+                    if mean_val is not None:
+                        val_str = f"{mean_val:.4f}"
+                        if std_val is not None:
+                            val_str += f"±{std_val:.4f}"
+                        parts.append(f"  - {metric}: {val_str}")
+            # Also check objective_score
+            obj_score = getattr(sweep, 'objective_score', None)
+            if obj_score is not None:
+                parts.append(f"  - objective_score: {obj_score:.4f}")
+
+    # Significance tests
     if artifact.significance_tests:
         parts.append("\n## Significance Tests")
         for test in artifact.significance_tests:
+            system_a = getattr(test, 'system_a', '') or getattr(test, 'candidate', '')
+            system_b = getattr(test, 'system_b', '') or getattr(test, 'comparator', '')
+            p_value = getattr(test, 'p_value', None)
+            is_sig = getattr(test, 'is_significant', None)
+            method = getattr(test, 'method', '')
+            p_str = f"{p_value:.4f}" if isinstance(p_value, (int, float)) else str(p_value)
             parts.append(
-                f"- {test.system_a} vs {test.system_b}: "
-                f"p={test.p_value:.4f}, significant={test.is_significant}, "
-                f"test={test.test_name}"
+                f"- {system_a} vs {system_b}: "
+                f"p={p_str}, significant={is_sig}, method={method}"
             )
 
+    # Acceptance checks
     if artifact.acceptance_checks:
         parts.append("\n## Acceptance Checks")
         for check in artifact.acceptance_checks:
-            parts.append(
-                f"- [{check.status}] {check.rule_id}: {check.description}"
-            )
+            status = getattr(check, 'status', '?')
+            rule_id = getattr(check, 'rule_id', '')
+            desc = getattr(check, 'description', '')
+            parts.append(f"- [{status}] {rule_id}: {desc}")
 
-    if artifact.sweep_evaluations:
-        parts.append("\n## Sweep Evaluations")
-        for sweep in artifact.sweep_evaluations:
-            parts.append(f"- Sweep: {sweep.sweep_name}")
-            if sweep.metric_results:
-                for mr in sweep.metric_results:
-                    parts.append(f"  - {mr.metric}: {mr.mean:.4f}±{mr.std:.4f}")
+    # Tables
+    if artifact.tables:
+        parts.append("\n## Tables")
+        for table in artifact.tables[:3]:
+            title = getattr(table, 'title', 'Untitled')
+            ncols = len(getattr(table, 'columns', []))
+            nrows = len(getattr(table, 'rows', []))
+            parts.append(f"- '{title}': {ncols} cols x {nrows} rows")
+
+    # Best system / objective score
+    if artifact.best_system:
+        score_str = f", {artifact.primary_metric}={artifact.objective_score:.4f}" if artifact.objective_score is not None else ""
+        parts.append(f"\nBest system: {artifact.best_system}{score_str}")
+
+    # Key findings
+    if artifact.key_findings:
+        parts.append("\n## Key Findings")
+        for finding in artifact.key_findings[:5]:
+            parts.append(f"- {finding}")
 
     return "\n".join(parts) if parts else "No structured results available."
 

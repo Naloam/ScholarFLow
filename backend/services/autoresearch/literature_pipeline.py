@@ -23,13 +23,37 @@ logger = logging.getLogger(__name__)
 
 
 def _search_topic_literature(project_id: str, topic: str) -> SearchResult | None:
-    try:
-        agent = SearchAgent()
-        result = agent.run({"query": topic, "limit": 25})
-        return SearchResult(**result["result"])
-    except Exception as exc:
-        logger.warning("literature search failed for topic=%r: %s", topic, exc)
-        return None
+    """Search for literature with retry and multi-source fallback."""
+    import time as _time
+
+    agent = SearchAgent()
+    last_exc: Exception | None = None
+
+    # Try with all sources first, then fallback source by source
+    source_configs = [
+        (["semantic_scholar", "arxiv", "crossref"], 25),
+        (["arxiv", "crossref"], 25),
+        (["arxiv"], 25),
+        (["crossref"], 25),
+    ]
+
+    for attempt, (sources, limit) in enumerate(source_configs):
+        try:
+            result = agent.run({"query": topic, "limit": limit, "sources": sources})
+            sr = SearchResult(**result["result"])
+            if sr.items:
+                return sr
+            logger.info("literature search returned 0 items with sources=%s (attempt %d)", sources, attempt + 1)
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("literature search failed for topic=%r sources=%s: %s", topic, sources, exc)
+            if attempt < len(source_configs) - 1:
+                _time.sleep(2 ** attempt)
+            continue
+
+    if last_exc is not None:
+        logger.warning("all literature search attempts failed for topic=%r", topic)
+    return None
 
 
 def _context_slug(text: str, fallback: str) -> str:
@@ -46,6 +70,57 @@ def build_fallback_literature_context(
     dataset_description: str,
     task_family: str,
 ) -> list[LiteratureInsight]:
+    """Generate context literature when search yields no real papers.
+
+    Attempts LLM-generated domain references first; falls back to static context.
+    """
+    # Try LLM-generated domain-specific references
+    try:
+        from services.llm.client import chat
+        from services.llm.response_utils import get_message_content
+        import json as _json
+
+        prompt = (
+            "Generate 3 plausible academic references for a research study. "
+            "Each reference must be a real-sounding but clearly labeled as AI-generated context. "
+            "The study is about:\n"
+            f"Topic: {topic}\n"
+            f"Task family: {task_family}\n"
+            f"Benchmark: {benchmark_name}\n\n"
+            "Return JSON array with objects having: title, year (2019-2025), insight (one sentence summary), "
+            "method_hint (what method the paper used), gap_hint (what gap remains).\n"
+            "Rules: Do NOT fabricate specific author names. Use realistic but clearly synthetic titles. "
+            "Focus on the actual research area, not the benchmark itself."
+        )
+        response = chat(
+            [
+                {"role": "system", "content": "You are generating academic context references. Return only valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+        )
+        content = get_message_content(response)
+        if content:
+            import re as _re
+            m = _re.search(r"\[.*\]", content, _re.DOTALL)
+            if m:
+                refs = _json.loads(m.group(0))
+                return [
+                    LiteratureInsight(
+                        paper_id=f"context_ref_{i}",
+                        title=r.get("title", f"Domain Reference {i}"),
+                        year=r.get("year"),
+                        source="ai_generated_context",
+                        insight=r.get("insight", ""),
+                        method_hint=r.get("method_hint"),
+                        gap_hint=r.get("gap_hint"),
+                    )
+                    for i, r in enumerate(refs[:3])
+                ]
+    except Exception as exc:
+        logger.warning("LLM fallback literature generation failed: %s", exc)
+
+    # Static fallback (last resort)
     family_label = task_family.replace("_", " ")
     topic_label = topic.strip() or benchmark_name
     benchmark_slug = _context_slug(benchmark_name, "benchmark")

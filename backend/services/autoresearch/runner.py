@@ -1510,6 +1510,48 @@ class AutoExperimentRunner:
         )
         return strategy, code_path, code
 
+    def prepare_method_split_attempt(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark_payload: dict[str, Any],
+        round_index: int,
+        goal: str,
+        prior_attempts: list[ExperimentAttempt],
+        code_filename_prefix: str | None = None,
+        code_subdir: str | None = None,
+    ) -> tuple[str, str, str, str]:
+        """Generate method.py + experiment.py split (karpathy/autoresearch pattern).
+
+        Returns (strategy, method_code_path, experiment_code_path, method_code).
+        """
+        strategy, method_code, experiment_code = self.codegen.generate_method_split(
+            plan=plan,
+            spec=spec,
+            benchmark_payload=benchmark_payload,
+            round_index=round_index,
+            goal=goal,
+            prior_attempts=prior_attempts,
+        )
+
+        safe_prefix = re.sub(r"[^a-zA-Z0-9_]+", "_", code_filename_prefix or "").strip("_")
+        prefix = f"{safe_prefix}_" if safe_prefix else ""
+
+        method_path = save_generated_code(
+            project_id, run_id, method_code,
+            filename=f"{prefix}method.py",
+            subdir=code_subdir,
+        )
+        experiment_path = save_generated_code(
+            project_id, run_id, experiment_code,
+            filename=f"{prefix}experiment_round_{round_index}.py",
+            subdir=code_subdir,
+        )
+        return strategy, method_path, experiment_path, method_code
+
     def run(
         self,
         *,

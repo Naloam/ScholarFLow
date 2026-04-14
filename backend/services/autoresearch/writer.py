@@ -1258,6 +1258,41 @@ class PaperWriter:
                 ):
                     current = revised
                     logger.info("multi_review: revision round %d accepted (%d chars)", round_idx + 1, len(current))
+
+                    # --- Verification round: check if revision addressed the issues (ARIS rebuttal pattern) ---
+                    try:
+                        verification_prompt = (
+                            "You are reviewing a revised paper. The reviewers found these issues:\n\n"
+                            + feedback_text[:2000]
+                            + "\n\nScore the revision from 1-10 on how well it addressed these issues.\n"
+                            "Return JSON: {\"score\": <1-10>, \"addressed\": <list of issue descriptions that were fixed>, "
+                            "\"remaining\": <list of issue descriptions still unresolved>}"
+                        )
+                        ver_response = chat(
+                            [
+                                {"role": "system", "content": verification_prompt},
+                                {"role": "user", "content": f"## Revised Paper\n{current}"},
+                            ],
+                            model=writer_model,
+                            temperature=0.2,
+                        )
+                        ver_content = get_message_content(ver_response).strip()
+                        if ver_content:
+                            import json as _json2
+                            m2 = re.search(r"\{.*\}", ver_content, re.DOTALL)
+                            if m2:
+                                ver_data = _json2.loads(m2.group(0))
+                                ver_score = ver_data.get("score", 5)
+                                remaining = ver_data.get("remaining", [])
+                                logger.info(
+                                    "multi_review: verification score=%s, remaining=%d issues",
+                                    ver_score, len(remaining),
+                                )
+                                if ver_score >= 7:
+                                    logger.info("multi_review: score >= 7, stopping review loop")
+                                    break
+                    except Exception as exc:
+                        logger.debug("multi_review: verification round failed: %s", exc)
                 else:
                     logger.warning("multi_review: revision round %d failed validation", round_idx + 1)
                     break
@@ -1325,6 +1360,7 @@ class PaperWriter:
         section_slug: str = "",
         narrative_context: str = "",
         conceptual_framework_context: str = "",
+        research_brief_context: str = "",
     ) -> str | None:
         try:
             # Try dedicated section prompt first, fall back to generic
@@ -1346,6 +1382,8 @@ class PaperWriter:
                 context_parts.append(f"\n## Narrative Analysis\n{narrative_context}")
             if conceptual_framework_context:
                 context_parts.append(f"\n## Conceptual Framework\n{conceptual_framework_context}")
+            if research_brief_context:
+                context_parts.append(f"\n## Research Brief\n{research_brief_context}")
             if prev_section_summary:
                 context_parts.append(f"\n## Previous Section ({prev_section_name})\n{prev_section_summary}")
             if next_section_summary:
@@ -1465,6 +1503,7 @@ class PaperWriter:
         figure_paths: dict[str, str] | None = None,
         literature_synthesis: LiteratureSynthesis | None = None,
         narrative_analysis: NarrativeAnalysis | None = None,
+        research_brief: str | None = None,
     ) -> dict[str, str]:
         figure_paths = figure_paths or {}
         section_slugs = [_section_slug(s.title) for s in paper_plan.sections]
@@ -1540,6 +1579,33 @@ class PaperWriter:
             cf_context = "\n".join(cf_parts)
 
         generated: dict[str, str] = {}
+        outlines: dict[str, str] = {}
+
+        # --- Pass 1: Generate concise outlines for all sections (ARIS pattern) ---
+        for idx, section in enumerate(paper_plan.sections):
+            slug = _section_slug(section.title)
+            try:
+                outline_prompt = (
+                    f"Write a 2-3 sentence outline for the '{section.title}' section of a research paper about: {plan.topic}.\n"
+                    f"Objective: {section.objective}\n"
+                    f"Just describe what will be covered, do not write the full section.\n"
+                    f"Keep it under 100 words."
+                )
+                response = chat(
+                    [
+                        {"role": "system", "content": "Write a brief section outline. Under 100 words."},
+                        {"role": "user", "content": outline_prompt},
+                    ],
+                    model=settings.llm_writer_model,
+                    temperature=0.3,
+                )
+                outline = get_message_content(response).strip()
+                if outline:
+                    outlines[slug] = outline
+            except Exception:
+                pass
+
+        # --- Pass 2: Write full sections with real prev/next outline context ---
         for idx, section in enumerate(paper_plan.sections):
             slug = _section_slug(section.title)
             objective = (
@@ -1553,7 +1619,13 @@ class PaperWriter:
             prev_slug = section_slugs[idx - 1] if idx > 0 else ""
             next_slug = section_slugs[idx + 1] if idx < len(section_slugs) - 1 else ""
             prev_summary = _excerpt(generated.get(prev_slug, ""), limit=200) or "This is the first section."
-            next_summary = "Follows with the next section." if next_slug else "This is the final section."
+            # Use real outline for next section context instead of placeholder
+            if next_slug and next_slug in outlines:
+                next_summary = outlines[next_slug]
+            elif next_slug:
+                next_summary = "Follows with the next section."
+            else:
+                next_summary = "This is the final section."
 
             fig_block = ""
             if slug == "results" and figure_paths:
@@ -1596,6 +1668,7 @@ class PaperWriter:
                 section_slug=slug,
                 narrative_context=narrative_context if slug in ("results", "discussion", "introduction", "conclusion", "abstract") else "",
                 conceptual_framework_context=cf_context if slug in ("method", "introduction", "discussion") else "",
+                research_brief_context=research_brief or "",
             )
             if content is not None:
                 generated[slug] = content
@@ -3616,11 +3689,86 @@ Program objective:
             ]
         )
 
+    def _latex_preamble(self, title: str, *, template: str = "article") -> str:
+        """Return LaTeX preamble for the chosen template."""
+        if template == "neurips":
+            return "\n".join([
+                r"\documentclass{article}",
+                r"\usepackage[final]{neurips_2024}",
+                r"\usepackage[utf8]{inputenc}",
+                r"\usepackage[T1]{fontenc}",
+                r"\usepackage{hyperref}",
+                r"\usepackage{graphicx}",
+                r"\usepackage{booktabs}",
+                r"\usepackage{amsmath}",
+                r"\usepackage{amssymb}",
+                r"\usepackage{enumitem}",
+                r"\usepackage{algorithm}",
+                r"\usepackage{algorithmic}",
+                r"\title{" + _latex_escape(title) + "}",
+                r"\author{ScholarFlow Auto-Research System}",
+                r"\date{}",
+            ])
+        if template == "icml":
+            return "\n".join([
+                r"\documentclass{article}",
+                r"\usepackage{icml2025}",
+                r"\usepackage[utf8]{inputenc}",
+                r"\usepackage[T1]{fontenc}",
+                r"\usepackage{hyperref}",
+                r"\usepackage{graphicx}",
+                r"\usepackage{booktabs}",
+                r"\usepackage{amsmath}",
+                r"\usepackage{amssymb}",
+                r"\usepackage{enumitem}",
+                r"\usepackage{algorithm}",
+                r"\usepackage{algorithmic}",
+                r"\icmltitle{" + _latex_escape(title) + "}",
+                r"\icmlauthor{ScholarFlow Auto-Research System}",
+                r"\icmlaffiliation{}{Auto-Generated}",
+                r"\date{}",
+            ])
+        if template == "ieee":
+            return "\n".join([
+                r"\documentclass[journal]{IEEEtran}",
+                r"\usepackage[utf8]{inputenc}",
+                r"\usepackage[T1]{fontenc}",
+                r"\usepackage{hyperref}",
+                r"\usepackage{graphicx}",
+                r"\usepackage{booktabs}",
+                r"\usepackage{amsmath}",
+                r"\usepackage{amssymb}",
+                r"\usepackage{enumitem}",
+                r"\usepackage{algorithm}",
+                r"\usepackage{algorithmic}",
+                r"\usepackage{cite}",
+                r"\title{" + _latex_escape(title) + "}",
+                r"\author{ScholarFlow Auto-Research System}",
+                r"\date{}",
+            ])
+        # Default: generic article
+        return "\n".join([
+            r"\documentclass{article}",
+            r"\usepackage[utf8]{inputenc}",
+            r"\usepackage[T1]{fontenc}",
+            r"\usepackage{hyperref}",
+            r"\usepackage{graphicx}",
+            r"\usepackage{booktabs}",
+            r"\usepackage{amsmath}",
+            r"\usepackage{amssymb}",
+            r"\usepackage{enumitem}",
+            r"\usepackage{algorithm}",
+            r"\usepackage{algorithmic}",
+            r"\title{" + _latex_escape(title) + "}",
+            r"\date{}",
+        ])
+
     def build_paper_latex_source(
         self,
         paper_markdown: str,
         *,
         literature: list[LiteratureInsight] | None = None,
+        template: str = "article",
     ) -> str:
         literature = literature or []
         raw_lines = paper_markdown.splitlines()
@@ -3676,19 +3824,11 @@ Program objective:
         )
         if not literature:
             bibliography_block = "% No bibliography pass is required for this run."
+
+        preamble = self._latex_preamble(title, template=template)
         return "\n".join(
             [
-                r"\documentclass{article}",
-                r"\usepackage[utf8]{inputenc}",
-                r"\usepackage[T1]{fontenc}",
-                r"\usepackage{hyperref}",
-                r"\usepackage{graphicx}",
-                r"\usepackage{booktabs}",
-                r"\usepackage{amsmath}",
-                r"\usepackage{amssymb}",
-                r"\usepackage{enumitem}",
-                r"\title{" + _latex_escape(title) + "}",
-                r"\date{}",
+                preamble,
                 r"\begin{document}",
                 r"\maketitle",
                 "",
@@ -3894,6 +4034,113 @@ Program objective:
             ready_for_compile=not missing_required_inputs and source_package_complete,
         )
 
+    def _build_research_brief(
+        self,
+        *,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        artifact: ResultArtifact,
+        literature: list[LiteratureInsight],
+        attempts: list[ExperimentAttempt],
+        benchmark_name: str | None = None,
+        portfolio: PortfolioSummary | None = None,
+        candidates: list[HypothesisCandidate] | None = None,
+        literature_synthesis: LiteratureSynthesis | None = None,
+        narrative_analysis: NarrativeAnalysis | None = None,
+    ) -> str:
+        """Generate a research brief — intermediate narrative between experiment and paper.
+
+        This is the ARIS pattern: before writing paper sections, synthesize what was
+        actually discovered into a coherent narrative brief.
+        """
+        try:
+            best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+            baseline_system = spec.baselines[0].name if spec.baselines else None
+            baseline_metric = self._aggregate_metric(artifact, baseline_system, artifact.primary_metric) if baseline_system else None
+
+            # Gather key evidence
+            findings = artifact.key_findings[:5] if artifact.key_findings else ["No explicit findings recorded."]
+            sig_tests = [t for t in artifact.significance_tests if t.significant] if artifact.significance_tests else []
+            neg_results = [n.detail for n in artifact.negative_results[:2]] if artifact.negative_results else []
+
+            # Literature connections
+            lit_connections = []
+            if literature_synthesis and literature_synthesis.themes:
+                lit_connections.append("Themes: " + "; ".join(t.label for t in literature_synthesis.themes[:3]))
+            if literature_synthesis and literature_synthesis.gaps:
+                lit_connections.append("Gaps addressed: " + "; ".join(g.description[:60] for g in literature_synthesis.gaps[:2]))
+
+            # Attempt evolution
+            attempt_summary = f"{len(attempts)} rounds of experimentation."
+            if len(attempts) >= 2:
+                first_score = None
+                last_score = best_metric
+                for a in attempts:
+                    if a.artifact and a.artifact.status == "done" and first_score is None:
+                        first_score = self._artifact_score(a.artifact)
+                if first_score is not None and last_score is not None:
+                    delta = last_score - first_score
+                    if delta > 0:
+                        attempt_summary = f"Improved from {first_score:.4f} to {last_score:.4f} ({delta:+.4f}) across {len(attempts)} rounds."
+
+            # Surprises
+            surprises = []
+            if narrative_analysis and narrative_analysis.surprising_findings:
+                surprises = narrative_analysis.surprising_findings[:3]
+
+            prompt_lines = [
+                "You are synthesizing experimental results into a research brief. "
+                "This brief will guide paper writing. Be concise, factual, and insightful.\n",
+                f"Topic: {plan.topic}",
+                f"Benchmark: {benchmark_name or spec.benchmark_name}",
+                f"Best system: {artifact.best_system} ({artifact.primary_metric}={best_metric:.4f})",
+            ]
+            if baseline_system and baseline_metric is not None:
+                prompt_lines.append(f"Baseline: {baseline_system} ({baseline_metric:.4f})")
+            prompt_lines.append(f"Hypothesis: {spec.hypothesis}\n")
+            prompt_lines.append("Key findings:")
+            prompt_lines.extend(f"- {f}" for f in findings)
+            prompt_lines.append(f"\nSignificant comparisons: {len(sig_tests)}")
+            prompt_lines.append(f"Negative results: {len(neg_results)}")
+            prompt_lines.append(f"Experiment evolution: {attempt_summary}")
+            prompt = "\n".join(prompt_lines)
+            if lit_connections:
+                prompt += f"\nLiterature context:\n" + "\n".join(f"- {c}" for c in lit_connections) + "\n"
+            if surprises:
+                prompt += f"\nSurprising findings:\n" + "\n".join(f"- {s}" for s in surprises) + "\n"
+
+            prompt += (
+                "\nWrite a 3-5 paragraph research brief answering:\n"
+                "1. What was the core finding? (1-2 sentences)\n"
+                "2. What was surprising or non-obvious? (1-2 sentences)\n"
+                "3. How does this relate to the literature? (1-2 sentences)\n"
+                "4. What is the strongest claim this evidence supports? (1 sentence)\n"
+                "5. What is the weakest claim or biggest limitation? (1 sentence)\n"
+                "Be specific with numbers and system names. No filler."
+            )
+
+            response = chat(
+                [
+                    {"role": "system", "content": "You are a senior researcher writing a concise research brief. Be factual, use specific numbers."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+            )
+            content = get_message_content(response)
+            if content and len(content) > 50:
+                logger.info("research_brief: generated (%d chars)", len(content))
+                return content
+        except Exception as exc:
+            logger.warning("research_brief: generation failed: %s", exc)
+
+        # Fallback: template brief
+        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        return (
+            f"Core finding: {artifact.best_system} achieved {artifact.primary_metric}={best_metric:.4f}. "
+            f"Key findings: {'; '.join(artifact.key_findings[:3])}. "
+            f"Evidence from {len(artifact.per_seed_results)} seeds across {len(attempts)} rounds."
+        )
+
     def build_pipeline(
         self,
         plan: ResearchPlan,
@@ -3960,6 +4207,20 @@ Program objective:
             except Exception as exc:
                 logger.error("build_pipeline: figure generation failed: %s", exc)
 
+        # --- Research Brief: intermediate narrative between artifact and paper (ARIS pattern) ---
+        research_brief = self._build_research_brief(
+            plan=plan,
+            spec=spec,
+            artifact=artifact,
+            literature=literature,
+            attempts=attempts,
+            benchmark_name=benchmark_name,
+            portfolio=portfolio,
+            candidates=candidates,
+            literature_synthesis=literature_synthesis,
+            narrative_analysis=narrative_analysis,
+        )
+
         paper_markdown = self.write(
             plan,
             spec,
@@ -3980,6 +4241,7 @@ Program objective:
             generated_figure_paths=generated_figure_paths or None,
             literature_synthesis=literature_synthesis,
             narrative_analysis=narrative_analysis,
+            research_brief=research_brief,
         )
         paper_section_rewrite_index = self.build_section_rewrite_packet_index(
             paper_plan=paper_plan,
@@ -4053,6 +4315,7 @@ Program objective:
         generated_figure_paths: dict[str, str] | None = None,
         literature_synthesis: LiteratureSynthesis | None = None,
         narrative_analysis: NarrativeAnalysis | None = None,
+        research_brief: str | None = None,
     ) -> str:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")
@@ -4374,6 +4637,7 @@ Program objective:
             figure_paths=generated_figure_paths,
             literature_synthesis=literature_synthesis,
             narrative_analysis=narrative_analysis,
+            research_brief=research_brief,
         )
         all_slugs = [_section_slug(s.title) for s in paper_plan.sections]
         llm_covered = [s for s in all_slugs if s in llm_sections]

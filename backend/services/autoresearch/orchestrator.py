@@ -1415,6 +1415,30 @@ class AutoResearchOrchestrator:
                     continue
                 if self._should_skip_candidate(candidate, execution_action=execution_action):
                     continue
+
+                # --- Novelty gate (ARIS pattern): skip candidates that duplicate known work ---
+                if execution_action not in ("resume", "retry") and literature:
+                    try:
+                        from services.autoresearch.novelty_gate import NoveltyCheck
+                        novelty_result = NoveltyCheck().check(
+                            plan=plan,
+                            literature=literature,
+                            literature_synthesis=literature_synthesis,
+                        )
+                        if novelty_result.get("score", 3) < 2:
+                            logger.info(
+                                "novelty_gate: skipping candidate %s (score=%s, verdict=%s)",
+                                candidate.id, novelty_result["score"], novelty_result["verdict"],
+                            )
+                            candidates = self._update_candidate(
+                                candidates, candidate.id,
+                                status="failed",
+                                selection_reason=f"Novelty too low: {novelty_result.get('reasoning', 'duplicates prior work')}",
+                            )
+                            continue
+                    except Exception as exc:
+                        logger.debug("novelty_gate: check failed: %s", exc)
+
                 candidate_plan = self.planner.candidate_plan(plan, candidate)
                 candidate_spec = self.planner.candidate_spec(spec, candidate)
                 executed_ids = list(portfolio.executed_candidate_ids)
@@ -1598,6 +1622,43 @@ class AutoResearchOrchestrator:
                         artifact=artifact,
                     )
                     attempts.append(attempt)
+
+                    # --- Structured experiment history (karpathy/autoresearch results.tsv pattern) ---
+                    try:
+                        from services.autoresearch.experiment_history import (
+                            append_result, BASELINE, KEEP, DISCARD, FAILED,
+                        )
+                        from services.autoresearch.repository import run_dir as _run_dir
+
+                        _rdir = Path(settings.data_dir) / "projects" / project_id / "autorresearch" / "runs" / run_id
+                        prev_score = (
+                            self._artifact_score(attempts[-2].artifact)
+                            if len(attempts) >= 2 and attempts[-2].artifact is not None
+                            else None
+                        )
+                        cur_score = self._artifact_score(artifact) if artifact.status == "done" else None
+                        delta = (cur_score - prev_score) if cur_score is not None and prev_score is not None else None
+                        modification = strategy.removesuffix("_search")
+                        verdict = FAILED
+                        if artifact.status == "done":
+                            if prev_score is None:
+                                verdict = BASELINE
+                            elif cur_score is not None and cur_score > prev_score:
+                                verdict = KEEP
+                            else:
+                                verdict = DISCARD
+                        append_result(
+                            _rdir,
+                            round_index=round_index,
+                            modification=modification,
+                            metric_name=artifact.primary_metric,
+                            metric_value=cur_score,
+                            delta=delta,
+                            verdict=verdict,
+                            description=artifact.summary[:120] if artifact.summary else "",
+                        )
+                    except Exception as exc:
+                        logger.debug("experiment_history append failed: %s", exc)
 
                     if artifact.status == "done" and (
                         best_attempt is None

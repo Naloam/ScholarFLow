@@ -208,6 +208,35 @@ def _fetch_chunk_context(db, project_id: str, papers: list[PaperMeta], max_paper
     return chunk_context
 
 
+def _try_arxiv_direct_search(
+    topic: str,
+    task_family: str,
+) -> list[LiteratureInsight] | None:
+    """Try direct ArXiv API search with LLM insight extraction.
+
+    This is the ARIS pattern: real ArXiv papers → structured insights.
+    Returns None if search fails, so callers can fall through to other methods.
+    """
+    try:
+        from services.autoresearch.arxiv_search import search_arxiv, extract_insights_from_arxiv
+
+        raw_papers = search_arxiv(topic, task_family=task_family, max_results=10)
+        if not raw_papers:
+            logger.info("arxiv_direct: no papers found, falling through")
+            return None
+
+        insights = extract_insights_from_arxiv(raw_papers, topic)
+        if insights:
+            logger.info("arxiv_direct: extracted %d insights from real ArXiv papers", len(insights))
+            return insights
+
+        logger.info("arxiv_direct: LLM extraction returned empty, falling through")
+        return None
+    except Exception as exc:
+        logger.warning("arxiv_direct: search failed: %s", exc)
+        return None
+
+
 def gather_literature_context(
     *,
     db,
@@ -237,8 +266,15 @@ def gather_literature_context(
     chunk_context = _fetch_chunk_context(db, project_id, papers) if auto_fetch and papers else {}
     insights = derive_literature_insights(papers, chunk_context=chunk_context)
 
+    # If we got no insights from the DB, try direct ArXiv API before falling back to LLM-generated context
+    if not insights and auto_search:
+        arxiv_insights = _try_arxiv_direct_search(topic, task_family)
+        if arxiv_insights:
+            insights = arxiv_insights
+
     synthesis: LiteratureSynthesis | None = None
     try:
+        # Use ArXiv insights for synthesis if available, even when we have no DB papers
         synthesis = synthesize_literature(
             papers=papers,
             chunk_context=chunk_context,

@@ -420,6 +420,7 @@ class AutoExperimentRunner:
 
     def _normalize_significance_tests(self, tests: list[Any]) -> list[dict[str, Any]]:
         """Fix significance test format issues from LLM-generated experiment code."""
+        valid_methods = {"paired_sign_flip_exact", "paired_sign_flip_monte_carlo"}
         fixed = []
         for item in tests:
             if not isinstance(item, dict):
@@ -429,6 +430,10 @@ class AutoExperimentRunner:
             item.setdefault("comparator", "")
             item.setdefault("effect_size", None)
             item.setdefault("detail", "")
+            # Map unknown test methods to closest valid value
+            method = item.get("method", "")
+            if method not in valid_methods:
+                item["method"] = "paired_sign_flip_monte_carlo"
             fixed.append(item)
         return fixed
 

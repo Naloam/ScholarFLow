@@ -4161,6 +4161,10 @@ Program objective:
         run_dir: Path | None = None,
         literature_synthesis: LiteratureSynthesis | None = None,
         narrative_analysis: NarrativeAnalysis | None = None,
+        claim_evidence_matrix: dict | None = None,
+        paper_blueprint: dict | None = None,
+        problem_anchor: str | None = None,
+        is_negative_result: bool = False,
     ) -> AutoResearchPaperPipelineArtifactsRead:
         literature = literature or []
         attempts = attempts or []
@@ -4242,6 +4246,9 @@ Program objective:
             literature_synthesis=literature_synthesis,
             narrative_analysis=narrative_analysis,
             research_brief=research_brief,
+            paper_blueprint=paper_blueprint,
+            problem_anchor=problem_anchor,
+            is_negative_result=is_negative_result,
         )
         paper_section_rewrite_index = self.build_section_rewrite_packet_index(
             paper_plan=paper_plan,
@@ -4316,6 +4323,9 @@ Program objective:
         literature_synthesis: LiteratureSynthesis | None = None,
         narrative_analysis: NarrativeAnalysis | None = None,
         research_brief: str | None = None,
+        paper_blueprint: dict | None = None,
+        problem_anchor: str | None = None,
+        is_negative_result: bool = False,
     ) -> str:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")

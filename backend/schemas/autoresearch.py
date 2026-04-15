@@ -417,6 +417,7 @@ class ResearchPlan(BaseModel):
     literature_gaps_addressed: list[str] = Field(default_factory=list)
     novelty_statement: str | None = None
     contribution_statements: list[str] = Field(default_factory=list)
+    problem_anchor: str | None = None
 
 
 class AcceptanceRule(BaseModel):

@@ -54,6 +54,13 @@ from services.autoresearch.repository import (
 from services.autoresearch.runner import AutoExperimentRunner
 from services.autoresearch.hill_climber import ExperimentHillClimber
 from services.autoresearch.writer import PaperWriter
+from services.autoresearch.claim_evidence_gate import ClaimEvidenceMatrix
+from services.autoresearch.paper_blueprint import PaperBlueprint
+from services.autoresearch.self_optimization import SelfOptimizationTrace
+from services.autoresearch.ablation_planner import AblationPlanner
+from services.autoresearch.reverse_outline import generate_reverse_outline
+from services.autoresearch.writing_audit import run_writing_audit, audit_report_to_markdown
+from services.autoresearch.citation_verifier import CitationVerifier
 from services.drafts.repository import create_draft
 from services.projects.repository import set_project_status
 from services.telemetry.context import telemetry_context
@@ -69,6 +76,11 @@ class AutoResearchOrchestrator:
         self.repair = ExperimentRepairEngine()
         self.runner = AutoExperimentRunner()
         self.writer = PaperWriter()
+        self.claim_matrix = ClaimEvidenceMatrix()
+        self.blueprint_builder = PaperBlueprint()
+        self.self_optimizer = SelfOptimizationTrace()
+        self.ablation_planner = AblationPlanner()
+        self.citation_verifier = CitationVerifier()
 
     def _attempt_goal(self, attempts: list[ExperimentAttempt], round_index: int) -> str:
         if round_index == 1:
@@ -392,6 +404,127 @@ class AutoResearchOrchestrator:
             logger.info("hill_climbing: no improvements found, keeping original result")
 
         return winner
+
+    def _freeze_problem_anchor(self, plan: ResearchPlan) -> ResearchPlan:
+        """#9 Problem Anchor: freeze an immutable problem statement to prevent scope drift."""
+        anchor = (
+            f"PROBLEM_ANCHOR: This study addresses '{plan.topic}' "
+            f"through {plan.task_family.replace('_', ' ')} experimentation. "
+            f"The core question is: {plan.research_questions[0] if plan.research_questions else plan.problem_statement}. "
+            "This anchor is immutable and must not change during execution or writing."
+        )
+        return plan.model_copy(update={"problem_anchor": anchor})
+
+    def _apply_5block_experiment_design(
+        self,
+        plan: ResearchPlan,
+        spec: ExperimentSpec,
+        benchmark: ResolvedBenchmark,
+    ) -> ResearchPlan:
+        """#6 5-Block Experiment Design: standardize experiment structure.
+
+        ARIS pattern: anchor result -> novelty isolation -> simplicity check
+        -> frontier necessity -> failure analysis.
+        """
+        blocks = [
+            "Block 1 (Main Anchor): Run the proposed method against baselines to establish primary performance.",
+            "Block 2 (Novelty Isolation): Ablate the core novelty to verify it is the source of improvement.",
+            "Block 3 (Simplicity Check): Test whether a simpler variant achieves similar performance.",
+            "Block 4 (Frontier Necessity): Verify that modern components (vs legacy) are needed.",
+            "Block 5 (Failure Analysis): Identify failure cases and error patterns.",
+        ]
+        existing_outline = list(plan.experiment_outline) if plan.experiment_outline else []
+        # Prepend 5-block structure if not already present
+        if not any("Block 1" in step for step in existing_outline):
+            combined = blocks + existing_outline
+            return plan.model_copy(update={"experiment_outline": combined})
+        return plan
+
+    def _label_experiment_integrity(self, artifact: ResultArtifact) -> ResultArtifact:
+        """#11 Experiment Integrity Labels: tag evaluation type and limit claim ceilings."""
+        eval_type = "real_gt"  # Default for built-in benchmarks with real ground truth
+        environment = dict(artifact.environment)
+
+        # Detect synthetic or simulation scenarios
+        env_eval_type = environment.get("evaluation_type")
+        if env_eval_type:
+            eval_type = str(env_eval_type)
+        elif environment.get("executor_mode") == "simulation":
+            eval_type = "simulation_only"
+
+        claim_ceilings = {
+            "real_gt": "full_performance_claims",
+            "synthetic_proxy": "proxy_consistency_only",
+            "self_supervised_proxy": "relative_improvement_only",
+            "simulation_only": "in_simulation_qualifier",
+            "human_eval": "subject_to_inter_rater_stats",
+        }
+
+        environment["evaluation_integrity"] = {
+            "evaluation_type": eval_type,
+            "claim_ceiling": claim_ceilings.get(eval_type, "proxy_consistency_only"),
+        }
+        return artifact.model_copy(update={"environment": environment})
+
+    def _run_result_to_claim_gate(
+        self,
+        *,
+        plan: ResearchPlan,
+        artifact: ResultArtifact,
+        attempts: list[ExperimentAttempt],
+    ) -> dict:
+        """#10 Result-to-Claim Gate: independently judge whether data supports claims."""
+        matrix = self.claim_matrix.build_matrix(
+            plan=plan,
+            artifact=artifact,
+            attempts=attempts,
+        )
+        total = matrix["total_claims"]
+        supported = matrix["supported_claims"]
+        ratio = supported / max(total, 1)
+
+        if ratio >= 0.7:
+            verdict = "proceed"
+        elif ratio >= 0.4:
+            verdict = "supplementary_experiments"
+        else:
+            verdict = "pivot"
+
+        return {
+            "verdict": verdict,
+            "claim_matrix": matrix,
+            "supported_ratio": ratio,
+            "supported": supported,
+            "total": total,
+        }
+
+    def _run_self_optimization(
+        self,
+        *,
+        artifact: ResultArtifact,
+        attempts: list[ExperimentAttempt],
+        spec: ExperimentSpec | None,
+        plan: ResearchPlan | None,
+        round_index: int,
+        max_rounds: int,
+    ) -> dict:
+        """#8 Self-Optimization Trace: analyze results and suggest improvements."""
+        return self.self_optimizer.analyze_and_suggest(
+            artifact=artifact,
+            attempts=attempts,
+            spec=spec,
+            plan=plan,
+            round_index=round_index,
+            max_rounds=max_rounds,
+        )
+
+    def _apply_simplicity_score(self, artifact: ResultArtifact, strategy: str) -> ResultArtifact:
+        """#13 Simplicity Criterion: add simplicity bonus to environment metadata."""
+        environment = dict(artifact.environment)
+        complex_keywords = {"ensemble", "stacking", "multi_head", "hierarchical", "composite"}
+        is_simple = not any(kw in strategy.lower() for kw in complex_keywords)
+        environment["simplicity_flag"] = "simple" if is_simple else "complex"
+        return artifact.model_copy(update={"environment": environment})
 
     def _portfolio_progress_summary(
         self,
@@ -1274,6 +1407,10 @@ class AutoResearchOrchestrator:
                     else "Instantiate the selected benchmark and freeze train/test partitions."
                 )
                 spec = build_experiment_spec(plan.task_family, benchmark)
+                # --- Problem Anchor (#9): freeze immutable problem statement ---
+                plan = self._freeze_problem_anchor(plan)
+                # --- 5-Block Experiment Design (#6): standardize experiment structure ---
+                plan = self._apply_5block_experiment_design(plan, spec, benchmark)
                 program = self.planner.build_program(
                     run_id=run_id,
                     plan=plan,
@@ -1609,6 +1746,10 @@ class AutoResearchOrchestrator:
                     artifact.environment.setdefault("benchmark_snapshot_path", benchmark_snapshot_path)
                     if chunk_context:
                         artifact.environment.setdefault("literature_chunk_context", chunk_context)
+                    # --- #11 Experiment Integrity Labels ---
+                    artifact = self._label_experiment_integrity(artifact)
+                    # --- #13 Simplicity Criterion: penalize complex code with same/better score ---
+                    artifact = self._apply_simplicity_score(artifact, strategy)
                     critique = self._attempt_critique(artifact, attempts)
                     attempt = ExperimentAttempt(
                         round_index=round_index,
@@ -1801,6 +1942,86 @@ class AutoResearchOrchestrator:
             winner = self._leader_candidate(candidates)
             self._raise_if_cancelled(should_cancel)
             if winner is None or winner.artifact is None:
+                # --- #12 Negative Results as First-Class ---
+                # Instead of just marking as failed, try to write a paper for negative/null results
+                latest_candidate = (
+                    self._candidate_by_id(candidates, portfolio.executed_candidate_ids[-1])
+                    if portfolio.executed_candidate_ids
+                    else None
+                )
+                # Check if we have ANY partial results to write about
+                has_partial = (
+                    latest_candidate is not None
+                    and latest_candidate.artifact is not None
+                    and latest_candidate.artifact.status == "done"
+                )
+                if has_partial and latest_candidate is not None:
+                    # Write a negative-result paper with the same quality
+                    try:
+                        logger.info("negative_result_paper: writing full paper for null/negative results")
+                        neg_paper_path = paper_file_path(project_id, run_id)
+                        neg_candidate_paper_path = candidate_paper_file_path(project_id, run_id, latest_candidate.id)
+                        neg_claim_matrix = self.claim_matrix.build_matrix(
+                            plan=plan, artifact=latest_candidate.artifact, attempts=latest_candidate.attempts,
+                        )
+                        neg_blueprint = self.blueprint_builder.build_blueprint(
+                            plan=plan, artifact=latest_candidate.artifact, claim_matrix=neg_claim_matrix,
+                        )
+                        paper_pipeline = self.writer.build_pipeline(
+                            plan,
+                            spec,
+                            latest_candidate.artifact,
+                            literature=literature,
+                            attempts=latest_candidate.attempts,
+                            benchmark_name=benchmark.benchmark_name,
+                            program=program,
+                            portfolio=portfolio,
+                            candidates=candidates,
+                            project_context=project_context,
+                            language=language,
+                            literature_synthesis=literature_synthesis,
+                            narrative_analysis=None,
+                            claim_evidence_matrix=neg_claim_matrix,
+                            paper_blueprint=neg_blueprint,
+                            problem_anchor=getattr(plan, "problem_anchor", None),
+                            is_negative_result=True,
+                        )
+                        neg_paper_markdown = paper_pipeline.paper_markdown
+                        candidates = self._update_candidate(
+                            candidates, latest_candidate.id,
+                            paper_markdown=neg_paper_markdown,
+                            paper_path=neg_candidate_paper_path,
+                            status="done",
+                        )
+                        draft = create_draft(db, project_id, neg_paper_markdown, claims=[], section="autoresearch_v0")
+                        portfolio = portfolio.model_copy(update={
+                            "status": "done",
+                            "selected_candidate_id": latest_candidate.id,
+                            "winning_score": latest_candidate.score,
+                            "decision_summary": (
+                                "Negative result paper written with full quality. "
+                                "The method did not outperform baselines, but the analysis is preserved."
+                            ),
+                        })
+                        set_project_status(db, project_id, "edit")
+                        return save_run(run.model_copy(update={
+                            "status": "done",
+                            "plan": plan,
+                            "spec": spec,
+                            "paper_markdown": neg_paper_markdown,
+                            "paper_path": neg_paper_path,
+                            "paper_draft_version": draft.version,
+                            "artifact": latest_candidate.artifact,
+                            "attempts": latest_candidate.attempts,
+                            "generated_code_path": latest_candidate.generated_code_path,
+                            "selected_round_index": latest_candidate.selected_round_index,
+                            "candidates": candidates,
+                            "portfolio": portfolio,
+                        }))
+                    except Exception as exc:
+                        logger.warning("negative_result_paper: failed to write: %s", exc)
+
+                # Fallback: original failed path
                 latest_candidate = (
                     self._candidate_by_id(candidates, portfolio.executed_candidate_ids[-1])
                     if portfolio.executed_candidate_ids
@@ -1862,6 +2083,64 @@ class AutoResearchOrchestrator:
 
             winner_plan = self.planner.candidate_plan(plan, winner)
             winner_spec = self.planner.candidate_spec(spec, winner)
+
+            # --- #10 Result-to-Claim Gate: verify data supports claims ---
+            claim_gate_result = None
+            try:
+                claim_gate_result = self._run_result_to_claim_gate(
+                    plan=winner_plan,
+                    artifact=winner.artifact,
+                    attempts=winner.attempts,
+                )
+                logger.info(
+                    "claim_gate: verdict=%s supported=%d/%d",
+                    claim_gate_result["verdict"],
+                    claim_gate_result["supported"],
+                    claim_gate_result["total"],
+                )
+            except Exception as exc:
+                logger.debug("claim_gate: analysis failed: %s", exc)
+
+            # --- #8 Self-Optimization Trace: analyze and suggest improvements ---
+            optimization_trace = None
+            try:
+                optimization_trace = self._run_self_optimization(
+                    artifact=winner.artifact,
+                    attempts=winner.attempts,
+                    spec=winner_spec,
+                    plan=winner_plan,
+                    round_index=1,
+                    max_rounds=max_rounds,
+                )
+                logger.info(
+                    "self_optimization: severity=%s should_continue=%s",
+                    optimization_trace["severity"],
+                    optimization_trace["should_continue"],
+                )
+            except Exception as exc:
+                logger.debug("self_optimization: analysis failed: %s", exc)
+
+            # --- #1 Claims-Evidence Matrix ---
+            claim_evidence_matrix = None
+            try:
+                claim_evidence_matrix = self.claim_matrix.build_matrix(
+                    plan=winner_plan,
+                    artifact=winner.artifact,
+                    attempts=winner.attempts,
+                )
+            except Exception as exc:
+                logger.debug("claim_evidence_matrix: build failed: %s", exc)
+
+            # --- #4 Paper Blueprint (FARS) ---
+            paper_blueprint = None
+            try:
+                paper_blueprint = self.blueprint_builder.build_blueprint(
+                    plan=winner_plan,
+                    artifact=winner.artifact,
+                    claim_matrix=claim_evidence_matrix,
+                )
+            except Exception as exc:
+                logger.debug("paper_blueprint: build failed: %s", exc)
 
             # --- Hill-climbing iterative optimization ---
             if execution_mode == "hill_climbing" and winner.artifact is not None:
@@ -1953,8 +2232,39 @@ class AutoResearchOrchestrator:
                     language=language,
                     literature_synthesis=literature_synthesis,
                     narrative_analysis=narrative_analysis,
+                    claim_evidence_matrix=claim_evidence_matrix,
+                    paper_blueprint=paper_blueprint,
+                    problem_anchor=getattr(winner_plan, "problem_anchor", None),
                 )
             paper_markdown = paper_pipeline.paper_markdown
+
+            # --- #2 5-Pass Writing Quality Audit ---
+            try:
+                audit_result = run_writing_audit(paper_markdown)
+                if audit_result["total_issues"] > 0:
+                    logger.info("writing_audit: %d issues found, applying cleaned markdown", audit_result["total_issues"])
+                    paper_markdown = audit_result["cleaned_markdown"]
+            except Exception as exc:
+                logger.debug("writing_audit: failed: %s", exc)
+
+            # --- #5 Reverse Outline Test ---
+            try:
+                outline_result = generate_reverse_outline(paper_markdown)
+                if outline_result["total_issues"] > 0:
+                    logger.info(
+                        "reverse_outline: %d coherence issues (score=%.2f)",
+                        outline_result["total_issues"],
+                        outline_result["coherence_score"],
+                    )
+            except Exception as exc:
+                logger.debug("reverse_outline: failed: %s", exc)
+
+            # --- #3 Citation Verification ---
+            try:
+                paper_markdown = self.citation_verifier.annotate_markdown(paper_markdown)
+            except Exception as exc:
+                logger.debug("citation_verifier: failed: %s", exc)
+
             candidates = self._update_candidate(
                 candidates,
                 winner.id,

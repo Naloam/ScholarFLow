@@ -135,7 +135,6 @@ def pass3_sentence_architecture(text: str) -> tuple[str, list[str]]:
     """Flag sentences over 40 words for splitting."""
     changes = []
     sentences = re.split(r'(?<=[.!?])\s+', text)
-    result_parts = []
 
     for sentence in sentences:
         word_count = len(sentence.split())
@@ -143,9 +142,8 @@ def pass3_sentence_architecture(text: str) -> tuple[str, list[str]]:
             changes.append(
                 f"Long sentence ({word_count} words): '{sentence[:80]}...'"
             )
-        result_parts.append(sentence)
 
-    return " ".join(result_parts), changes
+    return text, changes
 
 
 # --- Pass 4: Keyword Consistency (Banana Rule) ---

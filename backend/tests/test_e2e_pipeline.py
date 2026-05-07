@@ -175,6 +175,11 @@ The results demonstrate that our method achieves an accuracy of 0.82 on the test
 """
     report = run_writing_audit(sample_paper)
     assert report["total_issues"] > 0, "Expected to find issues in deliberately bad text"
+    cleaned = report["cleaned_markdown"]
+    assert "\n## Introduction\n" in cleaned
+    assert "\n## Related Work\n" in cleaned
+    assert "\n## Method\n" in cleaned
+    assert "\n## Results\n" in cleaned
     print(f"[PASS] writing_audit: {report['total_issues']} issues found "
           f"(clutter={report['pass1_clutter']['count']}, "
           f"voice={report['pass2_active_voice']['count']}, "

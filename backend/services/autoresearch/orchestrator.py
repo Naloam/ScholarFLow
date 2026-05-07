@@ -1288,7 +1288,7 @@ class AutoResearchOrchestrator:
         )
         set_project_status(db, project_id, "edit")
         if refresh_review_after_rebuild:
-            build_review_loop(project_id, run_id)
+            build_review_loop(project_id, run_id, advance_round=True)
         return load_run(project_id, run_id) or rebuilt_run
 
     def execute(

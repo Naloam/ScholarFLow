@@ -1151,17 +1151,19 @@ def _build_review_loop(
     project_id: str,
     run_id: str,
     review: AutoResearchRunReviewRead,
+    advance_round: bool = False,
 ) -> AutoResearchReviewLoopRead:
     persisted_path = str(_review_loop_path(project_id, run_id))
     existing = _load_review_loop(project_id, run_id)
     fingerprint = _review_fingerprint(review)
     latest_path = review.persisted_path
     same_fingerprint = existing is not None and existing.latest_review_fingerprint == fingerprint
-    current_round = (
-        existing.current_round
-        if same_fingerprint and existing is not None
-        else (existing.current_round + 1) if existing is not None else 1
-    )
+    if existing is None:
+        current_round = 1
+    elif same_fingerprint and not advance_round:
+        current_round = existing.current_round
+    else:
+        current_round = existing.current_round + 1
     action_titles_by_finding: dict[str, list[str]] = {}
     for action in review.revision_plan:
         for finding_id in action.finding_ids:
@@ -1272,7 +1274,7 @@ def _build_review_loop(
         )
 
     rounds = list(existing.rounds) if existing is not None else []
-    if not same_fingerprint:
+    if not same_fingerprint or advance_round:
         rounds.append(
             AutoResearchReviewLoopRoundRead(
                 round_index=current_round,
@@ -1345,7 +1347,12 @@ def _build_review_loop(
     return loop
 
 
-def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead | None:
+def build_run_review(
+    project_id: str,
+    run_id: str,
+    *,
+    advance_review_loop_round: bool = False,
+) -> AutoResearchRunReviewRead | None:
     run = load_run(project_id, run_id)
     registry = load_run_registry(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
@@ -1413,7 +1420,12 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
         revision_plan=revision_plan,
     )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
-    review_loop = _build_review_loop(project_id=project_id, run_id=run_id, review=review)
+    review_loop = _build_review_loop(
+        project_id=project_id,
+        run_id=run_id,
+        review=review,
+        advance_round=advance_review_loop_round,
+    )
     _sync_paper_revision_state(
         run=run,
         review=review,
@@ -1422,8 +1434,17 @@ def build_run_review(project_id: str, run_id: str) -> AutoResearchRunReviewRead 
     return review
 
 
-def build_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRead | None:
-    review = build_run_review(project_id, run_id)
+def build_review_loop(
+    project_id: str,
+    run_id: str,
+    *,
+    advance_round: bool = False,
+) -> AutoResearchReviewLoopRead | None:
+    review = build_run_review(
+        project_id,
+        run_id,
+        advance_review_loop_round=advance_round,
+    )
     if review is None:
         return None
     return _build_review_loop(project_id=project_id, run_id=run_id, review=review)

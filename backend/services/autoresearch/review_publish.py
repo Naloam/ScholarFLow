@@ -1071,9 +1071,20 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
     return actions
 
 
-def _review_fingerprint(review: AutoResearchRunReviewRead) -> str:
+def _review_fingerprint(
+    review: AutoResearchRunReviewRead,
+    *,
+    run: AutoResearchRunRead | None = None,
+    paper_markdown: str | None = None,
+) -> str:
     payload = {
         "selected_candidate_id": review.selected_candidate_id,
+        "paper_draft_version": run.paper_draft_version if run is not None else None,
+        "paper_markdown_sha256": (
+            hashlib.sha256(paper_markdown.encode("utf-8")).hexdigest()
+            if paper_markdown is not None
+            else None
+        ),
         "overall_status": review.overall_status,
         "unsupported_claim_risk": review.unsupported_claim_risk,
         "findings": [item.model_dump(mode="json") for item in review.findings],
@@ -1151,11 +1162,13 @@ def _build_review_loop(
     project_id: str,
     run_id: str,
     review: AutoResearchRunReviewRead,
+    run: AutoResearchRunRead | None = None,
+    paper_markdown: str | None = None,
     advance_round: bool = False,
 ) -> AutoResearchReviewLoopRead:
     persisted_path = str(_review_loop_path(project_id, run_id))
     existing = _load_review_loop(project_id, run_id)
-    fingerprint = _review_fingerprint(review)
+    fingerprint = _review_fingerprint(review, run=run, paper_markdown=paper_markdown)
     latest_path = review.persisted_path
     same_fingerprint = existing is not None and existing.latest_review_fingerprint == fingerprint
     if existing is None:
@@ -1424,6 +1437,8 @@ def build_run_review(
         project_id=project_id,
         run_id=run_id,
         review=review,
+        run=run,
+        paper_markdown=paper_markdown,
         advance_round=advance_review_loop_round,
     )
     _sync_paper_revision_state(
@@ -1447,7 +1462,7 @@ def build_review_loop(
     )
     if review is None:
         return None
-    return _build_review_loop(project_id=project_id, run_id=run_id, review=review)
+    return _load_review_loop(project_id, run_id)
 
 
 def _review_loop_revision_requirements(review_loop: AutoResearchReviewLoopRead | None) -> list[str]:

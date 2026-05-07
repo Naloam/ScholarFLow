@@ -4415,6 +4415,7 @@ Program objective:
         literature_synthesis_sentence = self._literature_synthesis_sentence(literature)
         portfolio_decision_sentence = self._portfolio_decision_sentence(portfolio, candidates)
         key_findings_sentence = self._key_findings_sentence(artifact)
+        project_flow_alignment_block = self._project_flow_alignment_block(project_context)
         best_ci_text = self._format_confidence_interval(best_ci)
         method_summary = plan.proposed_method.strip()
         if method_summary and method_summary[-1] not in ".!?":
@@ -4503,6 +4504,7 @@ Program objective:
                 + f"{plan.motivation}\n\n"
                 + f"{benchmark_slice_sentence}\n\n"
                 + f"{proxy_scope_sentence}\n\n"
+                + (f"{project_flow_alignment_block}\n\n" if project_flow_alignment_block else "")
                 + (f"{literature_context_sentence}\n\n" if literature_context_sentence else "")
                 + "We organize our investigation around the following questions:\n\n"
                 + "\n".join(f"{i}. {item}" for i, item in enumerate(plan.research_questions, 1))

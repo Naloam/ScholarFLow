@@ -470,7 +470,23 @@ class PaperWriter:
         return excerpt if excerpt.endswith((".", "!", "?")) else f"{excerpt}."
 
     def _section_revision_scope_sentence(self, section: AutoResearchPaperPlanSectionRead) -> str:
-        return ""
+        slug = _section_slug(section.title)
+        section_scope = {
+            "abstract": "the executed proxy benchmark, top-line artifact result, and claim-evidence matrix",
+            "introduction": "the executed proxy benchmark and bounded research question",
+            "related_work": "the executed proxy benchmark, retrieved literature context, and benchmark-local background",
+            "method": "the selected executable specification, baselines, and runtime constraints",
+            "experimental_setup": "the selected sweep, seed coverage, runtime environment, and acceptance checks",
+            "results": "the selected sweep, aggregate metrics, confidence intervals, and significance tests",
+            "discussion": "the claim-evidence matrix, negative results, and bounded interpretation",
+            "limitations": "the recorded scope limits, negative evidence, and unresolved execution risks",
+            "conclusion": "the supported claim set and remaining review-state gaps",
+        }
+        scope = section_scope.get(slug)
+        if scope is None:
+            focus = self._humanize_evidence_focus(section.evidence_focus)
+            scope = focus or "the persisted evidence trail"
+        return f"This revision pass keeps the section tied to {scope}."
 
     def _auto_revision_draft(
         self,
@@ -494,6 +510,14 @@ class PaperWriter:
             return base_body
 
         revision_sentences: list[str] = []
+        scope_sentence = self._section_revision_scope_sentence(section)
+        if scope_sentence:
+            revision_sentences.append(scope_sentence)
+        evidence_focus = self._humanize_evidence_focus(section.evidence_focus)
+        if evidence_focus:
+            revision_sentences.append(
+                f"Revision focus for this section: {evidence_focus}."
+            )
         unsupported_claim_count = sum(
             1 for item in claim_entries if item.support_status != "supported"
         )
@@ -507,7 +531,6 @@ class PaperWriter:
                 revision_sentences.append(
                     f"One open question is: {primary_issue}"
                 )
-        evidence_focus = self._humanize_evidence_focus(section.evidence_focus)
         if evidence_focus:
             revision_sentences.append(
                 f"This section draws on evidence from {evidence_focus}."

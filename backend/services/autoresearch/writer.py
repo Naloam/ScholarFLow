@@ -1840,6 +1840,17 @@ class PaperWriter:
                 return item.confidence_intervals.get(metric)
         return None
 
+    def _artifact_score(self, artifact: ResultArtifact | None) -> float | None:
+        if artifact is None or artifact.status != "done":
+            return None
+        if artifact.objective_score is not None:
+            return float(artifact.objective_score)
+        return self._aggregate_metric(
+            artifact,
+            artifact.objective_system or artifact.best_system,
+            artifact.primary_metric,
+        )
+
     def _format_confidence_interval(self, interval: ConfidenceIntervalSummary | None) -> str | None:
         if interval is None:
             return None
@@ -4382,18 +4393,24 @@ Program objective:
         conclusion_context_sentence = self._conclusion_context_sentence(literature)
         references_block = self._references_block(literature)
         related_work_intro = (
-            "The following background motivates the experimental design:\n"
+            "The retrieved papers place the executed benchmark in the following local context; "
+            "because no citation-grounded literature was retrieved, this section records benchmark "
+            "context and planning assumptions rather than a citation-based survey:\n"
             if self._fallback_context_only(literature)
             else "The following related work motivates the experimental design:\n"
         )
         significance_block = self._significance_block(artifact)
         negative_results_block = self._negative_results_block(artifact)
+        acceptance_block = self._acceptance_block(artifact)
+        acceptance_summary_sentence = self._acceptance_summary_sentence(artifact)
         failure_block = self._failure_block(artifact)
         anomaly_block = self._anomaly_block(artifact)
         benchmark_display = benchmark_name or spec.benchmark_name
         benchmark_slice_sentence = self._benchmark_slice_sentence(plan, spec, benchmark_display)
+        proxy_scope_sentence = self._proxy_scope_sentence(plan, spec, benchmark_display)
         bounded_interpretation_sentence = self._bounded_interpretation_sentence(plan, spec, benchmark_display)
         hypothesis_outcome_summary_sentence = self._hypothesis_outcome_summary_sentence(spec, artifact)
+        hypothesis_resolution_sentence = self._hypothesis_resolution_sentence(spec, artifact, attempts)
         compared_systems_sentence = self._compared_systems_sentence(artifact)
         literature_synthesis_sentence = self._literature_synthesis_sentence(literature)
         portfolio_decision_sentence = self._portfolio_decision_sentence(portfolio, candidates)
@@ -4485,6 +4502,7 @@ Program objective:
                 f"{plan.problem_statement}\n\n"
                 + f"{plan.motivation}\n\n"
                 + f"{benchmark_slice_sentence}\n\n"
+                + f"{proxy_scope_sentence}\n\n"
                 + (f"{literature_context_sentence}\n\n" if literature_context_sentence else "")
                 + "We organize our investigation around the following questions:\n\n"
                 + "\n".join(f"{i}. {item}" for i, item in enumerate(plan.research_questions, 1))
@@ -4496,6 +4514,8 @@ Program objective:
                     + f"{literature_block}\n\n"
                     if literature
                     else (
+                        "No citation-grounded literature was retrieved for this run, so this section records "
+                        "benchmark context and planning assumptions rather than a citation-based survey. "
                         f"The study of {plan.topic} has attracted growing attention in recent years. "
                         f"A number of benchmark suites have been developed to evaluate approaches on the "
                         f"`{spec.task_family}` task, including `{benchmark_display}` "
@@ -4549,8 +4569,14 @@ Program objective:
                     else ""
                 )
                 + (
-                    f"**Negative results.** {negative_results_block}\n\n"
+                    f"**Substantive negative outcomes retained in the artifact.** {negative_results_block}\n\n"
                     if negative_results_block
+                    else ""
+                )
+                + (
+                    f"**Acceptance checks for the selected configuration.** "
+                    f"{acceptance_summary_sentence}\n\n{acceptance_block}\n\n"
+                    if acceptance_block
                     else ""
                 )
                 + (
@@ -4573,12 +4599,14 @@ Program objective:
                     else f"The experimental results on the `{benchmark_display}` benchmark reveal the relative strengths of the evaluated approaches. "
                 )
                 + f"{learned_sentence} {majority_sentence} {ablation_sentence}\n\n"
+                + f"{hypothesis_resolution_sentence}\n\n"
                 + (f"{key_findings_sentence}\n\n" if key_findings_sentence else "")
                 + (
                     f"{discussion_context_sentence}\n\n"
                     if discussion_context_sentence
                     else ""
                 )
+                + f"{proxy_scope_sentence}\n\n"
                 + f"{bounded_interpretation_sentence}"
             ),
             "limitations": limitation_block,

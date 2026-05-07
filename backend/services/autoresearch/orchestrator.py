@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from config.settings import settings
 from schemas.autoresearch import (
     AutoResearchJobAction,
     AutoResearchRunRead,
@@ -64,6 +67,10 @@ from services.autoresearch.citation_verifier import CitationVerifier
 from services.drafts.repository import create_draft
 from services.projects.repository import set_project_status
 from services.telemetry.context import telemetry_context
+
+
+logger = logging.getLogger(__name__)
+AUTORESEARCH_DRAFT_SECTION = "autorresearch_v0"
 
 
 class AutoResearchExecutionCancelled(RuntimeError):
@@ -1239,7 +1246,7 @@ class AutoResearchOrchestrator:
             project_id,
             paper_pipeline.paper_markdown,
             claims=[],
-            section="autoresearch_v0",
+            section=AUTORESEARCH_DRAFT_SECTION,
         )
         rebuilt_run = save_run(
             run.model_copy(
@@ -1993,7 +2000,13 @@ class AutoResearchOrchestrator:
                             paper_path=neg_candidate_paper_path,
                             status="done",
                         )
-                        draft = create_draft(db, project_id, neg_paper_markdown, claims=[], section="autoresearch_v0")
+                        draft = create_draft(
+                            db,
+                            project_id,
+                            neg_paper_markdown,
+                            claims=[],
+                            section=AUTORESEARCH_DRAFT_SECTION,
+                        )
                         portfolio = portfolio.model_copy(update={
                             "status": "done",
                             "selected_candidate_id": latest_candidate.id,
@@ -2293,7 +2306,7 @@ class AutoResearchOrchestrator:
                 project_id,
                 paper_markdown,
                 claims=[],
-                section="autoresearch_v0",
+                section=AUTORESEARCH_DRAFT_SECTION,
             )
             set_project_status(db, project_id, "edit")
             completed = save_run(

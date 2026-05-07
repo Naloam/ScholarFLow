@@ -22,6 +22,42 @@ logger = logging.getLogger(__name__)
 NARRATIVE_ANALYST_PROMPT_PATH = "backend/prompts/autoresearch/narrative_analyst/v0.1.0.md"
 
 
+def _format_value(value: object) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def _format_metric_summary(
+    mean_metrics: dict[str, float],
+    *,
+    std_metrics: dict[str, float] | None = None,
+    confidence_intervals: dict[str, object] | None = None,
+) -> str:
+    if not mean_metrics:
+        return "no metrics recorded"
+    std_metrics = std_metrics or {}
+    confidence_intervals = confidence_intervals or {}
+    rendered: list[str] = []
+    for metric, mean_value in mean_metrics.items():
+        item = f"{metric}={_format_value(mean_value)}"
+        std_value = std_metrics.get(metric)
+        if std_value is not None:
+            item += f" (std={_format_value(std_value)})"
+        interval = confidence_intervals.get(metric)
+        if interval is not None:
+            lower = getattr(interval, "lower", None)
+            upper = getattr(interval, "upper", None)
+            level = getattr(interval, "level", None)
+            if lower is not None and upper is not None:
+                if isinstance(level, (int, float)):
+                    item += f", {round(level * 100):d}% CI [{_format_value(lower)}, {_format_value(upper)}]"
+                else:
+                    item += f", CI [{_format_value(lower)}, {_format_value(upper)}]"
+        rendered.append(item)
+    return ", ".join(rendered)
+
+
 def _artifact_summary(artifact: ResultArtifact) -> str:
     """Build a concise text summary of experiment results for the LLM."""
     parts: list[str] = []
@@ -40,32 +76,37 @@ def _artifact_summary(artifact: ResultArtifact) -> str:
     if artifact.aggregate_system_results:
         parts.append("\n## Aggregate Results")
         for ag in artifact.aggregate_system_results:
-            metrics_str = ", ".join(
-                f"{k}={v:.4f}" if isinstance(v, (int, float)) else f"{k}={v}"
-                for k, v in (ag.metrics or {}).items()
+            metrics_str = _format_metric_summary(
+                ag.mean_metrics or {},
+                std_metrics=ag.std_metrics,
+                confidence_intervals=ag.confidence_intervals,
             )
-            parts.append(f"- {ag.system}: {metrics_str}")
+            sample_suffix = f"; n={ag.sample_count}" if ag.sample_count else ""
+            parts.append(f"- {ag.system}: {metrics_str}{sample_suffix}")
 
     # Sweep results
     if artifact.sweep_results:
         parts.append("\n## Sweep Results")
         for sweep in artifact.sweep_results:
-            sweep_name = getattr(sweep, 'sweep_name', '') or getattr(sweep, 'name', '') or 'sweep'
-            parts.append(f"- Sweep: {sweep_name}")
-            if hasattr(sweep, 'metric_results') and sweep.metric_results:
-                for mr in sweep.metric_results:
-                    mean_val = getattr(mr, 'mean', None)
-                    std_val = getattr(mr, 'std', None)
-                    metric = getattr(mr, 'metric', 'score')
-                    if mean_val is not None:
-                        val_str = f"{mean_val:.4f}"
-                        if std_val is not None:
-                            val_str += f"±{std_val:.4f}"
-                        parts.append(f"  - {metric}: {val_str}")
-            # Also check objective_score
-            obj_score = getattr(sweep, 'objective_score', None)
+            params = f", params={sweep.params}" if sweep.params else ""
+            parts.append(
+                f"- Sweep: {sweep.label} ({sweep.status}; "
+                f"{sweep.successful_seed_count}/{sweep.seed_count} seeds{params})"
+            )
+            if sweep.best_system:
+                parts.append(f"  - best_system: {sweep.best_system}")
+            obj_score = sweep.objective_score_mean
             if obj_score is not None:
-                parts.append(f"  - objective_score: {obj_score:.4f}")
+                obj_text = f"  - objective_score_mean: {_format_value(obj_score)}"
+                if sweep.objective_score_std is not None:
+                    obj_text += f" (std={_format_value(sweep.objective_score_std)})"
+                interval = sweep.objective_score_confidence_interval
+                if interval is not None:
+                    obj_text += (
+                        f", {round(interval.level * 100):d}% CI "
+                        f"[{_format_value(interval.lower)}, {_format_value(interval.upper)}]"
+                    )
+                parts.append(obj_text)
 
     # Significance tests
     if artifact.significance_tests:
@@ -86,10 +127,10 @@ def _artifact_summary(artifact: ResultArtifact) -> str:
     if artifact.acceptance_checks:
         parts.append("\n## Acceptance Checks")
         for check in artifact.acceptance_checks:
-            status = getattr(check, 'status', '?')
-            rule_id = getattr(check, 'rule_id', '')
-            desc = getattr(check, 'description', '')
-            parts.append(f"- [{status}] {rule_id}: {desc}")
+            status = "pass" if check.passed else "fail"
+            rule_id = f"{check.rule_id}: " if check.rule_id else ""
+            detail = f" -- {check.detail}" if check.detail else ""
+            parts.append(f"- [{status}] {rule_id}{check.criterion}{detail}")
 
     # Tables
     if artifact.tables:

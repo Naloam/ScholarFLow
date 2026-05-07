@@ -1801,7 +1801,15 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     run = load_run(project_id, run_id)
     if review is None or bundle_index is None or run is None:
         return None
-    review_loop = _build_review_loop(project_id=project_id, run_id=run_id, review=review)
+    review_loop = _load_review_loop(project_id, run_id)
+    if review_loop is None:
+        review_loop = _build_review_loop(
+            project_id=project_id,
+            run_id=run_id,
+            review=review,
+            run=run,
+            paper_markdown=_paper_markdown(run),
+        )
 
     bundle = _selected_bundle(bundle_index)
     if bundle is None:

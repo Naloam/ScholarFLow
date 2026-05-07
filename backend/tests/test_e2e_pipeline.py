@@ -8,27 +8,37 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 # Ensure backend is on path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-def test_planner():
+def _build_plan():
     """Test that planner creates a valid plan with problem anchor."""
     from services.autoresearch.planner import ResearchPlanner
     planner = ResearchPlanner()
-    plan = planner._fallback_plan(
+    return planner._fallback_plan(
         topic="Sentiment Analysis on Short Texts",
         task_family="text_classification",
         literature=[],
         benchmark_name="sentiment140",
         benchmark_description="Twitter Sentiment Analysis",
     )
+
+
+@pytest.fixture
+def plan():
+    return _build_plan()
+
+
+def test_planner(plan):
+    """Test that planner creates a valid plan with problem anchor."""
     assert plan.topic == "Sentiment Analysis on Short Texts"
     assert plan.task_family == "text_classification"
     assert plan.hypotheses
     assert plan.planned_contributions
     print(f"[PASS] planner: {len(plan.hypotheses)} hypotheses, {len(plan.planned_contributions)} contributions")
-    return plan
 
 
 def test_problem_anchor(plan):
@@ -40,7 +50,6 @@ def test_problem_anchor(plan):
     assert anchored.problem_anchor is not None
     assert "PROBLEM_ANCHOR" in anchored.problem_anchor
     print(f"[PASS] problem_anchor: {anchored.problem_anchor[:60]}...")
-    return anchored
 
 
 def test_5block_experiment_design(plan):
@@ -92,7 +101,6 @@ def test_ablation_planner(plan):
     assert result["suggested_order"]
     print(f"[PASS] ablation_planner: {result['total_planned']} ablations, "
           f"{len(result['unnecessary_ablations'])} unnecessary")
-    return result
 
 
 def test_claim_evidence_matrix():
@@ -118,7 +126,6 @@ def test_claim_evidence_matrix():
     assert matrix["total_claims"] > 0
     print(f"[PASS] claim_evidence_matrix: {matrix['supported_claims']}/{matrix['total_claims']} supported, "
           f"coverage={matrix['coverage_score']:.0%}")
-    return matrix
 
 
 def test_paper_blueprint():
@@ -306,7 +313,8 @@ if __name__ == "__main__":
 
     # Phase 1: Planning
     print("--- Phase 1: Planning ---")
-    plan = test_planner()
+    plan = _build_plan()
+    test_planner(plan)
     test_problem_anchor(plan)
     test_5block_experiment_design(plan)
 

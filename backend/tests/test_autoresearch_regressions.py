@@ -30,6 +30,7 @@ from schemas.autoresearch import (
     ResearchPlan,
     ResearchProgram,
     ResultArtifact,
+    ResultTable,
 )
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark
@@ -398,6 +399,104 @@ def test_llm_section_generation_uses_paper_plan_section_objective(
 
     assert seen_objectives == ["Explain the exact benchmark framing and paper contribution."]
     assert sections["introduction"].startswith("Generated section grounded")
+
+
+def test_dedicated_section_prompt_receives_assignment_context(monkeypatch) -> None:
+    writer = PaperWriter()
+    captured_messages: list[dict] = []
+
+    def fake_load_prompt(path):
+        del path
+        return "Dedicated section prompt."
+
+    def fake_chat(messages, **kwargs):
+        del kwargs
+        captured_messages.extend(messages)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Generated section content grounded in the provided assignment context.",
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(autoresearch_writer, "load_prompt", fake_load_prompt)
+    monkeypatch.setattr(autoresearch_writer, "chat", fake_chat)
+
+    content = writer._write_section_with_llm(
+        section_title="Introduction",
+        section_objective="Explain the exact benchmark framing and contribution.",
+        evidence_context="- supported claim with metric evidence",
+        topic="Writer regression topic",
+        section_slug="introduction",
+    )
+
+    assert content is not None
+    user_context = captured_messages[1]["content"]
+    assert "## Section Assignment" in user_context
+    assert "- Title: Introduction" in user_context
+    assert "- Objective: Explain the exact benchmark framing and contribution." in user_context
+    assert "- Topic: Writer regression topic" in user_context
+
+
+def test_section_evidence_context_includes_table_values() -> None:
+    plan, _spec = _writer_plan_and_spec()
+    writer = PaperWriter()
+    artifact = _result_artifact().model_copy(
+        update={
+            "tables": [
+                ResultTable(
+                    title="Main Results",
+                    columns=["System", "Macro F1"],
+                    rows=[
+                        ["candidate_system", "0.72"],
+                        ["keyword_baseline", "0.61"],
+                    ],
+                )
+            ]
+        }
+    )
+    claim_matrix = writer.build_claim_evidence_matrix(
+        plan,
+        _spec,
+        artifact,
+        literature=[],
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+    section = AutoResearchPaperPlanSectionRead(
+        section_id="results",
+        title="Results",
+        objective="Present grounded metrics.",
+        claim_ids=["claim_result_summary"],
+    )
+
+    evidence_context = writer._build_evidence_context_for_section(
+        section,
+        artifact,
+        claim_matrix,
+    )
+
+    assert "| System | Macro F1 |" in evidence_context
+    assert "| candidate_system | 0.72 |" in evidence_context
+    assert "| keyword_baseline | 0.61 |" in evidence_context
+
+
+def test_split_sections_normalizes_numbered_headings() -> None:
+    sections = PaperWriter()._split_sections(
+        "# Title\n\n"
+        "## Abstract\nBrief.\n\n"
+        "## 1. Introduction\nIntro body.\n\n"
+        "## 2. Related Work\nRelated body.\n"
+    )
+
+    assert sections["abstract"] == "Brief."
+    assert sections["introduction"] == "Intro body."
+    assert sections["related_work"] == "Related body."
 
 
 def test_writer_strips_whole_markdown_fences_from_llm_outputs() -> None:

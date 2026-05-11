@@ -1343,7 +1343,7 @@ class PaperWriter:
         parts = _re.split(r"^##\s+", markdown, flags=_re.MULTILINE)
         for part in parts[1:]:  # skip content before first heading
             lines = part.split("\n", 1)
-            title = lines[0].strip().lower().replace(" ", "_")
+            title = _section_heading_slug(lines[0].strip())
             content = lines[1].strip() if len(lines) > 1 else ""
             sections[title] = content
         return sections
@@ -1407,8 +1407,15 @@ class PaperWriter:
             if not prompt_template:
                 prompt_template = load_prompt(PAPER_WRITER_SECTION_PROMPT_PATH)
 
-            # Build context object for the user message
-            context_parts = []
+            # Build context object for the user message.
+            context_parts = [
+                (
+                    "## Section Assignment\n"
+                    f"- Title: {section_title}\n"
+                    f"- Objective: {section_objective}\n"
+                    f"- Topic: {topic or 'not specified'}"
+                )
+            ]
             if evidence_context:
                 context_parts.append(f"## Evidence\n{evidence_context}")
             if literature_context:
@@ -1502,11 +1509,15 @@ class PaperWriter:
         if not parts:
             parts.append("- No specific claims assigned. Use general experimental data.")
         if artifact.tables:
-            table_summaries = []
+            table_details = []
             for table in artifact.tables[:3]:
-                cols = ", ".join(table.columns[:5])
-                table_summaries.append(f"Table '{table.title}': columns=[{cols}], {len(table.rows)} rows")
-            parts.append("\nAvailable result tables:\n" + "\n".join(f"- {s}" for s in table_summaries))
+                rendered_table = _markdown_table(table)
+                if rendered_table:
+                    table_details.append(f"### {table.title}\n{rendered_table}")
+                else:
+                    cols = ", ".join(table.columns[:5])
+                    table_details.append(f"### {table.title}\nColumns: {cols}; rows: {len(table.rows)}")
+            parts.append("\nAvailable result tables:\n" + "\n\n".join(table_details))
         best_system_name = artifact.best_system or artifact.objective_system
         if best_system_name and artifact.objective_score is not None:
             parts.append(

@@ -38,6 +38,7 @@ def _ensure_project_link(db: Session, project_id: str, paper_id: str) -> None:
     existing = db.execute(stmt).scalar_one_or_none()
     if existing is None:
         db.add(ProjectPaper(project_id=project_id, paper_id=paper_id))
+        db.flush()
 
 
 def _apply_metadata(paper: Paper, meta: dict) -> None:

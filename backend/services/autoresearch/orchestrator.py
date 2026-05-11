@@ -1342,6 +1342,7 @@ class AutoResearchOrchestrator:
                         benchmark_source=benchmark_source or run.benchmark,
                     )
                 literature = list(run.literature)
+                literature_synthesis = run.literature_synthesis
                 plan = run.plan
                 spec = run.spec
                 program = run.program

@@ -914,6 +914,112 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
     assert any("supported claim-evidence commitments" in item for item in final_blockers)
 
 
+def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -> None:
+    plan, spec = _writer_plan_and_spec()
+    artifact = _result_artifact()
+    claim_matrix = PaperWriter().build_claim_evidence_matrix(
+        plan,
+        spec,
+        artifact,
+        literature=[
+            LiteratureInsight(
+                paper_id="context_ref_1",
+                title="[Context Summary] Benchmark fallback",
+                source="benchmark_context",
+                insight="Synthetic benchmark context cannot establish publication novelty.",
+            )
+        ],
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+    candidate = HypothesisCandidate(
+        id="candidate_synthetic_literature",
+        program_id="program_synthetic_literature",
+        rank=1,
+        title="Synthetic Literature Candidate",
+        hypothesis=plan.hypotheses[0],
+        proposed_method=plan.proposed_method,
+        rationale="Exercise literature provenance gating.",
+        planned_contributions=plan.planned_contributions,
+        status="done",
+        artifact=artifact,
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_synthetic_literature_gate",
+        project_id="project_synthetic_literature_gate",
+        topic=plan.topic,
+        status="done",
+        task_family="text_classification",
+        plan=plan,
+        spec=spec,
+        candidates=[candidate],
+        artifact=artifact,
+        literature=[
+            LiteratureInsight(
+                paper_id="context_ref_1",
+                title="[Context Summary] Benchmark fallback",
+                source="benchmark_context",
+                insight="Synthetic benchmark context cannot establish publication novelty.",
+            )
+        ],
+        claim_evidence_matrix=claim_matrix,
+        paper_markdown=(
+            "# Synthetic Literature Gate\n\n"
+            "## Abstract\nCandidate system scored 0.72 macro F1.\n\n"
+            "## Related Work\nSynthetic benchmark context motivates the proxy task [1].\n\n"
+            "## Results\nCandidate system scored 0.72 macro F1.\n\n"
+            "## References\n[1] [Context Summary] Benchmark fallback.\n"
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+
+    novelty = review_publish._build_novelty_assessment(
+        run=run,
+        selected_candidate_id=candidate.id,
+    )
+    findings, evidence, citation_coverage = review_publish._review_findings(
+        run=run,
+        bundle=None,
+        selected_manifest_source="file",
+        paper_markdown=run.paper_markdown or "",
+        novelty_assessment=novelty,
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        generated_at=now,
+        overall_status="needs_revision",
+        unsupported_claim_risk="medium",
+        summary="Synthetic literature regression review.",
+        evidence=evidence,
+        citation_coverage=citation_coverage,
+        novelty_assessment=novelty,
+        scores=review_publish._review_scores(
+            run=run,
+            bundle=None,
+            findings=findings,
+            evidence=evidence,
+            citation_coverage=citation_coverage,
+            selected_manifest_source="file",
+        ),
+        findings=findings,
+        revision_plan=review_publish._revision_plan(findings),
+    )
+
+    assert novelty.status == "missing_context"
+    assert novelty.compared_paper_count == 0
+    assert "No real literature sources were persisted with the run." in {
+        item.summary for item in findings
+    }
+    assert any(
+        "real literature sources" in item
+        for item in review_publish._semantic_final_publish_blockers(review)
+    )
+
+
 def test_autoresearch_execute_persists_literature_synthesis(
     monkeypatch,
     tmp_path: Path,

@@ -168,6 +168,10 @@ _INFRASTRUCTURE_CLAIM_CUES = (
     "execution trace",
     "execution plane",
 )
+_SYNTHETIC_LITERATURE_SOURCES = {
+    "ai_generated_context",
+    "benchmark_context",
+}
 
 
 def _normalize_text(text: str | None) -> str:
@@ -386,6 +390,21 @@ def _research_claims(run: AutoResearchRunRead, selected_candidate_id: str | None
     return claims
 
 
+def _is_synthetic_literature(item) -> bool:
+    source = (getattr(item, "source", None) or "").strip().lower()
+    paper_id = (getattr(item, "paper_id", None) or "").strip().lower()
+    title = (getattr(item, "title", None) or "").strip().lower()
+    return (
+        source in _SYNTHETIC_LITERATURE_SOURCES
+        or paper_id.startswith("context_ref_")
+        or title.startswith("[context summary]")
+    )
+
+
+def _real_literature_items(run: AutoResearchRunRead) -> list:
+    return [item for item in run.literature if not _is_synthetic_literature(item)]
+
+
 def _selected_candidate(
     run: AutoResearchRunRead,
     selected_candidate_id: str | None,
@@ -574,6 +593,7 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
         if finding.category == "context":
             if (
                 "no literature insights were persisted" in lowered_summary
+                or "no real literature sources" in lowered_summary
                 or "novelty framing is weakly grounded" in lowered_summary
                 or "lacks an explicit related-work section" in lowered_summary
                 or "requested topic" in lowered_summary
@@ -615,6 +635,16 @@ def _build_novelty_assessment(
             status="missing_context",
             summary="No persisted literature was available, so novelty and related-work analysis remains weakly grounded.",
         )
+    real_literature = _real_literature_items(run)
+    if not real_literature:
+        return AutoResearchNoveltyAssessmentRead(
+            status="missing_context",
+            summary=(
+                f"The run retained {len(run.literature)} fallback context item(s), but no real literature records. "
+                "Novelty cannot be publication-grounded until retrieved papers are persisted."
+            ),
+            compared_paper_count=0,
+        )
 
     candidate_method_terms = _terms(candidate.title, candidate.hypothesis, candidate.proposed_method)
     candidate_claim_terms = _terms(*candidate.planned_contributions)
@@ -622,7 +652,7 @@ def _build_novelty_assessment(
     strong_match_count = 0
     gap_aligned_paper_count = 0
 
-    for item in run.literature:
+    for item in real_literature:
         literature_terms = _terms(item.title, item.insight, item.method_hint)
         gap_terms = _terms(item.gap_hint)
         shared_terms = sorted(candidate_method_terms & literature_terms)
@@ -667,7 +697,7 @@ def _build_novelty_assessment(
     uncovered_claims: list[str] = []
     literature_claim_terms = [
         _terms(item.title, item.insight, item.method_hint, item.gap_hint)
-        for item in run.literature
+        for item in real_literature
     ]
     for claim in research_claims:
         claim_terms = _terms(claim)
@@ -679,7 +709,7 @@ def _build_novelty_assessment(
     if strong_match_count == 0:
         status = "weak"
         summary = (
-            f"The selected candidate does not show a strong lexical or gap-aligned match against {len(run.literature)} "
+            f"The selected candidate does not show a strong lexical or gap-aligned match against {len(real_literature)} "
             "persisted literature items."
         )
     elif research_claims and covered_claims == 0:
@@ -705,7 +735,7 @@ def _build_novelty_assessment(
     return AutoResearchNoveltyAssessmentRead(
         status=status,
         summary=summary,
-        compared_paper_count=len(run.literature),
+        compared_paper_count=len(real_literature),
         strong_match_count=strong_match_count,
         gap_aligned_paper_count=gap_aligned_paper_count,
         covered_claim_count=covered_claims,
@@ -757,6 +787,8 @@ def _review_findings(
         item for item in unique_citation_indices if item < 1 or item > len(run.literature)
     ]
     cited_literature_count = sum(1 for item in unique_citation_indices if 1 <= item <= len(run.literature))
+    real_literature_count = len(_real_literature_items(run))
+    synthetic_literature_count = len(run.literature) - real_literature_count
     required_assets = [item for item in bundle.assets if item.required] if bundle is not None else []
     optional_assets = [item for item in bundle.assets if not item.required] if bundle is not None else []
     missing_required_assets = [item for item in required_assets if not item.ref.exists]
@@ -926,6 +958,18 @@ def _review_findings(
             category="context",
             summary="No literature insights were persisted with the run.",
             detail="Related-work and novelty review will be weaker until the run retains literature context.",
+        )
+    elif real_literature_count == 0:
+        add_finding(
+            severity="warning",
+            category="context",
+            summary="No real literature sources were persisted with the run.",
+            detail=(
+                f"The run retained {synthetic_literature_count} fallback context item(s), but all persisted "
+                "literature is synthetic benchmark or AI-generated context. Final publish needs at least one "
+                "retrieved paper record from a real literature source."
+            ),
+            supporting_asset_ids=["run_json", "run_paper_markdown"],
         )
     elif not has_related_work and citation_marker_count > 0:
         add_finding(

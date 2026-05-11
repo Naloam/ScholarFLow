@@ -21,6 +21,7 @@ from schemas.autoresearch import (
     ExperimentAttempt,
     ExperimentSpec,
     HypothesisCandidate,
+    LiteratureInsight,
     LiteratureSynthesis,
     LiteratureTheme,
     PortfolioSummary,
@@ -434,3 +435,91 @@ def test_review_flags_hypothesis_mismatch_from_objective_system() -> None:
     assert finding is not None
     assert finding[0] == "warning"
     assert "`candidate_system`" in finding[2]
+
+
+def test_autoresearch_execute_persists_literature_synthesis(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    session_local = _session_local(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "llm_api_key", None)
+    project_id = "project_persist_literature_synthesis"
+    topic = "Persist literature synthesis"
+    synthesis = LiteratureSynthesis(
+        themes=[
+            LiteratureTheme(
+                theme_id="theme_persist",
+                label="Persisted synthesis",
+                description="The run should retain synthesized literature context.",
+            )
+        ],
+        positioning="Persisted positioning for rebuild and review.",
+        novelty_claim="The persisted synthesis keeps novelty framing available after execution.",
+    )
+
+    def fake_gather_literature_context(**kwargs):
+        del kwargs
+        return (
+            [],
+            [
+                LiteratureInsight(
+                    title="Persisting Literature Synthesis for Research Agents",
+                    year=2025,
+                    source="test",
+                    insight="Research agents need persisted related-work context.",
+                    method_hint="Persist structured synthesis alongside literature insights.",
+                    gap_hint="Checkpoint recovery often loses narrative context.",
+                )
+            ],
+            None,
+            synthesis,
+        )
+
+    def fake_run(
+        self,
+        *,
+        code_filename_prefix: str,
+        round_index: int,
+        **kwargs,
+    ):
+        del self, kwargs
+        code_path = tmp_path / f"{code_filename_prefix}_{round_index}.py"
+        code_path.write_text("# persisted synthesis candidate\n", encoding="utf-8")
+        return "persisted_synthesis_strategy", str(code_path), _result_artifact()
+
+    monkeypatch.setattr(
+        autoresearch_orchestrator,
+        "gather_literature_context",
+        fake_gather_literature_context,
+    )
+    monkeypatch.setattr(autoresearch_orchestrator.AutoExperimentRunner, "run", fake_run)
+    monkeypatch.setattr(
+        autoresearch_orchestrator.PaperWriter,
+        "write",
+        lambda self, *args, **kwargs: "# persisted synthesis paper\n\nThe paper cites preserved context [1].\n\n## References\n[1] Test reference.",
+    )
+
+    db = session_local()
+    try:
+        _seed_project(db, project_id, title="Persist Literature Synthesis")
+        run = autoresearch_repository.create_run(project_id, topic)
+        result = autoresearch_orchestrator.AutoResearchOrchestrator().execute(
+            db=db,
+            project_id=project_id,
+            run_id=run.id,
+            topic=topic,
+            max_rounds=1,
+            candidate_execution_limit=1,
+            auto_search_literature=False,
+        )
+    finally:
+        db.close()
+
+    reloaded = autoresearch_repository.load_run(project_id, run.id)
+
+    assert result.status == "done"
+    assert result.literature_synthesis is not None
+    assert result.literature_synthesis.novelty_claim == synthesis.novelty_claim
+    assert reloaded is not None
+    assert reloaded.literature_synthesis is not None
+    assert reloaded.literature_synthesis.positioning == synthesis.positioning

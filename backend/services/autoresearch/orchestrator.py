@@ -1504,6 +1504,7 @@ class AutoResearchOrchestrator:
                 "plan": plan,
                 "spec": spec,
                 "literature": literature,
+                "literature_synthesis": literature_synthesis,
                 "candidates": candidates,
                 "portfolio": portfolio,
                 "error": None,

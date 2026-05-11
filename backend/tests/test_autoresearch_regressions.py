@@ -17,6 +17,11 @@ from config.settings import settings
 from models.base import Base
 from models.project import Project
 from schemas.autoresearch import (
+    AblationSpec,
+    AutoResearchClaimEvidenceEntryRead,
+    AutoResearchClaimEvidenceMatrixRead,
+    AutoResearchClaimEvidenceRefRead,
+    AutoResearchNoveltyAssessmentRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchRunRead,
@@ -674,6 +679,144 @@ def test_review_flags_hypothesis_mismatch_from_objective_system() -> None:
     assert finding is not None
     assert finding[0] == "warning"
     assert "`candidate_system`" in finding[2]
+
+
+def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() -> None:
+    plan, spec = _writer_plan_and_spec()
+    spec = spec.model_copy(
+        update={
+            "ablations": [
+                AblationSpec(
+                    name="vocab_ablation",
+                    description="Remove rare lexical features to test vocabulary coverage.",
+                )
+            ],
+            "seeds": [1, 2, 3],
+        }
+    )
+    artifact = _result_artifact().model_copy(
+        update={
+            "per_seed_results": [],
+            "significance_tests": [],
+            "sweep_results": [],
+        }
+    )
+    claim_matrix = AutoResearchClaimEvidenceMatrixRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        claim_count=2,
+        supported_claim_count=1,
+        unsupported_claim_count=1,
+        entries=[
+            AutoResearchClaimEvidenceEntryRead(
+                claim_id="claim_result_summary",
+                category="result",
+                section_hint="Results",
+                claim="Candidate system improved macro F1.",
+                evidence=[
+                    AutoResearchClaimEvidenceRefRead(
+                        source_kind="artifact",
+                        label="Result table",
+                        detail="Candidate system scored 0.72 macro F1.",
+                    )
+                ],
+            ),
+            AutoResearchClaimEvidenceEntryRead(
+                claim_id="claim_ablation",
+                category="result",
+                section_hint="Results",
+                claim="Vocabulary ablation confirms lexical coverage is necessary.",
+                support_status="unsupported",
+                evidence=[],
+                gaps=["Run the planned vocabulary ablation."],
+            ),
+        ],
+    )
+    literature = [
+        LiteratureInsight(
+            paper_id="paper-1",
+            title="Lexical Sentiment Baselines",
+            year=2024,
+            source="semantic_scholar",
+            insight="Lexical baselines need multi-seed evaluation.",
+        )
+    ]
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_underpowered_publish_gate",
+        project_id="project_underpowered_publish_gate",
+        topic=plan.topic,
+        status="done",
+        task_family="text_classification",
+        plan=plan,
+        spec=spec,
+        artifact=artifact,
+        literature=literature,
+        claim_evidence_matrix=claim_matrix,
+        paper_markdown=(
+            "# Writer Regression Topic\n\n"
+            "## Abstract\nGrounded result summary.\n\n"
+            "## Related Work\nPrior lexical baselines motivate this benchmark [1].\n\n"
+            "## Results\nCandidate system scored 0.72 macro F1.\n\n"
+            "## References\n[1] Lexical Sentiment Baselines. Semantic Scholar, 2024.\n"
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    novelty = AutoResearchNoveltyAssessmentRead(
+        status="grounded",
+        summary="Literature context is present for the selected claim.",
+        compared_paper_count=1,
+        strong_match_count=1,
+        covered_claim_count=1,
+        total_claim_count=1,
+    )
+
+    findings, evidence, citation_coverage = review_publish._review_findings(
+        run=run,
+        bundle=None,
+        selected_manifest_source="file",
+        paper_markdown=run.paper_markdown or "",
+        novelty_assessment=novelty,
+    )
+
+    summaries = {item.summary for item in findings}
+    assert "Seed coverage is insufficient for publication-level claims." in summaries
+    assert "The paper package does not preserve significance comparisons." in summaries
+    assert "Planned ablations were not executed in the selected artifact." in summaries
+    assert "Claim-evidence matrix contains unsupported publish-facing claims." in summaries
+
+    actions = review_publish._revision_plan(findings)
+    action_titles = {item.title for item in actions}
+    assert "Run additional seeds before final publication" in action_titles
+    assert "Run paired significance comparisons" in action_titles
+    assert "Run planned ablations or demote ablation claims" in action_titles
+    assert "Rerun experiments or demote unsupported claims" in action_titles
+
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        generated_at=now,
+        overall_status="needs_revision",
+        unsupported_claim_risk="medium",
+        summary="Regression review.",
+        evidence=evidence,
+        citation_coverage=citation_coverage,
+        novelty_assessment=novelty,
+        scores=review_publish._review_scores(
+            run=run,
+            bundle=None,
+            findings=findings,
+            evidence=evidence,
+            citation_coverage=citation_coverage,
+            selected_manifest_source="file",
+        ),
+        findings=findings,
+        revision_plan=actions,
+    )
+    final_blockers = review_publish._semantic_final_publish_blockers(review)
+
+    assert any("stronger experimental evidence" in item for item in final_blockers)
+    assert any("supported claim-evidence commitments" in item for item in final_blockers)
 
 
 def test_autoresearch_execute_persists_literature_synthesis(

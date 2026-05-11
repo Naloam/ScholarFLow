@@ -500,6 +500,70 @@ def _hypothesis_resolution_finding(
     )
 
 
+def _system_names_from_artifact(artifact) -> set[str]:
+    if artifact is None:
+        return set()
+    names: set[str] = set()
+    if artifact.best_system:
+        names.add(artifact.best_system)
+    if artifact.objective_system:
+        names.add(artifact.objective_system)
+    for collection_name in ("system_results", "aggregate_system_results"):
+        for item in getattr(artifact, collection_name, []) or []:
+            system = getattr(item, "system", None)
+            if system:
+                names.add(system)
+    for sweep in getattr(artifact, "sweep_results", []) or []:
+        if sweep.best_system:
+            names.add(sweep.best_system)
+        if sweep.objective_system:
+            names.add(sweep.objective_system)
+        for item in sweep.aggregate_system_results:
+            if item.system:
+                names.add(item.system)
+    return names
+
+
+def _planned_ablation_gaps(run: AutoResearchRunRead) -> list[str]:
+    spec = run.spec
+    artifact = run.artifact
+    if spec is None:
+        return []
+    observed_systems = _system_names_from_artifact(artifact)
+    for attempt in run.attempts:
+        observed_systems.update(_system_names_from_artifact(attempt.artifact))
+    for candidate in run.candidates:
+        observed_systems.update(_system_names_from_artifact(candidate.artifact))
+        for attempt in candidate.attempts:
+            observed_systems.update(_system_names_from_artifact(attempt.artifact))
+    gaps = []
+    for ablation in spec.ablations:
+        if ablation.name not in observed_systems:
+            gaps.append(ablation.name)
+    return gaps
+
+
+def _unsupported_claim_gap_finding(
+    run: AutoResearchRunRead,
+) -> tuple[str, str, str] | None:
+    matrix = run.claim_evidence_matrix
+    if matrix is None:
+        return None
+    unsupported = [item for item in matrix.entries if item.support_status == "unsupported"]
+    if not unsupported:
+        return None
+    example_claims = "; ".join(item.claim for item in unsupported[:3])
+    return (
+        "warning",
+        "Claim-evidence matrix contains unsupported publish-facing claims.",
+        (
+            f"{len(unsupported)}/{matrix.claim_count} claim commitments are unsupported by "
+            "the selected artifact and literature state. Demote unsupported claims to limitations or run the "
+            f"missing experiments before final publish. Examples: {example_claims}"
+        ),
+    )
+
+
 def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[str]:
     blockers: list[str] = []
     for finding in review.findings:
@@ -507,16 +571,24 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
         if finding.category == "citation":
             blockers.append(f"Final publish requires citation-grounded paper text: {finding.summary}")
             continue
-        if finding.category != "context":
+        if finding.category == "context":
+            if (
+                "no literature insights were persisted" in lowered_summary
+                or "novelty framing is weakly grounded" in lowered_summary
+                or "lacks an explicit related-work section" in lowered_summary
+                or "requested topic" in lowered_summary
+                or "original hypothesis" in lowered_summary
+            ):
+                blockers.append(f"Final publish requires tighter research framing: {finding.summary}")
+            if "claim-evidence matrix contains unsupported" in lowered_summary:
+                blockers.append(f"Final publish requires supported claim-evidence commitments: {finding.summary}")
             continue
-        if (
-            "no literature insights were persisted" in lowered_summary
-            or "novelty framing is weakly grounded" in lowered_summary
-            or "lacks an explicit related-work section" in lowered_summary
-            or "requested topic" in lowered_summary
-            or "original hypothesis" in lowered_summary
+        if finding.category == "statistics" and (
+            "does not preserve significance" in lowered_summary
+            or "seed coverage is insufficient" in lowered_summary
+            or "planned ablations were not executed" in lowered_summary
         ):
-            blockers.append(f"Final publish requires tighter research framing: {finding.summary}")
+            blockers.append(f"Final publish requires stronger experimental evidence: {finding.summary}")
     deduped: list[str] = []
     seen: set[str] = set()
     for item in blockers:
@@ -773,6 +845,16 @@ def _review_findings(
             detail=detail,
             supporting_asset_ids=["run_spec_json", "run_artifact_json", "run_paper_markdown"],
         )
+    unsupported_claim_gap = _unsupported_claim_gap_finding(run)
+    if unsupported_claim_gap is not None:
+        severity, summary, detail = unsupported_claim_gap
+        add_finding(
+            severity=severity,
+            category="context",
+            summary=summary,
+            detail=detail,
+            supporting_asset_ids=["run_claim_evidence_matrix_json", "run_paper_markdown"],
+        )
 
     if missing_required_assets:
         add_finding(
@@ -874,6 +956,43 @@ def _review_findings(
         )
 
     if artifact is not None and artifact.status == "done":
+        if evidence.completed_seed_count < 2:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Seed coverage is insufficient for publication-level claims.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count} completed seed result(s) "
+                    f"for {evidence.seed_count} requested seed(s). Final publish should run at least two completed "
+                    "seeds, and preferably the requested seed set, before making stability or robustness claims."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        elif evidence.seed_count and evidence.completed_seed_count < evidence.seed_count:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Seed coverage is incomplete relative to the experiment specification.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count}/{evidence.seed_count} requested seed "
+                    "results. Complete the planned seed set or narrow claims to the executed subset."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        missing_ablations = _planned_ablation_gaps(run)
+        if missing_ablations:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Planned ablations were not executed in the selected artifact.",
+                detail=(
+                    "The experiment specification lists ablations that do not appear in the final result tables or "
+                    "aggregate system results: "
+                    + ", ".join(f"`{item}`" for item in missing_ablations)
+                    + ". Run these ablations or demote the related hypotheses to limitations."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
         if not artifact.significance_tests:
             add_finding(
                 severity="warning",
@@ -1022,13 +1141,39 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
                 finding_id=finding.id,
             )
         elif finding.category == "statistics":
-            add_action(
-                key="statistics",
-                priority="high" if finding.severity == "error" else "medium",
-                title="Tighten statistical reporting in the paper summary",
-                detail="Expose acceptance checks, seeds, sweep choice, and significance support directly in the publish-facing paper.",
-                finding_id=finding.id,
-            )
+            lowered_summary = finding.summary.lower()
+            if "seed coverage is insufficient" in lowered_summary or "seed coverage is incomplete" in lowered_summary:
+                add_action(
+                    key="seed_coverage",
+                    priority="high",
+                    title="Run additional seeds before final publication",
+                    detail="Complete the planned seed set, preserve per-seed artifacts, and regenerate aggregate metrics before making stability claims.",
+                    finding_id=finding.id,
+                )
+            elif "planned ablations were not executed" in lowered_summary:
+                add_action(
+                    key="planned_ablations",
+                    priority="high",
+                    title="Run planned ablations or demote ablation claims",
+                    detail="Execute every ablation named in the experiment specification, or revise the paper to state that those hypotheses remain untested.",
+                    finding_id=finding.id,
+                )
+            elif "significance comparisons" in lowered_summary:
+                add_action(
+                    key="significance",
+                    priority="high",
+                    title="Run paired significance comparisons",
+                    detail="Preserve paired significance tests for the primary metric so score gaps can be interpreted as more than one-off wins.",
+                    finding_id=finding.id,
+                )
+            else:
+                add_action(
+                    key="statistics",
+                    priority="high" if finding.severity == "error" else "medium",
+                    title="Tighten statistical reporting in the paper summary",
+                    detail="Expose acceptance checks, seeds, sweep choice, and significance support directly in the publish-facing paper.",
+                    finding_id=finding.id,
+                )
         elif finding.category == "context":
             lowered_summary = finding.summary.lower()
             if "proxy benchmark" in lowered_summary or "requested topic" in lowered_summary:
@@ -1045,6 +1190,14 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
                     priority="medium",
                     title="State clearly whether the original hypothesis was supported",
                     detail="Make the publish-facing paper say whether the planned hypothesis held under the selected artifact and what system actually won.",
+                    finding_id=finding.id,
+                )
+            elif "claim-evidence matrix contains unsupported" in lowered_summary:
+                add_action(
+                    key="claim_evidence",
+                    priority="high",
+                    title="Rerun experiments or demote unsupported claims",
+                    detail="Every publish-facing claim should map to persisted evidence; unsupported claims must become limitations or trigger additional experiments.",
                     finding_id=finding.id,
                 )
             else:

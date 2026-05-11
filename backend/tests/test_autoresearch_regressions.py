@@ -600,6 +600,101 @@ def test_writer_review_loop_can_be_disabled(monkeypatch) -> None:
     assert result == seed_markdown.strip()
 
 
+def test_writer_marks_unexecuted_ablation_hypothesis_as_untested() -> None:
+    plan, spec = _writer_plan_and_spec()
+    plan = plan.model_copy(
+        update={
+            "hypotheses": [
+                "The candidate improves macro F1 over the baseline.",
+                "Reducing vocabulary coverage hurts macro F1.",
+            ]
+        }
+    )
+    spec = spec.model_copy(
+        update={
+            "ablations": [
+                AblationSpec(
+                    name="vocab_ablation",
+                    description="Remove rare lexical features.",
+                )
+            ]
+        }
+    )
+    artifact = _result_artifact()
+
+    block = PaperWriter()._hypothesis_validation_block(
+        plan,
+        spec,
+        artifact,
+        best_metric=0.72,
+        baseline_metric=0.61,
+        attempts=[],
+    )
+
+    assert "H1" in block
+    assert "SUPPORTED" in block
+    assert "H2" in block
+    assert "UNTESTED" in block
+    assert "no completed ablation result was preserved" in block
+
+
+def test_writer_seed_paper_demotes_missing_ablation_and_significance(monkeypatch) -> None:
+    plan, spec = _writer_plan_and_spec()
+    plan = plan.model_copy(
+        update={
+            "hypotheses": [
+                "The candidate improves macro F1 over the baseline.",
+                "Reducing vocabulary coverage hurts macro F1.",
+            ]
+        }
+    )
+    spec = spec.model_copy(
+        update={
+            "ablations": [
+                AblationSpec(
+                    name="vocab_ablation",
+                    description="Remove rare lexical features.",
+                )
+            ],
+            "seeds": [1, 2],
+        }
+    )
+    artifact = _result_artifact().model_copy(update={"per_seed_results": [], "significance_tests": []})
+    writer = PaperWriter()
+    claim_matrix = writer.build_claim_evidence_matrix(
+        plan,
+        spec,
+        artifact,
+        literature=[],
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+
+    def empty_chat(*args, **kwargs):
+        del args, kwargs
+        return {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+
+    monkeypatch.setenv("AUTORESEARCH_PAPER_WRITER_SECTION_PASS", "0")
+    monkeypatch.setenv("AUTORESEARCH_PAPER_WRITER_REVIEW_ROUNDS", "0")
+    monkeypatch.setattr(autoresearch_writer, "chat", empty_chat)
+
+    paper = writer.write(
+        plan,
+        spec,
+        artifact,
+        literature=[],
+        attempts=[],
+        claim_evidence_matrix=claim_matrix,
+    )
+
+    assert "No completed ablation result was preserved" in paper
+    assert "ablation-specific hypotheses remain untested" in paper
+    assert "No paired significance comparisons were preserved" in paper
+    assert "UNTESTED" in paper
+    assert "An ablation study was included" not in paper
+
+
 def test_writer_strips_whole_markdown_fences_from_llm_outputs() -> None:
     writer = PaperWriter()
 

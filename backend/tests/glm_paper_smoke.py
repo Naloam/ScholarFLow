@@ -1,16 +1,16 @@
 """Test paper generation with GLM API.
 
-Usage: OPENAI_API_KEY=xxx OPENAI_API_BASE=https://open.bigmodel.cn/api/paas/v4 LLM_MODEL=openai/glm-4-flash python tests/test_glm_paper.py
+Usage:
+  LITELLM_API_KEY=xxx LLM_API_BASE=https://api.siliconflow.cn/v1 LLM_MODEL=openai/Pro/zai-org/GLM-5.1 python tests/glm_paper_smoke.py
+
+The project settings loader reads .env files itself. Do not seed default
+LLM_MODEL/OPENAI_API_KEY values here; doing that before importing settings would
+mask the real local configuration.
 """
 import os
 import sys
 import json
 from pathlib import Path
-
-# Must set env BEFORE importing settings
-os.environ.setdefault("OPENAI_API_KEY", "")
-os.environ.setdefault("OPENAI_API_BASE", "https://open.bigmodel.cn/api/paas/v4")
-os.environ.setdefault("LLM_MODEL", "openai/glm-4-flash")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

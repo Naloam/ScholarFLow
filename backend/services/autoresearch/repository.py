@@ -578,6 +578,87 @@ def _candidate_lineage_edges(
     return edges
 
 
+def _run_derivation_lineage_edges(
+    *,
+    run: AutoResearchRunRead,
+    run_assets: AutoResearchRunRegistryFiles,
+) -> list[AutoResearchLineageEdgeRead]:
+    edges: list[AutoResearchLineageEdgeRead] = []
+
+    def add_derivation(
+        *,
+        source_kind: str,
+        source_id: str,
+        target_attr: str,
+        target_kind: str,
+    ) -> None:
+        ref = getattr(run_assets, target_attr)
+        if ref is None:
+            return
+        edges.append(
+            AutoResearchLineageEdgeRead(
+                source_kind=source_kind,
+                source_id=source_id,
+                relation="derived_from",
+                target_kind=target_kind,
+                target_id=f"{run.id}:{target_kind}",
+                target_path=ref.path,
+                exists=ref.exists,
+            )
+        )
+
+    if run_assets.artifact_json is not None:
+        artifact_source_id = f"{run.id}:artifact"
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="spec_json",
+            target_kind="spec",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="generated_code",
+            target_kind="generated_code",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="benchmark_json",
+            target_kind="benchmark",
+        )
+
+    if run_assets.paper_markdown is not None:
+        paper_source_id = f"{run.id}:paper"
+        for target_attr, target_kind in (
+            ("plan_json", "plan"),
+            ("spec_json", "spec"),
+            ("artifact_json", "artifact"),
+            ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("narrative_report_markdown", "narrative_report"),
+            ("paper_plan_json", "paper_plan"),
+            ("figure_plan_json", "figure_plan"),
+            ("generated_code", "generated_code"),
+            ("benchmark_json", "benchmark"),
+        ):
+            add_derivation(
+                source_kind="paper",
+                source_id=paper_source_id,
+                target_attr=target_attr,
+                target_kind=target_kind,
+            )
+
+    if run_assets.paper_latex_source is not None and run_assets.paper_markdown is not None:
+        add_derivation(
+            source_kind="paper_latex",
+            source_id=f"{run.id}:paper_latex",
+            target_attr="paper_markdown",
+            target_kind="paper",
+        )
+
+    return edges
+
+
 def _run_lineage_edges(
     *,
     run: AutoResearchRunRead,
@@ -653,6 +734,7 @@ def _run_lineage_edges(
                 exists=ref.exists,
             )
         )
+    edges.extend(_run_derivation_lineage_edges(run=run, run_assets=run_assets))
     for candidate in run.candidates:
         edges.append(
             AutoResearchLineageEdgeRead(

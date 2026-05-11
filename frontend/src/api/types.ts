@@ -692,7 +692,8 @@ export type AutoResearchLineageEdge = {
     | "owns"
     | "selected_candidate"
     | "has_asset"
-    | "materialized_to_run_asset";
+    | "materialized_to_run_asset"
+    | "derived_from";
   target_kind:
     | "run"
     | "program"

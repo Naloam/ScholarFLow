@@ -26,8 +26,10 @@ from schemas.autoresearch import (
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchPublishPackageRead,
+    AutoResearchRegistryAssetRef,
     AutoResearchRunExecutionRead,
     AutoResearchRunRead,
+    AutoResearchRunRegistryFiles,
     ExperimentAttempt,
     ExperimentSpec,
     HypothesisCandidate,
@@ -1066,6 +1068,58 @@ def test_operator_console_summary_exposes_final_publish_blockers() -> None:
     assert summary.blocker_count == 0
     assert summary.final_blocker_count == 2
     assert summary.revision_actions == ["Attach real retrieved literature before final publish."]
+
+
+def test_run_lineage_records_paper_derivation_chain(tmp_path: Path) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_lineage_derivation",
+        project_id="project_lineage_derivation",
+        topic="Lineage derivation chain",
+        status="done",
+        task_family="text_classification",
+        created_at=now,
+        updated_at=now,
+    )
+
+    def asset(name: str) -> AutoResearchRegistryAssetRef:
+        return AutoResearchRegistryAssetRef(
+            path=str(tmp_path / name),
+            exists=True,
+            sha256=f"sha-{name}",
+        )
+
+    files = AutoResearchRunRegistryFiles(
+        root=AutoResearchRegistryAssetRef(path=str(tmp_path), kind="directory", exists=True),
+        run_json=asset("run.json"),
+        plan_json=asset("plan.json"),
+        spec_json=asset("spec.json"),
+        artifact_json=asset("artifact.json"),
+        generated_code=asset("experiment.py"),
+        paper_markdown=asset("paper.md"),
+        claim_evidence_matrix_json=asset("claim_evidence_matrix.json"),
+        narrative_report_markdown=asset("narrative_report.md"),
+        paper_plan_json=asset("paper_plan.json"),
+        figure_plan_json=asset("figure_plan.json"),
+        benchmark_json=asset("benchmark.json"),
+    )
+
+    edges = autoresearch_repository._run_lineage_edges(run=run, run_assets=files)
+    derivations = {
+        (edge.source_kind, edge.source_id, edge.target_kind, edge.target_id)
+        for edge in edges
+        if edge.relation == "derived_from"
+    }
+
+    assert ("paper", f"{run.id}:paper", "artifact", f"{run.id}:artifact") in derivations
+    assert (
+        "paper",
+        f"{run.id}:paper",
+        "claim_evidence_matrix",
+        f"{run.id}:claim_evidence_matrix",
+    ) in derivations
+    assert ("paper", f"{run.id}:paper", "plan", f"{run.id}:plan") in derivations
+    assert ("artifact", f"{run.id}:artifact", "generated_code", f"{run.id}:generated_code") in derivations
 
 
 def test_autoresearch_execute_persists_literature_synthesis(

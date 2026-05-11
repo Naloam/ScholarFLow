@@ -107,6 +107,7 @@ AutoResearchLineageRelation = Literal[
     "selected_candidate",
     "has_asset",
     "materialized_to_run_asset",
+    "derived_from",
 ]
 AutoResearchReviewSeverity = Literal["info", "warning", "error"]
 AutoResearchReviewCategory = Literal[

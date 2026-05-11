@@ -400,6 +400,24 @@ def test_llm_section_generation_uses_paper_plan_section_objective(
     assert sections["introduction"].startswith("Generated section grounded")
 
 
+def test_writer_strips_whole_markdown_fences_from_llm_outputs() -> None:
+    writer = PaperWriter()
+
+    cleaned = writer._strip_markdown_fence(
+        """```markdown
+# Paper Title
+
+## Abstract
+Grounded paper content.
+```"""
+    )
+
+    assert cleaned.startswith("# Paper Title")
+    assert "## Abstract" in cleaned
+    assert not cleaned.startswith("```")
+    assert not cleaned.endswith("```")
+
+
 def test_review_flags_hypothesis_mismatch_from_objective_system() -> None:
     _plan, spec = _writer_plan_and_spec()
     spec = spec.model_copy(

@@ -897,6 +897,17 @@ class PaperWriter:
             if line.startswith("#")
         ]
 
+    def _strip_markdown_fence(self, markdown: str) -> str:
+        stripped = markdown.strip()
+        fenced = re.fullmatch(
+            r"```(?:markdown|md)?\s*\n?(.*?)\n?```",
+            stripped,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if fenced:
+            return fenced.group(1).strip()
+        return stripped
+
     def _llm_paper_candidate_valid(
         self,
         candidate: str,
@@ -978,7 +989,7 @@ class PaperWriter:
                 ],
                 model=settings.llm_writer_model,
             )
-            content = get_message_content(response).strip()
+            content = self._strip_markdown_fence(get_message_content(response))
             if content and self._llm_paper_candidate_valid(
                 content,
                 seed_markdown=seed_markdown,
@@ -1071,7 +1082,7 @@ class PaperWriter:
                     ],
                     model=writer_model,
                 )
-                revised = get_message_content(rev_response).strip()
+                revised = self._strip_markdown_fence(get_message_content(rev_response))
                 if not revised or len(revised) < len(current) * 0.5:
                     logger.warning(
                         "paper_writer: revision round %d produced insufficient output (%d chars), keeping current",
@@ -1266,7 +1277,7 @@ class PaperWriter:
                     ],
                     model=writer_model,
                 )
-                revised = get_message_content(rev_response).strip()
+                revised = self._strip_markdown_fence(get_message_content(rev_response))
                 if not revised or len(revised) < len(current) * 0.5:
                     logger.warning(
                         "multi_review: revision round %d insufficient output, keeping current",
@@ -1453,7 +1464,7 @@ class PaperWriter:
                 ],
                 model=writer_model,
             )
-            content = get_message_content(response).strip()
+            content = self._strip_markdown_fence(get_message_content(response))
             if not content or len(content) < 50:
                 logger.warning(
                     "paper_writer: section '%s' LLM output too short (%d chars), skipping",

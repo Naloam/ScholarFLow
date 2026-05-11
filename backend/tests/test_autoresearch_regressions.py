@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import services.autoresearch.orchestrator as autoresearch_orchestrator
+import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
 import services.autoresearch.writer as autoresearch_writer
@@ -523,3 +524,24 @@ def test_autoresearch_execute_persists_literature_synthesis(
     assert reloaded is not None
     assert reloaded.literature_synthesis is not None
     assert reloaded.literature_synthesis.positioning == synthesis.positioning
+
+
+def test_narrative_artifact_summary_uses_objective_system_when_best_missing() -> None:
+    artifact = ResultArtifact(
+        status="done",
+        summary="The objective system is present even without a best-system alias.",
+        key_findings=["objective system is the selected outcome"],
+        primary_metric="macro_f1",
+        objective_system="candidate_system",
+        objective_score=0.83,
+        system_results=[],
+        aggregate_system_results=[],
+        acceptance_checks=[],
+        tables=[],
+        environment={},
+        outputs={},
+    )
+
+    summary = narrative_analyst._artifact_summary(artifact)
+
+    assert "Best system: candidate_system, macro_f1=0.8300" in summary

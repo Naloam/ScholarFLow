@@ -142,9 +142,10 @@ def _artifact_summary(artifact: ResultArtifact) -> str:
             parts.append(f"- '{title}': {ncols} cols x {nrows} rows")
 
     # Best system / objective score
-    if artifact.best_system:
+    best_system = artifact.best_system or artifact.objective_system
+    if best_system:
         score_str = f", {artifact.primary_metric}={artifact.objective_score:.4f}" if artifact.objective_score is not None else ""
-        parts.append(f"\nBest system: {artifact.best_system}{score_str}")
+        parts.append(f"\nBest system: {best_system}{score_str}")
 
     # Key findings
     if artifact.key_findings:

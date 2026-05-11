@@ -14,10 +14,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Smoke tests should finish with slow thinking models. The production defaults
+# still run the full outline/section/review loop unless these variables are set.
+os.environ.setdefault("AUTORESEARCH_PAPER_WRITER_SECTION_PASS", "0")
+os.environ.setdefault("AUTORESEARCH_PAPER_WRITER_OUTLINE_PASS", "0")
+os.environ.setdefault("AUTORESEARCH_PAPER_WRITER_REVIEW_ROUNDS", "0")
+
 from config.settings import settings
 print(f"API key configured: {bool(settings.llm_api_key)}")
 print(f"API base: {settings.llm_api_base}")
 print(f"Model: {settings.llm_model or os.getenv('LLM_MODEL')}")
+print(
+    "Paper writer smoke budget: "
+    f"section_pass={os.getenv('AUTORESEARCH_PAPER_WRITER_SECTION_PASS')}, "
+    f"outline_pass={os.getenv('AUTORESEARCH_PAPER_WRITER_OUTLINE_PASS')}, "
+    f"review_rounds={os.getenv('AUTORESEARCH_PAPER_WRITER_REVIEW_ROUNDS')}"
+)
 print()
 
 # Step 1: Test LLM connectivity

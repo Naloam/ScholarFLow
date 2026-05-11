@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -90,6 +91,24 @@ _SECTION_PROMPT_MAP: dict[str, str] = {
     "limitations": f"{_SECTION_PROMPT_DIR}/limitations/v0.1.0.md",
     "conclusion": f"{_SECTION_PROMPT_DIR}/conclusion/v0.1.0.md",
 }
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return default
+    return max(minimum, value)
 
 
 def _latex_escape(text: str) -> str:
@@ -1003,6 +1022,11 @@ class PaperWriter:
         except Exception as exc:
             logger.error("paper_writer: LLM refinement failed with exception: %s", exc)
 
+        review_rounds = _env_int("AUTORESEARCH_PAPER_WRITER_REVIEW_ROUNDS", 2)
+        if review_rounds < 1:
+            logger.info("paper_writer: skipping LLM review loop by configuration")
+            return refined
+
         # --- Multi-perspective review + revision loop (fallback to self-review) ---
         try:
             refined = self._multi_perspective_review(
@@ -1014,6 +1038,7 @@ class PaperWriter:
                 narrative_analysis=narrative_analysis,
                 seed_markdown=seed_markdown,
                 project_context=project_context,
+                max_rounds=review_rounds,
             )
         except Exception as exc:
             logger.warning("multi_perspective_review failed, falling back to self-review: %s", exc)
@@ -1024,6 +1049,7 @@ class PaperWriter:
                 literature=literature,
                 seed_markdown=seed_markdown,
                 project_context=project_context,
+                max_rounds=review_rounds,
             )
         return refined
 
@@ -1630,29 +1656,36 @@ class PaperWriter:
         generated: dict[str, str] = {}
         outlines: dict[str, str] = {}
 
+        if not _env_bool("AUTORESEARCH_PAPER_WRITER_SECTION_PASS", True):
+            logger.info("paper_writer: skipping LLM section pass by configuration")
+            return generated
+
         # --- Pass 1: Generate concise outlines for all sections (ARIS pattern) ---
-        for idx, section in enumerate(paper_plan.sections):
-            slug = _section_slug(section.title)
-            try:
-                outline_prompt = (
-                    f"Write a 2-3 sentence outline for the '{section.title}' section of a research paper about: {plan.topic}.\n"
-                    f"Objective: {section.objective}\n"
-                    f"Just describe what will be covered, do not write the full section.\n"
-                    f"Keep it under 100 words."
-                )
-                response = chat(
-                    [
-                        {"role": "system", "content": "Write a brief section outline. Under 100 words."},
-                        {"role": "user", "content": outline_prompt},
-                    ],
-                    model=settings.llm_writer_model,
-                    temperature=0.3,
-                )
-                outline = get_message_content(response).strip()
-                if outline:
-                    outlines[slug] = outline
-            except Exception:
-                pass
+        if _env_bool("AUTORESEARCH_PAPER_WRITER_OUTLINE_PASS", True):
+            for idx, section in enumerate(paper_plan.sections):
+                slug = _section_slug(section.title)
+                try:
+                    outline_prompt = (
+                        f"Write a 2-3 sentence outline for the '{section.title}' section of a research paper about: {plan.topic}.\n"
+                        f"Objective: {section.objective}\n"
+                        f"Just describe what will be covered, do not write the full section.\n"
+                        f"Keep it under 100 words."
+                    )
+                    response = chat(
+                        [
+                            {"role": "system", "content": "Write a brief section outline. Under 100 words."},
+                            {"role": "user", "content": outline_prompt},
+                        ],
+                        model=settings.llm_writer_model,
+                        temperature=0.3,
+                    )
+                    outline = get_message_content(response).strip()
+                    if outline:
+                        outlines[slug] = outline
+                except Exception:
+                    pass
+        else:
+            logger.info("paper_writer: skipping LLM outline pass by configuration")
 
         # --- Pass 2: Write full sections with real prev/next outline context ---
         for idx, section in enumerate(paper_plan.sections):

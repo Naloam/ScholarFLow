@@ -499,6 +499,102 @@ def test_split_sections_normalizes_numbered_headings() -> None:
     assert sections["related_work"] == "Related body."
 
 
+def test_writer_section_pass_can_be_disabled(monkeypatch) -> None:
+    plan, spec = _writer_plan_and_spec()
+    artifact = _result_artifact()
+    writer = PaperWriter()
+    claim_matrix = writer.build_claim_evidence_matrix(
+        plan,
+        spec,
+        artifact,
+        literature=[],
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+    paper_plan = writer.build_paper_plan(plan, claim_matrix)
+
+    def fail_chat(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("section-pass disabled should not call the LLM")
+
+    monkeypatch.setenv("AUTORESEARCH_PAPER_WRITER_SECTION_PASS", "0")
+    monkeypatch.setattr(autoresearch_writer, "chat", fail_chat)
+
+    sections = writer._write_full_paper_with_llm(
+        plan,
+        spec,
+        artifact,
+        paper_plan,
+        claim_matrix,
+        [],
+    )
+
+    assert sections == {}
+
+
+def test_writer_review_loop_can_be_disabled(monkeypatch) -> None:
+    plan, spec = _writer_plan_and_spec()
+    artifact = _result_artifact()
+    writer = PaperWriter()
+    claim_matrix = writer.build_claim_evidence_matrix(
+        plan,
+        spec,
+        artifact,
+        literature=[],
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+    paper_plan = AutoResearchPaperPlanRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        title=plan.title,
+        narrative_summary="Minimal plan for review-budget regression.",
+        sections=[
+            AutoResearchPaperPlanSectionRead(
+                section_id="abstract",
+                title="Abstract",
+                objective="Summarize the grounded result.",
+            )
+        ],
+    )
+    revision_state = writer.build_paper_revision_state(
+        claim_matrix,
+        paper_plan=paper_plan,
+        figure_plan=None,
+    )
+    seed_markdown = "# Writer Regression Topic\n\n## Abstract\nGrounded abstract.\n"
+
+    def fake_chat(*args, **kwargs):
+        del args, kwargs
+        return {"choices": [{"message": {"role": "assistant", "content": seed_markdown}}]}
+
+    def fail_review(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("review loop should be skipped")
+
+    monkeypatch.setenv("AUTORESEARCH_PAPER_WRITER_REVIEW_ROUNDS", "0")
+    monkeypatch.setattr(autoresearch_writer, "chat", fake_chat)
+    monkeypatch.setattr(PaperWriter, "_multi_perspective_review", fail_review)
+
+    result = writer._maybe_refine_with_llm(
+        seed_markdown=seed_markdown,
+        language="en",
+        plan=plan,
+        spec=spec,
+        artifact=artifact,
+        literature=[],
+        attempts=[],
+        project_context=None,
+        narrative_report_markdown="Narrative report.",
+        claim_evidence_matrix=claim_matrix,
+        paper_plan=paper_plan,
+        paper_revision_state=revision_state,
+    )
+
+    assert result == seed_markdown.strip()
+
+
 def test_writer_strips_whole_markdown_fences_from_llm_outputs() -> None:
     writer = PaperWriter()
 

@@ -16,6 +16,7 @@ from schemas.autoresearch import (
     AutoResearchCitationCoverageRead,
     AutoResearchDeploymentRefRead,
     AutoResearchNoveltyAssessmentRead,
+    AutoResearchPublicationReadinessRead,
     AutoResearchPublishExportRead,
     AutoResearchPublishExportRequest,
     AutoResearchPublishPackageRead,
@@ -42,6 +43,7 @@ from services.autoresearch.repository import (
     run_dir,
     save_run,
 )
+from services.autoresearch.research_readiness import build_publication_readiness
 from services.projects.repository import get_project
 from services.autoresearch.writer import PaperWriter
 
@@ -460,6 +462,7 @@ def _topic_proxy_alignment_finding(
 
 def _hypothesis_resolution_finding(
     run: AutoResearchRunRead,
+    paper_markdown: str,
 ) -> tuple[str, str, str] | None:
     artifact = run.artifact
     spec = run.spec
@@ -481,6 +484,36 @@ def _hypothesis_resolution_finding(
     if not mentioned_systems:
         return None
     if best_system_name in mentioned_systems:
+        return None
+    objective_score = artifact.objective_score
+    best_score = None
+    objective_system_name = artifact.objective_system
+    for item in [*artifact.system_results, *artifact.aggregate_system_results]:
+        metric_value = item.metrics.get(artifact.primary_metric) if hasattr(item, "metrics") else None
+        if metric_value is None and hasattr(item, "mean_metrics"):
+            metric_value = item.mean_metrics.get(artifact.primary_metric)
+        if item.system == best_system_name and metric_value is not None:
+            best_score = float(metric_value)
+        if item.system == objective_system_name and metric_value is not None:
+            objective_score = float(metric_value)
+    if (
+        objective_system_name in mentioned_systems
+        and objective_score is not None
+        and best_score is not None
+        and abs(float(objective_score) - float(best_score)) <= 1e-12
+    ):
+        return None
+    lowered_paper = paper_markdown.lower()
+    if (
+        best_system_name
+        and best_system_name.lower() in lowered_paper
+        and (
+            "original hypothesis is not supported" in lowered_paper
+            or "hypothesis is not supported" in lowered_paper
+            or "contradicts the planned hypothesis" in lowered_paper
+            or "contradicted" in lowered_paper
+        )
+    ):
         return None
     mentioned_attempts = sorted(
         {
@@ -549,12 +582,6 @@ def _planned_ablation_gaps(run: AutoResearchRunRead) -> list[str]:
     if spec is None:
         return []
     observed_systems = _system_names_from_artifact(artifact)
-    for attempt in run.attempts:
-        observed_systems.update(_system_names_from_artifact(attempt.artifact))
-    for candidate in run.candidates:
-        observed_systems.update(_system_names_from_artifact(candidate.artifact))
-        for attempt in candidate.attempts:
-            observed_systems.update(_system_names_from_artifact(attempt.artifact))
     gaps = []
     for ablation in spec.ablations:
         if ablation.name not in observed_systems:
@@ -585,10 +612,16 @@ def _unsupported_claim_gap_finding(
 
 def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[str]:
     blockers: list[str] = []
+    if review.publication_readiness is not None:
+        for item in review.publication_readiness.blockers:
+            blockers.append(f"Final publish readiness gate: {item}")
     for finding in review.findings:
         lowered_summary = finding.summary.lower()
         if finding.category == "citation":
             blockers.append(f"Final publish requires citation-grounded paper text: {finding.summary}")
+            continue
+        if finding.category == "benchmark":
+            blockers.append(f"Final publish requires a publication-grade benchmark: {finding.summary}")
             continue
         if finding.category == "context":
             if (
@@ -606,6 +639,8 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
         if finding.category == "statistics" and (
             "does not preserve significance" in lowered_summary
             or "seed coverage is insufficient" in lowered_summary
+            or "seed coverage is below final-publish grade" in lowered_summary
+            or "publication-profile seed coverage is incomplete" in lowered_summary
             or "planned ablations were not executed" in lowered_summary
         ):
             blockers.append(f"Final publish requires stronger experimental evidence: {finding.summary}")
@@ -752,6 +787,7 @@ def _review_findings(
     selected_manifest_source: str | None,
     paper_markdown: str,
     novelty_assessment: AutoResearchNoveltyAssessmentRead,
+    publication_readiness: AutoResearchPublicationReadinessRead,
 ) -> tuple[
     list[AutoResearchReviewFindingRead],
     AutoResearchReviewEvidenceRead,
@@ -809,6 +845,9 @@ def _review_findings(
         acceptance_total=acceptance_total,
         citation_marker_count=citation_marker_count,
         missing_required_asset_count=len(missing_required_assets),
+        real_literature_count=real_literature_count,
+        synthetic_literature_count=synthetic_literature_count,
+        publication_grade_benchmark=publication_readiness.publication_grade_benchmark,
     )
     citation_coverage = AutoResearchCitationCoverageRead(
         literature_item_count=len(run.literature),
@@ -867,7 +906,7 @@ def _review_findings(
             detail=detail,
             supporting_asset_ids=["run_plan_json", "run_spec_json", "run_paper_markdown"],
         )
-    hypothesis_resolution = _hypothesis_resolution_finding(run)
+    hypothesis_resolution = _hypothesis_resolution_finding(run, paper_markdown)
     if hypothesis_resolution is not None:
         severity, summary, detail = hypothesis_resolution
         add_finding(
@@ -1000,6 +1039,21 @@ def _review_findings(
         )
 
     if artifact is not None and artifact.status == "done":
+        if not publication_readiness.publication_grade_benchmark:
+            add_finding(
+                severity="warning",
+                category="benchmark",
+                summary="Selected benchmark is not publication-grade.",
+                detail=next(
+                    (
+                        item.detail
+                        for item in publication_readiness.checks
+                        if item.check_id == "publication_grade_benchmark"
+                    ),
+                    "Final publish requires an external benchmark with persisted provenance.",
+                ),
+                supporting_asset_ids=["run_benchmark_json", "run_spec_json"],
+            )
         if evidence.completed_seed_count < 2:
             add_finding(
                 severity="warning",
@@ -1009,6 +1063,31 @@ def _review_findings(
                     f"The selected artifact preserves {evidence.completed_seed_count} completed seed result(s) "
                     f"for {evidence.seed_count} requested seed(s). Final publish should run at least two completed "
                     "seeds, and preferably the requested seed set, before making stability or robustness claims."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        elif evidence.completed_seed_count < publication_readiness.requested_seed_count and (
+            run.request is not None and run.request.execution_profile == "publication"
+        ):
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Publication-profile seed coverage is incomplete.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count}/"
+                    f"{publication_readiness.requested_seed_count} publication-profile seed results. "
+                    "Complete the requested publication seed set or rerun in exploratory profile."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        elif evidence.completed_seed_count < 3:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Seed coverage is below final-publish grade.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count} completed seed result(s). "
+                    "Final publish requires at least three completed seeds; use publication profile for paper-candidate runs."
                 ),
                 supporting_asset_ids=["run_spec_json", "run_artifact_json"],
             )
@@ -1184,9 +1263,22 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
                 detail="Introduce explicit citations in background, related-work, and conclusion-facing discussion sections.",
                 finding_id=finding.id,
             )
+        elif finding.category == "benchmark":
+            add_action(
+                key="publication_grade_benchmark",
+                priority="high",
+                title="Rerun on a publication-grade external benchmark",
+                detail="Replace built-in toy benchmarks with a persisted external benchmark source, dataset card, and reproducible split before final publish.",
+                finding_id=finding.id,
+            )
         elif finding.category == "statistics":
             lowered_summary = finding.summary.lower()
-            if "seed coverage is insufficient" in lowered_summary or "seed coverage is incomplete" in lowered_summary:
+            if (
+                "seed coverage is insufficient" in lowered_summary
+                or "seed coverage is incomplete" in lowered_summary
+                or "seed coverage is below final-publish grade" in lowered_summary
+                or "publication-profile seed coverage is incomplete" in lowered_summary
+            ):
                 add_action(
                     key="seed_coverage",
                     priority="high",
@@ -1580,12 +1672,17 @@ def build_run_review(
         run=run,
         selected_candidate_id=registry.selected_candidate_id,
     )
+    publication_readiness = build_publication_readiness(
+        run,
+        paper_markdown=paper_markdown,
+    )
     findings, evidence, citation_coverage = _review_findings(
         run=run,
         bundle=bundle,
         selected_manifest_source=selected_entry.manifest_source if selected_entry is not None else None,
         paper_markdown=paper_markdown,
         novelty_assessment=novelty_assessment,
+        publication_readiness=publication_readiness,
     )
     scores = _review_scores(
         run=run,
@@ -1614,7 +1711,8 @@ def build_run_review(
         f"Review built from persisted run, artifact, paper, and registry bundle state. "
         f"Candidates={evidence.candidate_count}, seeds={evidence.seed_count}, sweeps={evidence.sweep_count}, "
         f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}, "
-        f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}."
+        f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}, "
+        f"publication_tier={publication_readiness.tier}, readiness_score={publication_readiness.score}."
     )
     review = AutoResearchRunReviewRead(
         project_id=project_id,
@@ -1629,6 +1727,7 @@ def build_run_review(
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty_assessment,
+        publication_readiness=publication_readiness,
         scores=scores,
         findings=findings,
         revision_plan=revision_plan,
@@ -1755,6 +1854,16 @@ def _publish_package_fingerprint(
         "status": status,
         "review_bundle_ready": review_bundle_ready,
         "final_publish_ready": final_publish_ready,
+        "publication_tier": (
+            review.publication_readiness.tier
+            if review.publication_readiness is not None
+            else "exploratory"
+        ),
+        "publication_readiness_score": (
+            review.publication_readiness.score
+            if review.publication_readiness is not None
+            else 0
+        ),
         "completeness_status": completeness_status,
         "blockers": blockers,
         "final_blockers": final_blockers,
@@ -1966,6 +2075,8 @@ def build_publication_manifest(
         bundle_kind=_archive_bundle_kind(package),
         review_bundle_ready=package.review_bundle_ready,
         final_publish_ready=package.final_publish_ready,
+        publication_tier=package.publication_tier,
+        publication_readiness_score=package.publication_readiness_score,
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,
@@ -2062,6 +2173,16 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         publish_ready=final_publish_ready,
         review_bundle_ready=review_bundle_ready,
         final_publish_ready=final_publish_ready,
+        publication_tier=(
+            review.publication_readiness.tier
+            if review.publication_readiness is not None
+            else "exploratory"
+        ),
+        publication_readiness_score=(
+            review.publication_readiness.score
+            if review.publication_readiness is not None
+            else 0
+        ),
         completeness_status=completeness_status,
         review_path=review.persisted_path,
         manifest_path=str(_publish_manifest_path(project_id, run_id)),
@@ -2214,6 +2335,8 @@ def _archive_manifest(
         "review_fingerprint": package.review_fingerprint,
         "review_bundle_ready": package.review_bundle_ready,
         "final_publish_ready": package.final_publish_ready,
+        "publication_tier": package.publication_tier,
+        "publication_readiness_score": package.publication_readiness_score,
         "completeness_status": package.completeness_status,
         "selected_candidate_id": package.selected_candidate_id,
         "source_bundle_id": package.source_bundle_id,

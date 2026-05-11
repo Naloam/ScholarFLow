@@ -268,6 +268,22 @@ export type AutoResearchRunStatus =
   | "failed"
   | "canceled";
 
+export type AutoResearchExecutionProfile = "exploratory" | "publication";
+
+export type AutoResearchPublicationTier =
+  | "exploratory"
+  | "review_ready"
+  | "publish_candidate"
+  | "publish_ready";
+
+export type AutoResearchReadinessCategory =
+  | "benchmark"
+  | "literature"
+  | "statistics"
+  | "evidence"
+  | "reproducibility"
+  | "paper";
+
 export type AutoResearchJobAction = "run" | "resume" | "retry";
 
 export type AutoResearchExperimentBridgeNotificationHook = {
@@ -309,6 +325,7 @@ export type AutoResearchRunRequest = {
   experiment_bridge?: AutoResearchExperimentBridgeConfig | null;
   auto_search_literature?: boolean;
   auto_fetch_literature?: boolean;
+  execution_profile?: AutoResearchExecutionProfile;
 };
 
 export type AutoResearchRunControlPatch = {
@@ -988,6 +1005,38 @@ export type AutoResearchReviewEvidence = {
   acceptance_total: number;
   citation_marker_count: number;
   missing_required_asset_count: number;
+  real_literature_count: number;
+  synthetic_literature_count: number;
+  publication_grade_benchmark: boolean;
+};
+
+export type AutoResearchReadinessCheck = {
+  check_id: string;
+  category: AutoResearchReadinessCategory;
+  passed: boolean;
+  required_for_final_publish: boolean;
+  summary: string;
+  detail: string;
+};
+
+export type AutoResearchPublicationReadiness = {
+  generated_at: string;
+  tier: AutoResearchPublicationTier;
+  score: number;
+  summary: string;
+  final_publish_ready: boolean;
+  publication_grade_benchmark: boolean;
+  real_literature_count: number;
+  synthetic_literature_count: number;
+  completed_seed_count: number;
+  requested_seed_count: number;
+  significance_test_count: number;
+  planned_ablation_count: number;
+  observed_ablation_count: number;
+  unsupported_claim_count: number;
+  checks: AutoResearchReadinessCheck[];
+  blockers: string[];
+  warnings: string[];
 };
 
 export type AutoResearchCitationCoverage = {
@@ -1028,6 +1077,7 @@ export type AutoResearchReviewFinding = {
   severity: "info" | "warning" | "error";
   category:
     | "artifact"
+    | "benchmark"
     | "statistics"
     | "citation"
     | "context"
@@ -1059,6 +1109,7 @@ export type AutoResearchRunReview = {
   evidence: AutoResearchReviewEvidence;
   citation_coverage: AutoResearchCitationCoverage;
   novelty_assessment?: AutoResearchNoveltyAssessment | null;
+  publication_readiness?: AutoResearchPublicationReadiness | null;
   scores: AutoResearchReviewScores;
   findings: AutoResearchReviewFinding[];
   revision_plan: AutoResearchRevisionAction[];
@@ -1276,6 +1327,8 @@ export type AutoResearchPublicationManifest = {
   bundle_kind: "review_bundle" | "final_publish_bundle";
   review_bundle_ready: boolean;
   final_publish_ready: boolean;
+  publication_tier: AutoResearchPublicationTier;
+  publication_readiness_score: number;
   archive_ready: boolean;
   archive_current: boolean;
   review_round: number;
@@ -1365,6 +1418,8 @@ export type AutoResearchPublishPackage = {
   publish_ready: boolean;
   review_bundle_ready: boolean;
   final_publish_ready: boolean;
+  publication_tier: AutoResearchPublicationTier;
+  publication_readiness_score: number;
   completeness_status: "complete" | "incomplete";
   review_path?: string | null;
   manifest_path?: string | null;

@@ -7,6 +7,16 @@ from pydantic import BaseModel, Field, field_validator
 
 
 TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking", "llm_evaluation"]
+AutoResearchExecutionProfile = Literal["exploratory", "publication"]
+AutoResearchPublicationTier = Literal["exploratory", "review_ready", "publish_candidate", "publish_ready"]
+AutoResearchReadinessCategory = Literal[
+    "benchmark",
+    "literature",
+    "statistics",
+    "evidence",
+    "reproducibility",
+    "paper",
+]
 BenchmarkKind = Literal[
     "builtin",
     "remote_csv",
@@ -112,6 +122,7 @@ AutoResearchLineageRelation = Literal[
 AutoResearchReviewSeverity = Literal["info", "warning", "error"]
 AutoResearchReviewCategory = Literal[
     "artifact",
+    "benchmark",
     "statistics",
     "citation",
     "context",
@@ -253,6 +264,7 @@ class BenchmarkSource(BaseModel):
     url: str | None = None
     dataset_id: str | None = None
     revision: str | None = None
+    license: str | None = None
     file_path: str | None = None
     subset: str | None = None
     task_family_hint: TaskFamily | None = None
@@ -288,6 +300,7 @@ class AutoResearchRunRequest(BaseModel):
     execution_mode: str = "portfolio"  # portfolio | hill_climbing
     hill_climb_time_budget_minutes: int = 10
     hill_climb_max_iterations: int = 30
+    execution_profile: AutoResearchExecutionProfile = "exploratory"
 
     @field_validator("candidate_execution_limit")
     @classmethod
@@ -313,6 +326,7 @@ class AutoResearchRunConfig(BaseModel):
     execution_mode: str = "portfolio"
     hill_climb_time_budget_minutes: int = 10
     hill_climb_max_iterations: int = 30
+    execution_profile: AutoResearchExecutionProfile = "exploratory"
 
     @field_validator("candidate_execution_limit")
     @classmethod
@@ -339,6 +353,7 @@ class AutoResearchRunConfig(BaseModel):
             execution_mode=payload.execution_mode,
             hill_climb_time_budget_minutes=payload.hill_climb_time_budget_minutes,
             hill_climb_max_iterations=payload.hill_climb_max_iterations,
+            execution_profile=payload.execution_profile,
         )
 
 
@@ -371,6 +386,13 @@ class DatasetSpec(BaseModel):
     label_space: list[str] = Field(default_factory=list)
     query_fields: list[str] = Field(default_factory=list)
     candidate_count: int | None = None
+    source_kind: BenchmarkKind | None = None
+    source_url: str | None = None
+    source_dataset_id: str | None = None
+    source_revision: str | None = None
+    source_license: str | None = None
+    source_fingerprint: str | None = None
+    publication_grade: bool = False
 
 
 class SweepConfig(BaseModel):
@@ -1345,6 +1367,38 @@ class AutoResearchReviewEvidenceRead(BaseModel):
     acceptance_total: int = 0
     citation_marker_count: int = 0
     missing_required_asset_count: int = 0
+    real_literature_count: int = 0
+    synthetic_literature_count: int = 0
+    publication_grade_benchmark: bool = False
+
+
+class AutoResearchReadinessCheckRead(BaseModel):
+    check_id: str
+    category: AutoResearchReadinessCategory
+    passed: bool = False
+    required_for_final_publish: bool = True
+    summary: str
+    detail: str
+
+
+class AutoResearchPublicationReadinessRead(BaseModel):
+    generated_at: datetime
+    tier: AutoResearchPublicationTier = "exploratory"
+    score: int = 0
+    summary: str
+    final_publish_ready: bool = False
+    publication_grade_benchmark: bool = False
+    real_literature_count: int = 0
+    synthetic_literature_count: int = 0
+    completed_seed_count: int = 0
+    requested_seed_count: int = 0
+    significance_test_count: int = 0
+    planned_ablation_count: int = 0
+    observed_ablation_count: int = 0
+    unsupported_claim_count: int = 0
+    checks: list[AutoResearchReadinessCheckRead] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AutoResearchCitationCoverageRead(BaseModel):
@@ -1410,6 +1464,7 @@ class AutoResearchRunReviewRead(BaseModel):
     evidence: AutoResearchReviewEvidenceRead
     citation_coverage: AutoResearchCitationCoverageRead
     novelty_assessment: AutoResearchNoveltyAssessmentRead | None = None
+    publication_readiness: AutoResearchPublicationReadinessRead | None = None
     scores: AutoResearchReviewScoresRead
     findings: list[AutoResearchReviewFindingRead] = Field(default_factory=list)
     revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)
@@ -1500,6 +1555,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     bundle_kind: AutoResearchPublishBundleKind = "review_bundle"
     review_bundle_ready: bool = False
     final_publish_ready: bool = False
+    publication_tier: AutoResearchPublicationTier = "exploratory"
+    publication_readiness_score: int = 0
     archive_ready: bool = False
     archive_current: bool = False
     review_round: int = 0
@@ -1585,6 +1642,8 @@ class AutoResearchPublishPackageRead(BaseModel):
     publish_ready: bool = False
     review_bundle_ready: bool = False
     final_publish_ready: bool = False
+    publication_tier: AutoResearchPublicationTier = "exploratory"
+    publication_readiness_score: int = 0
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
     manifest_path: str | None = None

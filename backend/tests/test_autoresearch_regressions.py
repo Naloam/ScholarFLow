@@ -23,13 +23,16 @@ from schemas.autoresearch import (
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
     AutoResearchNoveltyAssessmentRead,
+    AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchPublishPackageRead,
     AutoResearchRegistryAssetRef,
+    AutoResearchRunConfig,
     AutoResearchRunExecutionRead,
     AutoResearchRunRead,
     AutoResearchRunRegistryFiles,
+    BenchmarkSource,
     ExperimentAttempt,
     ExperimentSpec,
     HypothesisCandidate,
@@ -43,7 +46,8 @@ from schemas.autoresearch import (
     ResultTable,
 )
 from schemas.papers import PaperMeta
-from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark
+from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
+from services.autoresearch.research_readiness import build_publication_readiness, enforce_publication_protocol
 from services.autoresearch.writer import PaperWriter
 
 
@@ -112,6 +116,250 @@ def _result_artifact() -> ResultArtifact:
     )
 
 
+def _publication_compile_report() -> AutoResearchPaperCompileReportRead:
+    return AutoResearchPaperCompileReportRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        entrypoint="main.tex",
+        bibliography="references.bib",
+        compiler_hint="pdflatex",
+        compile_commands=["pdflatex main.tex"],
+        required_inputs=["main.tex", "references.bib"],
+        missing_required_inputs=[],
+        required_source_files=["main.tex", "references.bib"],
+        missing_required_source_files=[],
+        expected_outputs=["main.pdf"],
+        materialized_outputs=[],
+        source_package_complete=True,
+        all_expected_outputs_materialized=False,
+        ready_for_compile=True,
+    )
+
+
+def _publication_claim_matrix(*, partial: bool = False) -> AutoResearchClaimEvidenceMatrixRead:
+    evidence = [
+        AutoResearchClaimEvidenceRefRead(
+            source_kind="artifact",
+            label="Result artifact",
+            detail="The selected artifact preserves aggregate metrics and significance tests.",
+            locator="artifact.json",
+        )
+    ]
+    entries = [
+        AutoResearchClaimEvidenceEntryRead(
+            claim_id="claim_supported_result",
+            category="result",
+            section_hint="Results",
+            claim="The candidate outperforms the majority baseline on macro F1.",
+            support_status="supported",
+            evidence=evidence,
+            gaps=[],
+        )
+    ]
+    if partial:
+        entries.append(
+            AutoResearchClaimEvidenceEntryRead(
+                claim_id="claim_partial_negative",
+                category="limitation",
+                section_hint="Limitations",
+                claim="Negative evidence remains bounded to the executed comparator set.",
+                support_status="partial",
+                evidence=evidence,
+                gaps=["Comparator coverage is intentionally limited."],
+            )
+        )
+    return AutoResearchClaimEvidenceMatrixRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        claim_count=len(entries),
+        supported_claim_count=sum(1 for item in entries if item.support_status == "supported"),
+        unsupported_claim_count=sum(1 for item in entries if item.support_status != "supported"),
+        entries=entries,
+    )
+
+
+def _publication_literature() -> list[LiteratureInsight]:
+    return [
+        LiteratureInsight(
+            paper_id="paper_pub_1",
+            title="Benchmarking Compact Retrieval Pipelines",
+            year=2024,
+            source="semantic_scholar",
+            insight="Provides real related-work context for compact retrieval benchmarks.",
+        ),
+        LiteratureInsight(
+            paper_id="paper_pub_2",
+            title="Lightweight Lexical Signals for Reranking",
+            year=2023,
+            source="semantic_scholar",
+            insight="Motivates lexical baselines and controlled reranking comparisons.",
+        ),
+    ]
+
+
+def _publication_artifact(*, include_ablation: bool = True, seed_count: int = 5) -> ResultArtifact:
+    systems = [
+        {"system": "majority", "metrics": {"accuracy": 0.5, "macro_f1": 0.5}},
+        {"system": "candidate_system", "metrics": {"accuracy": 0.8, "macro_f1": 0.8}},
+    ]
+    aggregate = [
+        {
+            "system": "majority",
+            "mean_metrics": {"accuracy": 0.5, "macro_f1": 0.5},
+            "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+            "min_metrics": {"accuracy": 0.5, "macro_f1": 0.5},
+            "max_metrics": {"accuracy": 0.5, "macro_f1": 0.5},
+            "sample_count": seed_count,
+        },
+        {
+            "system": "candidate_system",
+            "mean_metrics": {"accuracy": 0.8, "macro_f1": 0.8},
+            "std_metrics": {"accuracy": 0.01, "macro_f1": 0.01},
+            "min_metrics": {"accuracy": 0.79, "macro_f1": 0.79},
+            "max_metrics": {"accuracy": 0.81, "macro_f1": 0.81},
+            "sample_count": seed_count,
+        },
+    ]
+    if include_ablation:
+        systems.append({"system": "candidate_ablation", "metrics": {"accuracy": 0.7, "macro_f1": 0.7}})
+        aggregate.append(
+            {
+                "system": "candidate_ablation",
+                "mean_metrics": {"accuracy": 0.7, "macro_f1": 0.7},
+                "std_metrics": {"accuracy": 0.01, "macro_f1": 0.01},
+                "min_metrics": {"accuracy": 0.69, "macro_f1": 0.69},
+                "max_metrics": {"accuracy": 0.71, "macro_f1": 0.71},
+                "sample_count": seed_count,
+            }
+        )
+    return ResultArtifact(
+        status="done",
+        summary="Publication artifact with multi-seed aggregate metrics.",
+        key_findings=["candidate_system improves over majority"],
+        primary_metric="macro_f1",
+        best_system="candidate_system",
+        objective_system="candidate_system",
+        objective_score=0.8,
+        system_results=systems,
+        aggregate_system_results=aggregate,
+        per_seed_results=[
+            {
+                "seed": seed,
+                "sweep_label": "default",
+                "best_system": "candidate_system",
+                "objective_system": "candidate_system",
+                "objective_score": 0.8,
+                "primary_metric": "macro_f1",
+                "system_results": systems,
+            }
+            for seed in [7, 13, 23, 31, 47][:seed_count]
+        ],
+        significance_tests=[
+            {
+                "scope": "system",
+                "metric": "macro_f1",
+                "candidate": "candidate_system",
+                "comparator": "majority",
+                "comparison_family": "system:macro_f1",
+                "family_size": 1,
+                "p_value": 0.0312,
+                "adjusted_p_value": 0.0312,
+                "adjusted_alpha": 0.05,
+                "correction": "holm_bonferroni",
+                "effect_size": 0.3,
+                "recommended_sample_count": 3,
+                "adequately_powered": True,
+                "sample_count": seed_count,
+                "significant": True,
+                "detail": "candidate_system beats majority across paired seeds.",
+            }
+        ],
+        acceptance_checks=[
+            {
+                "criterion": "Objective system should outperform the majority baseline.",
+                "passed": True,
+                "detail": "candidate_system mean macro_f1=0.8",
+                "rule_id": "objective_primary_metric_beats_baseline",
+                "rule_kind": "objective_metric_comparison",
+            }
+        ],
+        tables=[],
+        environment={},
+        outputs={},
+    )
+
+
+def _external_publication_spec() -> tuple[ExperimentSpec, BenchmarkSource]:
+    source = BenchmarkSource(
+        kind="remote_csv",
+        name="Publication Regression Benchmark",
+        url="https://example.com/publication-regression.csv",
+        task_family_hint="text_classification",
+    )
+    rows = [
+        {"text": f"retrieval example {index}", "label": "retrieval"}
+        for index in range(12)
+    ] + [
+        {"text": f"systems example {index}", "label": "systems"}
+        for index in range(12)
+    ]
+    payload = {
+        "name": "Publication Regression Benchmark",
+        "description": "External benchmark fixture with persisted source provenance.",
+        "train": rows[:18],
+        "test": rows[18:],
+        "label_space": ["retrieval", "systems"],
+        "source_url": source.url,
+    }
+    spec = build_experiment_spec(
+        "text_classification",
+        ResolvedBenchmark(
+            source=source,
+            task_family="text_classification",
+            payload=payload,
+            benchmark_name="Publication Regression Benchmark",
+            benchmark_description="External benchmark fixture with persisted source provenance.",
+        ),
+    )
+    spec = spec.model_copy(
+        update={
+            "ablations": [
+                AblationSpec(
+                    name="candidate_ablation",
+                    description="Remove the strongest lexical feature group.",
+                )
+            ]
+        }
+    )
+    return enforce_publication_protocol(spec), source
+
+
+def _readiness_run(
+    *,
+    spec: ExperimentSpec,
+    benchmark: BenchmarkSource,
+    artifact: ResultArtifact,
+    profile: str = "publication",
+    claim_matrix: AutoResearchClaimEvidenceMatrixRead | None = None,
+) -> AutoResearchRunRead:
+    timestamp = datetime.now(UTC).replace(tzinfo=None)
+    return AutoResearchRunRead(
+        id="run_publication_readiness",
+        project_id="project_publication_readiness",
+        topic="Publication readiness regression",
+        status="done",
+        request=AutoResearchRunConfig(execution_profile=profile),
+        task_family="text_classification",
+        benchmark=benchmark,
+        spec=spec,
+        literature=_publication_literature(),
+        claim_evidence_matrix=claim_matrix or _publication_claim_matrix(),
+        paper_compile_report=_publication_compile_report(),
+        artifact=artifact,
+        paper_markdown="# Publication Readiness\n\nThis paper cites related work [1, 2].",
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
 def _writer_plan_and_spec() -> tuple[ResearchPlan, ExperimentSpec]:
     topic = "Writer regression topic"
     benchmark = builtin_benchmark("text_classification", topic=topic)
@@ -129,6 +377,80 @@ def _writer_plan_and_spec() -> tuple[ResearchPlan, ExperimentSpec]:
         experiment_outline=["Build the candidate and report grounded metrics."],
     )
     return plan, spec
+
+
+def test_publication_readiness_blocks_builtin_toy_benchmark_even_with_grounded_assets() -> None:
+    benchmark = builtin_benchmark("text_classification", topic="Compact CS classification")
+    spec = build_experiment_spec("text_classification", benchmark)
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark.source,
+        artifact=_publication_artifact(include_ablation=False, seed_count=2),
+        profile="exploratory",
+    )
+
+    readiness = build_publication_readiness(run, paper_markdown=run.paper_markdown)
+
+    assert readiness.tier == "review_ready"
+    assert readiness.final_publish_ready is False
+    assert readiness.publication_grade_benchmark is False
+    assert readiness.completed_seed_count == 2
+    assert any(
+        item.check_id == "publication_grade_benchmark" and not item.passed
+        for item in readiness.checks
+    )
+    assert any("built-in toy benchmarks" in item for item in readiness.blockers)
+    assert any("minimum completed seeds" in item for item in readiness.blockers)
+
+
+def test_publication_readiness_accepts_external_profile_with_final_ablation_evidence() -> None:
+    spec, benchmark = _external_publication_spec()
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+        claim_matrix=_publication_claim_matrix(partial=True),
+    )
+
+    readiness = build_publication_readiness(run, paper_markdown=run.paper_markdown)
+
+    assert readiness.tier == "publish_ready"
+    assert readiness.score == 100
+    assert readiness.final_publish_ready is True
+    assert readiness.publication_grade_benchmark is True
+    assert readiness.completed_seed_count == 5
+    assert readiness.requested_seed_count == 5
+    assert readiness.significance_test_count == 1
+    assert readiness.observed_ablation_count == readiness.planned_ablation_count == 1
+    assert readiness.unsupported_claim_count == 0
+    assert readiness.blockers == []
+
+
+def test_publication_readiness_requires_ablation_in_final_selected_artifact() -> None:
+    spec, benchmark = _external_publication_spec()
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=False, seed_count=5),
+    )
+
+    readiness = build_publication_readiness(run, paper_markdown=run.paper_markdown)
+
+    assert readiness.tier == "publish_candidate"
+    assert readiness.final_publish_ready is False
+    assert readiness.observed_ablation_count == 0
+    assert any(
+        item.check_id == "planned_ablations_observed" and not item.passed
+        for item in readiness.checks
+    )
+
+
+def test_autoresearch_attempt_preference_keeps_richer_tied_artifact() -> None:
+    orchestrator = autoresearch_orchestrator.AutoResearchOrchestrator()
+    narrow = _publication_artifact(include_ablation=False, seed_count=5)
+    richer = _publication_artifact(include_ablation=True, seed_count=5)
+
+    assert orchestrator._attempt_preference_key(richer) > orchestrator._attempt_preference_key(narrow)
 
 
 def test_autoresearch_resume_preserves_checkpointed_literature_synthesis(
@@ -780,7 +1102,7 @@ def test_review_flags_hypothesis_mismatch_from_objective_system() -> None:
         updated_at=now,
     )
 
-    finding = review_publish._hypothesis_resolution_finding(run)
+    finding = review_publish._hypothesis_resolution_finding(run, "")
 
     assert finding is not None
     assert finding[0] == "warning"
@@ -883,6 +1205,10 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
+        publication_readiness=build_publication_readiness(
+            run,
+            paper_markdown=run.paper_markdown or "",
+        ),
     )
 
     summaries = {item.summary for item in findings}
@@ -908,6 +1234,10 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty,
+        publication_readiness=build_publication_readiness(
+            run,
+            paper_markdown=run.paper_markdown or "",
+        ),
         scores=review_publish._review_scores(
             run=run,
             bundle=None,
@@ -997,6 +1327,10 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
+        publication_readiness=build_publication_readiness(
+            run,
+            paper_markdown=run.paper_markdown or "",
+        ),
     )
     review = review_publish.AutoResearchRunReviewRead(
         project_id=run.project_id,
@@ -1008,6 +1342,10 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty,
+        publication_readiness=build_publication_readiness(
+            run,
+            paper_markdown=run.paper_markdown or "",
+        ),
         scores=review_publish._review_scores(
             run=run,
             bundle=None,

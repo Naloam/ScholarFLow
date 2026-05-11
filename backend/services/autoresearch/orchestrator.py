@@ -29,6 +29,7 @@ from services.autoresearch.narrative_analyst import analyze as analyze_narrative
 from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.project_flow import gather_project_flow_context
 from services.autoresearch.repair import ExperimentRepairEngine
+from services.autoresearch.research_readiness import enforce_publication_protocol
 from services.autoresearch.repository import (
     paper_bibliography_file_path,
     candidate_paper_file_path,
@@ -245,11 +246,19 @@ class AutoResearchOrchestrator:
         ratio = (passed / total) if total else 1.0
         return total == 0 or passed == total, passed, total, ratio
 
-    def _attempt_preference_key(self, artifact: ResultArtifact | None) -> tuple[int, float, float]:
+    def _attempt_preference_key(self, artifact: ResultArtifact | None) -> tuple[int, float, float, int, int, int]:
         if artifact is None or artifact.status != "done":
-            return 0, 0.0, float("-inf")
+            return 0, 0.0, float("-inf"), 0, 0, 0
         all_passed, _, _, ratio = self._acceptance_summary(artifact)
-        return int(all_passed), ratio, self._artifact_score(artifact)
+        aggregate_system_count = len(artifact.aggregate_system_results) or len(artifact.system_results)
+        return (
+            int(all_passed),
+            ratio,
+            self._artifact_score(artifact),
+            len(artifact.significance_tests),
+            aggregate_system_count,
+            len(artifact.per_seed_results),
+        )
 
     def _artifact_power_ok(self, artifact: ResultArtifact | None) -> bool:
         if artifact is None or artifact.status != "done":
@@ -1415,6 +1424,8 @@ class AutoResearchOrchestrator:
                     else "Instantiate the selected benchmark and freeze train/test partitions."
                 )
                 spec = build_experiment_spec(plan.task_family, benchmark)
+                if run.request is not None and run.request.execution_profile == "publication":
+                    spec = enforce_publication_protocol(spec)
                 # --- Problem Anchor (#9): freeze immutable problem statement ---
                 plan = self._freeze_problem_anchor(plan)
                 # --- 5-Block Experiment Design (#6): standardize experiment structure ---

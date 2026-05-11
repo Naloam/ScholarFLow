@@ -388,6 +388,11 @@ export function OperatorConsolePanel({
                       {run.publish_status ?? "n/a"}
                     </small>
                     <small>
+                      final {run.final_publish_ready ? "ready" : "not ready"} /
+                      blockers {run.blocker_count}+{run.final_blocker_count} /
+                      revisions {run.revision_count}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>

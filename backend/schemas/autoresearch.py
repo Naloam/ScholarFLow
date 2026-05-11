@@ -1778,10 +1778,15 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     completed_action_count: int = 0
     publish_status: AutoResearchPublishStatus | None = None
     publish_ready: bool = False
+    review_bundle_ready: bool = False
+    final_publish_ready: bool = False
+    archive_ready: bool = False
     review_risk: AutoResearchUnsupportedClaimRisk | None = None
     novelty_status: AutoResearchNoveltyStatus | None = None
     blocker_count: int = 0
+    final_blocker_count: int = 0
     revision_count: int = 0
+    revision_actions: list[str] = Field(default_factory=list)
 
 
 class AutoResearchOperatorRunDetailRead(BaseModel):

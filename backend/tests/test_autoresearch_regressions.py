@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import services.autoresearch.orchestrator as autoresearch_orchestrator
+import services.autoresearch.console as autoresearch_console
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
@@ -24,6 +25,8 @@ from schemas.autoresearch import (
     AutoResearchNoveltyAssessmentRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
+    AutoResearchPublishPackageRead,
+    AutoResearchRunExecutionRead,
     AutoResearchRunRead,
     ExperimentAttempt,
     ExperimentSpec,
@@ -1018,6 +1021,51 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         "real literature sources" in item
         for item in review_publish._semantic_final_publish_blockers(review)
     )
+
+
+def test_operator_console_summary_exposes_final_publish_blockers() -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_console_final_blockers",
+        project_id="project_console_final_blockers",
+        topic="Console final blocker visibility",
+        status="done",
+        task_family="text_classification",
+        created_at=now,
+        updated_at=now,
+    )
+    publish = AutoResearchPublishPackageRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        package_id="publish_ready_bundle",
+        generated_at=now,
+        status="blocked",
+        publish_ready=False,
+        review_bundle_ready=True,
+        final_publish_ready=False,
+        archive_ready=False,
+        blocker_count=0,
+        final_blocker_count=2,
+        revision_count=1,
+        revision_actions=["Attach real retrieved literature before final publish."],
+    )
+
+    summary = autoresearch_console._run_summary(
+        run=run,
+        execution=AutoResearchRunExecutionRead(project_id=run.project_id, run_id=run.id),
+        bridge=None,
+        review=None,
+        review_loop=None,
+        publish=publish,
+    )
+
+    assert summary.publish_status == "blocked"
+    assert summary.review_bundle_ready is True
+    assert summary.final_publish_ready is False
+    assert summary.archive_ready is False
+    assert summary.blocker_count == 0
+    assert summary.final_blocker_count == 2
+    assert summary.revision_actions == ["Attach real retrieved literature before final publish."]
 
 
 def test_autoresearch_execute_persists_literature_synthesis(

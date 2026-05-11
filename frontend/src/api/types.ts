@@ -1515,6 +1515,9 @@ export type AutoResearchOperatorRunSummary = {
   completed_action_count: number;
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
   publish_ready: boolean;
+  review_bundle_ready: boolean;
+  final_publish_ready: boolean;
+  archive_ready: boolean;
   review_risk?: "low" | "medium" | "high" | null;
   novelty_status?:
     | "missing_context"
@@ -1523,7 +1526,9 @@ export type AutoResearchOperatorRunSummary = {
     | "weak"
     | null;
   blocker_count: number;
+  final_blocker_count: number;
   revision_count: number;
+  revision_actions: string[];
 };
 
 export type AutoResearchOperatorRunDetail = {

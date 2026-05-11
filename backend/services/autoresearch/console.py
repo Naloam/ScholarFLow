@@ -129,10 +129,15 @@ def _run_summary(
         completed_action_count=review_loop.completed_action_count if review_loop is not None else 0,
         publish_status=publish.status if publish is not None else None,
         publish_ready=publish.publish_ready if publish is not None else False,
+        review_bundle_ready=publish.review_bundle_ready if publish is not None else False,
+        final_publish_ready=publish.final_publish_ready if publish is not None else False,
+        archive_ready=publish.archive_ready if publish is not None else False,
         review_risk=review.unsupported_claim_risk if review is not None else None,
         novelty_status=review.novelty_assessment.status if review is not None and review.novelty_assessment is not None else None,
         blocker_count=publish.blocker_count if publish is not None else 0,
+        final_blocker_count=publish.final_blocker_count if publish is not None else 0,
         revision_count=publish.revision_count if publish is not None else 0,
+        revision_actions=publish.revision_actions[:3] if publish is not None else [],
     )
 
 

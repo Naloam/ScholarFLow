@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -7,12 +8,16 @@ from sqlalchemy.orm import sessionmaker
 
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.repository as autoresearch_repository
+import services.autoresearch.writer as autoresearch_writer
 import services.papers.repository as papers_repository
 from config.settings import settings
 from models.base import Base
 from models.project import Project
 from schemas.autoresearch import (
+    AutoResearchPaperPlanRead,
+    AutoResearchPaperPlanSectionRead,
     ExperimentAttempt,
+    ExperimentSpec,
     HypothesisCandidate,
     LiteratureSynthesis,
     LiteratureTheme,
@@ -23,6 +28,7 @@ from schemas.autoresearch import (
 )
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark
+from services.autoresearch.writer import PaperWriter
 
 
 def _session_local(monkeypatch, tmp_path: Path):
@@ -88,6 +94,25 @@ def _result_artifact() -> ResultArtifact:
         environment={},
         outputs={},
     )
+
+
+def _writer_plan_and_spec() -> tuple[ResearchPlan, ExperimentSpec]:
+    topic = "Writer regression topic"
+    benchmark = builtin_benchmark("text_classification", topic=topic)
+    spec = build_experiment_spec("text_classification", benchmark)
+    plan = ResearchPlan(
+        topic=topic,
+        title="Writer Regression Topic",
+        task_family="text_classification",
+        problem_statement="Evaluate a compact text classification method.",
+        motivation="The writer should preserve concrete experimental context.",
+        proposed_method="Use a lightweight lexical classifier.",
+        research_questions=["Does the candidate improve macro F1?"],
+        hypotheses=["The candidate improves macro F1 over the baseline."],
+        planned_contributions=["A grounded writer regression case."],
+        experiment_outline=["Build the candidate and report grounded metrics."],
+    )
+    return plan, spec
 
 
 def test_autoresearch_resume_preserves_checkpointed_literature_synthesis(
@@ -277,3 +302,94 @@ def test_paper_search_upsert_reuses_project_link_for_duplicate_results(
     assert ids[0] == ids[1]
     assert len(papers) == 1
     assert papers[0].title == "Deduplicated Search Paper"
+
+
+def test_research_brief_uses_objective_score_when_best_system_is_missing(
+    monkeypatch,
+) -> None:
+    plan, spec = _writer_plan_and_spec()
+    artifact = ResultArtifact(
+        status="done",
+        summary="The candidate produced an objective score without a best-system alias.",
+        key_findings=["objective system improved macro F1"],
+        primary_metric="macro_f1",
+        objective_system="candidate_system",
+        objective_score=0.83,
+        system_results=[],
+        aggregate_system_results=[],
+        acceptance_checks=[],
+        tables=[],
+        environment={},
+        outputs={},
+    )
+
+    def fail_chat(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(autoresearch_writer, "chat", fail_chat)
+
+    brief = PaperWriter()._build_research_brief(
+        plan=plan,
+        spec=spec,
+        artifact=artifact,
+        literature=[],
+        attempts=[],
+    )
+
+    assert "candidate_system" in brief
+    assert "macro_f1=0.8300" in brief
+
+
+def test_llm_section_generation_uses_paper_plan_section_objective(
+    monkeypatch,
+) -> None:
+    plan, spec = _writer_plan_and_spec()
+    artifact = _result_artifact()
+    writer = PaperWriter()
+    claim_matrix = writer.build_claim_evidence_matrix(
+        plan,
+        spec,
+        artifact,
+        literature=[],
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+    paper_plan = AutoResearchPaperPlanRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        title=plan.title,
+        narrative_summary="Use the exact section objective during LLM section drafting.",
+        sections=[
+            AutoResearchPaperPlanSectionRead(
+                section_id="intro",
+                title="Introduction",
+                objective="Explain the exact benchmark framing and paper contribution.",
+            )
+        ],
+    )
+    seen_objectives: list[str] = []
+
+    def fail_chat(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("offline")
+
+    def fake_write_section(self, section_title, section_objective, **kwargs):
+        del self, section_title, kwargs
+        seen_objectives.append(section_objective)
+        return "Generated section grounded in the exact paper-plan objective."
+
+    monkeypatch.setattr(autoresearch_writer, "chat", fail_chat)
+    monkeypatch.setattr(PaperWriter, "_write_section_with_llm", fake_write_section)
+
+    sections = writer._write_full_paper_with_llm(
+        plan,
+        spec,
+        artifact,
+        paper_plan,
+        claim_matrix,
+        [],
+    )
+
+    assert seen_objectives == ["Explain the exact benchmark framing and paper contribution."]
+    assert sections["introduction"].startswith("Generated section grounded")

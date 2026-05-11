@@ -1054,7 +1054,7 @@ class PaperWriter:
                 # Apply revision
                 rev_prompt = load_prompt(PAPER_REVISION_PROMPT_PATH)
                 evidence_summary = (
-                    f"Best system: {artifact.best_system}, "
+                    f"Best system: {artifact.best_system or artifact.objective_system or 'selected system'}, "
                     f"primary metric ({artifact.primary_metric}): {artifact.objective_score:.4f}\n"
                     f"Key findings: {'; '.join(artifact.key_findings[:5])}\n"
                 ) if artifact.objective_score is not None else "No score available."
@@ -1344,7 +1344,10 @@ class PaperWriter:
             parts.append(f"Assumptions: {'; '.join(cf.assumptions)}")
             parts.append(f"Expected mechanism: {cf.expected_mechanism}")
         if artifact.objective_score is not None:
-            parts.append(f"Best system: {artifact.best_system}, score: {artifact.objective_score:.4f}")
+            parts.append(
+                f"Best system: {artifact.best_system or artifact.objective_system or 'selected system'}, "
+                f"score: {artifact.objective_score:.4f}"
+            )
         return "\n".join(parts)
 
     def _build_domain_context(self, plan: ResearchPlan, synthesis: LiteratureSynthesis | None) -> str:
@@ -1493,9 +1496,10 @@ class PaperWriter:
                 cols = ", ".join(table.columns[:5])
                 table_summaries.append(f"Table '{table.title}': columns=[{cols}], {len(table.rows)} rows")
             parts.append("\nAvailable result tables:\n" + "\n".join(f"- {s}" for s in table_summaries))
-        if artifact.best_system and artifact.objective_score is not None:
+        best_system_name = artifact.best_system or artifact.objective_system
+        if best_system_name and artifact.objective_score is not None:
             parts.append(
-                f"\nBest system: {artifact.best_system}, "
+                f"\nBest system: {best_system_name}, "
                 f"objective score ({artifact.primary_metric}): {artifact.objective_score:.4f}"
             )
         return "\n".join(parts)
@@ -1632,8 +1636,8 @@ class PaperWriter:
         for idx, section in enumerate(paper_plan.sections):
             slug = _section_slug(section.title)
             objective = (
-                section.objectives
-                if hasattr(section, "objectives") and section.objectives
+                section.objective
+                if getattr(section, "objective", None)
                 else f"Write the {section.title} section of the paper."
             )
             evidence = self._build_evidence_context_for_section(
@@ -2247,24 +2251,25 @@ class PaperWriter:
         baseline_system: str | None,
     ) -> str:
         parts: list[str] = []
-        if best_metric is not None and artifact.best_system:
+        best_system_name = artifact.best_system or artifact.objective_system
+        if best_metric is not None and best_system_name:
             if baseline_metric is not None and best_metric > baseline_metric:
                 delta = best_metric - baseline_metric
                 parts.append(
-                    f"The proposed method ({artifact.best_system}) outperforms the "
+                    f"The proposed method ({best_system_name}) outperforms the "
                     f"baseline ({baseline_system}) by {delta:.4f} on {artifact.primary_metric}. "
                     f"This improvement {'is statistically significant' if artifact.significance_tests and any(t.significant for t in artifact.significance_tests) else 'warrants further statistical validation'}."
                 )
             elif baseline_metric is not None:
                 delta = baseline_metric - (best_metric or 0)
                 parts.append(
-                    f"The proposed method ({artifact.best_system}) did not outperform the "
+                    f"The proposed method ({best_system_name}) did not outperform the "
                     f"baseline ({baseline_system}), trailing by {delta:.4f} on {artifact.primary_metric}. "
                     "This suggests the approach may need fundamental revision."
                 )
             else:
                 parts.append(
-                    f"The best system ({artifact.best_system}) achieved "
+                    f"The best system ({best_system_name}) achieved "
                     f"{artifact.primary_metric}={best_metric:.4f}. No explicit baseline comparison is available."
                 )
         else:
@@ -2328,7 +2333,10 @@ class PaperWriter:
     ) -> list[AutoResearchClaimEvidenceEntryRead]:
         """Generate claims driven by actual experimental outcomes rather than fixed templates."""
         claims: list[AutoResearchClaimEvidenceEntryRead] = []
-        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        best_system_name = artifact.best_system or artifact.objective_system
+        best_metric = self._aggregate_metric(artifact, best_system_name, artifact.primary_metric)
+        if best_metric is None and artifact.objective_score is not None:
+            best_metric = float(artifact.objective_score)
         baseline_system = spec.baselines[0].name if spec.baselines else None
         baseline_metric = self._aggregate_metric(artifact, baseline_system, artifact.primary_metric) if baseline_system else None
 
@@ -2354,24 +2362,24 @@ class PaperWriter:
                 )
             )
 
-        if best_metric is not None and artifact.best_system:
+        if best_metric is not None and best_system_name:
             if baseline_metric is not None and best_metric > baseline_metric:
                 claim_text = (
-                    f"The proposed method ({artifact.best_system}) outperforms the strongest baseline "
+                    f"The proposed method ({best_system_name}) outperforms the strongest baseline "
                     f"({baseline_system}) on {artifact.primary_metric} "
                     f"({best_metric:.4f} vs {baseline_metric:.4f})."
                 )
                 support = "supported"
             elif baseline_metric is not None and best_metric < baseline_metric:
                 claim_text = (
-                    f"The proposed method ({artifact.best_system}) does not outperform the baseline "
+                    f"The proposed method ({best_system_name}) does not outperform the baseline "
                     f"({baseline_system}) on {artifact.primary_metric} "
                     f"({best_metric:.4f} vs {baseline_metric:.4f}), suggesting the hypothesis requires revision."
                 )
                 support = "partial"
             else:
                 claim_text = (
-                    f"The best system ({artifact.best_system}) achieved {artifact.primary_metric}={best_metric:.4f}."
+                    f"The best system ({best_system_name}) achieved {artifact.primary_metric}={best_metric:.4f}."
                 )
                 support = "supported"
         else:
@@ -2474,7 +2482,10 @@ class PaperWriter:
         portfolio: PortfolioSummary | None,
         candidates: list[HypothesisCandidate],
     ) -> list[AutoResearchClaimEvidenceEntryRead]:
-        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        best_system_name = artifact.best_system or artifact.objective_system
+        best_metric = self._aggregate_metric(artifact, best_system_name, artifact.primary_metric)
+        if best_metric is None and artifact.objective_score is not None:
+            best_metric = float(artifact.objective_score)
         passed_acceptance, total_acceptance = self._acceptance_counts(artifact)
         selected_candidate = next(
             (candidate for candidate in candidates if portfolio and candidate.id == portfolio.selected_candidate_id),
@@ -2560,9 +2571,9 @@ class PaperWriter:
                 )
             )
         result_claim = (
-            f"The selected configuration produced `{artifact.best_system}` as the strongest system "
+            f"The selected configuration produced `{best_system_name}` as the strongest system "
             f"with mean {artifact.primary_metric}={best_metric:.4f}."
-            if artifact.best_system and best_metric is not None
+            if best_system_name and best_metric is not None
             else "The selected configuration produced a completed result artifact."
         )
         entries.append(
@@ -2732,7 +2743,10 @@ class PaperWriter:
         attempts = attempts or []
         candidates = candidates or []
         benchmark_display = benchmark_name or spec.benchmark_name
-        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        best_system_name = artifact.best_system or artifact.objective_system
+        best_metric = self._aggregate_metric(artifact, best_system_name, artifact.primary_metric)
+        if best_metric is None and artifact.objective_score is not None:
+            best_metric = float(artifact.objective_score)
         baseline_system = spec.baselines[0].name if spec.baselines else None
         baseline_metric = self._aggregate_metric(artifact, baseline_system, artifact.primary_metric) if baseline_system else None
         claim_lines = []
@@ -2797,7 +2811,7 @@ Program objective:
 ## Evidence Summary
 - Artifact summary: {artifact.summary}
 - Primary metric: `{artifact.primary_metric}`
-- Best system: `{artifact.best_system or 'unknown'}`
+- Best system: `{best_system_name or 'unknown'}`
 - Key findings: {"; ".join(artifact.key_findings) or "No explicit key findings recorded."}
 - Search / repair rounds: {len(attempts)}
 
@@ -4088,9 +4102,11 @@ Program objective:
         actually discovered into a coherent narrative brief.
         """
         try:
-            best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+            best_system_name = artifact.best_system or artifact.objective_system
+            best_metric = self._artifact_score(artifact)
             baseline_system = spec.baselines[0].name if spec.baselines else None
             baseline_metric = self._aggregate_metric(artifact, baseline_system, artifact.primary_metric) if baseline_system else None
+            best_metric_text = f"{best_metric:.4f}" if best_metric is not None else "not recorded"
 
             # Gather key evidence
             findings = artifact.key_findings[:5] if artifact.key_findings else ["No explicit findings recorded."]
@@ -4127,7 +4143,7 @@ Program objective:
                 "This brief will guide paper writing. Be concise, factual, and insightful.\n",
                 f"Topic: {plan.topic}",
                 f"Benchmark: {benchmark_name or spec.benchmark_name}",
-                f"Best system: {artifact.best_system} ({artifact.primary_metric}={best_metric:.4f})",
+                f"Best system: {best_system_name or 'selected system'} ({artifact.primary_metric}={best_metric_text})",
             ]
             if baseline_system and baseline_metric is not None:
                 prompt_lines.append(f"Baseline: {baseline_system} ({baseline_metric:.4f})")
@@ -4168,9 +4184,11 @@ Program objective:
             logger.warning("research_brief: generation failed: %s", exc)
 
         # Fallback: template brief
-        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
+        best_system_name = artifact.best_system or artifact.objective_system or "selected system"
+        best_metric = self._artifact_score(artifact)
+        best_metric_text = f"{artifact.primary_metric}={best_metric:.4f}" if best_metric is not None else f"{artifact.primary_metric}=not recorded"
         return (
-            f"Core finding: {artifact.best_system} achieved {artifact.primary_metric}={best_metric:.4f}. "
+            f"Core finding: {best_system_name} achieved {best_metric_text}. "
             f"Key findings: {'; '.join(artifact.key_findings[:3])}. "
             f"Evidence from {len(artifact.per_seed_results)} seeds across {len(attempts)} rounds."
         )
@@ -4396,10 +4414,13 @@ Program objective:
             candidates=candidates,
             project_context=project_context,
         )
-        best_metric = self._aggregate_metric(artifact, artifact.best_system, artifact.primary_metric)
-        best_std = self._aggregate_std(artifact, artifact.best_system, artifact.primary_metric)
-        best_ci = self._aggregate_confidence_interval(artifact, artifact.best_system, artifact.primary_metric)
-        learned_system = spec.baselines[-1].name if spec.baselines else artifact.best_system
+        best_system_name = artifact.best_system or artifact.objective_system
+        best_metric = self._aggregate_metric(artifact, best_system_name, artifact.primary_metric)
+        if best_metric is None and artifact.objective_score is not None:
+            best_metric = float(artifact.objective_score)
+        best_std = self._aggregate_std(artifact, best_system_name, artifact.primary_metric)
+        best_ci = self._aggregate_confidence_interval(artifact, best_system_name, artifact.primary_metric)
+        learned_system = spec.baselines[-1].name if spec.baselines else best_system_name
         ablation_name = spec.ablations[0].name if spec.ablations else None
         learned_metric = self._aggregate_metric(artifact, learned_system, artifact.primary_metric)
         ablation_metric = self._aggregate_metric(artifact, ablation_name, artifact.primary_metric)
@@ -4457,10 +4478,10 @@ Program objective:
         best_detail = f" ({'; '.join(best_detail_parts)})" if best_detail_parts else ""
 
         comparison_sentence = (
-            f"The best-performing system was `{artifact.best_system}`, achieving a "
+            f"The best-performing system was `{best_system_name}`, achieving a "
             f"mean {artifact.primary_metric} of {best_metric:.4f}"
             f"{best_detail}."
-            if best_metric is not None and artifact.best_system
+            if best_metric is not None and best_system_name
             else "All systems were evaluated and ranked by their primary metric."
         )
         learned_sentence = (
@@ -4512,7 +4533,7 @@ Program objective:
                 f"the `{benchmark_display}` benchmark. We compare several classification approaches, ranging "
                 f"from simple baselines to learned models, and evaluate them using {metrics}. "
                 + (
-                    f"Our results show that `{artifact.best_system or 'the best system'}` achieves the highest "
+                    f"Our results show that `{best_system_name or 'the best system'}` achieves the highest "
                     f"performance with a mean {artifact.primary_metric} of {best_metric:.4f}"
                     f"{best_detail} across {seed_count} experimental seeds. "
                     if best_metric is not None
@@ -4617,7 +4638,7 @@ Program objective:
             ),
             "discussion": (
                 (
-                    f"The experimental results reveal that `{artifact.best_system or 'the best-performing system'}` "
+                    f"The experimental results reveal that `{best_system_name or 'the best-performing system'}` "
                     f"achieves the strongest performance with a mean {artifact.primary_metric} of "
                     f"{best_metric:.4f}{best_detail} on the `{benchmark_display}` benchmark. "
                     if best_metric is not None
@@ -4640,7 +4661,7 @@ Program objective:
                 f"on the `{benchmark_display}` benchmark. "
                 + (
                     f"Our experiments demonstrate that "
-                    f"`{artifact.best_system or 'the best system'}` achieves a mean {artifact.primary_metric} "
+                    f"`{best_system_name or 'the best system'}` achieves a mean {artifact.primary_metric} "
                     f"of {best_metric:.4f}{best_detail}, "
                     + ("significantly outperforming the baseline. " if majority_metric is not None and best_metric is not None and best_metric > majority_metric else "")
                     if best_metric is not None

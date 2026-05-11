@@ -70,7 +70,7 @@ for h in plan.hypotheses:
 # Step 3: Build experiment spec
 print()
 print("--- Step 3: Experiment Spec ---")
-from schemas.autoresearch import ExperimentSpec, DatasetSpec
+from schemas.autoresearch import ExperimentSpec, DatasetSpec, LiteratureInsight
 
 spec = ExperimentSpec(
     task_family="text_classification",
@@ -82,6 +82,28 @@ spec = ExperimentSpec(
     seeds=[42],
 )
 print(f"[OK] Spec: {spec.task_family}, strategies={spec.search_strategies}")
+
+literature = [
+    LiteratureInsight(
+        paper_id="pang-2002",
+        title="Thumbs up? Sentiment Classification using Machine Learning Techniques",
+        year=2002,
+        source="local_smoke_fixture",
+        insight="Early sentiment classification work established supervised lexical models as strong baselines for polarity detection.",
+        method_hint="Compare lightweight probabilistic classifiers against simple baselines before claiming model improvements.",
+        gap_hint="Small-resource settings still need transparent lexical baselines with explicit error and scope reporting.",
+    ),
+    LiteratureInsight(
+        paper_id="go-2009",
+        title="Twitter Sentiment Classification using Distant Supervision",
+        year=2009,
+        source="local_smoke_fixture",
+        insight="Distantly supervised Twitter sentiment datasets make short-text polarity classification scalable but noisy.",
+        method_hint="Treat tweet sentiment labels as useful benchmark signals while preserving caveats about label noise.",
+        gap_hint="Benchmark-local results should be framed as bounded evidence rather than broad claims about all social media sentiment.",
+    ),
+]
+print(f"  Literature fixtures: {len(literature)}")
 
 # Step 4: Generate experiment code (fallback, no LLM needed)
 print()
@@ -133,7 +155,7 @@ artifact = ResultArtifact(
 )
 
 matrix_builder = ClaimEvidenceMatrix()
-matrix = matrix_builder.build_matrix(plan=plan, artifact=artifact)
+matrix = matrix_builder.build_matrix(plan=plan, artifact=artifact, literature=literature)
 print(f"[OK] Matrix: {matrix['supported_claims']}/{matrix['total_claims']} claims supported")
 
 blueprint_builder = PaperBlueprint()
@@ -171,7 +193,7 @@ cem = AutoResearchClaimEvidenceMatrixRead(
 try:
     paper = writer.write(
         plan, spec, artifact,
-        literature=[],
+        literature=literature,
         attempts=[],
         benchmark_name="sentiment140",
         claim_evidence_matrix=cem,

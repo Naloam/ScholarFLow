@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CHAT_MODEL = "gpt-4o-mini"
 FALLBACK_RESPONSE = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+DEEPSEEK_V4_THINKING_IGNORED_PARAMS = (
+    "temperature",
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+)
 
 
 def _apply_deepseek_v4_thinking_defaults(model: str, request_kwargs: dict[str, Any]) -> None:
@@ -41,6 +47,17 @@ def _apply_deepseek_v4_thinking_defaults(model: str, request_kwargs: dict[str, A
     if "reasoning_effort" not in allowed_params:
         allowed_params.append("reasoning_effort")
     request_kwargs["allowed_openai_params"] = allowed_params
+
+    removed_params = [
+        name
+        for name in DEEPSEEK_V4_THINKING_IGNORED_PARAMS
+        if request_kwargs.pop(name, None) is not None
+    ]
+    if removed_params:
+        logger.debug(
+            "DeepSeek V4 thinking ignores sampling params; stripped %s",
+            ", ".join(removed_params),
+        )
 
 
 def chat(messages: list[dict[str, Any]], model: str | None = None, **kwargs: Any) -> dict:

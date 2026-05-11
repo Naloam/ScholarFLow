@@ -679,6 +679,8 @@ def test_llm_client_enables_deepseek_v4_thinking_defaults(monkeypatch) -> None:
     response = llm_client.chat(
         [{"role": "user", "content": "Return OK"}],
         model="openai/deepseek-v4-pro",
+        temperature=0.2,
+        top_p=0.9,
     )
 
     assert response["choices"][0]["message"]["content"] == "OK"
@@ -686,3 +688,5 @@ def test_llm_client_enables_deepseek_v4_thinking_defaults(monkeypatch) -> None:
     assert captured["extra_body"] == {"thinking": {"type": "enabled"}}
     assert captured["reasoning_effort"] == "high"
     assert "reasoning_effort" in captured["allowed_openai_params"]
+    assert "temperature" not in captured
+    assert "top_p" not in captured

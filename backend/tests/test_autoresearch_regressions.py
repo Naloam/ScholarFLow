@@ -675,6 +675,12 @@ def test_writer_seed_paper_demotes_missing_ablation_and_significance(monkeypatch
         portfolio=None,
         candidates=[],
     )
+    statistical_claim = next(
+        item for item in claim_matrix.entries if item.claim_id == "claim_statistical_grounding"
+    )
+    assert statistical_claim.support_status == "partial"
+    assert "does not preserve completed per-seed artifacts" in statistical_claim.claim
+    assert "multi-seed aggregate reporting across 2 seeds" not in statistical_claim.claim
 
     def empty_chat(*args, **kwargs):
         del args, kwargs

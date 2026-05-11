@@ -2777,17 +2777,40 @@ class PaperWriter:
             )
         )
 
-        robustness_support = "supported" if len(artifact.per_seed_results) >= 2 else "partial"
-        robustness_gaps = [] if robustness_support == "supported" else ["Increase completed seed coverage for stronger aggregate claims."]
+        completed_seed_count = len(artifact.per_seed_results)
+        requested_seed_count = len(spec.seeds)
+        robustness_support = "supported" if completed_seed_count >= 2 else "partial"
+        robustness_gaps = (
+            []
+            if robustness_support == "supported"
+            else ["Increase completed seed coverage for stronger aggregate claims."]
+        )
+        if completed_seed_count >= 2:
+            statistical_claim = (
+                f"The run is grounded in multi-seed aggregate reporting across {completed_seed_count} completed seeds, "
+                f"with acceptance {passed_acceptance}/{total_acceptance}."
+            )
+        elif completed_seed_count == 1:
+            statistical_claim = (
+                f"The run preserves one completed seed artifact with acceptance {passed_acceptance}/{total_acceptance}; "
+                "multi-seed stability remains unresolved."
+            )
+        else:
+            requested_clause = (
+                f" despite {requested_seed_count} requested seeds"
+                if requested_seed_count
+                else ""
+            )
+            statistical_claim = (
+                f"The run does not preserve completed per-seed artifacts{requested_clause}; "
+                f"acceptance is {passed_acceptance}/{total_acceptance} and stability claims remain unverified."
+            )
         entries.append(
             AutoResearchClaimEvidenceEntryRead(
                 claim_id="claim_statistical_grounding",
                 category="result",
                 section_hint="Experimental Setup",
-                claim=(
-                    f"The run is grounded in multi-seed aggregate reporting across {len(artifact.per_seed_results) or len(spec.seeds) or 1} seeds, "
-                    f"with acceptance {passed_acceptance}/{total_acceptance}."
-                ),
+                claim=statistical_claim,
                 support_status=robustness_support,
                 evidence=[
                     AutoResearchClaimEvidenceRefRead(

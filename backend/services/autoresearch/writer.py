@@ -938,6 +938,11 @@ class PaperWriter:
         if not candidate.strip():
             logger.warning("paper_writer validation: candidate is empty")
             return False
+        if any(line.strip().startswith("# ") for line in seed_markdown.splitlines()) and not any(
+            line.strip().startswith("# ") for line in candidate.splitlines()
+        ):
+            logger.warning("paper_writer validation: candidate dropped top-level title")
+            return False
         seed_section_headings = [
             line.strip() for line in seed_markdown.splitlines()
             if line.strip().startswith("## ")

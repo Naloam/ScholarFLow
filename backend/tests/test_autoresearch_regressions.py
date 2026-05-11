@@ -613,6 +613,19 @@ Grounded paper content.
     assert not cleaned.endswith("```")
 
 
+def test_llm_paper_candidate_must_preserve_top_level_title() -> None:
+    writer = PaperWriter()
+
+    valid = writer._llm_paper_candidate_valid(
+        "## Abstract\nGrounded abstract.\n",
+        seed_markdown="# Paper Title\n\n## Abstract\nGrounded abstract.\n",
+        literature=[],
+        project_context=None,
+    )
+
+    assert valid is False
+
+
 def test_review_flags_hypothesis_mismatch_from_objective_system() -> None:
     _plan, spec = _writer_plan_and_spec()
     spec = spec.model_copy(

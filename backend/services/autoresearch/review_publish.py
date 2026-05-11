@@ -444,7 +444,10 @@ def _hypothesis_resolution_finding(
 ) -> tuple[str, str, str] | None:
     artifact = run.artifact
     spec = run.spec
-    if artifact is None or artifact.status != "done" or spec is None or not artifact.best_system:
+    if artifact is None or artifact.status != "done" or spec is None:
+        return None
+    best_system_name = artifact.best_system or artifact.objective_system
+    if not best_system_name:
         return None
     candidate_names = sorted(
         {item.name for item in [*spec.baselines, *spec.ablations]},
@@ -458,7 +461,7 @@ def _hypothesis_resolution_finding(
     ]
     if not mentioned_systems:
         return None
-    if artifact.best_system in mentioned_systems:
+    if best_system_name in mentioned_systems:
         return None
     mentioned_attempts = sorted(
         {
@@ -471,6 +474,7 @@ def _hypothesis_resolution_finding(
                     attempt.artifact is not None
                     and (
                         attempt.artifact.best_system == system_name
+                        or attempt.artifact.objective_system == system_name
                         or any(item.system == system_name for item in attempt.artifact.system_results)
                         or any(item.system == system_name for item in attempt.artifact.aggregate_system_results)
                     )
@@ -489,7 +493,7 @@ def _hypothesis_resolution_finding(
         "warning",
         "Paper should state clearly that the original hypothesis was not supported.",
         (
-            f"The study hypothesis names {mentioned_label}, but the selected artifact ranks `{artifact.best_system}` "
+            f"The study hypothesis names {mentioned_label}, but the selected artifact ranks `{best_system_name}` "
             f"highest on `{artifact.primary_metric}`.{attempt_clause} The publish-facing paper should explicitly say "
             "that the initial hypothesis was contradicted or only partially supported."
         ),

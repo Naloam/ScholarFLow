@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.repository as autoresearch_repository
+import services.autoresearch.review_publish as review_publish
 import services.autoresearch.writer as autoresearch_writer
 import services.papers.repository as papers_repository
 from config.settings import settings
@@ -16,6 +17,7 @@ from models.project import Project
 from schemas.autoresearch import (
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
+    AutoResearchRunRead,
     ExperimentAttempt,
     ExperimentSpec,
     HypothesisCandidate,
@@ -393,3 +395,42 @@ def test_llm_section_generation_uses_paper_plan_section_objective(
 
     assert seen_objectives == ["Explain the exact benchmark framing and paper contribution."]
     assert sections["introduction"].startswith("Generated section grounded")
+
+
+def test_review_flags_hypothesis_mismatch_from_objective_system() -> None:
+    _plan, spec = _writer_plan_and_spec()
+    spec = spec.model_copy(
+        update={"hypothesis": "The majority baseline should produce the best macro F1."}
+    )
+    artifact = ResultArtifact(
+        status="done",
+        summary="The candidate system won even though the hypothesis named the baseline.",
+        key_findings=["candidate system beat the named baseline"],
+        primary_metric="macro_f1",
+        objective_system="candidate_system",
+        objective_score=0.83,
+        system_results=[],
+        aggregate_system_results=[],
+        acceptance_checks=[],
+        tables=[],
+        environment={},
+        outputs={},
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_hypothesis_objective_system",
+        project_id="project_hypothesis_objective_system",
+        topic="Writer regression topic",
+        status="done",
+        task_family="text_classification",
+        spec=spec,
+        artifact=artifact,
+        created_at=now,
+        updated_at=now,
+    )
+
+    finding = review_publish._hypothesis_resolution_finding(run)
+
+    assert finding is not None
+    assert finding[0] == "warning"
+    assert "`candidate_system`" in finding[2]

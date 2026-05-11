@@ -927,6 +927,23 @@ class PaperWriter:
             return fenced.group(1).strip()
         return stripped
 
+    def _top_level_title(self, markdown: str) -> str | None:
+        for line in markdown.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# "):
+                return stripped
+        return None
+
+    def _ensure_top_level_title(self, candidate: str, *, seed_markdown: str) -> str:
+        candidate = candidate.strip()
+        if self._top_level_title(candidate) is not None:
+            return candidate
+        seed_title = self._top_level_title(seed_markdown)
+        if seed_title is None:
+            return candidate
+        logger.info("paper_writer: restoring top-level title dropped by LLM candidate")
+        return f"{seed_title}\n\n{candidate}"
+
     def _llm_paper_candidate_valid(
         self,
         candidate: str,
@@ -1014,6 +1031,7 @@ class PaperWriter:
                 model=settings.llm_writer_model,
             )
             content = self._strip_markdown_fence(get_message_content(response))
+            content = self._ensure_top_level_title(content, seed_markdown=seed_markdown)
             if content and self._llm_paper_candidate_valid(
                 content,
                 seed_markdown=seed_markdown,
@@ -1114,6 +1132,7 @@ class PaperWriter:
                     model=writer_model,
                 )
                 revised = self._strip_markdown_fence(get_message_content(rev_response))
+                revised = self._ensure_top_level_title(revised, seed_markdown=seed_markdown)
                 if not revised or len(revised) < len(current) * 0.5:
                     logger.warning(
                         "paper_writer: revision round %d produced insufficient output (%d chars), keeping current",
@@ -1309,6 +1328,7 @@ class PaperWriter:
                     model=writer_model,
                 )
                 revised = self._strip_markdown_fence(get_message_content(rev_response))
+                revised = self._ensure_top_level_title(revised, seed_markdown=seed_markdown)
                 if not revised or len(revised) < len(current) * 0.5:
                     logger.warning(
                         "multi_review: revision round %d insufficient output, keeping current",

@@ -12,6 +12,7 @@ import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
 import services.autoresearch.writer as autoresearch_writer
 import services.papers.repository as papers_repository
+import services.llm.client as llm_client
 from config.settings import settings
 from models.base import Base
 from models.project import Project
@@ -545,3 +546,26 @@ def test_narrative_artifact_summary_uses_objective_system_when_best_missing() ->
     summary = narrative_analyst._artifact_summary(artifact)
 
     assert "Best system: candidate_system, macro_f1=0.8300" in summary
+
+
+def test_llm_client_enables_deepseek_v4_thinking_defaults(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return {"choices": [{"message": {"role": "assistant", "content": "OK"}}]}
+
+    monkeypatch.setattr(settings, "llm_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_api_base", "https://api.deepseek.com")
+    monkeypatch.setattr(llm_client, "litellm_completion", fake_completion)
+
+    response = llm_client.chat(
+        [{"role": "user", "content": "Return OK"}],
+        model="openai/deepseek-v4-pro",
+    )
+
+    assert response["choices"][0]["message"]["content"] == "OK"
+    assert captured["model"] == "openai/deepseek-v4-pro"
+    assert captured["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert captured["reasoning_effort"] == "high"
+    assert "reasoning_effort" in captured["allowed_openai_params"]

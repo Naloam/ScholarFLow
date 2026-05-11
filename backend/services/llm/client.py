@@ -25,6 +25,24 @@ DEFAULT_CHAT_MODEL = "gpt-4o-mini"
 FALLBACK_RESPONSE = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
 
 
+def _apply_deepseek_v4_thinking_defaults(model: str, request_kwargs: dict[str, Any]) -> None:
+    if "deepseek-v4" not in model.lower():
+        return
+    extra_body = dict(request_kwargs.get("extra_body") or {})
+    extra_body.setdefault("thinking", {"type": "enabled"})
+    request_kwargs["extra_body"] = extra_body
+
+    effort = str(os.getenv("DEEPSEEK_REASONING_EFFORT") or "high").strip().lower()
+    if effort not in {"high", "max"}:
+        effort = "high"
+    request_kwargs.setdefault("reasoning_effort", effort)
+
+    allowed_params = list(request_kwargs.get("allowed_openai_params") or [])
+    if "reasoning_effort" not in allowed_params:
+        allowed_params.append("reasoning_effort")
+    request_kwargs["allowed_openai_params"] = allowed_params
+
+
 def chat(messages: list[dict[str, Any]], model: str | None = None, **kwargs: Any) -> dict:
     model = model or settings.llm_model or DEFAULT_CHAT_MODEL
     started = perf_counter()
@@ -66,6 +84,7 @@ def chat(messages: list[dict[str, Any]], model: str | None = None, **kwargs: Any
         request_kwargs["api_base"] = settings.llm_api_base
     if settings.llm_api_key and "api_key" not in request_kwargs:
         request_kwargs["api_key"] = settings.llm_api_key
+    _apply_deepseek_v4_thinking_defaults(model, request_kwargs)
     logger.info("LLM call: model=%s api_base=%s messages=%d", model, settings.llm_api_base, len(messages))
     max_retries = 3
     for attempt in range(max_retries):

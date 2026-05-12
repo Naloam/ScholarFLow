@@ -37,9 +37,11 @@ from schemas.autoresearch import (
 from services.autoresearch.repository import (
     PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME,
     PAPER_COMPILED_PDF_FILENAME,
+    PUBLICATION_READINESS_FILENAME,
     load_run,
     load_run_bundle_index,
     load_run_registry,
+    publication_readiness_file_path,
     run_dir,
     save_run,
 )
@@ -74,6 +76,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_publication_readiness_json",
     "run_paper_compile_report_json",
     "run_paper_build_script",
     "run_paper_latex_source",
@@ -97,6 +100,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_publication_readiness_json",
     "generated_code",
 }
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
@@ -485,33 +489,37 @@ def _hypothesis_resolution_finding(
         return None
     if best_system_name in mentioned_systems:
         return None
-    objective_score = artifact.objective_score
-    best_score = None
-    objective_system_name = artifact.objective_system
-    for item in [*artifact.system_results, *artifact.aggregate_system_results]:
-        metric_value = item.metrics.get(artifact.primary_metric) if hasattr(item, "metrics") else None
-        if metric_value is None and hasattr(item, "mean_metrics"):
-            metric_value = item.mean_metrics.get(artifact.primary_metric)
-        if item.system == best_system_name and metric_value is not None:
-            best_score = float(metric_value)
-        if item.system == objective_system_name and metric_value is not None:
-            objective_score = float(metric_value)
-    if (
-        objective_system_name in mentioned_systems
-        and objective_score is not None
-        and best_score is not None
-        and abs(float(objective_score) - float(best_score)) <= 1e-12
-    ):
-        return None
+    publication_profile = run.request is not None and run.request.execution_profile == "publication"
+    if publication_profile:
+        objective_system_name = artifact.objective_system
+        objective_score = artifact.objective_score
+        best_score = None
+        for item in [*artifact.system_results, *artifact.aggregate_system_results]:
+            metric_value = item.metrics.get(artifact.primary_metric) if hasattr(item, "metrics") else None
+            if metric_value is None and hasattr(item, "mean_metrics"):
+                metric_value = item.mean_metrics.get(artifact.primary_metric)
+            if item.system == best_system_name and metric_value is not None:
+                best_score = float(metric_value)
+            if item.system == objective_system_name and metric_value is not None:
+                objective_score = float(metric_value)
+        if (
+            objective_system_name in mentioned_systems
+            and objective_score is not None
+            and best_score is not None
+            and abs(float(objective_score) - float(best_score)) <= 1e-12
+        ):
+            return None
     lowered_paper = paper_markdown.lower()
     if (
-        best_system_name
+        publication_profile
+        and best_system_name
         and best_system_name.lower() in lowered_paper
         and (
             "original hypothesis is not supported" in lowered_paper
             or "hypothesis is not supported" in lowered_paper
             or "contradicts the planned hypothesis" in lowered_paper
-            or "contradicted" in lowered_paper
+            or "initial hypothesis was contradicted" in lowered_paper
+            or "original hypothesis was contradicted" in lowered_paper
         )
     ):
         return None
@@ -1660,21 +1668,26 @@ def build_run_review(
     advance_review_loop_round: bool = False,
 ) -> AutoResearchRunReviewRead | None:
     run = load_run(project_id, run_id)
+    if run is None:
+        return None
+
+    paper_markdown = _paper_markdown(run)
+    publication_readiness = build_publication_readiness(
+        run,
+        paper_markdown=paper_markdown,
+    )
+    publication_readiness_path = Path(publication_readiness_file_path(project_id, run_id))
+    _write_json(publication_readiness_path, publication_readiness.model_dump(mode="json"))
     registry = load_run_registry(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
-    if run is None or registry is None or bundle_index is None:
+    if registry is None or bundle_index is None:
         return None
 
     bundle = _selected_bundle(bundle_index)
     selected_entry = next((item for item in registry.candidates if item.selected), None)
-    paper_markdown = _paper_markdown(run)
     novelty_assessment = _build_novelty_assessment(
         run=run,
         selected_candidate_id=registry.selected_candidate_id,
-    )
-    publication_readiness = build_publication_readiness(
-        run,
-        paper_markdown=paper_markdown,
     )
     findings, evidence, citation_coverage = _review_findings(
         run=run,
@@ -1728,6 +1741,7 @@ def build_run_review(
         citation_coverage=citation_coverage,
         novelty_assessment=novelty_assessment,
         publication_readiness=publication_readiness,
+        publication_readiness_path=str(publication_readiness_path),
         scores=scores,
         findings=findings,
         revision_plan=revision_plan,
@@ -1844,6 +1858,7 @@ def _publish_package_fingerprint(
         "selected_candidate_id": review.selected_candidate_id,
         "review_status": review.overall_status,
         "review_path": review.persisted_path,
+        "publication_readiness_path": review.publication_readiness_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
             review_loop.latest_review_fingerprint
@@ -2135,6 +2150,15 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     blockers = [item.summary for item in review.findings if item.severity == "error"]
     semantic_final_blockers = _semantic_final_publish_blockers(review)
     compile_final_blockers = _compile_ready_final_blockers(run)
+    status_semantic_blockers = [
+        item
+        for item in semantic_final_blockers
+        if item.startswith("Final publish requires citation-grounded")
+        or item.startswith("Final publish requires tighter research framing")
+        or item.startswith("Final publish requires supported claim-evidence")
+    ]
+    if semantic_final_blockers and not missing_final_assets and not compile_final_blockers:
+        status_semantic_blockers = semantic_final_blockers
     review_loop_requirements = (
         _review_loop_revision_requirements(review_loop)
         if review.overall_status != "ready"
@@ -2157,7 +2181,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     completeness_status = "complete" if not missing_final_assets else "incomplete"
     status = (
         "blocked"
-        if blockers or semantic_final_blockers or not review_bundle_ready
+        if blockers or status_semantic_blockers or not review_bundle_ready
         else "publish_ready"
         if final_publish_ready
         else "revision_required"
@@ -2183,6 +2207,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
             if review.publication_readiness is not None
             else 0
         ),
+        publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
         manifest_path=str(_publish_manifest_path(project_id, run_id)),
@@ -2344,6 +2369,7 @@ def _archive_manifest(
         "generated_files": [
             REVIEW_FILENAME,
             REVIEW_LOOP_FILENAME,
+            PUBLICATION_READINESS_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,
         ],

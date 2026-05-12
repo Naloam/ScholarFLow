@@ -49,6 +49,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_paper_markdown",
     "run_narrative_report_markdown",
     "run_claim_evidence_matrix_json",
+    "run_publication_readiness_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_history_markdown",
@@ -93,6 +94,7 @@ AutoResearchLineageNodeKind = Literal[
     "benchmark",
     "narrative_report",
     "claim_evidence_matrix",
+    "publication_readiness",
     "paper_plan",
     "figure_plan",
     "paper_revision_history",
@@ -1181,6 +1183,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     paper_markdown: AutoResearchRegistryAssetRef | None = None
     narrative_report_markdown: AutoResearchRegistryAssetRef | None = None
     claim_evidence_matrix_json: AutoResearchRegistryAssetRef | None = None
+    publication_readiness_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None
@@ -1465,6 +1468,7 @@ class AutoResearchRunReviewRead(BaseModel):
     citation_coverage: AutoResearchCitationCoverageRead
     novelty_assessment: AutoResearchNoveltyAssessmentRead | None = None
     publication_readiness: AutoResearchPublicationReadinessRead | None = None
+    publication_readiness_path: str | None = None
     scores: AutoResearchReviewScoresRead
     findings: list[AutoResearchReviewFindingRead] = Field(default_factory=list)
     revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)
@@ -1646,6 +1650,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     publication_readiness_score: int = 0
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
+    publication_readiness_path: str | None = None
     manifest_path: str | None = None
     archive_path: str | None = None
     archive_manifest_path: str | None = None

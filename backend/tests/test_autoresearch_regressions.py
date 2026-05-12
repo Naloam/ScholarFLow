@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -519,6 +520,77 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         review=review,
         publish=publish,
         filters=AutoResearchOperatorConsoleFiltersRead(publication_tier="review_ready"),
+    )
+
+
+def test_publication_readiness_is_persisted_registered_and_packaged(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    spec, benchmark = _external_publication_spec()
+    project_id = "project_publication_readiness_registry"
+    run_id = "run_publication_readiness_registry"
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+    ).model_copy(
+        update={
+            "id": run_id,
+            "project_id": project_id,
+            "paper_latex_source": "\\documentclass{article}\\begin{document}Ready\\end{document}",
+            "paper_bibliography_bib": "@article{ready2026,title={Ready},author={A},year={2026}}",
+        }
+    )
+    autoresearch_repository.save_run(run)
+
+    readiness_path = Path(
+        autoresearch_repository.publication_readiness_file_path(project_id, run_id)
+    )
+    assert not readiness_path.is_file()
+
+    review = review_publish.build_run_review(project_id, run_id)
+
+    assert review is not None
+    assert review.publication_readiness is not None
+    assert review.publication_readiness_path == str(readiness_path)
+    assert readiness_path.is_file()
+    readiness_payload = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert readiness_payload["tier"] == review.publication_readiness.tier
+    assert readiness_payload["score"] == review.publication_readiness.score
+
+    registry = autoresearch_repository.load_run_registry(project_id, run_id)
+    assert registry is not None
+    assert registry.files.publication_readiness_json is not None
+    assert registry.files.publication_readiness_json.exists is True
+    assert any(
+        edge.relation == "has_asset"
+        and edge.target_kind == "publication_readiness"
+        and edge.target_path == str(readiness_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "publication_readiness"
+        and edge.source_kind in {"artifact", "paper", "claim_evidence_matrix", "paper_compile_report"}
+        for edge in registry.lineage.edges
+    )
+
+    bundle_index = autoresearch_repository.load_run_bundle_index(project_id, run_id)
+    assert bundle_index is not None
+    selected_bundle = next(item for item in bundle_index.bundles if item.id == "selected_candidate_repro")
+    readiness_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_publication_readiness_json"
+    )
+    assert readiness_asset.ref.exists is True
+
+    package = review_publish.build_publish_package(project_id, run_id)
+    assert package is not None
+    assert package.publication_readiness_path == str(readiness_path)
+    assert any(
+        item.role == "run_publication_readiness_json"
+        for item in package.final_required_assets
     )
 
 

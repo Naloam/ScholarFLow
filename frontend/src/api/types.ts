@@ -686,6 +686,7 @@ export type AutoResearchLineageEdge = {
     | "benchmark"
     | "narrative_report"
     | "claim_evidence_matrix"
+    | "publication_readiness"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -727,6 +728,7 @@ export type AutoResearchLineageEdge = {
     | "benchmark"
     | "narrative_report"
     | "claim_evidence_matrix"
+    | "publication_readiness"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -763,6 +765,7 @@ export type AutoResearchRunRegistryFiles = {
   paper_markdown?: AutoResearchRegistryAssetRef | null;
   narrative_report_markdown?: AutoResearchRegistryAssetRef | null;
   claim_evidence_matrix_json?: AutoResearchRegistryAssetRef | null;
+  publication_readiness_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
@@ -906,6 +909,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_markdown"
     | "run_narrative_report_markdown"
     | "run_claim_evidence_matrix_json"
+    | "run_publication_readiness_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
     | "run_paper_revision_history_markdown"
@@ -1110,6 +1114,7 @@ export type AutoResearchRunReview = {
   citation_coverage: AutoResearchCitationCoverage;
   novelty_assessment?: AutoResearchNoveltyAssessment | null;
   publication_readiness?: AutoResearchPublicationReadiness | null;
+  publication_readiness_path?: string | null;
   scores: AutoResearchReviewScores;
   findings: AutoResearchReviewFinding[];
   revision_plan: AutoResearchRevisionAction[];
@@ -1422,6 +1427,7 @@ export type AutoResearchPublishPackage = {
   publication_readiness_score: number;
   completeness_status: "complete" | "incomplete";
   review_path?: string | null;
+  publication_readiness_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;
   archive_manifest_path?: string | null;

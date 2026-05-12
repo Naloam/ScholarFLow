@@ -62,6 +62,7 @@ function normalizeConsoleFilters(
     search: search ? search : null,
     status: filters.status ?? null,
     publish_status: filters.publish_status ?? null,
+    publication_tier: filters.publication_tier ?? null,
     review_risk: filters.review_risk ?? null,
     novelty_status: filters.novelty_status ?? null,
     budget_status: filters.budget_status ?? null,

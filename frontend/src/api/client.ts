@@ -426,6 +426,9 @@ export const api = {
     if (options?.publish_status) {
       params.set("publish_status", options.publish_status);
     }
+    if (options?.publication_tier) {
+      params.set("publication_tier", options.publication_tier);
+    }
     if (options?.review_risk) {
       params.set("review_risk", options.review_risk);
     }

@@ -125,9 +125,11 @@ export function OperatorConsolePanel({
     filters.search,
     filters.status,
     filters.publish_status,
+    filters.publication_tier,
     filters.review_risk,
     filters.novelty_status,
     filters.budget_status,
+    filters.queue_priority,
   ]);
 
   const current = consoleState?.current_run ?? null;
@@ -159,6 +161,7 @@ export function OperatorConsolePanel({
     filters.search ||
     filters.status ||
     filters.publish_status ||
+    filters.publication_tier ||
     filters.review_risk ||
     filters.novelty_status ||
     filters.budget_status ||
@@ -393,6 +396,11 @@ export function OperatorConsolePanel({
                       revisions {run.revision_count}
                     </small>
                     <small>
+                      tier {run.publication_tier ?? "n/a"} / score{" "}
+                      {run.publication_readiness_score} / checks{" "}
+                      {run.readiness_checks_passed}/{run.readiness_checks_total}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>
@@ -446,6 +454,42 @@ export function OperatorConsolePanel({
               <div>
                 <span className="meta-label">{t("operator.publish")}</span>
                 <strong>{publish?.status ?? t("operator.notBuilt")}</strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.publicationTier")}
+                </span>
+                <strong data-testid="operator-publication-tier">
+                  {currentSummary?.publication_tier ?? "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.readinessScore")}
+                </span>
+                <strong data-testid="operator-readiness-score">
+                  {currentSummary
+                    ? `${currentSummary.publication_readiness_score}/100`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.readinessChecks")}
+                </span>
+                <strong data-testid="operator-readiness-checks">
+                  {currentSummary
+                    ? `${currentSummary.readiness_checks_passed}/${currentSummary.readiness_checks_total}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.executionProfile")}
+                </span>
+                <strong data-testid="operator-execution-profile">
+                  {currentSummary?.execution_profile ?? "exploratory"}
+                </strong>
               </div>
             </div>
           )}
@@ -576,6 +620,35 @@ export function OperatorConsolePanel({
                   {t("operator.revisionRequired")}
                 </option>
                 <option value="blocked">{t("operator.blocked")}</option>
+              </select>
+              <select
+                id="operator-filter-publication-tier"
+                name="operator_filter_publication_tier"
+                value={draftFilters.publication_tier ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "publication_tier",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["publication_tier"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-publication-tier"
+              >
+                <option value="">{t("operator.allPublicationTiers")}</option>
+                <option value="exploratory">
+                  {t("operator.tierExploratory")}
+                </option>
+                <option value="review_ready">
+                  {t("operator.tierReviewReady")}
+                </option>
+                <option value="publish_candidate">
+                  {t("operator.tierPublishCandidate")}
+                </option>
+                <option value="publish_ready">
+                  {t("operator.tierPublishReady")}
+                </option>
               </select>
               <select
                 id="operator-filter-risk"
@@ -1253,6 +1326,31 @@ export function OperatorConsolePanel({
                   <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
                 </div>
               </div>
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-readiness-blockers">
+                  <span className="meta-label">
+                    {t("operator.readinessBlockers")}
+                  </span>
+                  <p>
+                    tier={currentSummary.publication_tier ?? "n/a"} score=
+                    {currentSummary.publication_readiness_score}/100
+                    {" "}benchmark=
+                    {currentSummary.publication_grade_benchmark
+                      ? t("operator.yes")
+                      : t("operator.no")}
+                  </p>
+                  {currentSummary.publication_blockers.length ? (
+                    <ul>
+                      {currentSummary.publication_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noReadinessBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
 
               {currentPublication ? (
                 <>

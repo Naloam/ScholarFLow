@@ -23,6 +23,7 @@ from schemas.autoresearch import (
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
     AutoResearchNoveltyAssessmentRead,
+    AutoResearchOperatorConsoleFiltersRead,
     AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
@@ -451,6 +452,74 @@ def test_autoresearch_attempt_preference_keeps_richer_tied_artifact() -> None:
     richer = _publication_artifact(include_ablation=True, seed_count=5)
 
     assert orchestrator._attempt_preference_key(richer) > orchestrator._attempt_preference_key(narrow)
+
+
+def test_operator_console_summary_surfaces_publication_readiness() -> None:
+    spec, benchmark = _external_publication_spec()
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+    )
+    readiness = build_publication_readiness(run, paper_markdown=run.paper_markdown)
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Publication-ready console regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        novelty_assessment=AutoResearchNoveltyAssessmentRead(
+            status="grounded",
+            summary="Grounded literature context.",
+            compared_paper_count=2,
+            strong_match_count=1,
+        ),
+        publication_readiness=readiness,
+        scores=review_publish.AutoResearchReviewScoresRead(),
+    )
+    publish = AutoResearchPublishPackageRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        package_id="publish_ready_bundle",
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        status="publish_ready",
+        publish_ready=True,
+        review_bundle_ready=True,
+        final_publish_ready=True,
+        publication_tier=readiness.tier,
+        publication_readiness_score=readiness.score,
+    )
+
+    summary = autoresearch_console._run_summary(
+        run=run,
+        execution=AutoResearchRunExecutionRead(project_id=run.project_id, run_id=run.id),
+        bridge=None,
+        review=review,
+        review_loop=None,
+        publish=publish,
+    )
+
+    assert summary.execution_profile == "publication"
+    assert summary.publication_tier == "publish_ready"
+    assert summary.publication_readiness_score == 100
+    assert summary.publication_grade_benchmark is True
+    assert summary.readiness_checks_passed == summary.readiness_checks_total
+    assert summary.publication_blocker_count == 0
+    assert autoresearch_console._matches_filters(
+        run=run,
+        review=review,
+        publish=publish,
+        filters=AutoResearchOperatorConsoleFiltersRead(publication_tier="publish_ready"),
+    )
+    assert not autoresearch_console._matches_filters(
+        run=run,
+        review=review,
+        publish=publish,
+        filters=AutoResearchOperatorConsoleFiltersRead(publication_tier="review_ready"),
+    )
 
 
 def test_autoresearch_resume_preserves_checkpointed_literature_synthesis(

@@ -1785,6 +1785,7 @@ class AutoResearchOperatorConsoleFiltersRead(BaseModel):
     search: str | None = None
     status: AutoResearchRunStatus | None = None
     publish_status: AutoResearchPublishStatus | None = None
+    publication_tier: AutoResearchPublicationTier | None = None
     review_risk: AutoResearchUnsupportedClaimRisk | None = None
     novelty_status: AutoResearchNoveltyStatus | None = None
     budget_status: AutoResearchBudgetStatus | None = None
@@ -1826,6 +1827,7 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     budget_status: AutoResearchBudgetStatus = "default"
     max_rounds: int = 3
     candidate_execution_limit: int | None = None
+    execution_profile: AutoResearchExecutionProfile = "exploratory"
     executed_candidate_count: int = 0
     recovery_count: int = 0
     bridge_status: AutoResearchBridgeStatus | None = None
@@ -1840,6 +1842,13 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     publish_ready: bool = False
     review_bundle_ready: bool = False
     final_publish_ready: bool = False
+    publication_tier: AutoResearchPublicationTier | None = None
+    publication_readiness_score: int = 0
+    publication_grade_benchmark: bool = False
+    publication_blocker_count: int = 0
+    publication_blockers: list[str] = Field(default_factory=list)
+    readiness_checks_passed: int = 0
+    readiness_checks_total: int = 0
     archive_ready: bool = False
     review_risk: AutoResearchUnsupportedClaimRisk | None = None
     novelty_status: AutoResearchNoveltyStatus | None = None

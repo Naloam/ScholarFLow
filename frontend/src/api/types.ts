@@ -1489,6 +1489,7 @@ export type AutoResearchOperatorConsoleFilters = {
   search?: string | null;
   status?: AutoResearchRunStatus | null;
   publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
+  publication_tier?: AutoResearchPublicationTier | null;
   review_risk?: "low" | "medium" | "high" | null;
   novelty_status?:
     | "missing_context"
@@ -1546,6 +1547,7 @@ export type AutoResearchOperatorRunSummary = {
   budget_status: "default" | "constrained";
   max_rounds: number;
   candidate_execution_limit?: number | null;
+  execution_profile: AutoResearchExecutionProfile;
   executed_candidate_count: number;
   recovery_count: number;
   bridge_status?:
@@ -1573,6 +1575,13 @@ export type AutoResearchOperatorRunSummary = {
   publish_ready: boolean;
   review_bundle_ready: boolean;
   final_publish_ready: boolean;
+  publication_tier?: AutoResearchPublicationTier | null;
+  publication_readiness_score: number;
+  publication_grade_benchmark: boolean;
+  publication_blocker_count: number;
+  publication_blockers: string[];
+  readiness_checks_passed: number;
+  readiness_checks_total: number;
   archive_ready: boolean;
   review_risk?: "low" | "medium" | "high" | null;
   novelty_status?:

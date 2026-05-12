@@ -9,6 +9,7 @@ from schemas.autoresearch import (
     AutoResearchOperatorRunActionsRead,
     AutoResearchOperatorRunDetailRead,
     AutoResearchOperatorRunSummaryRead,
+    AutoResearchPublicationTier,
     AutoResearchPublishStatus,
     AutoResearchQueuePriority,
     AutoResearchRunStatus,
@@ -83,6 +84,29 @@ def _run_summary(
     latest_job = execution.jobs[-1] if execution.jobs else None
     request = run.request
     candidate_count = counts.total_candidates if counts is not None else len(run.candidates)
+    readiness = review.publication_readiness if review is not None else None
+    readiness_checks = readiness.checks if readiness is not None else []
+    publication_tier = (
+        publish.publication_tier
+        if publish is not None
+        else readiness.tier
+        if readiness is not None
+        else None
+    )
+    publication_readiness_score = (
+        publish.publication_readiness_score
+        if publish is not None
+        else readiness.score
+        if readiness is not None
+        else 0
+    )
+    publication_blockers = (
+        readiness.blockers[:3]
+        if readiness is not None
+        else publish.final_blockers[:3]
+        if publish is not None
+        else []
+    )
     budget_status = (
         "constrained"
         if request is not None
@@ -113,6 +137,7 @@ def _run_summary(
         budget_status=budget_status,
         max_rounds=request.max_rounds if request is not None else 3,
         candidate_execution_limit=request.candidate_execution_limit if request is not None else None,
+        execution_profile=request.execution_profile if request is not None else "exploratory",
         executed_candidate_count=len(run.portfolio.executed_candidate_ids) if run.portfolio is not None else 0,
         recovery_count=max((job.recovery_count for job in execution.jobs), default=0),
         bridge_status=bridge.status if bridge is not None and bridge.enabled else None,
@@ -131,6 +156,17 @@ def _run_summary(
         publish_ready=publish.publish_ready if publish is not None else False,
         review_bundle_ready=publish.review_bundle_ready if publish is not None else False,
         final_publish_ready=publish.final_publish_ready if publish is not None else False,
+        publication_tier=publication_tier,
+        publication_readiness_score=publication_readiness_score,
+        publication_grade_benchmark=(
+            readiness.publication_grade_benchmark
+            if readiness is not None
+            else False
+        ),
+        publication_blocker_count=len(readiness.blockers) if readiness is not None else 0,
+        publication_blockers=publication_blockers,
+        readiness_checks_passed=sum(1 for item in readiness_checks if item.passed),
+        readiness_checks_total=len(readiness_checks),
         archive_ready=publish.archive_ready if publish is not None else False,
         review_risk=review.unsupported_claim_risk if review is not None else None,
         novelty_status=review.novelty_assessment.status if review is not None and review.novelty_assessment is not None else None,
@@ -170,6 +206,17 @@ def _matches_filters(
     if filters.publish_status is not None:
         if publish is None or publish.status != filters.publish_status:
             return False
+    if filters.publication_tier is not None:
+        readiness = review.publication_readiness if review is not None else None
+        publication_tier = (
+            publish.publication_tier
+            if publish is not None
+            else readiness.tier
+            if readiness is not None
+            else None
+        )
+        if publication_tier != filters.publication_tier:
+            return False
     if filters.review_risk is not None:
         if review is None or review.unsupported_claim_risk != filters.review_risk:
             return False
@@ -204,6 +251,7 @@ def build_operator_console(
     search: str | None = None,
     status: AutoResearchRunStatus | None = None,
     publish_status: AutoResearchPublishStatus | None = None,
+    publication_tier: AutoResearchPublicationTier | None = None,
     review_risk: AutoResearchUnsupportedClaimRisk | None = None,
     novelty_status: AutoResearchNoveltyStatus | None = None,
     budget_status: AutoResearchBudgetStatus | None = None,
@@ -214,6 +262,7 @@ def build_operator_console(
         search=search.strip() if search and search.strip() else None,
         status=status,
         publish_status=publish_status,
+        publication_tier=publication_tier,
         review_risk=review_risk,
         novelty_status=novelty_status,
         budget_status=budget_status,

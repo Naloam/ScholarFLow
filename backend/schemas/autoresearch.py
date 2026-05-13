@@ -2100,6 +2100,9 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     benchmark_card_total_examples: int = 0
     benchmark_card_blocker_count: int = 0
     benchmark_card_blockers: list[str] = Field(default_factory=list)
+    publication_evidence_index_complete: bool = False
+    publication_evidence_index_missing_count: int = 0
+    publication_evidence_index_blockers: list[str] = Field(default_factory=list)
     publication_grade_benchmark: bool = False
     publication_blocker_count: int = 0
     publication_blockers: list[str] = Field(default_factory=list)

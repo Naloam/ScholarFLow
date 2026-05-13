@@ -133,6 +133,8 @@
     "benchmarkCard": "Benchmark Card",
     "examples": "examples",
     "noBenchmarkCardBlockers": "No benchmark card blockers.",
+    "evidenceIndex": "Evidence Index",
+    "noEvidenceIndexBlockers": "No evidence index blockers.",
     "methodologyBlockers": "Methodology Blockers",
     "noMethodologyBlockers": "No protocol or methodology blockers.",
     "revisionDossier": "Revision Dossier",

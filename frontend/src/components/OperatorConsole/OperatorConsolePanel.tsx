@@ -417,6 +417,13 @@ export function OperatorConsolePanel({
                       / required {run.revision_dossier_blocker_count}
                     </small>
                     <small>
+                      evidence{" "}
+                      {run.publication_evidence_index_complete
+                        ? "complete"
+                        : "missing"}{" "}
+                      / missing {run.publication_evidence_index_missing_count}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>
@@ -528,6 +535,18 @@ export function OperatorConsolePanel({
                 <strong data-testid="operator-benchmark-card-summary">
                   {currentSummary
                     ? `${currentSummary.benchmark_card_total_examples} ${t("operator.examples")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.evidenceIndex")}
+                </span>
+                <strong data-testid="operator-evidence-index-summary">
+                  {currentSummary
+                    ? currentSummary.publication_evidence_index_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_evidence_index_missing_count} ${t("operator.missing")}`
                     : "n/a"}
                 </strong>
               </div>
@@ -1399,6 +1418,28 @@ export function OperatorConsolePanel({
                     </ul>
                   ) : (
                     <p>{t("operator.noBenchmarkCardBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-evidence-index">
+                  <span className="meta-label">
+                    {t("operator.evidenceIndex")}
+                  </span>
+                  <p>
+                    {currentSummary.publication_evidence_index_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_evidence_index_missing_count} ${t("operator.missing")}`}
+                  </p>
+                  {currentSummary.publication_evidence_index_blockers.length ? (
+                    <ul>
+                      {currentSummary.publication_evidence_index_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noEvidenceIndexBlockers")}</p>
                   )}
                 </div>
               ) : null}

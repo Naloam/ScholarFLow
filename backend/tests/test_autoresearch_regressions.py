@@ -29,6 +29,7 @@ from schemas.autoresearch import (
     AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
+    AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublishPackageRead,
     AutoResearchRegistryAssetRef,
     AutoResearchRunConfig,
@@ -543,6 +544,21 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         complete=True,
         dossier_fingerprint="dossier-fingerprint",
     )
+    evidence_index = AutoResearchPublicationEvidenceIndexRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        project_id=run.project_id,
+        run_id=run.id,
+        review_round=1,
+        review_fingerprint="review-fingerprint",
+        publication_tier=readiness.tier,
+        publication_readiness_score=readiness.score,
+        evidence_item_count=18,
+        required_evidence_count=18,
+        present_required_evidence_count=18,
+        missing_required_evidence_count=0,
+        complete=True,
+        evidence_index_fingerprint="evidence-index-fingerprint",
+    )
     review = review_publish.AutoResearchRunReviewRead(
         project_id=run.project_id,
         run_id=run.id,
@@ -563,6 +579,7 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         methodology_audit=audit,
         publication_readiness=readiness,
         revision_dossier=dossier,
+        publication_evidence_index=evidence_index,
         scores=review_publish.AutoResearchReviewScoresRead(),
     )
     publish = AutoResearchPublishPackageRead(
@@ -601,6 +618,9 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
     assert summary.benchmark_card_provenance_complete is True
     assert summary.benchmark_card_total_examples == 24
     assert summary.benchmark_card_blocker_count == 0
+    assert summary.publication_evidence_index_complete is True
+    assert summary.publication_evidence_index_missing_count == 0
+    assert summary.publication_evidence_index_blockers == []
     assert summary.publication_grade_benchmark is True
     assert summary.readiness_checks_passed == summary.readiness_checks_total
     assert summary.publication_blocker_count == 0

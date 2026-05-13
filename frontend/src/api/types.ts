@@ -1844,6 +1844,9 @@ export type AutoResearchOperatorRunSummary = {
   benchmark_card_total_examples: number;
   benchmark_card_blocker_count: number;
   benchmark_card_blockers: string[];
+  publication_evidence_index_complete: boolean;
+  publication_evidence_index_missing_count: number;
+  publication_evidence_index_blockers: string[];
   publication_grade_benchmark: boolean;
   publication_blocker_count: number;
   publication_blockers: string[];

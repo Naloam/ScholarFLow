@@ -88,6 +88,9 @@ def _run_summary(
     benchmark_card = review.benchmark_card if review is not None else None
     methodology_audit = review.methodology_audit if review is not None else None
     revision_dossier = review.revision_dossier if review is not None else None
+    publication_evidence_index = (
+        review.publication_evidence_index if review is not None else None
+    )
     readiness = review.publication_readiness if review is not None else None
     audit_checks = methodology_audit.checks if methodology_audit is not None else []
     readiness_checks = readiness.checks if readiness is not None else []
@@ -193,6 +196,21 @@ def _run_summary(
         ),
         benchmark_card_blockers=(
             benchmark_card.blockers[:3] if benchmark_card is not None else []
+        ),
+        publication_evidence_index_complete=(
+            publication_evidence_index.complete
+            if publication_evidence_index is not None
+            else False
+        ),
+        publication_evidence_index_missing_count=(
+            publication_evidence_index.missing_required_evidence_count
+            if publication_evidence_index is not None
+            else 0
+        ),
+        publication_evidence_index_blockers=(
+            publication_evidence_index.blockers[:3]
+            if publication_evidence_index is not None
+            else []
         ),
         publication_grade_benchmark=(
             readiness.publication_grade_benchmark

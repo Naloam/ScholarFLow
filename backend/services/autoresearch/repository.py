@@ -53,6 +53,7 @@ PROJECT_CONTEXT_FILENAME = "project_context.json"
 NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 RESEARCH_PROTOCOL_FILENAME = "research_protocol.json"
+METHODOLOGY_AUDIT_FILENAME = "methodology_audit.json"
 PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
@@ -543,6 +544,7 @@ def _candidate_lineage_edges(
             ("narrative_report_markdown", "narrative_report"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
             ("research_protocol_json", "research_protocol"),
+            ("methodology_audit_json", "methodology_audit"),
             ("publication_readiness_json", "publication_readiness"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
@@ -646,6 +648,7 @@ def _run_derivation_lineage_edges(
             ("artifact_json", "artifact"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
             ("research_protocol_json", "research_protocol"),
+            ("methodology_audit_json", "methodology_audit"),
             ("publication_readiness_json", "publication_readiness"),
             ("narrative_report_markdown", "narrative_report"),
             ("paper_plan_json", "paper_plan"),
@@ -685,6 +688,34 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="research_protocol",
             source_id=f"{run.id}:research_protocol",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.artifact_json is not None:
+        add_derivation(
+            source_kind="artifact",
+            source_id=f"{run.id}:artifact",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.claim_evidence_matrix_json is not None:
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.paper_compile_report_json is not None:
+        add_derivation(
+            source_kind="paper_compile_report",
+            source_id=f"{run.id}:paper_compile_report",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.methodology_audit_json is not None:
+        add_derivation(
+            source_kind="methodology_audit",
+            source_id=f"{run.id}:methodology_audit",
             target_attr="publication_readiness_json",
             target_kind="publication_readiness",
         )
@@ -754,6 +785,7 @@ def _run_lineage_edges(
         ("narrative_report_markdown", "narrative_report"),
         ("claim_evidence_matrix_json", "claim_evidence_matrix"),
         ("research_protocol_json", "research_protocol"),
+        ("methodology_audit_json", "methodology_audit"),
         ("publication_readiness_json", "publication_readiness"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
@@ -907,6 +939,17 @@ def _run_bundle_assets(
                 required=False,
             )
             if files.research_protocol_json is not None and files.research_protocol_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_methodology_audit_json",
+                label="Selected run methodology audit",
+                role="run_methodology_audit_json",
+                ref=files.methodology_audit_json,
+                required=False,
+            )
+            if files.methodology_audit_json is not None and files.methodology_audit_json.exists
             else None
         ),
         (
@@ -1565,6 +1608,10 @@ def research_protocol_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / RESEARCH_PROTOCOL_FILENAME)
 
 
+def methodology_audit_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / METHODOLOGY_AUDIT_FILENAME)
+
+
 def publication_readiness_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PUBLICATION_READINESS_FILENAME)
 
@@ -1721,6 +1768,7 @@ def load_candidate_registry(
                 current_run.claim_evidence_matrix_path or (run_base / CLAIM_EVIDENCE_MATRIX_FILENAME)
             ),
             research_protocol_json=_asset_ref(run_base / RESEARCH_PROTOCOL_FILENAME),
+            methodology_audit_json=_asset_ref(run_base / METHODOLOGY_AUDIT_FILENAME),
             publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
             paper_plan_json=_asset_ref(
                 current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
@@ -1873,6 +1921,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
             run.claim_evidence_matrix_path or (base / CLAIM_EVIDENCE_MATRIX_FILENAME)
         ),
         research_protocol_json=_asset_ref(base / RESEARCH_PROTOCOL_FILENAME),
+        methodology_audit_json=_asset_ref(base / METHODOLOGY_AUDIT_FILENAME),
         publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),
         paper_plan_json=_asset_ref(
             run.paper_plan_path or (base / PAPER_PLAN_FILENAME)

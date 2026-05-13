@@ -47,6 +47,25 @@ def _add_check(
     )
 
 
+def _primary_metric_name(run: AutoResearchRunRead) -> str | None:
+    spec = run.spec
+    if spec is None or not spec.metrics:
+        return run.artifact.primary_metric if run.artifact is not None else None
+    metric_names = [item.name for item in spec.metrics]
+    task_family_preferences = {
+        "text_classification": ("macro_f1", "f1", "accuracy"),
+        "tabular_classification": ("macro_f1", "f1", "accuracy"),
+        "ir_reranking": ("ndcg", "mrr", "map", "recall"),
+        "llm_evaluation": ("accuracy", "macro_f1", "f1"),
+    }
+    for candidate in task_family_preferences.get(spec.task_family, ()):
+        if candidate in metric_names:
+            return candidate
+    if run.artifact is not None and run.artifact.primary_metric in metric_names:
+        return run.artifact.primary_metric
+    return metric_names[0]
+
+
 def build_research_protocol(run: AutoResearchRunRead) -> AutoResearchResearchProtocolRead:
     spec = run.spec
     plan = run.plan
@@ -54,7 +73,7 @@ def build_research_protocol(run: AutoResearchRunRead) -> AutoResearchResearchPro
     publication_profile = profile == "publication"
     minimum_completed_seed_count = PUBLICATION_MIN_COMPLETED_SEEDS if publication_profile else 1
     literature_minimum = PUBLICATION_MIN_REAL_LITERATURE if publication_profile else 1
-    primary_metric = spec.metrics[0].name if spec is not None and spec.metrics else None
+    primary_metric = _primary_metric_name(run)
     baseline_systems = [item.name for item in spec.baselines] if spec is not None else []
     ablation_systems = [item.name for item in spec.ablations] if spec is not None else []
     acceptance_rules = spec.acceptance_criteria if spec is not None else []

@@ -50,6 +50,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_narrative_report_markdown",
     "run_claim_evidence_matrix_json",
     "run_research_protocol_json",
+    "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
@@ -96,6 +97,7 @@ AutoResearchLineageNodeKind = Literal[
     "narrative_report",
     "claim_evidence_matrix",
     "research_protocol",
+    "methodology_audit",
     "publication_readiness",
     "paper_plan",
     "figure_plan",
@@ -1186,6 +1188,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     narrative_report_markdown: AutoResearchRegistryAssetRef | None = None
     claim_evidence_matrix_json: AutoResearchRegistryAssetRef | None = None
     research_protocol_json: AutoResearchRegistryAssetRef | None = None
+    methodology_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
@@ -1444,6 +1447,41 @@ class AutoResearchResearchProtocolRead(BaseModel):
     protocol_fingerprint: str
 
 
+class AutoResearchMethodologyAuditRead(BaseModel):
+    generated_at: datetime
+    audit_id: str = "methodology_audit_v1"
+    protocol_fingerprint: str | None = None
+    audit_fingerprint: str
+    execution_profile: AutoResearchExecutionProfile = "exploratory"
+    primary_metric: str | None = None
+    planned_seed_count: int = 0
+    completed_seed_count: int = 0
+    minimum_completed_seed_count: int = 0
+    planned_sweep_labels: list[str] = Field(default_factory=list)
+    observed_sweep_labels: list[str] = Field(default_factory=list)
+    planned_ablation_systems: list[str] = Field(default_factory=list)
+    observed_ablation_systems: list[str] = Field(default_factory=list)
+    acceptance_rule_ids: list[str] = Field(default_factory=list)
+    satisfied_acceptance_rule_ids: list[str] = Field(default_factory=list)
+    required_statistics: list[AcceptanceStatistic] = Field(default_factory=list)
+    observed_statistics: list[AcceptanceStatistic] = Field(default_factory=list)
+    significance_test_count: int = 0
+    adequately_powered_test_count: int = 0
+    power_analysis_reported_count: int = 0
+    real_literature_count: int = 0
+    synthetic_literature_count: int = 0
+    literature_minimum: int = 0
+    unsupported_claim_count: int = 0
+    partial_claim_count: int = 0
+    compile_ready: bool = False
+    paper_source_package_complete: bool = False
+    checks: list[AutoResearchReadinessCheckRead] = Field(default_factory=list)
+    score: int = 0
+    compliant: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class AutoResearchCitationCoverageRead(BaseModel):
     literature_item_count: int = 0
     citation_marker_count: int = 0
@@ -1509,6 +1547,8 @@ class AutoResearchRunReviewRead(BaseModel):
     novelty_assessment: AutoResearchNoveltyAssessmentRead | None = None
     research_protocol: AutoResearchResearchProtocolRead | None = None
     research_protocol_path: str | None = None
+    methodology_audit: AutoResearchMethodologyAuditRead | None = None
+    methodology_audit_path: str | None = None
     publication_readiness: AutoResearchPublicationReadinessRead | None = None
     publication_readiness_path: str | None = None
     scores: AutoResearchReviewScoresRead
@@ -1605,6 +1645,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publication_readiness_score: int = 0
     research_protocol_path: str | None = None
     research_protocol_sha256: str | None = None
+    methodology_audit_path: str | None = None
+    methodology_audit_sha256: str | None = None
     publication_readiness_path: str | None = None
     publication_readiness_sha256: str | None = None
     archive_ready: bool = False
@@ -1695,6 +1737,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     publication_tier: AutoResearchPublicationTier = "exploratory"
     publication_readiness_score: int = 0
     research_protocol_path: str | None = None
+    methodology_audit_path: str | None = None
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
     publication_readiness_path: str | None = None

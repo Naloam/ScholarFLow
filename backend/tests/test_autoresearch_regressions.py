@@ -50,6 +50,7 @@ from schemas.autoresearch import (
 )
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
+from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import (
     PUBLICATION_MIN_COMPLETED_SEEDS,
@@ -213,6 +214,9 @@ def _publication_artifact(*, include_ablation: bool = True, seed_count: int = 5)
             "system": "majority",
             "mean_metrics": {"accuracy": 0.5, "macro_f1": 0.5},
             "std_metrics": {"accuracy": 0.0, "macro_f1": 0.0},
+            "confidence_intervals": {
+                "macro_f1": {"lower": 0.5, "upper": 0.5, "level": 0.95}
+            },
             "min_metrics": {"accuracy": 0.5, "macro_f1": 0.5},
             "max_metrics": {"accuracy": 0.5, "macro_f1": 0.5},
             "sample_count": seed_count,
@@ -221,6 +225,9 @@ def _publication_artifact(*, include_ablation: bool = True, seed_count: int = 5)
             "system": "candidate_system",
             "mean_metrics": {"accuracy": 0.8, "macro_f1": 0.8},
             "std_metrics": {"accuracy": 0.01, "macro_f1": 0.01},
+            "confidence_intervals": {
+                "macro_f1": {"lower": 0.79, "upper": 0.81, "level": 0.95}
+            },
             "min_metrics": {"accuracy": 0.79, "macro_f1": 0.79},
             "max_metrics": {"accuracy": 0.81, "macro_f1": 0.81},
             "sample_count": seed_count,
@@ -233,6 +240,9 @@ def _publication_artifact(*, include_ablation: bool = True, seed_count: int = 5)
                 "system": "candidate_ablation",
                 "mean_metrics": {"accuracy": 0.7, "macro_f1": 0.7},
                 "std_metrics": {"accuracy": 0.01, "macro_f1": 0.01},
+                "confidence_intervals": {
+                    "macro_f1": {"lower": 0.69, "upper": 0.71, "level": 0.95}
+                },
                 "min_metrics": {"accuracy": 0.69, "macro_f1": 0.69},
                 "max_metrics": {"accuracy": 0.71, "macro_f1": 0.71},
                 "sample_count": seed_count,
@@ -259,6 +269,30 @@ def _publication_artifact(*, include_ablation: bool = True, seed_count: int = 5)
                 "system_results": systems,
             }
             for seed in [7, 13, 23, 31, 47][:seed_count]
+        ],
+        sweep_results=[
+            {
+                "label": "default",
+                "status": "done",
+                "best_system": "candidate_system",
+                "objective_system": "candidate_system",
+                "objective_score_mean": 0.8,
+                "objective_score_std": 0.01,
+                "aggregate_system_results": aggregate,
+                "seed_count": seed_count,
+                "successful_seed_count": seed_count,
+            },
+            {
+                "label": "higher_order_lexical",
+                "status": "done",
+                "best_system": "candidate_system",
+                "objective_system": "candidate_system",
+                "objective_score_mean": 0.79,
+                "objective_score_std": 0.01,
+                "aggregate_system_results": aggregate,
+                "seed_count": seed_count,
+                "successful_seed_count": seed_count,
+            },
         ],
         significance_tests=[
             {
@@ -287,10 +321,34 @@ def _publication_artifact(*, include_ablation: bool = True, seed_count: int = 5)
                 "detail": "candidate_system mean macro_f1=0.8",
                 "rule_id": "objective_primary_metric_beats_baseline",
                 "rule_kind": "objective_metric_comparison",
+            },
+            {
+                "criterion": "Selected sweep should complete every requested seed.",
+                "passed": seed_count == 5,
+                "detail": f"Selected sweep completed {seed_count}/5 requested seeds.",
+                "rule_id": "selected_sweep_completes_all_requested_seeds",
+                "rule_kind": "seed_coverage",
+            },
+            {
+                "criterion": "Record mean, standard deviation, and confidence intervals for the primary metric.",
+                "passed": True,
+                "detail": "macro_f1 mean, std, and 95% confidence interval are recorded.",
+                "rule_id": "primary_metric_reports_mean_std_and_ci",
+                "rule_kind": "aggregate_metric_reporting",
+            },
+            {
+                "criterion": "Report significance for the objective system against the baseline.",
+                "passed": True,
+                "detail": "candidate_system beats majority across paired seeds.",
+                "rule_id": "objective_vs_baseline_significance_reported",
+                "rule_kind": "significance_test_reporting",
             }
         ],
         tables=[],
-        environment={},
+        environment={
+            "selected_sweep": "default",
+            "sweeps_evaluated": ["default", "higher_order_lexical"],
+        },
         outputs={},
     )
 
@@ -557,8 +615,12 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     protocol_path = Path(
         autoresearch_repository.research_protocol_file_path(project_id, run_id)
     )
+    audit_path = Path(
+        autoresearch_repository.methodology_audit_file_path(project_id, run_id)
+    )
     assert not readiness_path.is_file()
     assert not protocol_path.is_file()
+    assert not audit_path.is_file()
 
     review = review_publish.build_run_review(project_id, run_id)
 
@@ -573,6 +635,16 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert protocol_payload["minimum_completed_seed_count"] == PUBLICATION_MIN_COMPLETED_SEEDS
     assert protocol_payload["ablation_systems"] == ["candidate_ablation"]
     assert protocol_payload["protocol_fingerprint"] == review.research_protocol.protocol_fingerprint
+    assert review.methodology_audit is not None
+    assert review.methodology_audit_path == str(audit_path)
+    assert audit_path.is_file()
+    audit_payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit_payload["compliant"] is True
+    assert audit_payload["protocol_fingerprint"] == review.research_protocol.protocol_fingerprint
+    assert audit_payload["audit_fingerprint"] == review.methodology_audit.audit_fingerprint
+    assert audit_payload["completed_seed_count"] == 5
+    assert audit_payload["observed_ablation_systems"] == ["candidate_ablation"]
+    assert set(audit_payload["required_statistics"]) == {"mean", "std", "confidence_interval"}
     assert review.publication_readiness is not None
     assert review.publication_readiness_path == str(readiness_path)
     assert readiness_path.is_file()
@@ -584,6 +656,8 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert registry is not None
     assert registry.files.research_protocol_json is not None
     assert registry.files.research_protocol_json.exists is True
+    assert registry.files.methodology_audit_json is not None
+    assert registry.files.methodology_audit_json.exists is True
     assert registry.files.publication_readiness_json is not None
     assert registry.files.publication_readiness_json.exists is True
     assert any(
@@ -596,6 +670,18 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         edge.relation == "derived_from"
         and edge.target_kind == "research_protocol"
         and edge.source_kind in {"spec", "plan"}
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "has_asset"
+        and edge.target_kind == "methodology_audit"
+        and edge.target_path == str(audit_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "methodology_audit"
+        and edge.source_kind in {"research_protocol", "artifact", "claim_evidence_matrix"}
         for edge in registry.lineage.edges
     )
     assert any(
@@ -618,6 +704,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         item for item in selected_bundle.assets if item.role == "run_research_protocol_json"
     )
     assert protocol_asset.ref.exists is True
+    audit_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_methodology_audit_json"
+    )
+    assert audit_asset.ref.exists is True
     readiness_asset = next(
         item for item in selected_bundle.assets if item.role == "run_publication_readiness_json"
     )
@@ -626,9 +716,14 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     package = review_publish.build_publish_package(project_id, run_id)
     assert package is not None
     assert package.research_protocol_path == str(protocol_path)
+    assert package.methodology_audit_path == str(audit_path)
     assert package.publication_readiness_path == str(readiness_path)
     assert any(
         item.role == "run_research_protocol_json"
+        for item in package.final_required_assets
+    )
+    assert any(
+        item.role == "run_methodology_audit_json"
         for item in package.final_required_assets
     )
     assert any(
@@ -667,13 +762,18 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert review is not None
     assert review.research_protocol is not None
     assert review.research_protocol_path is not None
+    assert review.methodology_audit is not None
+    assert review.methodology_audit_path is not None
     assert review.publication_readiness is not None
     assert review.publication_readiness_path is not None
     protocol_path = Path(review.research_protocol_path)
+    audit_path = Path(review.methodology_audit_path)
     readiness_path = Path(review.publication_readiness_path)
     assert protocol_path.is_file()
+    assert audit_path.is_file()
     assert readiness_path.is_file()
     expected_protocol_sha256 = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
+    expected_audit_sha256 = hashlib.sha256(audit_path.read_bytes()).hexdigest()
     expected_readiness_sha256 = hashlib.sha256(readiness_path.read_bytes()).hexdigest()
 
     code_package_path = review_publish._code_package_path(project_id, run_id)
@@ -691,6 +791,7 @@ def test_publication_manifest_records_readiness_artifact_identity(
         publication_tier=review.publication_readiness.tier,
         publication_readiness_score=review.publication_readiness.score,
         research_protocol_path=str(protocol_path),
+        methodology_audit_path=str(audit_path),
         publication_readiness_path=str(readiness_path),
         manifest_path=str(review_publish._publish_manifest_path(project_id, run_id)),
         archive_path=str(review_publish._publish_archive_path(project_id, run_id)),
@@ -709,11 +810,15 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert manifest is not None
     assert manifest.research_protocol_path == str(protocol_path)
     assert manifest.research_protocol_sha256 == expected_protocol_sha256
+    assert manifest.methodology_audit_path == str(audit_path)
+    assert manifest.methodology_audit_sha256 == expected_audit_sha256
     assert manifest.publication_readiness_path == str(readiness_path)
     assert manifest.publication_readiness_sha256 == expected_readiness_sha256
     persisted = json.loads(Path(manifest.publication_manifest_path).read_text(encoding="utf-8"))
     assert persisted["research_protocol_path"] == str(protocol_path)
     assert persisted["research_protocol_sha256"] == expected_protocol_sha256
+    assert persisted["methodology_audit_path"] == str(audit_path)
+    assert persisted["methodology_audit_sha256"] == expected_audit_sha256
     assert persisted["publication_readiness_path"] == str(readiness_path)
     assert persisted["publication_readiness_sha256"] == expected_readiness_sha256
 
@@ -1464,13 +1569,16 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
         total_claim_count=1,
     )
 
+    protocol = build_research_protocol(run)
+    audit = build_methodology_audit(run, protocol=protocol)
     findings, evidence, citation_coverage = review_publish._review_findings(
         run=run,
         bundle=None,
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
-        research_protocol=build_research_protocol(run),
+        research_protocol=protocol,
+        methodology_audit=audit,
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",
@@ -1500,7 +1608,8 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty,
-        research_protocol=build_research_protocol(run),
+        research_protocol=protocol,
+        methodology_audit=audit,
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",
@@ -1588,13 +1697,16 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         run=run,
         selected_candidate_id=candidate.id,
     )
+    protocol = build_research_protocol(run)
+    audit = build_methodology_audit(run, protocol=protocol)
     findings, evidence, citation_coverage = review_publish._review_findings(
         run=run,
         bundle=None,
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
-        research_protocol=build_research_protocol(run),
+        research_protocol=protocol,
+        methodology_audit=audit,
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",
@@ -1610,7 +1722,8 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty,
-        research_protocol=build_research_protocol(run),
+        research_protocol=protocol,
+        methodology_audit=audit,
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",

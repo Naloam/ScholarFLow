@@ -704,6 +704,7 @@ export type AutoResearchLineageEdge = {
     | "narrative_report"
     | "claim_evidence_matrix"
     | "research_protocol"
+    | "methodology_audit"
     | "publication_readiness"
     | "paper_plan"
     | "figure_plan"
@@ -747,6 +748,7 @@ export type AutoResearchLineageEdge = {
     | "narrative_report"
     | "claim_evidence_matrix"
     | "research_protocol"
+    | "methodology_audit"
     | "publication_readiness"
     | "paper_plan"
     | "figure_plan"
@@ -785,6 +787,7 @@ export type AutoResearchRunRegistryFiles = {
   narrative_report_markdown?: AutoResearchRegistryAssetRef | null;
   claim_evidence_matrix_json?: AutoResearchRegistryAssetRef | null;
   research_protocol_json?: AutoResearchRegistryAssetRef | null;
+  methodology_audit_json?: AutoResearchRegistryAssetRef | null;
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
@@ -926,6 +929,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_narrative_report_markdown"
     | "run_claim_evidence_matrix_json"
     | "run_research_protocol_json"
+    | "run_methodology_audit_json"
     | "run_publication_readiness_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
@@ -1097,6 +1101,41 @@ export type AutoResearchResearchProtocol = {
   protocol_fingerprint: string;
 };
 
+export type AutoResearchMethodologyAudit = {
+  generated_at: string;
+  audit_id: string;
+  protocol_fingerprint?: string | null;
+  audit_fingerprint: string;
+  execution_profile: AutoResearchExecutionProfile;
+  primary_metric?: string | null;
+  planned_seed_count: number;
+  completed_seed_count: number;
+  minimum_completed_seed_count: number;
+  planned_sweep_labels: string[];
+  observed_sweep_labels: string[];
+  planned_ablation_systems: string[];
+  observed_ablation_systems: string[];
+  acceptance_rule_ids: string[];
+  satisfied_acceptance_rule_ids: string[];
+  required_statistics: AutoResearchAcceptanceStatistic[];
+  observed_statistics: AutoResearchAcceptanceStatistic[];
+  significance_test_count: number;
+  adequately_powered_test_count: number;
+  power_analysis_reported_count: number;
+  real_literature_count: number;
+  synthetic_literature_count: number;
+  literature_minimum: number;
+  unsupported_claim_count: number;
+  partial_claim_count: number;
+  compile_ready: boolean;
+  paper_source_package_complete: boolean;
+  checks: AutoResearchReadinessCheck[];
+  score: number;
+  compliant: boolean;
+  blockers: string[];
+  warnings: string[];
+};
+
 export type AutoResearchCitationCoverage = {
   literature_item_count: number;
   citation_marker_count: number;
@@ -1169,6 +1208,8 @@ export type AutoResearchRunReview = {
   novelty_assessment?: AutoResearchNoveltyAssessment | null;
   research_protocol?: AutoResearchResearchProtocol | null;
   research_protocol_path?: string | null;
+  methodology_audit?: AutoResearchMethodologyAudit | null;
+  methodology_audit_path?: string | null;
   publication_readiness?: AutoResearchPublicationReadiness | null;
   publication_readiness_path?: string | null;
   scores: AutoResearchReviewScores;
@@ -1388,6 +1429,8 @@ export type AutoResearchPublicationManifest = {
   publication_readiness_score: number;
   research_protocol_path?: string | null;
   research_protocol_sha256?: string | null;
+  methodology_audit_path?: string | null;
+  methodology_audit_sha256?: string | null;
   publication_readiness_path?: string | null;
   publication_readiness_sha256?: string | null;
   archive_ready: boolean;
@@ -1480,6 +1523,7 @@ export type AutoResearchPublishPackage = {
   completeness_status: "complete" | "incomplete";
   review_path?: string | null;
   research_protocol_path?: string | null;
+  methodology_audit_path?: string | null;
   publication_readiness_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;

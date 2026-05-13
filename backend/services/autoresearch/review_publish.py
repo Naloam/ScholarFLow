@@ -15,6 +15,7 @@ from schemas.autoresearch import (
     AutoResearchBundleRead,
     AutoResearchCitationCoverageRead,
     AutoResearchDeploymentRefRead,
+    AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchPublicationReadinessRead,
     AutoResearchResearchProtocolRead,
@@ -36,6 +37,7 @@ from schemas.autoresearch import (
     HypothesisCandidate,
 )
 from services.autoresearch.repository import (
+    METHODOLOGY_AUDIT_FILENAME,
     PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME,
     PAPER_COMPILED_PDF_FILENAME,
     RESEARCH_PROTOCOL_FILENAME,
@@ -43,11 +45,13 @@ from services.autoresearch.repository import (
     load_run,
     load_run_bundle_index,
     load_run_registry,
+    methodology_audit_file_path,
     publication_readiness_file_path,
     research_protocol_file_path,
     run_dir,
     save_run,
 )
+from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import build_publication_readiness
 from services.projects.repository import get_project
@@ -81,6 +85,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "artifact_json",
     "manifest_json",
     "run_research_protocol_json",
+    "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_paper_compile_report_json",
     "run_paper_build_script",
@@ -106,6 +111,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "artifact_json",
     "manifest_json",
     "run_research_protocol_json",
+    "run_methodology_audit_json",
     "run_publication_readiness_json",
     "generated_code",
 }
@@ -640,6 +646,9 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
         if finding.category == "provenance" and "research protocol" in lowered_summary:
             blockers.append(f"Final publish requires a complete research protocol: {finding.summary}")
             continue
+        if "methodology audit" in lowered_summary:
+            blockers.append(f"Final publish requires protocol-compliant methodology: {finding.summary}")
+            continue
         if finding.category == "context":
             if (
                 "no literature insights were persisted" in lowered_summary
@@ -805,6 +814,7 @@ def _review_findings(
     paper_markdown: str,
     novelty_assessment: AutoResearchNoveltyAssessmentRead,
     research_protocol: AutoResearchResearchProtocolRead,
+    methodology_audit: AutoResearchMethodologyAuditRead,
     publication_readiness: AutoResearchPublicationReadinessRead,
 ) -> tuple[
     list[AutoResearchReviewFindingRead],
@@ -951,6 +961,18 @@ def _review_findings(
             summary="Research protocol is incomplete.",
             detail="; ".join(research_protocol.blockers),
             supporting_asset_ids=["run_research_protocol_json", "run_spec_json"],
+        )
+    if methodology_audit.blockers:
+        add_finding(
+            severity="error" if methodology_audit.execution_profile == "publication" else "warning",
+            category="statistics",
+            summary="Methodology audit found protocol adherence gaps.",
+            detail="; ".join(methodology_audit.blockers),
+            supporting_asset_ids=[
+                "run_methodology_audit_json",
+                "run_research_protocol_json",
+                "run_artifact_json",
+            ],
         )
 
     if missing_required_assets:
@@ -1693,6 +1715,9 @@ def build_run_review(
     research_protocol = build_research_protocol(run)
     research_protocol_path = Path(research_protocol_file_path(project_id, run_id))
     _write_json(research_protocol_path, research_protocol.model_dump(mode="json"))
+    methodology_audit = build_methodology_audit(run, protocol=research_protocol)
+    methodology_audit_path = Path(methodology_audit_file_path(project_id, run_id))
+    _write_json(methodology_audit_path, methodology_audit.model_dump(mode="json"))
     publication_readiness = build_publication_readiness(
         run,
         paper_markdown=paper_markdown,
@@ -1717,6 +1742,7 @@ def build_run_review(
         paper_markdown=paper_markdown,
         novelty_assessment=novelty_assessment,
         research_protocol=research_protocol,
+        methodology_audit=methodology_audit,
         publication_readiness=publication_readiness,
     )
     scores = _review_scores(
@@ -1764,6 +1790,8 @@ def build_run_review(
         novelty_assessment=novelty_assessment,
         research_protocol=research_protocol,
         research_protocol_path=str(research_protocol_path),
+        methodology_audit=methodology_audit,
+        methodology_audit_path=str(methodology_audit_path),
         publication_readiness=publication_readiness,
         publication_readiness_path=str(publication_readiness_path),
         scores=scores,
@@ -1883,6 +1911,7 @@ def _publish_package_fingerprint(
         "review_status": review.overall_status,
         "review_path": review.persisted_path,
         "research_protocol_path": review.research_protocol_path,
+        "methodology_audit_path": review.methodology_audit_path,
         "publication_readiness_path": review.publication_readiness_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
@@ -2102,6 +2131,12 @@ def build_publication_manifest(
         else Path(research_protocol_file_path(project_id, run_id))
     )
     protocol_path_value = str(protocol_path) if protocol_path.is_file() else package.research_protocol_path
+    audit_path = (
+        Path(package.methodology_audit_path)
+        if package.methodology_audit_path
+        else Path(methodology_audit_file_path(project_id, run_id))
+    )
+    audit_path_value = str(audit_path) if audit_path.is_file() else package.methodology_audit_path
     readiness_path = (
         Path(package.publication_readiness_path)
         if package.publication_readiness_path
@@ -2131,6 +2166,8 @@ def build_publication_manifest(
         publication_readiness_score=package.publication_readiness_score,
         research_protocol_path=protocol_path_value,
         research_protocol_sha256=_file_sha256(protocol_path),
+        methodology_audit_path=audit_path_value,
+        methodology_audit_sha256=_file_sha256(audit_path),
         publication_readiness_path=readiness_path_value,
         publication_readiness_sha256=_file_sha256(readiness_path),
         archive_ready=package.archive_ready,
@@ -2249,6 +2286,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
             else 0
         ),
         research_protocol_path=review.research_protocol_path,
+        methodology_audit_path=review.methodology_audit_path,
         publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
@@ -2412,6 +2450,7 @@ def _archive_manifest(
             REVIEW_FILENAME,
             REVIEW_LOOP_FILENAME,
             RESEARCH_PROTOCOL_FILENAME,
+            METHODOLOGY_AUDIT_FILENAME,
             PUBLICATION_READINESS_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,

@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -670,6 +671,50 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         publish=publish,
         filters=AutoResearchOperatorConsoleFiltersRead(publication_tier="review_ready"),
     )
+
+
+def test_apply_review_actions_respects_repair_plan_action_kind() -> None:
+    paper_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        project_id="project_repair_gate",
+        run_id="run_repair_gate",
+        pending_action_count=1,
+        auto_applicable_action_count=1,
+        next_action_ids=["paper_repair"],
+        actions=[
+            AutoResearchPublicationRepairActionRead(
+                action_id="paper_repair",
+                kind="rebuild_paper_sources",
+                source="revision_action",
+                title="Rebuild paper sources",
+                detail="Materialize missing paper source package.",
+                auto_applicable=True,
+                expected_outputs=["run_paper_sources_manifest_json"],
+            )
+        ],
+        repair_plan_fingerprint="paper-repair",
+    )
+    autoresearch_orchestrator._ensure_repair_plan_allows_paper_rebuild(paper_plan)
+
+    experiment_plan = paper_plan.model_copy(
+        update={
+            "next_action_ids": ["rerun_experiment"],
+            "actions": [
+                AutoResearchPublicationRepairActionRead(
+                    action_id="rerun_experiment",
+                    kind="rerun_experiments",
+                    source="readiness",
+                    title="Rerun experiments",
+                    detail="Add missing seed and ablation evidence.",
+                    auto_applicable=True,
+                    expected_outputs=["run_artifact_json"],
+                )
+            ],
+            "repair_plan_fingerprint": "experiment-repair",
+        }
+    )
+    with pytest.raises(ValueError, match="non-paper repair actions"):
+        autoresearch_orchestrator._ensure_repair_plan_allows_paper_rebuild(experiment_plan)
 
 
 def test_publication_readiness_is_persisted_registered_and_packaged(

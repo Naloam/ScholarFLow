@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from config.settings import settings
 from schemas.autoresearch import (
     AutoResearchJobAction,
+    AutoResearchPublicationRepairPlanRead,
     AutoResearchRunRead,
     BenchmarkSource,
     ExecutionBackendSpec,
@@ -71,6 +72,39 @@ from services.telemetry.context import telemetry_context
 
 
 logger = logging.getLogger(__name__)
+_PAPER_PIPELINE_REPAIR_KINDS = {
+    "rebuild_paper_sources",
+    "repair_claim_evidence",
+    "refresh_literature",
+    "rebuild_publish_package",
+}
+
+
+def _ensure_repair_plan_allows_paper_rebuild(
+    repair_plan: AutoResearchPublicationRepairPlanRead | None,
+) -> None:
+    if repair_plan is None or repair_plan.pending_action_count < 1:
+        return
+    next_action_ids = set(repair_plan.next_action_ids)
+    pending_actions = [
+        action
+        for action in repair_plan.actions
+        if action.status == "pending"
+        and action.auto_applicable
+        and (not next_action_ids or action.action_id in next_action_ids)
+    ]
+    if not pending_actions:
+        raise ValueError(
+            "Repair plan has no auto-applicable pending actions; manual repair is required before applying review actions"
+        )
+    if not any(action.kind in _PAPER_PIPELINE_REPAIR_KINDS for action in pending_actions):
+        required = ", ".join(sorted({action.kind for action in pending_actions}))
+        raise ValueError(
+            "Repair plan requires non-paper repair actions before paper rebuild can apply revisions: "
+            f"{required}"
+        )
+
+
 AUTORESEARCH_DRAFT_SECTION = "autorresearch_v0"
 
 
@@ -1105,7 +1139,7 @@ class AutoResearchOrchestrator:
         expected_round: int,
         expected_review_fingerprint: str,
     ) -> AutoResearchRunRead:
-        from services.autoresearch.review_publish import build_review_loop
+        from services.autoresearch.review_publish import build_review_loop, build_run_review
 
         review_loop = build_review_loop(project_id, run_id)
         if review_loop is None:
@@ -1118,6 +1152,9 @@ class AutoResearchOrchestrator:
             raise ValueError("Review loop fingerprint changed; refresh review state before applying revisions")
         if review_loop.pending_action_count < 1:
             raise ValueError("Review loop has no pending revision actions to apply")
+        review = build_run_review(project_id, run_id)
+        repair_plan = review.publication_repair_plan if review is not None else None
+        _ensure_repair_plan_allows_paper_rebuild(repair_plan)
         return self._rebuild_paper_pipeline(
             db=db,
             project_id=project_id,

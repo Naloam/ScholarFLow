@@ -91,6 +91,9 @@ def _run_summary(
     publication_evidence_index = (
         review.publication_evidence_index if review is not None else None
     )
+    publication_repair_plan = (
+        review.publication_repair_plan if review is not None else None
+    )
     readiness = review.publication_readiness if review is not None else None
     audit_checks = methodology_audit.checks if methodology_audit is not None else []
     readiness_checks = readiness.checks if readiness is not None else []
@@ -210,6 +213,35 @@ def _run_summary(
         publication_evidence_index_blockers=(
             publication_evidence_index.blockers[:3]
             if publication_evidence_index is not None
+            else []
+        ),
+        publication_repair_plan_complete=(
+            publication_repair_plan.complete
+            if publication_repair_plan is not None
+            else False
+        ),
+        publication_repair_plan_pending_count=(
+            publication_repair_plan.pending_action_count
+            if publication_repair_plan is not None
+            else 0
+        ),
+        publication_repair_plan_blocked_count=(
+            publication_repair_plan.blocked_action_count
+            if publication_repair_plan is not None
+            else 0
+        ),
+        publication_repair_plan_auto_applicable_count=(
+            publication_repair_plan.auto_applicable_action_count
+            if publication_repair_plan is not None
+            else 0
+        ),
+        publication_repair_plan_next_actions=(
+            [
+                item.title
+                for item in publication_repair_plan.actions
+                if item.action_id in set(publication_repair_plan.next_action_ids)
+            ][:3]
+            if publication_repair_plan is not None
             else []
         ),
         publication_grade_benchmark=(

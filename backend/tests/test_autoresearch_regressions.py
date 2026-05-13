@@ -30,6 +30,8 @@ from schemas.autoresearch import (
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchPublicationEvidenceIndexRead,
+    AutoResearchPublicationRepairActionRead,
+    AutoResearchPublicationRepairPlanRead,
     AutoResearchPublishPackageRead,
     AutoResearchRegistryAssetRef,
     AutoResearchRunConfig,
@@ -559,6 +561,32 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         complete=True,
         evidence_index_fingerprint="evidence-index-fingerprint",
     )
+    repair_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        project_id=run.project_id,
+        run_id=run.id,
+        review_round=1,
+        review_fingerprint="review-fingerprint",
+        publication_tier=readiness.tier,
+        publication_readiness_score=readiness.score,
+        action_count=1,
+        pending_action_count=1,
+        auto_applicable_action_count=1,
+        next_action_ids=["repair_claims"],
+        actions=[
+            AutoResearchPublicationRepairActionRead(
+                action_id="repair_claims",
+                kind="repair_claim_evidence",
+                source="readiness",
+                priority="high",
+                title="Repair claim evidence",
+                detail="Refresh claim-evidence support.",
+                auto_applicable=True,
+                expected_outputs=["run_claim_evidence_matrix_json"],
+            )
+        ],
+        repair_plan_fingerprint="repair-plan-fingerprint",
+    )
     review = review_publish.AutoResearchRunReviewRead(
         project_id=run.project_id,
         run_id=run.id,
@@ -580,6 +608,7 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         publication_readiness=readiness,
         revision_dossier=dossier,
         publication_evidence_index=evidence_index,
+        publication_repair_plan=repair_plan,
         scores=review_publish.AutoResearchReviewScoresRead(),
     )
     publish = AutoResearchPublishPackageRead(
@@ -621,6 +650,11 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
     assert summary.publication_evidence_index_complete is True
     assert summary.publication_evidence_index_missing_count == 0
     assert summary.publication_evidence_index_blockers == []
+    assert summary.publication_repair_plan_complete is False
+    assert summary.publication_repair_plan_pending_count == 1
+    assert summary.publication_repair_plan_blocked_count == 0
+    assert summary.publication_repair_plan_auto_applicable_count == 1
+    assert summary.publication_repair_plan_next_actions == ["Repair claim evidence"]
     assert summary.publication_grade_benchmark is True
     assert summary.readiness_checks_passed == summary.readiness_checks_total
     assert summary.publication_blocker_count == 0

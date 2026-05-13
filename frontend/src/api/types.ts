@@ -1908,6 +1908,11 @@ export type AutoResearchOperatorRunSummary = {
   publication_evidence_index_complete: boolean;
   publication_evidence_index_missing_count: number;
   publication_evidence_index_blockers: string[];
+  publication_repair_plan_complete: boolean;
+  publication_repair_plan_pending_count: number;
+  publication_repair_plan_blocked_count: number;
+  publication_repair_plan_auto_applicable_count: number;
+  publication_repair_plan_next_actions: string[];
   publication_grade_benchmark: boolean;
   publication_blocker_count: number;
   publication_blockers: string[];

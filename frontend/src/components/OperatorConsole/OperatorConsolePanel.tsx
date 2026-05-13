@@ -424,6 +424,12 @@ export function OperatorConsolePanel({
                       / missing {run.publication_evidence_index_missing_count}
                     </small>
                     <small>
+                      repair{" "}
+                      {run.publication_repair_plan_complete ? "complete" : "pending"}{" "}
+                      / auto {run.publication_repair_plan_auto_applicable_count}{" "}
+                      / blocked {run.publication_repair_plan_blocked_count}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>
@@ -547,6 +553,18 @@ export function OperatorConsolePanel({
                     ? currentSummary.publication_evidence_index_complete
                       ? t("operator.complete")
                       : `${currentSummary.publication_evidence_index_missing_count} ${t("operator.missing")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.repairPlan")}
+                </span>
+                <strong data-testid="operator-repair-plan-summary">
+                  {currentSummary
+                    ? currentSummary.publication_repair_plan_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_repair_plan_auto_applicable_count} ${t("operator.auto")} / ${currentSummary.publication_repair_plan_blocked_count} ${t("operator.blocked")}`
                     : "n/a"}
                 </strong>
               </div>
@@ -1440,6 +1458,28 @@ export function OperatorConsolePanel({
                     </ul>
                   ) : (
                     <p>{t("operator.noEvidenceIndexBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-repair-plan">
+                  <span className="meta-label">
+                    {t("operator.repairPlan")}
+                  </span>
+                  <p>
+                    {currentSummary.publication_repair_plan_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_repair_plan_pending_count} ${t("operator.pending")} / ${currentSummary.publication_repair_plan_blocked_count} ${t("operator.blocked")}`}
+                  </p>
+                  {currentSummary.publication_repair_plan_next_actions.length ? (
+                    <ul>
+                      {currentSummary.publication_repair_plan_next_actions.map((action) => (
+                        <li key={action}>{action}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noRepairPlanActions")}</p>
                   )}
                 </div>
               ) : null}

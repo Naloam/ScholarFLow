@@ -2166,6 +2166,11 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     publication_evidence_index_complete: bool = False
     publication_evidence_index_missing_count: int = 0
     publication_evidence_index_blockers: list[str] = Field(default_factory=list)
+    publication_repair_plan_complete: bool = False
+    publication_repair_plan_pending_count: int = 0
+    publication_repair_plan_blocked_count: int = 0
+    publication_repair_plan_auto_applicable_count: int = 0
+    publication_repair_plan_next_actions: list[str] = Field(default_factory=list)
     publication_grade_benchmark: bool = False
     publication_blocker_count: int = 0
     publication_blockers: list[str] = Field(default_factory=list)

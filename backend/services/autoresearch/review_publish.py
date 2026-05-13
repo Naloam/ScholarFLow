@@ -46,6 +46,7 @@ from services.autoresearch.repository import (
     PAPER_COMPILED_PDF_FILENAME,
     RESEARCH_PROTOCOL_FILENAME,
     PUBLICATION_READINESS_FILENAME,
+    PUBLICATION_EVIDENCE_INDEX_FILENAME,
     REVISION_DOSSIER_FILENAME,
     load_run,
     load_run_bundle_index,
@@ -53,6 +54,7 @@ from services.autoresearch.repository import (
     benchmark_card_file_path,
     methodology_audit_file_path,
     publication_readiness_file_path,
+    publication_evidence_index_file_path,
     research_protocol_file_path,
     revision_dossier_file_path,
     run_dir,
@@ -60,6 +62,7 @@ from services.autoresearch.repository import (
 )
 from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.methodology_audit import build_methodology_audit
+from services.autoresearch.publication_evidence_index import build_publication_evidence_index
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import build_publication_readiness
 from services.projects.repository import get_project
@@ -97,6 +100,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_revision_dossier_json",
+    "run_publication_evidence_index_json",
     "run_paper_compile_report_json",
     "run_paper_build_script",
     "run_paper_latex_source",
@@ -125,6 +129,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_revision_dossier_json",
+    "run_publication_evidence_index_json",
     "generated_code",
 }
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
@@ -1945,6 +1950,26 @@ def build_run_review(
             "revision_dossier_path": str(revision_dossier_path),
         }
     )
+    publication_evidence_index = build_publication_evidence_index(
+        run,
+        review=review,
+        review_loop=review_loop,
+        review_path=_review_path(project_id, run_id),
+        review_loop_path=_review_loop_path(project_id, run_id),
+    )
+    publication_evidence_index_path = Path(
+        publication_evidence_index_file_path(project_id, run_id)
+    )
+    _write_json(
+        publication_evidence_index_path,
+        publication_evidence_index.model_dump(mode="json"),
+    )
+    review = review.model_copy(
+        update={
+            "publication_evidence_index": publication_evidence_index,
+            "publication_evidence_index_path": str(publication_evidence_index_path),
+        }
+    )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     _sync_paper_revision_state(
         run=run,
@@ -2054,6 +2079,7 @@ def _publish_package_fingerprint(
         "methodology_audit_path": review.methodology_audit_path,
         "publication_readiness_path": review.publication_readiness_path,
         "revision_dossier_path": review.revision_dossier_path,
+        "publication_evidence_index_path": review.publication_evidence_index_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
             review_loop.latest_review_fingerprint
@@ -2298,6 +2324,16 @@ def build_publication_manifest(
         else Path(revision_dossier_file_path(project_id, run_id))
     )
     dossier_path_value = str(dossier_path) if dossier_path.is_file() else package.revision_dossier_path
+    evidence_index_path = (
+        Path(package.publication_evidence_index_path)
+        if package.publication_evidence_index_path
+        else Path(publication_evidence_index_file_path(project_id, run_id))
+    )
+    evidence_index_path_value = (
+        str(evidence_index_path)
+        if evidence_index_path.is_file()
+        else package.publication_evidence_index_path
+    )
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -2329,6 +2365,8 @@ def build_publication_manifest(
         publication_readiness_sha256=_file_sha256(readiness_path),
         revision_dossier_path=dossier_path_value,
         revision_dossier_sha256=_file_sha256(dossier_path),
+        publication_evidence_index_path=evidence_index_path_value,
+        publication_evidence_index_sha256=_file_sha256(evidence_index_path),
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,
@@ -2387,6 +2425,11 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     blockers = [item.summary for item in review.findings if item.severity == "error"]
     semantic_final_blockers = _semantic_final_publish_blockers(review)
     compile_final_blockers = _compile_ready_final_blockers(run)
+    evidence_index_final_blockers = (
+        review.publication_evidence_index.blockers
+        if review.publication_evidence_index is not None
+        else ["Final publish requires a publication evidence index."]
+    )
     status_semantic_blockers = [
         item
         for item in semantic_final_blockers
@@ -2404,6 +2447,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     final_blockers = [
         *semantic_final_blockers,
         *compile_final_blockers,
+        *evidence_index_final_blockers,
         *review_loop_requirements,
         *(f"Missing final publish asset: {item.role}" for item in missing_final_assets),
     ]
@@ -2413,6 +2457,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         and not missing_final_assets
         and not semantic_final_blockers
         and not compile_final_blockers
+        and not evidence_index_final_blockers
         and not review_loop_requirements
     )
     completeness_status = "complete" if not missing_final_assets else "incomplete"
@@ -2448,6 +2493,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         research_protocol_path=review.research_protocol_path,
         methodology_audit_path=review.methodology_audit_path,
         revision_dossier_path=review.revision_dossier_path,
+        publication_evidence_index_path=review.publication_evidence_index_path,
         publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
@@ -2615,6 +2661,7 @@ def _archive_manifest(
             METHODOLOGY_AUDIT_FILENAME,
             PUBLICATION_READINESS_FILENAME,
             REVISION_DOSSIER_FILENAME,
+            PUBLICATION_EVIDENCE_INDEX_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,
         ],
@@ -2664,6 +2711,7 @@ def export_publish_package(
         for generated_path in (
             _review_path(project_id, run_id),
             _review_loop_path(project_id, run_id),
+            Path(publication_evidence_index_file_path(project_id, run_id)),
             _publish_manifest_path(project_id, run_id),
             archive_manifest_path,
         ):

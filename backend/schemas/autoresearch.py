@@ -54,6 +54,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_revision_dossier_json",
+    "run_publication_evidence_index_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_history_markdown",
@@ -103,6 +104,7 @@ AutoResearchLineageNodeKind = Literal[
     "methodology_audit",
     "publication_readiness",
     "revision_dossier",
+    "publication_evidence_index",
     "paper_plan",
     "figure_plan",
     "paper_revision_history",
@@ -1197,6 +1199,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     methodology_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
     revision_dossier_json: AutoResearchRegistryAssetRef | None = None
+    publication_evidence_index_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None
@@ -1484,6 +1487,57 @@ class AutoResearchBenchmarkCardRead(BaseModel):
     card_fingerprint: str
 
 
+AutoResearchEvidenceIndexCategory = Literal[
+    "run",
+    "benchmark",
+    "protocol",
+    "methodology",
+    "readiness",
+    "revision",
+    "claims",
+    "paper",
+    "code",
+    "review",
+    "package",
+]
+
+
+class AutoResearchEvidenceIndexItemRead(BaseModel):
+    evidence_id: str
+    label: str
+    category: AutoResearchEvidenceIndexCategory
+    role: AutoResearchBundleAssetRole | None = None
+    path: str | None = None
+    exists: bool = False
+    size_bytes: int | None = None
+    sha256: str | None = None
+    required_for_final_publish: bool = False
+    supports: list[str] = Field(default_factory=list)
+    status: Literal["present", "missing"] = "missing"
+
+
+class AutoResearchPublicationEvidenceIndexRead(BaseModel):
+    generated_at: datetime
+    index_id: str = "publication_evidence_index_v1"
+    project_id: str
+    run_id: str
+    selected_candidate_id: str | None = None
+    review_round: int = 0
+    review_fingerprint: str | None = None
+    publication_tier: AutoResearchPublicationTier = "exploratory"
+    publication_readiness_score: int = 0
+    evidence_item_count: int = 0
+    required_evidence_count: int = 0
+    present_required_evidence_count: int = 0
+    missing_required_evidence_count: int = 0
+    missing_required_evidence_ids: list[str] = Field(default_factory=list)
+    evidence_items: list[AutoResearchEvidenceIndexItemRead] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    complete: bool = False
+    evidence_index_fingerprint: str
+
+
 class AutoResearchMethodologyAuditRead(BaseModel):
     generated_at: datetime
     audit_id: str = "methodology_audit_v1"
@@ -1595,6 +1649,8 @@ class AutoResearchRunReviewRead(BaseModel):
     revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)
     revision_dossier: "AutoResearchRevisionDossierRead | None" = None
     revision_dossier_path: str | None = None
+    publication_evidence_index: AutoResearchPublicationEvidenceIndexRead | None = None
+    publication_evidence_index_path: str | None = None
 
 
 class AutoResearchReviewLoopRoundRead(BaseModel):
@@ -1732,6 +1788,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publication_readiness_sha256: str | None = None
     revision_dossier_path: str | None = None
     revision_dossier_sha256: str | None = None
+    publication_evidence_index_path: str | None = None
+    publication_evidence_index_sha256: str | None = None
     archive_ready: bool = False
     archive_current: bool = False
     review_round: int = 0
@@ -1823,6 +1881,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     research_protocol_path: str | None = None
     methodology_audit_path: str | None = None
     revision_dossier_path: str | None = None
+    publication_evidence_index_path: str | None = None
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
     publication_readiness_path: str | None = None

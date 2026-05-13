@@ -57,6 +57,7 @@ METHODOLOGY_AUDIT_FILENAME = "methodology_audit.json"
 PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
 REVISION_DOSSIER_FILENAME = "revision_dossier.json"
 PUBLICATION_EVIDENCE_INDEX_FILENAME = "publication_evidence_index.json"
+PUBLICATION_REPAIR_PLAN_FILENAME = "publication_repair_plan.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
 PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
@@ -664,6 +665,7 @@ def _run_derivation_lineage_edges(
             ("publication_readiness_json", "publication_readiness"),
             ("revision_dossier_json", "revision_dossier"),
             ("publication_evidence_index_json", "publication_evidence_index"),
+            ("publication_repair_plan_json", "publication_repair_plan"),
             ("narrative_report_markdown", "narrative_report"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
@@ -807,6 +809,26 @@ def _run_derivation_lineage_edges(
             target_attr="publication_evidence_index_json",
             target_kind="publication_evidence_index",
         )
+        add_derivation(
+            source_kind="revision_dossier",
+            source_id=f"{run.id}:revision_dossier",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.publication_evidence_index_json is not None:
+        add_derivation(
+            source_kind="publication_evidence_index",
+            source_id=f"{run.id}:publication_evidence_index",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.publication_readiness_json is not None:
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
     if run_assets.paper_compile_report_json is not None:
         add_derivation(
             source_kind="paper_compile_report",
@@ -878,6 +900,7 @@ def _run_lineage_edges(
         ("publication_readiness_json", "publication_readiness"),
         ("revision_dossier_json", "revision_dossier"),
         ("publication_evidence_index_json", "publication_evidence_index"),
+        ("publication_repair_plan_json", "publication_repair_plan"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
         ("paper_revision_history_markdown", "paper_revision_history"),
@@ -1086,6 +1109,18 @@ def _run_bundle_assets(
             )
             if files.publication_evidence_index_json is not None
             and files.publication_evidence_index_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_publication_repair_plan_json",
+                label="Selected run publication repair plan",
+                role="run_publication_repair_plan_json",
+                ref=files.publication_repair_plan_json,
+                required=False,
+            )
+            if files.publication_repair_plan_json is not None
+            and files.publication_repair_plan_json.exists
             else None
         ),
         _bundle_asset(
@@ -1749,6 +1784,10 @@ def publication_evidence_index_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PUBLICATION_EVIDENCE_INDEX_FILENAME)
 
 
+def publication_repair_plan_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PUBLICATION_REPAIR_PLAN_FILENAME)
+
+
 def paper_plan_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_PLAN_FILENAME)
 
@@ -1910,6 +1949,7 @@ def load_candidate_registry(
             publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
             revision_dossier_json=_asset_ref(run_base / REVISION_DOSSIER_FILENAME),
             publication_evidence_index_json=_asset_ref(run_base / PUBLICATION_EVIDENCE_INDEX_FILENAME),
+            publication_repair_plan_json=_asset_ref(run_base / PUBLICATION_REPAIR_PLAN_FILENAME),
             paper_plan_json=_asset_ref(
                 current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
             ),
@@ -2066,6 +2106,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),
         revision_dossier_json=_asset_ref(base / REVISION_DOSSIER_FILENAME),
         publication_evidence_index_json=_asset_ref(base / PUBLICATION_EVIDENCE_INDEX_FILENAME),
+        publication_repair_plan_json=_asset_ref(base / PUBLICATION_REPAIR_PLAN_FILENAME),
         paper_plan_json=_asset_ref(
             run.paper_plan_path or (base / PAPER_PLAN_FILENAME)
         ),

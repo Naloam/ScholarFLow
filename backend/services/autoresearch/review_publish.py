@@ -47,6 +47,7 @@ from services.autoresearch.repository import (
     RESEARCH_PROTOCOL_FILENAME,
     PUBLICATION_READINESS_FILENAME,
     PUBLICATION_EVIDENCE_INDEX_FILENAME,
+    PUBLICATION_REPAIR_PLAN_FILENAME,
     REVISION_DOSSIER_FILENAME,
     load_run,
     load_run_bundle_index,
@@ -55,6 +56,7 @@ from services.autoresearch.repository import (
     methodology_audit_file_path,
     publication_readiness_file_path,
     publication_evidence_index_file_path,
+    publication_repair_plan_file_path,
     research_protocol_file_path,
     revision_dossier_file_path,
     run_dir,
@@ -63,6 +65,7 @@ from services.autoresearch.repository import (
 from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_evidence_index import build_publication_evidence_index
+from services.autoresearch.publication_repair_plan import build_publication_repair_plan
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import build_publication_readiness
 from services.projects.repository import get_project
@@ -101,6 +104,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_publication_readiness_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
+    "run_publication_repair_plan_json",
     "run_paper_compile_report_json",
     "run_paper_build_script",
     "run_paper_latex_source",
@@ -130,6 +134,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_publication_readiness_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
+    "run_publication_repair_plan_json",
     "generated_code",
 }
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
@@ -1970,6 +1975,21 @@ def build_run_review(
             "publication_evidence_index_path": str(publication_evidence_index_path),
         }
     )
+    publication_repair_plan = build_publication_repair_plan(
+        review=review,
+        review_loop=review_loop,
+    )
+    publication_repair_plan_path = Path(publication_repair_plan_file_path(project_id, run_id))
+    _write_json(
+        publication_repair_plan_path,
+        publication_repair_plan.model_dump(mode="json"),
+    )
+    review = review.model_copy(
+        update={
+            "publication_repair_plan": publication_repair_plan,
+            "publication_repair_plan_path": str(publication_repair_plan_path),
+        }
+    )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     _sync_paper_revision_state(
         run=run,
@@ -2080,6 +2100,7 @@ def _publish_package_fingerprint(
         "publication_readiness_path": review.publication_readiness_path,
         "revision_dossier_path": review.revision_dossier_path,
         "publication_evidence_index_path": review.publication_evidence_index_path,
+        "publication_repair_plan_path": review.publication_repair_plan_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
             review_loop.latest_review_fingerprint
@@ -2334,6 +2355,14 @@ def build_publication_manifest(
         if evidence_index_path.is_file()
         else package.publication_evidence_index_path
     )
+    repair_plan_path = (
+        Path(package.publication_repair_plan_path)
+        if package.publication_repair_plan_path
+        else Path(publication_repair_plan_file_path(project_id, run_id))
+    )
+    repair_plan_path_value = (
+        str(repair_plan_path) if repair_plan_path.is_file() else package.publication_repair_plan_path
+    )
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -2367,6 +2396,8 @@ def build_publication_manifest(
         revision_dossier_sha256=_file_sha256(dossier_path),
         publication_evidence_index_path=evidence_index_path_value,
         publication_evidence_index_sha256=_file_sha256(evidence_index_path),
+        publication_repair_plan_path=repair_plan_path_value,
+        publication_repair_plan_sha256=_file_sha256(repair_plan_path),
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,
@@ -2494,6 +2525,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         methodology_audit_path=review.methodology_audit_path,
         revision_dossier_path=review.revision_dossier_path,
         publication_evidence_index_path=review.publication_evidence_index_path,
+        publication_repair_plan_path=review.publication_repair_plan_path,
         publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
@@ -2662,6 +2694,7 @@ def _archive_manifest(
             PUBLICATION_READINESS_FILENAME,
             REVISION_DOSSIER_FILENAME,
             PUBLICATION_EVIDENCE_INDEX_FILENAME,
+            PUBLICATION_REPAIR_PLAN_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,
         ],
@@ -2712,6 +2745,7 @@ def export_publish_package(
             _review_path(project_id, run_id),
             _review_loop_path(project_id, run_id),
             Path(publication_evidence_index_file_path(project_id, run_id)),
+            Path(publication_repair_plan_file_path(project_id, run_id)),
             _publish_manifest_path(project_id, run_id),
             archive_manifest_path,
         ):

@@ -709,6 +709,7 @@ export type AutoResearchLineageEdge = {
     | "publication_readiness"
     | "revision_dossier"
     | "publication_evidence_index"
+    | "publication_repair_plan"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -756,6 +757,7 @@ export type AutoResearchLineageEdge = {
     | "publication_readiness"
     | "revision_dossier"
     | "publication_evidence_index"
+    | "publication_repair_plan"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -798,6 +800,7 @@ export type AutoResearchRunRegistryFiles = {
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
   revision_dossier_json?: AutoResearchRegistryAssetRef | null;
   publication_evidence_index_json?: AutoResearchRegistryAssetRef | null;
+  publication_repair_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
@@ -943,6 +946,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_publication_readiness_json"
     | "run_revision_dossier_json"
     | "run_publication_evidence_index_json"
+    | "run_publication_repair_plan_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
     | "run_paper_revision_history_markdown"
@@ -1155,6 +1159,58 @@ export type AutoResearchPublicationEvidenceIndex = {
   evidence_index_fingerprint: string;
 };
 
+export type AutoResearchRepairActionKind =
+  | "rebuild_paper_sources"
+  | "repair_claim_evidence"
+  | "refresh_literature"
+  | "rerun_experiments"
+  | "update_benchmark_provenance"
+  | "rebuild_publish_package"
+  | "manual_review";
+
+export type AutoResearchRepairActionSource =
+  | "review_finding"
+  | "revision_action"
+  | "revision_dossier"
+  | "evidence_index"
+  | "readiness";
+
+export type AutoResearchPublicationRepairAction = {
+  action_id: string;
+  kind: AutoResearchRepairActionKind;
+  source: AutoResearchRepairActionSource;
+  source_ids: string[];
+  priority: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  status: "pending" | "blocked" | "not_needed";
+  auto_applicable: boolean;
+  expected_outputs: string[];
+  supporting_asset_ids: string[];
+  blockers: string[];
+};
+
+export type AutoResearchPublicationRepairPlan = {
+  generated_at: string;
+  plan_id: string;
+  project_id: string;
+  run_id: string;
+  selected_candidate_id?: string | null;
+  review_round: number;
+  review_fingerprint?: string | null;
+  publication_tier: AutoResearchPublicationTier;
+  publication_readiness_score: number;
+  action_count: number;
+  pending_action_count: number;
+  blocked_action_count: number;
+  auto_applicable_action_count: number;
+  next_action_ids: string[];
+  actions: AutoResearchPublicationRepairAction[];
+  complete: boolean;
+  blockers: string[];
+  repair_plan_fingerprint: string;
+};
+
 export type AutoResearchResearchProtocol = {
   generated_at: string;
   protocol_id: string;
@@ -1309,6 +1365,8 @@ export type AutoResearchRunReview = {
   revision_dossier_path?: string | null;
   publication_evidence_index?: AutoResearchPublicationEvidenceIndex | null;
   publication_evidence_index_path?: string | null;
+  publication_repair_plan?: AutoResearchPublicationRepairPlan | null;
+  publication_repair_plan_path?: string | null;
   scores: AutoResearchReviewScores;
   findings: AutoResearchReviewFinding[];
   revision_plan: AutoResearchRevisionAction[];
@@ -1581,6 +1639,8 @@ export type AutoResearchPublicationManifest = {
   revision_dossier_sha256?: string | null;
   publication_evidence_index_path?: string | null;
   publication_evidence_index_sha256?: string | null;
+  publication_repair_plan_path?: string | null;
+  publication_repair_plan_sha256?: string | null;
   archive_ready: boolean;
   archive_current: boolean;
   review_round: number;
@@ -1675,6 +1735,7 @@ export type AutoResearchPublishPackage = {
   methodology_audit_path?: string | null;
   revision_dossier_path?: string | null;
   publication_evidence_index_path?: string | null;
+  publication_repair_plan_path?: string | null;
   publication_readiness_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;

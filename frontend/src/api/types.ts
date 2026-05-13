@@ -1334,6 +1334,8 @@ export type AutoResearchPublicationManifest = {
   final_publish_ready: boolean;
   publication_tier: AutoResearchPublicationTier;
   publication_readiness_score: number;
+  publication_readiness_path?: string | null;
+  publication_readiness_sha256?: string | null;
   archive_ready: boolean;
   archive_current: boolean;
   review_round: number;

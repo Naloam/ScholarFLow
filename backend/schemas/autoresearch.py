@@ -1561,6 +1561,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     final_publish_ready: bool = False
     publication_tier: AutoResearchPublicationTier = "exploratory"
     publication_readiness_score: int = 0
+    publication_readiness_path: str | None = None
+    publication_readiness_sha256: str | None = None
     archive_ready: bool = False
     archive_current: bool = False
     review_round: int = 0

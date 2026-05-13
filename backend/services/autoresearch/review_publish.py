@@ -2071,6 +2071,12 @@ def build_publication_manifest(
         code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
     compiled_paper_path = _compiled_paper_path(run)
     paper_compile_output_paths = _paper_compile_output_paths(run)
+    readiness_path = (
+        Path(package.publication_readiness_path)
+        if package.publication_readiness_path
+        else Path(publication_readiness_file_path(project_id, run_id))
+    )
+    readiness_path_value = str(readiness_path) if readiness_path.is_file() else package.publication_readiness_path
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -2092,6 +2098,8 @@ def build_publication_manifest(
         final_publish_ready=package.final_publish_ready,
         publication_tier=package.publication_tier,
         publication_readiness_score=package.publication_readiness_score,
+        publication_readiness_path=readiness_path_value,
+        publication_readiness_sha256=_file_sha256(readiness_path),
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -592,6 +593,77 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         item.role == "run_publication_readiness_json"
         for item in package.final_required_assets
     )
+
+
+def test_publication_manifest_records_readiness_artifact_identity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    monkeypatch.setattr(
+        review_publish,
+        "_project_title",
+        lambda project_id: "Publication Manifest Readiness Project",
+    )
+    spec, benchmark = _external_publication_spec()
+    project_id = "project_publication_manifest_readiness"
+    run_id = "run_publication_manifest_readiness"
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+    ).model_copy(
+        update={
+            "id": run_id,
+            "project_id": project_id,
+            "paper_latex_source": "\\documentclass{article}\\begin{document}Ready\\end{document}",
+            "paper_bibliography_bib": "@article{ready2026,title={Ready},author={A},year={2026}}",
+        }
+    )
+    autoresearch_repository.save_run(run)
+    review = review_publish.build_run_review(project_id, run_id)
+    assert review is not None
+    assert review.publication_readiness is not None
+    assert review.publication_readiness_path is not None
+    readiness_path = Path(review.publication_readiness_path)
+    assert readiness_path.is_file()
+    expected_sha256 = hashlib.sha256(readiness_path.read_bytes()).hexdigest()
+
+    code_package_path = review_publish._code_package_path(project_id, run_id)
+    code_package_path.parent.mkdir(parents=True, exist_ok=True)
+    code_package_path.write_bytes(b"fake code package")
+    package = AutoResearchPublishPackageRead(
+        project_id=project_id,
+        run_id=run_id,
+        package_id="publish_ready_bundle",
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        status="publish_ready",
+        publish_ready=True,
+        review_bundle_ready=True,
+        final_publish_ready=True,
+        publication_tier=review.publication_readiness.tier,
+        publication_readiness_score=review.publication_readiness.score,
+        publication_readiness_path=str(readiness_path),
+        manifest_path=str(review_publish._publish_manifest_path(project_id, run_id)),
+        archive_path=str(review_publish._publish_archive_path(project_id, run_id)),
+        archive_ready=True,
+        archive_current=True,
+        package_fingerprint="package-fingerprint",
+    )
+    monkeypatch.setattr(
+        review_publish,
+        "build_publish_package",
+        lambda current_project_id, current_run_id: package,
+    )
+
+    manifest = review_publish.build_publication_manifest(project_id, run_id)
+
+    assert manifest is not None
+    assert manifest.publication_readiness_path == str(readiness_path)
+    assert manifest.publication_readiness_sha256 == expected_sha256
+    persisted = json.loads(Path(manifest.publication_manifest_path).read_text(encoding="utf-8"))
+    assert persisted["publication_readiness_path"] == str(readiness_path)
+    assert persisted["publication_readiness_sha256"] == expected_sha256
 
 
 def test_autoresearch_resume_preserves_checkpointed_literature_synthesis(

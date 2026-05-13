@@ -706,6 +706,7 @@ export type AutoResearchLineageEdge = {
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
+    | "revision_dossier"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -750,6 +751,7 @@ export type AutoResearchLineageEdge = {
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
+    | "revision_dossier"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -789,6 +791,7 @@ export type AutoResearchRunRegistryFiles = {
   research_protocol_json?: AutoResearchRegistryAssetRef | null;
   methodology_audit_json?: AutoResearchRegistryAssetRef | null;
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
+  revision_dossier_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
@@ -931,6 +934,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_research_protocol_json"
     | "run_methodology_audit_json"
     | "run_publication_readiness_json"
+    | "run_revision_dossier_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
     | "run_paper_revision_history_markdown"
@@ -1212,6 +1216,8 @@ export type AutoResearchRunReview = {
   methodology_audit_path?: string | null;
   publication_readiness?: AutoResearchPublicationReadiness | null;
   publication_readiness_path?: string | null;
+  revision_dossier?: AutoResearchRevisionDossier | null;
+  revision_dossier_path?: string | null;
   scores: AutoResearchReviewScores;
   findings: AutoResearchReviewFinding[];
   revision_plan: AutoResearchRevisionAction[];
@@ -1282,6 +1288,51 @@ export type AutoResearchReviewLoop = {
   pending_action_count: number;
   completed_action_count: number;
   pending_revision_actions: string[];
+};
+
+export type AutoResearchRevisionDossierItem = {
+  item_id: string;
+  finding_id?: string | null;
+  issue_id?: string | null;
+  severity: "info" | "warning" | "error";
+  category:
+    | "artifact"
+    | "benchmark"
+    | "statistics"
+    | "citation"
+    | "context"
+    | "provenance"
+    | "publish";
+  summary: string;
+  response: string;
+  status: "resolved" | "action_required" | "blocked";
+  required_for_final_publish: boolean;
+  action_ids: string[];
+  action_titles: string[];
+  supporting_asset_ids: string[];
+};
+
+export type AutoResearchRevisionDossier = {
+  generated_at: string;
+  dossier_id: string;
+  review_round: number;
+  review_fingerprint?: string | null;
+  review_path?: string | null;
+  overall_status: "ready" | "needs_revision" | "blocked";
+  publication_tier: AutoResearchPublicationTier;
+  publication_readiness_score: number;
+  methodology_audit_score: number;
+  methodology_audit_compliant: boolean;
+  open_issue_count: number;
+  resolved_issue_count: number;
+  pending_action_count: number;
+  completed_action_count: number;
+  blocker_count: number;
+  final_blocker_count: number;
+  required_action_titles: string[];
+  items: AutoResearchRevisionDossierItem[];
+  complete: boolean;
+  dossier_fingerprint: string;
 };
 
 export type AutoResearchReviewLoopApply = {
@@ -1433,6 +1484,8 @@ export type AutoResearchPublicationManifest = {
   methodology_audit_sha256?: string | null;
   publication_readiness_path?: string | null;
   publication_readiness_sha256?: string | null;
+  revision_dossier_path?: string | null;
+  revision_dossier_sha256?: string | null;
   archive_ready: boolean;
   archive_current: boolean;
   review_round: number;
@@ -1524,6 +1577,7 @@ export type AutoResearchPublishPackage = {
   review_path?: string | null;
   research_protocol_path?: string | null;
   methodology_audit_path?: string | null;
+  revision_dossier_path?: string | null;
   publication_readiness_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;

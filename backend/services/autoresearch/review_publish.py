@@ -31,6 +31,8 @@ from schemas.autoresearch import (
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopRoundRead,
     AutoResearchReviewScoresRead,
+    AutoResearchRevisionDossierItemRead,
+    AutoResearchRevisionDossierRead,
     AutoResearchRevisionActionRead,
     AutoResearchRunRead,
     AutoResearchRunReviewRead,
@@ -42,12 +44,14 @@ from services.autoresearch.repository import (
     PAPER_COMPILED_PDF_FILENAME,
     RESEARCH_PROTOCOL_FILENAME,
     PUBLICATION_READINESS_FILENAME,
+    REVISION_DOSSIER_FILENAME,
     load_run,
     load_run_bundle_index,
     load_run_registry,
     methodology_audit_file_path,
     publication_readiness_file_path,
     research_protocol_file_path,
+    revision_dossier_file_path,
     run_dir,
     save_run,
 )
@@ -87,6 +91,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
+    "run_revision_dossier_json",
     "run_paper_compile_report_json",
     "run_paper_build_script",
     "run_paper_latex_source",
@@ -113,6 +118,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
+    "run_revision_dossier_json",
     "generated_code",
 }
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
@@ -1701,6 +1707,105 @@ def _build_review_loop(
     return loop
 
 
+def _revision_dossier_response(
+    *,
+    finding: AutoResearchReviewFindingRead,
+    action_titles: list[str],
+    resolved: bool,
+) -> str:
+    if resolved:
+        return "Resolved in the current review loop; preserve the repaired evidence and manuscript state."
+    if action_titles:
+        return "Required revision: " + "; ".join(action_titles) + "."
+    return f"Address this {finding.category} finding before treating the run as publication-ready."
+
+
+def _build_revision_dossier(
+    *,
+    review: AutoResearchRunReviewRead,
+    review_loop: AutoResearchReviewLoopRead,
+) -> AutoResearchRevisionDossierRead:
+    issues_by_finding_id: dict[str, AutoResearchReviewLoopIssueRead] = {}
+    for issue in review_loop.issues:
+        for finding_id in issue.finding_ids:
+            issues_by_finding_id[finding_id] = issue
+    actions_by_finding_id: dict[str, list[AutoResearchReviewLoopActionRead]] = {}
+    for action in review_loop.actions:
+        for finding_id in action.finding_ids:
+            actions_by_finding_id.setdefault(finding_id, []).append(action)
+
+    items: list[AutoResearchRevisionDossierItemRead] = []
+    for finding in review.findings:
+        if finding.severity == "info":
+            continue
+        issue = issues_by_finding_id.get(finding.id)
+        actions = actions_by_finding_id.get(finding.id, [])
+        action_titles = [item.title for item in actions]
+        resolved = issue is not None and issue.status == "resolved"
+        required_for_final_publish = finding.severity == "error" or any(
+            item.priority == "high" for item in actions
+        )
+        status = (
+            "resolved"
+            if resolved
+            else "blocked"
+            if required_for_final_publish
+            else "action_required"
+        )
+        items.append(
+            AutoResearchRevisionDossierItemRead(
+                item_id=f"revision_item_{len(items) + 1}",
+                finding_id=finding.id,
+                issue_id=issue.issue_id if issue is not None else None,
+                severity=finding.severity,
+                category=finding.category,
+                summary=finding.summary,
+                response=_revision_dossier_response(
+                    finding=finding,
+                    action_titles=action_titles,
+                    resolved=resolved,
+                ),
+                status=status,
+                required_for_final_publish=required_for_final_publish,
+                action_ids=[item.action_id for item in actions],
+                action_titles=action_titles,
+                supporting_asset_ids=list(finding.supporting_asset_ids),
+            )
+        )
+
+    publication_readiness = review.publication_readiness
+    methodology_audit = review.methodology_audit
+    required_open_items = [
+        item for item in items if item.required_for_final_publish and item.status != "resolved"
+    ]
+    payload = {
+        "dossier_id": "revision_dossier_v1",
+        "review_round": review_loop.current_round,
+        "review_fingerprint": review_loop.latest_review_fingerprint,
+        "review_path": review.persisted_path,
+        "overall_status": review.overall_status,
+        "publication_tier": publication_readiness.tier if publication_readiness is not None else "exploratory",
+        "publication_readiness_score": publication_readiness.score if publication_readiness is not None else 0,
+        "methodology_audit_score": methodology_audit.score if methodology_audit is not None else 0,
+        "methodology_audit_compliant": methodology_audit.compliant if methodology_audit is not None else False,
+        "open_issue_count": review_loop.open_issue_count,
+        "resolved_issue_count": review_loop.resolved_issue_count,
+        "pending_action_count": review_loop.pending_action_count,
+        "completed_action_count": review_loop.completed_action_count,
+        "blocker_count": sum(1 for item in review.findings if item.severity == "error"),
+        "final_blocker_count": len(required_open_items),
+        "required_action_titles": list(review_loop.pending_revision_actions),
+        "items": [item.model_dump(mode="json") for item in items],
+        "complete": not required_open_items,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return AutoResearchRevisionDossierRead(
+        generated_at=_utcnow(),
+        dossier_fingerprint=hashlib.sha256(encoded).hexdigest(),
+        **payload,
+    )
+
+
 def build_run_review(
     project_id: str,
     run_id: str,
@@ -1807,6 +1912,19 @@ def build_run_review(
         paper_markdown=paper_markdown,
         advance_round=advance_review_loop_round,
     )
+    revision_dossier = _build_revision_dossier(
+        review=review,
+        review_loop=review_loop,
+    )
+    revision_dossier_path = Path(revision_dossier_file_path(project_id, run_id))
+    _write_json(revision_dossier_path, revision_dossier.model_dump(mode="json"))
+    review = review.model_copy(
+        update={
+            "revision_dossier": revision_dossier,
+            "revision_dossier_path": str(revision_dossier_path),
+        }
+    )
+    _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     _sync_paper_revision_state(
         run=run,
         review=review,
@@ -1913,6 +2031,7 @@ def _publish_package_fingerprint(
         "research_protocol_path": review.research_protocol_path,
         "methodology_audit_path": review.methodology_audit_path,
         "publication_readiness_path": review.publication_readiness_path,
+        "revision_dossier_path": review.revision_dossier_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
             review_loop.latest_review_fingerprint
@@ -2143,6 +2262,12 @@ def build_publication_manifest(
         else Path(publication_readiness_file_path(project_id, run_id))
     )
     readiness_path_value = str(readiness_path) if readiness_path.is_file() else package.publication_readiness_path
+    dossier_path = (
+        Path(package.revision_dossier_path)
+        if package.revision_dossier_path
+        else Path(revision_dossier_file_path(project_id, run_id))
+    )
+    dossier_path_value = str(dossier_path) if dossier_path.is_file() else package.revision_dossier_path
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -2170,6 +2295,8 @@ def build_publication_manifest(
         methodology_audit_sha256=_file_sha256(audit_path),
         publication_readiness_path=readiness_path_value,
         publication_readiness_sha256=_file_sha256(readiness_path),
+        revision_dossier_path=dossier_path_value,
+        revision_dossier_sha256=_file_sha256(dossier_path),
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,
@@ -2287,6 +2414,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         ),
         research_protocol_path=review.research_protocol_path,
         methodology_audit_path=review.methodology_audit_path,
+        revision_dossier_path=review.revision_dossier_path,
         publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
@@ -2452,6 +2580,7 @@ def _archive_manifest(
             RESEARCH_PROTOCOL_FILENAME,
             METHODOLOGY_AUDIT_FILENAME,
             PUBLICATION_READINESS_FILENAME,
+            REVISION_DOSSIER_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,
         ],

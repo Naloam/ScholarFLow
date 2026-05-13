@@ -52,6 +52,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
+    "run_revision_dossier_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_history_markdown",
@@ -99,6 +100,7 @@ AutoResearchLineageNodeKind = Literal[
     "research_protocol",
     "methodology_audit",
     "publication_readiness",
+    "revision_dossier",
     "paper_plan",
     "figure_plan",
     "paper_revision_history",
@@ -140,6 +142,7 @@ AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
 AutoResearchRevisionPriority = Literal["high", "medium", "low"]
 AutoResearchReviewLoopIssueStatus = Literal["open", "resolved"]
 AutoResearchReviewLoopActionStatus = Literal["pending", "completed"]
+AutoResearchRevisionDossierItemStatus = Literal["resolved", "action_required", "blocked"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
@@ -1190,6 +1193,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     research_protocol_json: AutoResearchRegistryAssetRef | None = None
     methodology_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
+    revision_dossier_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None
@@ -1554,6 +1558,8 @@ class AutoResearchRunReviewRead(BaseModel):
     scores: AutoResearchReviewScoresRead
     findings: list[AutoResearchReviewFindingRead] = Field(default_factory=list)
     revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)
+    revision_dossier: "AutoResearchRevisionDossierRead | None" = None
+    revision_dossier_path: str | None = None
 
 
 class AutoResearchReviewLoopRoundRead(BaseModel):
@@ -1617,6 +1623,44 @@ class AutoResearchReviewLoopRead(BaseModel):
     pending_revision_actions: list[str] = Field(default_factory=list)
 
 
+class AutoResearchRevisionDossierItemRead(BaseModel):
+    item_id: str
+    finding_id: str | None = None
+    issue_id: str | None = None
+    severity: AutoResearchReviewSeverity = "warning"
+    category: AutoResearchReviewCategory = "context"
+    summary: str
+    response: str
+    status: AutoResearchRevisionDossierItemStatus = "action_required"
+    required_for_final_publish: bool = False
+    action_ids: list[str] = Field(default_factory=list)
+    action_titles: list[str] = Field(default_factory=list)
+    supporting_asset_ids: list[str] = Field(default_factory=list)
+
+
+class AutoResearchRevisionDossierRead(BaseModel):
+    generated_at: datetime
+    dossier_id: str = "revision_dossier_v1"
+    review_round: int = 0
+    review_fingerprint: str | None = None
+    review_path: str | None = None
+    overall_status: AutoResearchReviewStatus = "needs_revision"
+    publication_tier: AutoResearchPublicationTier = "exploratory"
+    publication_readiness_score: int = 0
+    methodology_audit_score: int = 0
+    methodology_audit_compliant: bool = False
+    open_issue_count: int = 0
+    resolved_issue_count: int = 0
+    pending_action_count: int = 0
+    completed_action_count: int = 0
+    blocker_count: int = 0
+    final_blocker_count: int = 0
+    required_action_titles: list[str] = Field(default_factory=list)
+    items: list[AutoResearchRevisionDossierItemRead] = Field(default_factory=list)
+    complete: bool = False
+    dossier_fingerprint: str
+
+
 class AutoResearchDeploymentRefRead(BaseModel):
     deployment_id: str
     label: str
@@ -1649,6 +1693,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     methodology_audit_sha256: str | None = None
     publication_readiness_path: str | None = None
     publication_readiness_sha256: str | None = None
+    revision_dossier_path: str | None = None
+    revision_dossier_sha256: str | None = None
     archive_ready: bool = False
     archive_current: bool = False
     review_round: int = 0
@@ -1738,6 +1784,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     publication_readiness_score: int = 0
     research_protocol_path: str | None = None
     methodology_audit_path: str | None = None
+    revision_dossier_path: str | None = None
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
     publication_readiness_path: str | None = None

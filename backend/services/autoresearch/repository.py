@@ -55,6 +55,7 @@ CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 RESEARCH_PROTOCOL_FILENAME = "research_protocol.json"
 METHODOLOGY_AUDIT_FILENAME = "methodology_audit.json"
 PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
+REVISION_DOSSIER_FILENAME = "revision_dossier.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
 PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
@@ -546,6 +547,7 @@ def _candidate_lineage_edges(
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
             ("publication_readiness_json", "publication_readiness"),
+            ("revision_dossier_json", "revision_dossier"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
             ("paper_revision_history_markdown", "paper_revision_history"),
@@ -650,6 +652,7 @@ def _run_derivation_lineage_edges(
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
             ("publication_readiness_json", "publication_readiness"),
+            ("revision_dossier_json", "revision_dossier"),
             ("narrative_report_markdown", "narrative_report"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
@@ -719,6 +722,26 @@ def _run_derivation_lineage_edges(
             target_attr="publication_readiness_json",
             target_kind="publication_readiness",
         )
+        add_derivation(
+            source_kind="methodology_audit",
+            source_id=f"{run.id}:methodology_audit",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
+    if run_assets.publication_readiness_json is not None:
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
+    if run_assets.claim_evidence_matrix_json is not None:
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
     if run_assets.paper_compile_report_json is not None:
         add_derivation(
             source_kind="paper_compile_report",
@@ -787,6 +810,7 @@ def _run_lineage_edges(
         ("research_protocol_json", "research_protocol"),
         ("methodology_audit_json", "methodology_audit"),
         ("publication_readiness_json", "publication_readiness"),
+        ("revision_dossier_json", "revision_dossier"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
         ("paper_revision_history_markdown", "paper_revision_history"),
@@ -961,6 +985,17 @@ def _run_bundle_assets(
                 required=False,
             )
             if files.publication_readiness_json is not None and files.publication_readiness_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_revision_dossier_json",
+                label="Selected run revision dossier",
+                role="run_revision_dossier_json",
+                ref=files.revision_dossier_json,
+                required=False,
+            )
+            if files.revision_dossier_json is not None and files.revision_dossier_json.exists
             else None
         ),
         _bundle_asset(
@@ -1616,6 +1651,10 @@ def publication_readiness_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PUBLICATION_READINESS_FILENAME)
 
 
+def revision_dossier_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / REVISION_DOSSIER_FILENAME)
+
+
 def paper_plan_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_PLAN_FILENAME)
 
@@ -1770,6 +1809,7 @@ def load_candidate_registry(
             research_protocol_json=_asset_ref(run_base / RESEARCH_PROTOCOL_FILENAME),
             methodology_audit_json=_asset_ref(run_base / METHODOLOGY_AUDIT_FILENAME),
             publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
+            revision_dossier_json=_asset_ref(run_base / REVISION_DOSSIER_FILENAME),
             paper_plan_json=_asset_ref(
                 current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
             ),
@@ -1923,6 +1963,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         research_protocol_json=_asset_ref(base / RESEARCH_PROTOCOL_FILENAME),
         methodology_audit_json=_asset_ref(base / METHODOLOGY_AUDIT_FILENAME),
         publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),
+        revision_dossier_json=_asset_ref(base / REVISION_DOSSIER_FILENAME),
         paper_plan_json=_asset_ref(
             run.paper_plan_path or (base / PAPER_PLAN_FILENAME)
         ),

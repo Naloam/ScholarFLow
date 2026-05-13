@@ -701,6 +701,7 @@ export type AutoResearchLineageEdge = {
     | "manifest"
     | "generated_code"
     | "benchmark"
+    | "benchmark_card"
     | "narrative_report"
     | "claim_evidence_matrix"
     | "research_protocol"
@@ -746,6 +747,7 @@ export type AutoResearchLineageEdge = {
     | "manifest"
     | "generated_code"
     | "benchmark"
+    | "benchmark_card"
     | "narrative_report"
     | "claim_evidence_matrix"
     | "research_protocol"
@@ -784,6 +786,7 @@ export type AutoResearchRunRegistryFiles = {
   portfolio_json?: AutoResearchRegistryAssetRef | null;
   artifact_json?: AutoResearchRegistryAssetRef | null;
   benchmark_json?: AutoResearchRegistryAssetRef | null;
+  benchmark_card_json?: AutoResearchRegistryAssetRef | null;
   generated_code?: AutoResearchRegistryAssetRef | null;
   paper_markdown?: AutoResearchRegistryAssetRef | null;
   narrative_report_markdown?: AutoResearchRegistryAssetRef | null;
@@ -924,6 +927,7 @@ export type AutoResearchBundleAssetRead = {
     | "program_json"
     | "portfolio_json"
     | "benchmark_json"
+    | "run_benchmark_card_json"
     | "run_plan_json"
     | "run_spec_json"
     | "run_artifact_json"
@@ -1068,6 +1072,36 @@ export type AutoResearchPublicationReadiness = {
   warnings: string[];
 };
 
+export type AutoResearchBenchmarkCard = {
+  generated_at: string;
+  card_id: string;
+  topic?: string | null;
+  task_family?: AutoResearchTaskFamily | null;
+  benchmark_name?: string | null;
+  benchmark_description?: string | null;
+  dataset_name?: string | null;
+  dataset_description?: string | null;
+  train_size: number;
+  test_size: number;
+  total_examples: number;
+  label_space: string[];
+  input_fields: string[];
+  source_kind?: AutoResearchBenchmarkKind | null;
+  source_url?: string | null;
+  source_dataset_id?: string | null;
+  source_revision?: string | null;
+  source_license?: string | null;
+  source_fingerprint?: string | null;
+  publication_grade: boolean;
+  provenance_complete: boolean;
+  checks: AutoResearchReadinessCheck[];
+  limitations: string[];
+  recommended_use: string[];
+  blockers: string[];
+  warnings: string[];
+  card_fingerprint: string;
+};
+
 export type AutoResearchResearchProtocol = {
   generated_at: string;
   protocol_id: string;
@@ -1210,6 +1244,8 @@ export type AutoResearchRunReview = {
   evidence: AutoResearchReviewEvidence;
   citation_coverage: AutoResearchCitationCoverage;
   novelty_assessment?: AutoResearchNoveltyAssessment | null;
+  benchmark_card?: AutoResearchBenchmarkCard | null;
+  benchmark_card_path?: string | null;
   research_protocol?: AutoResearchResearchProtocol | null;
   research_protocol_path?: string | null;
   methodology_audit?: AutoResearchMethodologyAudit | null;
@@ -1478,6 +1514,8 @@ export type AutoResearchPublicationManifest = {
   final_publish_ready: boolean;
   publication_tier: AutoResearchPublicationTier;
   publication_readiness_score: number;
+  benchmark_card_path?: string | null;
+  benchmark_card_sha256?: string | null;
   research_protocol_path?: string | null;
   research_protocol_sha256?: string | null;
   methodology_audit_path?: string | null;
@@ -1575,6 +1613,7 @@ export type AutoResearchPublishPackage = {
   publication_readiness_score: number;
   completeness_status: "complete" | "incomplete";
   review_path?: string | null;
+  benchmark_card_path?: string | null;
   research_protocol_path?: string | null;
   methodology_audit_path?: string | null;
   revision_dossier_path?: string | null;

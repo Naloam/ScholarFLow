@@ -13,6 +13,7 @@ from schemas.autoresearch import (
     AutoResearchBundleAssetRead,
     AutoResearchBundleIndexRead,
     AutoResearchBundleRead,
+    AutoResearchBenchmarkCardRead,
     AutoResearchCitationCoverageRead,
     AutoResearchDeploymentRefRead,
     AutoResearchMethodologyAuditRead,
@@ -40,6 +41,7 @@ from schemas.autoresearch import (
 )
 from services.autoresearch.repository import (
     METHODOLOGY_AUDIT_FILENAME,
+    BENCHMARK_CARD_FILENAME,
     PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME,
     PAPER_COMPILED_PDF_FILENAME,
     RESEARCH_PROTOCOL_FILENAME,
@@ -48,6 +50,7 @@ from services.autoresearch.repository import (
     load_run,
     load_run_bundle_index,
     load_run_registry,
+    benchmark_card_file_path,
     methodology_audit_file_path,
     publication_readiness_file_path,
     research_protocol_file_path,
@@ -55,6 +58,7 @@ from services.autoresearch.repository import (
     run_dir,
     save_run,
 )
+from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import build_publication_readiness
@@ -76,6 +80,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "program_json",
     "portfolio_json",
     "benchmark_json",
+    "run_benchmark_card_json",
     "run_plan_json",
     "run_spec_json",
     "run_artifact_json",
@@ -104,6 +109,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "program_json",
     "portfolio_json",
     "benchmark_json",
+    "run_benchmark_card_json",
     "run_plan_json",
     "run_spec_json",
     "run_artifact_json",
@@ -819,6 +825,7 @@ def _review_findings(
     selected_manifest_source: str | None,
     paper_markdown: str,
     novelty_assessment: AutoResearchNoveltyAssessmentRead,
+    benchmark_card: AutoResearchBenchmarkCardRead,
     research_protocol: AutoResearchResearchProtocolRead,
     methodology_audit: AutoResearchMethodologyAuditRead,
     publication_readiness: AutoResearchPublicationReadinessRead,
@@ -959,6 +966,14 @@ def _review_findings(
             summary=summary,
             detail=detail,
             supporting_asset_ids=["run_claim_evidence_matrix_json", "run_paper_markdown"],
+        )
+    if benchmark_card.blockers:
+        add_finding(
+            severity="error",
+            category="benchmark",
+            summary="Benchmark card is incomplete for publication review.",
+            detail="; ".join(benchmark_card.blockers),
+            supporting_asset_ids=["run_benchmark_card_json", "benchmark_json", "run_spec_json"],
         )
     if research_protocol.blockers:
         add_finding(
@@ -1817,6 +1832,9 @@ def build_run_review(
         return None
 
     paper_markdown = _paper_markdown(run)
+    benchmark_card = build_benchmark_card(run)
+    benchmark_card_path = Path(benchmark_card_file_path(project_id, run_id))
+    _write_json(benchmark_card_path, benchmark_card.model_dump(mode="json"))
     research_protocol = build_research_protocol(run)
     research_protocol_path = Path(research_protocol_file_path(project_id, run_id))
     _write_json(research_protocol_path, research_protocol.model_dump(mode="json"))
@@ -1846,6 +1864,7 @@ def build_run_review(
         selected_manifest_source=selected_entry.manifest_source if selected_entry is not None else None,
         paper_markdown=paper_markdown,
         novelty_assessment=novelty_assessment,
+        benchmark_card=benchmark_card,
         research_protocol=research_protocol,
         methodology_audit=methodology_audit,
         publication_readiness=publication_readiness,
@@ -1893,6 +1912,8 @@ def build_run_review(
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty_assessment,
+        benchmark_card=benchmark_card,
+        benchmark_card_path=str(benchmark_card_path),
         research_protocol=research_protocol,
         research_protocol_path=str(research_protocol_path),
         methodology_audit=methodology_audit,
@@ -2028,6 +2049,7 @@ def _publish_package_fingerprint(
         "selected_candidate_id": review.selected_candidate_id,
         "review_status": review.overall_status,
         "review_path": review.persisted_path,
+        "benchmark_card_path": review.benchmark_card_path,
         "research_protocol_path": review.research_protocol_path,
         "methodology_audit_path": review.methodology_audit_path,
         "publication_readiness_path": review.publication_readiness_path,
@@ -2244,6 +2266,14 @@ def build_publication_manifest(
         code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
     compiled_paper_path = _compiled_paper_path(run)
     paper_compile_output_paths = _paper_compile_output_paths(run)
+    benchmark_card_path = (
+        Path(package.benchmark_card_path)
+        if package.benchmark_card_path
+        else Path(benchmark_card_file_path(project_id, run_id))
+    )
+    benchmark_card_path_value = (
+        str(benchmark_card_path) if benchmark_card_path.is_file() else package.benchmark_card_path
+    )
     protocol_path = (
         Path(package.research_protocol_path)
         if package.research_protocol_path
@@ -2289,6 +2319,8 @@ def build_publication_manifest(
         final_publish_ready=package.final_publish_ready,
         publication_tier=package.publication_tier,
         publication_readiness_score=package.publication_readiness_score,
+        benchmark_card_path=benchmark_card_path_value,
+        benchmark_card_sha256=_file_sha256(benchmark_card_path),
         research_protocol_path=protocol_path_value,
         research_protocol_sha256=_file_sha256(protocol_path),
         methodology_audit_path=audit_path_value,
@@ -2412,6 +2444,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
             if review.publication_readiness is not None
             else 0
         ),
+        benchmark_card_path=review.benchmark_card_path,
         research_protocol_path=review.research_protocol_path,
         methodology_audit_path=review.methodology_audit_path,
         revision_dossier_path=review.revision_dossier_path,
@@ -2577,6 +2610,7 @@ def _archive_manifest(
         "generated_files": [
             REVIEW_FILENAME,
             REVIEW_LOOP_FILENAME,
+            BENCHMARK_CARD_FILENAME,
             RESEARCH_PROTOCOL_FILENAME,
             METHODOLOGY_AUDIT_FILENAME,
             PUBLICATION_READINESS_FILENAME,

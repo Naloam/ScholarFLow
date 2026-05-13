@@ -50,6 +50,7 @@ from schemas.autoresearch import (
 )
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
+from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import (
@@ -636,6 +637,9 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     readiness_path = Path(
         autoresearch_repository.publication_readiness_file_path(project_id, run_id)
     )
+    benchmark_card_path = Path(
+        autoresearch_repository.benchmark_card_file_path(project_id, run_id)
+    )
     protocol_path = Path(
         autoresearch_repository.research_protocol_file_path(project_id, run_id)
     )
@@ -646,6 +650,7 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         autoresearch_repository.revision_dossier_file_path(project_id, run_id)
     )
     assert not readiness_path.is_file()
+    assert not benchmark_card_path.is_file()
     assert not protocol_path.is_file()
     assert not audit_path.is_file()
     assert not dossier_path.is_file()
@@ -653,6 +658,13 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     review = review_publish.build_run_review(project_id, run_id)
 
     assert review is not None
+    assert review.benchmark_card is not None
+    assert review.benchmark_card_path == str(benchmark_card_path)
+    assert benchmark_card_path.is_file()
+    benchmark_card_payload = json.loads(benchmark_card_path.read_text(encoding="utf-8"))
+    assert benchmark_card_payload["publication_grade"] is True
+    assert benchmark_card_payload["provenance_complete"] is True
+    assert benchmark_card_payload["card_fingerprint"] == review.benchmark_card.card_fingerprint
     assert review.research_protocol is not None
     assert review.research_protocol_path == str(protocol_path)
     assert protocol_path.is_file()
@@ -689,6 +701,8 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
 
     registry = autoresearch_repository.load_run_registry(project_id, run_id)
     assert registry is not None
+    assert registry.files.benchmark_card_json is not None
+    assert registry.files.benchmark_card_json.exists is True
     assert registry.files.research_protocol_json is not None
     assert registry.files.research_protocol_json.exists is True
     assert registry.files.methodology_audit_json is not None
@@ -707,6 +721,18 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         edge.relation == "derived_from"
         and edge.target_kind == "research_protocol"
         and edge.source_kind in {"spec", "plan"}
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "has_asset"
+        and edge.target_kind == "benchmark_card"
+        and edge.target_path == str(benchmark_card_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "benchmark_card"
+        and edge.source_kind in {"spec", "benchmark", "artifact"}
         for edge in registry.lineage.edges
     )
     assert any(
@@ -749,6 +775,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     bundle_index = autoresearch_repository.load_run_bundle_index(project_id, run_id)
     assert bundle_index is not None
     selected_bundle = next(item for item in bundle_index.bundles if item.id == "selected_candidate_repro")
+    benchmark_card_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_benchmark_card_json"
+    )
+    assert benchmark_card_asset.ref.exists is True
     protocol_asset = next(
         item for item in selected_bundle.assets if item.role == "run_research_protocol_json"
     )
@@ -768,10 +798,15 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
 
     package = review_publish.build_publish_package(project_id, run_id)
     assert package is not None
+    assert package.benchmark_card_path == str(benchmark_card_path)
     assert package.research_protocol_path == str(protocol_path)
     assert package.methodology_audit_path == str(audit_path)
     assert package.revision_dossier_path == str(dossier_path)
     assert package.publication_readiness_path == str(readiness_path)
+    assert any(
+        item.role == "run_benchmark_card_json"
+        for item in package.final_required_assets
+    )
     assert any(
         item.role == "run_research_protocol_json"
         for item in package.final_required_assets
@@ -818,6 +853,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     autoresearch_repository.save_run(run)
     review = review_publish.build_run_review(project_id, run_id)
     assert review is not None
+    assert review.benchmark_card is not None
+    assert review.benchmark_card_path is not None
     assert review.research_protocol is not None
     assert review.research_protocol_path is not None
     assert review.methodology_audit is not None
@@ -826,14 +863,17 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert review.revision_dossier_path is not None
     assert review.publication_readiness is not None
     assert review.publication_readiness_path is not None
+    benchmark_card_path = Path(review.benchmark_card_path)
     protocol_path = Path(review.research_protocol_path)
     audit_path = Path(review.methodology_audit_path)
     dossier_path = Path(review.revision_dossier_path)
     readiness_path = Path(review.publication_readiness_path)
+    assert benchmark_card_path.is_file()
     assert protocol_path.is_file()
     assert audit_path.is_file()
     assert dossier_path.is_file()
     assert readiness_path.is_file()
+    expected_benchmark_card_sha256 = hashlib.sha256(benchmark_card_path.read_bytes()).hexdigest()
     expected_protocol_sha256 = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
     expected_audit_sha256 = hashlib.sha256(audit_path.read_bytes()).hexdigest()
     expected_dossier_sha256 = hashlib.sha256(dossier_path.read_bytes()).hexdigest()
@@ -853,6 +893,7 @@ def test_publication_manifest_records_readiness_artifact_identity(
         final_publish_ready=True,
         publication_tier=review.publication_readiness.tier,
         publication_readiness_score=review.publication_readiness.score,
+        benchmark_card_path=str(benchmark_card_path),
         research_protocol_path=str(protocol_path),
         methodology_audit_path=str(audit_path),
         revision_dossier_path=str(dossier_path),
@@ -872,6 +913,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     manifest = review_publish.build_publication_manifest(project_id, run_id)
 
     assert manifest is not None
+    assert manifest.benchmark_card_path == str(benchmark_card_path)
+    assert manifest.benchmark_card_sha256 == expected_benchmark_card_sha256
     assert manifest.research_protocol_path == str(protocol_path)
     assert manifest.research_protocol_sha256 == expected_protocol_sha256
     assert manifest.methodology_audit_path == str(audit_path)
@@ -881,6 +924,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert manifest.publication_readiness_path == str(readiness_path)
     assert manifest.publication_readiness_sha256 == expected_readiness_sha256
     persisted = json.loads(Path(manifest.publication_manifest_path).read_text(encoding="utf-8"))
+    assert persisted["benchmark_card_path"] == str(benchmark_card_path)
+    assert persisted["benchmark_card_sha256"] == expected_benchmark_card_sha256
     assert persisted["research_protocol_path"] == str(protocol_path)
     assert persisted["research_protocol_sha256"] == expected_protocol_sha256
     assert persisted["methodology_audit_path"] == str(audit_path)
@@ -1645,6 +1690,7 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
+        benchmark_card=build_benchmark_card(run),
         research_protocol=protocol,
         methodology_audit=audit,
         publication_readiness=build_publication_readiness(
@@ -1773,6 +1819,7 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
+        benchmark_card=build_benchmark_card(run),
         research_protocol=protocol,
         methodology_audit=audit,
         publication_readiness=build_publication_readiness(

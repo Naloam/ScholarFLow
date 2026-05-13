@@ -81,6 +81,7 @@ PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
 PAPER_COMPILED_PDF_FILENAME = "main.pdf"
 PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME = "main.bbl"
 BENCHMARK_FILENAME = "benchmark.json"
+BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
 CANDIDATE_FILENAME = "candidate.json"
 ATTEMPTS_FILENAME = "attempts.json"
@@ -544,6 +545,7 @@ def _candidate_lineage_edges(
             ("paper_markdown", "paper"),
             ("narrative_report_markdown", "narrative_report"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("benchmark_card_json", "benchmark_card"),
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
             ("publication_readiness_json", "publication_readiness"),
@@ -638,6 +640,12 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="artifact",
             source_id=artifact_source_id,
+            target_attr="benchmark_card_json",
+            target_kind="benchmark_card",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
             target_attr="publication_readiness_json",
             target_kind="publication_readiness",
         )
@@ -649,6 +657,7 @@ def _run_derivation_lineage_edges(
             ("spec_json", "spec"),
             ("artifact_json", "artifact"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("benchmark_card_json", "benchmark_card"),
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
             ("publication_readiness_json", "publication_readiness"),
@@ -679,6 +688,19 @@ def _run_derivation_lineage_edges(
             source_id=f"{run.id}:spec",
             target_attr="research_protocol_json",
             target_kind="research_protocol",
+        )
+        add_derivation(
+            source_kind="spec",
+            source_id=f"{run.id}:spec",
+            target_attr="benchmark_card_json",
+            target_kind="benchmark_card",
+        )
+    if run_assets.benchmark_json is not None:
+        add_derivation(
+            source_kind="benchmark",
+            source_id=f"{run.id}:benchmark",
+            target_attr="benchmark_card_json",
+            target_kind="benchmark_card",
         )
     if run_assets.plan_json is not None:
         add_derivation(
@@ -807,6 +829,7 @@ def _run_lineage_edges(
         ("paper_markdown", "paper"),
         ("narrative_report_markdown", "narrative_report"),
         ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+        ("benchmark_card_json", "benchmark_card"),
         ("research_protocol_json", "research_protocol"),
         ("methodology_audit_json", "methodology_audit"),
         ("publication_readiness_json", "publication_readiness"),
@@ -935,6 +958,17 @@ def _run_bundle_assets(
         _bundle_asset(asset_id=f"{run_registry.run_id}:program_json", label="Program snapshot", role="program_json", ref=files.program_json),
         _bundle_asset(asset_id=f"{run_registry.run_id}:portfolio_json", label="Portfolio snapshot", role="portfolio_json", ref=files.portfolio_json),
         _bundle_asset(asset_id=f"{run_registry.run_id}:benchmark_json", label="Benchmark snapshot", role="benchmark_json", ref=files.benchmark_json, required=False),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_benchmark_card_json",
+                label="Selected run benchmark card",
+                role="run_benchmark_card_json",
+                ref=files.benchmark_card_json,
+                required=False,
+            )
+            if files.benchmark_card_json is not None and files.benchmark_card_json.exists
+            else None
+        ),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_plan_json", label="Selected run plan", role="run_plan_json", ref=files.plan_json, required=False),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_spec_json", label="Selected run spec", role="run_spec_json", ref=files.spec_json, required=False),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_artifact_json", label="Selected run artifact", role="run_artifact_json", ref=files.artifact_json, required=False),
@@ -1703,6 +1737,10 @@ def paper_sources_manifest_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_SOURCES_DIRNAME / PAPER_SOURCES_MANIFEST_FILENAME)
 
 
+def benchmark_card_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / BENCHMARK_CARD_FILENAME)
+
+
 def candidate_paper_file_path(project_id: str, run_id: str, candidate_id: str) -> str:
     return str(candidate_dir(project_id, run_id, candidate_id) / PAPER_FILENAME)
 
@@ -1798,6 +1836,7 @@ def load_candidate_registry(
             portfolio_json=_asset_ref(run_base / PORTFOLIO_FILENAME),
             artifact_json=_asset_ref(run_base / ARTIFACT_FILENAME),
             benchmark_json=_asset_ref(run_base / BENCHMARK_FILENAME),
+            benchmark_card_json=_asset_ref(run_base / BENCHMARK_CARD_FILENAME),
             generated_code=_asset_ref(current_run.generated_code_path),
             paper_markdown=_asset_ref(run_paper_path),
             narrative_report_markdown=_asset_ref(
@@ -1952,6 +1991,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         portfolio_json=_asset_ref(base / PORTFOLIO_FILENAME),
         artifact_json=_asset_ref(base / ARTIFACT_FILENAME),
         benchmark_json=_asset_ref(base / BENCHMARK_FILENAME),
+        benchmark_card_json=_asset_ref(base / BENCHMARK_CARD_FILENAME),
         generated_code=_asset_ref(run.generated_code_path),
         paper_markdown=_asset_ref(paper_path),
         narrative_report_markdown=_asset_ref(

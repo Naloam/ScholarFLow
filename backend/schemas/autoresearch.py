@@ -42,6 +42,7 @@ AutoResearchBundleAssetRole = Literal[
     "program_json",
     "portfolio_json",
     "benchmark_json",
+    "run_benchmark_card_json",
     "run_plan_json",
     "run_spec_json",
     "run_artifact_json",
@@ -95,6 +96,7 @@ AutoResearchLineageNodeKind = Literal[
     "manifest",
     "generated_code",
     "benchmark",
+    "benchmark_card",
     "narrative_report",
     "claim_evidence_matrix",
     "research_protocol",
@@ -1186,6 +1188,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     portfolio_json: AutoResearchRegistryAssetRef | None = None
     artifact_json: AutoResearchRegistryAssetRef | None = None
     benchmark_json: AutoResearchRegistryAssetRef | None = None
+    benchmark_card_json: AutoResearchRegistryAssetRef | None = None
     generated_code: AutoResearchRegistryAssetRef | None = None
     paper_markdown: AutoResearchRegistryAssetRef | None = None
     narrative_report_markdown: AutoResearchRegistryAssetRef | None = None
@@ -1451,6 +1454,36 @@ class AutoResearchResearchProtocolRead(BaseModel):
     protocol_fingerprint: str
 
 
+class AutoResearchBenchmarkCardRead(BaseModel):
+    generated_at: datetime
+    card_id: str = "benchmark_card_v1"
+    topic: str | None = None
+    task_family: TaskFamily | None = None
+    benchmark_name: str | None = None
+    benchmark_description: str | None = None
+    dataset_name: str | None = None
+    dataset_description: str | None = None
+    train_size: int = 0
+    test_size: int = 0
+    total_examples: int = 0
+    label_space: list[str] = Field(default_factory=list)
+    input_fields: list[str] = Field(default_factory=list)
+    source_kind: BenchmarkKind | None = None
+    source_url: str | None = None
+    source_dataset_id: str | None = None
+    source_revision: str | None = None
+    source_license: str | None = None
+    source_fingerprint: str | None = None
+    publication_grade: bool = False
+    provenance_complete: bool = False
+    checks: list[AutoResearchReadinessCheckRead] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    recommended_use: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    card_fingerprint: str
+
+
 class AutoResearchMethodologyAuditRead(BaseModel):
     generated_at: datetime
     audit_id: str = "methodology_audit_v1"
@@ -1549,6 +1582,8 @@ class AutoResearchRunReviewRead(BaseModel):
     evidence: AutoResearchReviewEvidenceRead
     citation_coverage: AutoResearchCitationCoverageRead
     novelty_assessment: AutoResearchNoveltyAssessmentRead | None = None
+    benchmark_card: AutoResearchBenchmarkCardRead | None = None
+    benchmark_card_path: str | None = None
     research_protocol: AutoResearchResearchProtocolRead | None = None
     research_protocol_path: str | None = None
     methodology_audit: AutoResearchMethodologyAuditRead | None = None
@@ -1687,6 +1722,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     final_publish_ready: bool = False
     publication_tier: AutoResearchPublicationTier = "exploratory"
     publication_readiness_score: int = 0
+    benchmark_card_path: str | None = None
+    benchmark_card_sha256: str | None = None
     research_protocol_path: str | None = None
     research_protocol_sha256: str | None = None
     methodology_audit_path: str | None = None
@@ -1782,6 +1819,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     final_publish_ready: bool = False
     publication_tier: AutoResearchPublicationTier = "exploratory"
     publication_readiness_score: int = 0
+    benchmark_card_path: str | None = None
     research_protocol_path: str | None = None
     methodology_audit_path: str | None = None
     revision_dossier_path: str | None = None

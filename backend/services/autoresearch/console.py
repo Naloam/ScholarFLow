@@ -85,6 +85,7 @@ def _run_summary(
     request = run.request
     candidate_count = counts.total_candidates if counts is not None else len(run.candidates)
     protocol = review.research_protocol if review is not None else None
+    benchmark_card = review.benchmark_card if review is not None else None
     methodology_audit = review.methodology_audit if review is not None else None
     revision_dossier = review.revision_dossier if review is not None else None
     readiness = review.publication_readiness if review is not None else None
@@ -177,6 +178,21 @@ def _run_summary(
         ),
         revision_dossier_required_actions=(
             revision_dossier.required_action_titles[:3] if revision_dossier is not None else []
+        ),
+        benchmark_card_publication_grade=(
+            benchmark_card.publication_grade if benchmark_card is not None else False
+        ),
+        benchmark_card_provenance_complete=(
+            benchmark_card.provenance_complete if benchmark_card is not None else False
+        ),
+        benchmark_card_total_examples=(
+            benchmark_card.total_examples if benchmark_card is not None else 0
+        ),
+        benchmark_card_blocker_count=(
+            len(benchmark_card.blockers) if benchmark_card is not None else 0
+        ),
+        benchmark_card_blockers=(
+            benchmark_card.blockers[:3] if benchmark_card is not None else []
         ),
         publication_grade_benchmark=(
             readiness.publication_grade_benchmark

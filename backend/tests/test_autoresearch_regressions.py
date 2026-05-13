@@ -528,6 +528,7 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         artifact=_publication_artifact(include_ablation=True, seed_count=5),
     )
     protocol = build_research_protocol(run)
+    benchmark_card = build_benchmark_card(run)
     audit = build_methodology_audit(run, protocol=protocol)
     readiness = build_publication_readiness(run, paper_markdown=run.paper_markdown)
     dossier = review_publish.AutoResearchRevisionDossierRead(
@@ -558,6 +559,7 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
             strong_match_count=1,
         ),
         research_protocol=protocol,
+        benchmark_card=benchmark_card,
         methodology_audit=audit,
         publication_readiness=readiness,
         revision_dossier=dossier,
@@ -595,6 +597,10 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
     assert summary.methodology_audit_checks_passed == summary.methodology_audit_checks_total
     assert summary.revision_dossier_complete is True
     assert summary.revision_dossier_blocker_count == 0
+    assert summary.benchmark_card_publication_grade is True
+    assert summary.benchmark_card_provenance_complete is True
+    assert summary.benchmark_card_total_examples == 24
+    assert summary.benchmark_card_blocker_count == 0
     assert summary.publication_grade_benchmark is True
     assert summary.readiness_checks_passed == summary.readiness_checks_total
     assert summary.publication_blocker_count == 0

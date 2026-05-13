@@ -401,6 +401,13 @@ export function OperatorConsolePanel({
                       {run.readiness_checks_passed}/{run.readiness_checks_total}
                     </small>
                     <small>
+                      card{" "}
+                      {run.benchmark_card_publication_grade ? "grade" : "gaps"}{" "}
+                      / provenance{" "}
+                      {run.benchmark_card_provenance_complete ? "yes" : "no"}{" "}
+                      / examples {run.benchmark_card_total_examples}
+                    </small>
+                    <small>
                       protocol {run.research_protocol_complete ? "complete" : "gaps"}{" "}
                       / audit {run.methodology_audit_score}/100{" "}
                       {run.methodology_audit_compliant ? "compliant" : "blocked"}
@@ -511,6 +518,16 @@ export function OperatorConsolePanel({
                 <strong data-testid="operator-methodology-audit">
                   {currentSummary
                     ? `${currentSummary.methodology_audit_score}/100 ${currentSummary.methodology_audit_checks_passed}/${currentSummary.methodology_audit_checks_total}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.benchmarkCard")}
+                </span>
+                <strong data-testid="operator-benchmark-card-summary">
+                  {currentSummary
+                    ? `${currentSummary.benchmark_card_total_examples} ${t("operator.examples")}`
                     : "n/a"}
                 </strong>
               </div>
@@ -1357,6 +1374,34 @@ export function OperatorConsolePanel({
                   <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
                 </div>
               </div>
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-benchmark-card">
+                  <span className="meta-label">
+                    {t("operator.benchmarkCard")}
+                  </span>
+                  <p>
+                    grade=
+                    {currentSummary.benchmark_card_publication_grade
+                      ? t("operator.yes")
+                      : t("operator.no")}{" "}
+                    provenance=
+                    {currentSummary.benchmark_card_provenance_complete
+                      ? t("operator.yes")
+                      : t("operator.no")}{" "}
+                    examples={currentSummary.benchmark_card_total_examples}
+                  </p>
+                  {currentSummary.benchmark_card_blockers.length ? (
+                    <ul>
+                      {currentSummary.benchmark_card_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noBenchmarkCardBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
 
               {currentSummary ? (
                 <div className="meta-block" data-testid="operator-readiness-blockers">

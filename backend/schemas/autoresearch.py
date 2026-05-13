@@ -2036,6 +2036,11 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     revision_dossier_complete: bool = False
     revision_dossier_blocker_count: int = 0
     revision_dossier_required_actions: list[str] = Field(default_factory=list)
+    benchmark_card_publication_grade: bool = False
+    benchmark_card_provenance_complete: bool = False
+    benchmark_card_total_examples: int = 0
+    benchmark_card_blocker_count: int = 0
+    benchmark_card_blockers: list[str] = Field(default_factory=list)
     publication_grade_benchmark: bool = False
     publication_blocker_count: int = 0
     publication_blockers: list[str] = Field(default_factory=list)

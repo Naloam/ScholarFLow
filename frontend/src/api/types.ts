@@ -1781,6 +1781,11 @@ export type AutoResearchOperatorRunSummary = {
   revision_dossier_complete: boolean;
   revision_dossier_blocker_count: number;
   revision_dossier_required_actions: string[];
+  benchmark_card_publication_grade: boolean;
+  benchmark_card_provenance_complete: boolean;
+  benchmark_card_total_examples: number;
+  benchmark_card_blocker_count: number;
+  benchmark_card_blockers: string[];
   publication_grade_benchmark: boolean;
   publication_blocker_count: number;
   publication_blockers: string[];

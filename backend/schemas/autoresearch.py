@@ -1995,6 +1995,9 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     methodology_audit_blockers: list[str] = Field(default_factory=list)
     methodology_audit_checks_passed: int = 0
     methodology_audit_checks_total: int = 0
+    revision_dossier_complete: bool = False
+    revision_dossier_blocker_count: int = 0
+    revision_dossier_required_actions: list[str] = Field(default_factory=list)
     publication_grade_benchmark: bool = False
     publication_blocker_count: int = 0
     publication_blockers: list[str] = Field(default_factory=list)

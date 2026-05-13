@@ -132,6 +132,8 @@
     "methodologyAudit": "Methodology Audit",
     "methodologyBlockers": "Methodology Blockers",
     "noMethodologyBlockers": "No protocol or methodology blockers.",
+    "revisionDossier": "Revision Dossier",
+    "noRevisionDossierActions": "No required revision dossier actions.",
     "complete": "complete",
     "gaps": "gaps",
     "compliant": "compliant",

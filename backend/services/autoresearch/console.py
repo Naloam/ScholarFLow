@@ -86,6 +86,7 @@ def _run_summary(
     candidate_count = counts.total_candidates if counts is not None else len(run.candidates)
     protocol = review.research_protocol if review is not None else None
     methodology_audit = review.methodology_audit if review is not None else None
+    revision_dossier = review.revision_dossier if review is not None else None
     readiness = review.publication_readiness if review is not None else None
     audit_checks = methodology_audit.checks if methodology_audit is not None else []
     readiness_checks = readiness.checks if readiness is not None else []
@@ -170,6 +171,13 @@ def _run_summary(
         methodology_audit_blockers=methodology_audit.blockers[:3] if methodology_audit is not None else [],
         methodology_audit_checks_passed=sum(1 for item in audit_checks if item.passed),
         methodology_audit_checks_total=len(audit_checks),
+        revision_dossier_complete=revision_dossier.complete if revision_dossier is not None else False,
+        revision_dossier_blocker_count=(
+            revision_dossier.final_blocker_count if revision_dossier is not None else 0
+        ),
+        revision_dossier_required_actions=(
+            revision_dossier.required_action_titles[:3] if revision_dossier is not None else []
+        ),
         publication_grade_benchmark=(
             readiness.publication_grade_benchmark
             if readiness is not None

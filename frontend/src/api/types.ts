@@ -1739,6 +1739,9 @@ export type AutoResearchOperatorRunSummary = {
   methodology_audit_blockers: string[];
   methodology_audit_checks_passed: number;
   methodology_audit_checks_total: number;
+  revision_dossier_complete: boolean;
+  revision_dossier_blocker_count: number;
+  revision_dossier_required_actions: string[];
   publication_grade_benchmark: boolean;
   publication_blocker_count: number;
   publication_blockers: string[];

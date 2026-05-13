@@ -406,6 +406,10 @@ export function OperatorConsolePanel({
                       {run.methodology_audit_compliant ? "compliant" : "blocked"}
                     </small>
                     <small>
+                      dossier {run.revision_dossier_complete ? "complete" : "open"}{" "}
+                      / required {run.revision_dossier_blocker_count}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>
@@ -1408,6 +1412,28 @@ export function OperatorConsolePanel({
                     </ul>
                   ) : (
                     <p>{t("operator.noMethodologyBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-revision-dossier">
+                  <span className="meta-label">
+                    {t("operator.revisionDossier")}
+                  </span>
+                  <p>
+                    {currentSummary.revision_dossier_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.revision_dossier_blocker_count} ${t("operator.blocked")}`}
+                  </p>
+                  {currentSummary.revision_dossier_required_actions.length ? (
+                    <ul>
+                      {currentSummary.revision_dossier_required_actions.map((action) => (
+                        <li key={action}>{action}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noRevisionDossierActions")}</p>
                   )}
                 </div>
               ) : null}

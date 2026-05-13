@@ -526,6 +526,8 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         benchmark=benchmark,
         artifact=_publication_artifact(include_ablation=True, seed_count=5),
     )
+    protocol = build_research_protocol(run)
+    audit = build_methodology_audit(run, protocol=protocol)
     readiness = build_publication_readiness(run, paper_markdown=run.paper_markdown)
     review = review_publish.AutoResearchRunReviewRead(
         project_id=run.project_id,
@@ -542,6 +544,8 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
             compared_paper_count=2,
             strong_match_count=1,
         ),
+        research_protocol=protocol,
+        methodology_audit=audit,
         publication_readiness=readiness,
         scores=review_publish.AutoResearchReviewScoresRead(),
     )
@@ -570,6 +574,11 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
     assert summary.execution_profile == "publication"
     assert summary.publication_tier == "publish_ready"
     assert summary.publication_readiness_score == 100
+    assert summary.research_protocol_complete is True
+    assert summary.research_protocol_blocker_count == 0
+    assert summary.methodology_audit_compliant is True
+    assert summary.methodology_audit_score == 100
+    assert summary.methodology_audit_checks_passed == summary.methodology_audit_checks_total
     assert summary.publication_grade_benchmark is True
     assert summary.readiness_checks_passed == summary.readiness_checks_total
     assert summary.publication_blocker_count == 0

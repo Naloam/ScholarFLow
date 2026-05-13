@@ -401,6 +401,11 @@ export function OperatorConsolePanel({
                       {run.readiness_checks_passed}/{run.readiness_checks_total}
                     </small>
                     <small>
+                      protocol {run.research_protocol_complete ? "complete" : "gaps"}{" "}
+                      / audit {run.methodology_audit_score}/100{" "}
+                      {run.methodology_audit_compliant ? "compliant" : "blocked"}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>
@@ -480,6 +485,28 @@ export function OperatorConsolePanel({
                 <strong data-testid="operator-readiness-checks">
                   {currentSummary
                     ? `${currentSummary.readiness_checks_passed}/${currentSummary.readiness_checks_total}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.protocolStatus")}
+                </span>
+                <strong data-testid="operator-protocol-status">
+                  {currentSummary
+                    ? currentSummary.research_protocol_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.research_protocol_blocker_count} ${t("operator.gaps")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.methodologyAudit")}
+                </span>
+                <strong data-testid="operator-methodology-audit">
+                  {currentSummary
+                    ? `${currentSummary.methodology_audit_score}/100 ${currentSummary.methodology_audit_checks_passed}/${currentSummary.methodology_audit_checks_total}`
                     : "n/a"}
                 </strong>
               </div>
@@ -1348,6 +1375,39 @@ export function OperatorConsolePanel({
                     </ul>
                   ) : (
                     <p>{t("operator.noReadinessBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-methodology-blockers">
+                  <span className="meta-label">
+                    {t("operator.methodologyBlockers")}
+                  </span>
+                  <p>
+                    protocol=
+                    {currentSummary.research_protocol_complete
+                      ? t("operator.complete")
+                      : t("operator.gaps")}{" "}
+                    audit=
+                    {currentSummary.methodology_audit_compliant
+                      ? t("operator.compliant")
+                      : t("operator.blocked")}
+                  </p>
+                  {currentSummary.methodology_audit_blockers.length ? (
+                    <ul>
+                      {currentSummary.methodology_audit_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : currentSummary.research_protocol_blockers.length ? (
+                    <ul>
+                      {currentSummary.research_protocol_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noMethodologyBlockers")}</p>
                   )}
                 </div>
               ) : null}

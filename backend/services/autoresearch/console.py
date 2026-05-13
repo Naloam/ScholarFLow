@@ -84,7 +84,10 @@ def _run_summary(
     latest_job = execution.jobs[-1] if execution.jobs else None
     request = run.request
     candidate_count = counts.total_candidates if counts is not None else len(run.candidates)
+    protocol = review.research_protocol if review is not None else None
+    methodology_audit = review.methodology_audit if review is not None else None
     readiness = review.publication_readiness if review is not None else None
+    audit_checks = methodology_audit.checks if methodology_audit is not None else []
     readiness_checks = readiness.checks if readiness is not None else []
     publication_tier = (
         publish.publication_tier
@@ -158,6 +161,15 @@ def _run_summary(
         final_publish_ready=publish.final_publish_ready if publish is not None else False,
         publication_tier=publication_tier,
         publication_readiness_score=publication_readiness_score,
+        research_protocol_complete=protocol.complete if protocol is not None else False,
+        research_protocol_blocker_count=len(protocol.blockers) if protocol is not None else 0,
+        research_protocol_blockers=protocol.blockers[:3] if protocol is not None else [],
+        methodology_audit_score=methodology_audit.score if methodology_audit is not None else 0,
+        methodology_audit_compliant=methodology_audit.compliant if methodology_audit is not None else False,
+        methodology_audit_blocker_count=len(methodology_audit.blockers) if methodology_audit is not None else 0,
+        methodology_audit_blockers=methodology_audit.blockers[:3] if methodology_audit is not None else [],
+        methodology_audit_checks_passed=sum(1 for item in audit_checks if item.passed),
+        methodology_audit_checks_total=len(audit_checks),
         publication_grade_benchmark=(
             readiness.publication_grade_benchmark
             if readiness is not None

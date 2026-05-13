@@ -1939,6 +1939,15 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     final_publish_ready: bool = False
     publication_tier: AutoResearchPublicationTier | None = None
     publication_readiness_score: int = 0
+    research_protocol_complete: bool = False
+    research_protocol_blocker_count: int = 0
+    research_protocol_blockers: list[str] = Field(default_factory=list)
+    methodology_audit_score: int = 0
+    methodology_audit_compliant: bool = False
+    methodology_audit_blocker_count: int = 0
+    methodology_audit_blockers: list[str] = Field(default_factory=list)
+    methodology_audit_checks_passed: int = 0
+    methodology_audit_checks_total: int = 0
     publication_grade_benchmark: bool = False
     publication_blocker_count: int = 0
     publication_blockers: list[str] = Field(default_factory=list)

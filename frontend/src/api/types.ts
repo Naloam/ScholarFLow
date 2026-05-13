@@ -1676,6 +1676,15 @@ export type AutoResearchOperatorRunSummary = {
   final_publish_ready: boolean;
   publication_tier?: AutoResearchPublicationTier | null;
   publication_readiness_score: number;
+  research_protocol_complete: boolean;
+  research_protocol_blocker_count: number;
+  research_protocol_blockers: string[];
+  methodology_audit_score: number;
+  methodology_audit_compliant: boolean;
+  methodology_audit_blocker_count: number;
+  methodology_audit_blockers: string[];
+  methodology_audit_checks_passed: number;
+  methodology_audit_checks_total: number;
   publication_grade_benchmark: boolean;
   publication_blocker_count: number;
   publication_blockers: string[];

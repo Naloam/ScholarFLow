@@ -52,6 +52,7 @@ PAPER_FILENAME = "paper.md"
 PROJECT_CONTEXT_FILENAME = "project_context.json"
 NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
+RESEARCH_PROTOCOL_FILENAME = "research_protocol.json"
 PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
@@ -541,6 +542,7 @@ def _candidate_lineage_edges(
             ("paper_markdown", "paper"),
             ("narrative_report_markdown", "narrative_report"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("research_protocol_json", "research_protocol"),
             ("publication_readiness_json", "publication_readiness"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
@@ -643,6 +645,7 @@ def _run_derivation_lineage_edges(
             ("spec_json", "spec"),
             ("artifact_json", "artifact"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("research_protocol_json", "research_protocol"),
             ("publication_readiness_json", "publication_readiness"),
             ("narrative_report_markdown", "narrative_report"),
             ("paper_plan_json", "paper_plan"),
@@ -661,6 +664,27 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="claim_evidence_matrix",
             source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="publication_readiness_json",
+            target_kind="publication_readiness",
+        )
+    if run_assets.spec_json is not None:
+        add_derivation(
+            source_kind="spec",
+            source_id=f"{run.id}:spec",
+            target_attr="research_protocol_json",
+            target_kind="research_protocol",
+        )
+    if run_assets.plan_json is not None:
+        add_derivation(
+            source_kind="plan",
+            source_id=f"{run.id}:plan",
+            target_attr="research_protocol_json",
+            target_kind="research_protocol",
+        )
+    if run_assets.research_protocol_json is not None:
+        add_derivation(
+            source_kind="research_protocol",
+            source_id=f"{run.id}:research_protocol",
             target_attr="publication_readiness_json",
             target_kind="publication_readiness",
         )
@@ -729,6 +753,7 @@ def _run_lineage_edges(
         ("paper_markdown", "paper"),
         ("narrative_report_markdown", "narrative_report"),
         ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+        ("research_protocol_json", "research_protocol"),
         ("publication_readiness_json", "publication_readiness"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
@@ -872,6 +897,17 @@ def _run_bundle_assets(
             role="run_claim_evidence_matrix_json",
             ref=files.claim_evidence_matrix_json,
             required=False,
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_research_protocol_json",
+                label="Selected run research protocol",
+                role="run_research_protocol_json",
+                ref=files.research_protocol_json,
+                required=False,
+            )
+            if files.research_protocol_json is not None and files.research_protocol_json.exists
+            else None
         ),
         (
             _bundle_asset(
@@ -1525,6 +1561,10 @@ def claim_evidence_matrix_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / CLAIM_EVIDENCE_MATRIX_FILENAME)
 
 
+def research_protocol_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / RESEARCH_PROTOCOL_FILENAME)
+
+
 def publication_readiness_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PUBLICATION_READINESS_FILENAME)
 
@@ -1680,6 +1720,7 @@ def load_candidate_registry(
             claim_evidence_matrix_json=_asset_ref(
                 current_run.claim_evidence_matrix_path or (run_base / CLAIM_EVIDENCE_MATRIX_FILENAME)
             ),
+            research_protocol_json=_asset_ref(run_base / RESEARCH_PROTOCOL_FILENAME),
             publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
             paper_plan_json=_asset_ref(
                 current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
@@ -1831,6 +1872,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         claim_evidence_matrix_json=_asset_ref(
             run.claim_evidence_matrix_path or (base / CLAIM_EVIDENCE_MATRIX_FILENAME)
         ),
+        research_protocol_json=_asset_ref(base / RESEARCH_PROTOCOL_FILENAME),
         publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),
         paper_plan_json=_asset_ref(
             run.paper_plan_path or (base / PAPER_PLAN_FILENAME)

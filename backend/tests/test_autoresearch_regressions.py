@@ -50,7 +50,12 @@ from schemas.autoresearch import (
 )
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
-from services.autoresearch.research_readiness import build_publication_readiness, enforce_publication_protocol
+from services.autoresearch.research_protocol import build_research_protocol
+from services.autoresearch.research_readiness import (
+    PUBLICATION_MIN_COMPLETED_SEEDS,
+    build_publication_readiness,
+    enforce_publication_protocol,
+)
 from services.autoresearch.writer import PaperWriter
 
 
@@ -549,11 +554,25 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     readiness_path = Path(
         autoresearch_repository.publication_readiness_file_path(project_id, run_id)
     )
+    protocol_path = Path(
+        autoresearch_repository.research_protocol_file_path(project_id, run_id)
+    )
     assert not readiness_path.is_file()
+    assert not protocol_path.is_file()
 
     review = review_publish.build_run_review(project_id, run_id)
 
     assert review is not None
+    assert review.research_protocol is not None
+    assert review.research_protocol_path == str(protocol_path)
+    assert protocol_path.is_file()
+    protocol_payload = json.loads(protocol_path.read_text(encoding="utf-8"))
+    assert protocol_payload["complete"] is True
+    assert protocol_payload["execution_profile"] == "publication"
+    assert protocol_payload["planned_seed_count"] == 5
+    assert protocol_payload["minimum_completed_seed_count"] == PUBLICATION_MIN_COMPLETED_SEEDS
+    assert protocol_payload["ablation_systems"] == ["candidate_ablation"]
+    assert protocol_payload["protocol_fingerprint"] == review.research_protocol.protocol_fingerprint
     assert review.publication_readiness is not None
     assert review.publication_readiness_path == str(readiness_path)
     assert readiness_path.is_file()
@@ -563,8 +582,22 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
 
     registry = autoresearch_repository.load_run_registry(project_id, run_id)
     assert registry is not None
+    assert registry.files.research_protocol_json is not None
+    assert registry.files.research_protocol_json.exists is True
     assert registry.files.publication_readiness_json is not None
     assert registry.files.publication_readiness_json.exists is True
+    assert any(
+        edge.relation == "has_asset"
+        and edge.target_kind == "research_protocol"
+        and edge.target_path == str(protocol_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "research_protocol"
+        and edge.source_kind in {"spec", "plan"}
+        for edge in registry.lineage.edges
+    )
     assert any(
         edge.relation == "has_asset"
         and edge.target_kind == "publication_readiness"
@@ -581,6 +614,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     bundle_index = autoresearch_repository.load_run_bundle_index(project_id, run_id)
     assert bundle_index is not None
     selected_bundle = next(item for item in bundle_index.bundles if item.id == "selected_candidate_repro")
+    protocol_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_research_protocol_json"
+    )
+    assert protocol_asset.ref.exists is True
     readiness_asset = next(
         item for item in selected_bundle.assets if item.role == "run_publication_readiness_json"
     )
@@ -588,7 +625,12 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
 
     package = review_publish.build_publish_package(project_id, run_id)
     assert package is not None
+    assert package.research_protocol_path == str(protocol_path)
     assert package.publication_readiness_path == str(readiness_path)
+    assert any(
+        item.role == "run_research_protocol_json"
+        for item in package.final_required_assets
+    )
     assert any(
         item.role == "run_publication_readiness_json"
         for item in package.final_required_assets
@@ -623,11 +665,16 @@ def test_publication_manifest_records_readiness_artifact_identity(
     autoresearch_repository.save_run(run)
     review = review_publish.build_run_review(project_id, run_id)
     assert review is not None
+    assert review.research_protocol is not None
+    assert review.research_protocol_path is not None
     assert review.publication_readiness is not None
     assert review.publication_readiness_path is not None
+    protocol_path = Path(review.research_protocol_path)
     readiness_path = Path(review.publication_readiness_path)
+    assert protocol_path.is_file()
     assert readiness_path.is_file()
-    expected_sha256 = hashlib.sha256(readiness_path.read_bytes()).hexdigest()
+    expected_protocol_sha256 = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
+    expected_readiness_sha256 = hashlib.sha256(readiness_path.read_bytes()).hexdigest()
 
     code_package_path = review_publish._code_package_path(project_id, run_id)
     code_package_path.parent.mkdir(parents=True, exist_ok=True)
@@ -643,6 +690,7 @@ def test_publication_manifest_records_readiness_artifact_identity(
         final_publish_ready=True,
         publication_tier=review.publication_readiness.tier,
         publication_readiness_score=review.publication_readiness.score,
+        research_protocol_path=str(protocol_path),
         publication_readiness_path=str(readiness_path),
         manifest_path=str(review_publish._publish_manifest_path(project_id, run_id)),
         archive_path=str(review_publish._publish_archive_path(project_id, run_id)),
@@ -659,11 +707,15 @@ def test_publication_manifest_records_readiness_artifact_identity(
     manifest = review_publish.build_publication_manifest(project_id, run_id)
 
     assert manifest is not None
+    assert manifest.research_protocol_path == str(protocol_path)
+    assert manifest.research_protocol_sha256 == expected_protocol_sha256
     assert manifest.publication_readiness_path == str(readiness_path)
-    assert manifest.publication_readiness_sha256 == expected_sha256
+    assert manifest.publication_readiness_sha256 == expected_readiness_sha256
     persisted = json.loads(Path(manifest.publication_manifest_path).read_text(encoding="utf-8"))
+    assert persisted["research_protocol_path"] == str(protocol_path)
+    assert persisted["research_protocol_sha256"] == expected_protocol_sha256
     assert persisted["publication_readiness_path"] == str(readiness_path)
-    assert persisted["publication_readiness_sha256"] == expected_sha256
+    assert persisted["publication_readiness_sha256"] == expected_readiness_sha256
 
 
 def test_autoresearch_resume_preserves_checkpointed_literature_synthesis(
@@ -1418,6 +1470,7 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
+        research_protocol=build_research_protocol(run),
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",
@@ -1447,6 +1500,7 @@ def test_review_blocks_final_publish_for_underpowered_or_unsupported_research() 
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty,
+        research_protocol=build_research_protocol(run),
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",
@@ -1540,6 +1594,7 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         selected_manifest_source="file",
         paper_markdown=run.paper_markdown or "",
         novelty_assessment=novelty,
+        research_protocol=build_research_protocol(run),
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",
@@ -1555,6 +1610,7 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty,
+        research_protocol=build_research_protocol(run),
         publication_readiness=build_publication_readiness(
             run,
             paper_markdown=run.paper_markdown or "",

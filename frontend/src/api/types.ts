@@ -268,6 +268,26 @@ export type AutoResearchRunStatus =
   | "failed"
   | "canceled";
 
+export type AutoResearchTaskFamily =
+  | "text_classification"
+  | "tabular_classification"
+  | "ir_reranking"
+  | "llm_evaluation";
+
+export type AutoResearchBenchmarkKind =
+  | "builtin"
+  | "remote_csv"
+  | "remote_jsonl"
+  | "remote_json"
+  | "huggingface_file"
+  | "openml_file"
+  | "beir_json";
+
+export type AutoResearchAcceptanceStatistic =
+  | "mean"
+  | "std"
+  | "confidence_interval";
+
 export type AutoResearchExecutionProfile = "exploratory" | "publication";
 
 export type AutoResearchPublicationTier =
@@ -310,10 +330,7 @@ export type AutoResearchExperimentBridgeConfig = {
 
 export type AutoResearchRunRequest = {
   topic: string;
-  task_family_hint?:
-    | "text_classification"
-    | "tabular_classification"
-    | "ir_reranking";
+  task_family_hint?: AutoResearchTaskFamily;
   docker_image?: string | null;
   language?: string;
   paper_ids?: string[] | null;
@@ -686,6 +703,7 @@ export type AutoResearchLineageEdge = {
     | "benchmark"
     | "narrative_report"
     | "claim_evidence_matrix"
+    | "research_protocol"
     | "publication_readiness"
     | "paper_plan"
     | "figure_plan"
@@ -728,6 +746,7 @@ export type AutoResearchLineageEdge = {
     | "benchmark"
     | "narrative_report"
     | "claim_evidence_matrix"
+    | "research_protocol"
     | "publication_readiness"
     | "paper_plan"
     | "figure_plan"
@@ -765,6 +784,7 @@ export type AutoResearchRunRegistryFiles = {
   paper_markdown?: AutoResearchRegistryAssetRef | null;
   narrative_report_markdown?: AutoResearchRegistryAssetRef | null;
   claim_evidence_matrix_json?: AutoResearchRegistryAssetRef | null;
+  research_protocol_json?: AutoResearchRegistryAssetRef | null;
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
@@ -866,11 +886,7 @@ export type AutoResearchRunRegistry = {
   run_id: string;
   topic: string;
   status: AutoResearchRunStatus;
-  task_family?:
-    | "text_classification"
-    | "tabular_classification"
-    | "ir_reranking"
-    | null;
+  task_family?: AutoResearchTaskFamily | null;
   program_id?: string | null;
   benchmark_name?: string | null;
   portfolio_status?: "planned" | "running" | "done" | "failed" | null;
@@ -909,6 +925,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_markdown"
     | "run_narrative_report_markdown"
     | "run_claim_evidence_matrix_json"
+    | "run_research_protocol_json"
     | "run_publication_readiness_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
@@ -1043,6 +1060,43 @@ export type AutoResearchPublicationReadiness = {
   warnings: string[];
 };
 
+export type AutoResearchResearchProtocol = {
+  generated_at: string;
+  protocol_id: string;
+  execution_profile: AutoResearchExecutionProfile;
+  topic?: string | null;
+  title?: string | null;
+  task_family?: AutoResearchTaskFamily | null;
+  benchmark_name?: string | null;
+  benchmark_publication_grade: boolean;
+  dataset_source_kind?: AutoResearchBenchmarkKind | null;
+  dataset_source_url?: string | null;
+  dataset_source_dataset_id?: string | null;
+  dataset_fingerprint?: string | null;
+  hypothesis?: string | null;
+  research_questions: string[];
+  primary_metric?: string | null;
+  baseline_systems: string[];
+  ablation_systems: string[];
+  planned_seed_count: number;
+  minimum_completed_seed_count: number;
+  planned_sweep_count: number;
+  acceptance_rule_count: number;
+  acceptance_rule_ids: string[];
+  required_statistics: AutoResearchAcceptanceStatistic[];
+  significance_required: boolean;
+  power_analysis_required: boolean;
+  literature_minimum: number;
+  evidence_requirements: string[];
+  reproducibility_requirements: string[];
+  threat_model: string[];
+  checks: AutoResearchReadinessCheck[];
+  complete: boolean;
+  blockers: string[];
+  warnings: string[];
+  protocol_fingerprint: string;
+};
+
 export type AutoResearchCitationCoverage = {
   literature_item_count: number;
   citation_marker_count: number;
@@ -1113,6 +1167,8 @@ export type AutoResearchRunReview = {
   evidence: AutoResearchReviewEvidence;
   citation_coverage: AutoResearchCitationCoverage;
   novelty_assessment?: AutoResearchNoveltyAssessment | null;
+  research_protocol?: AutoResearchResearchProtocol | null;
+  research_protocol_path?: string | null;
   publication_readiness?: AutoResearchPublicationReadiness | null;
   publication_readiness_path?: string | null;
   scores: AutoResearchReviewScores;
@@ -1322,11 +1378,7 @@ export type AutoResearchPublicationManifest = {
   updated_at: string;
   selected_candidate_id?: string | null;
   benchmark_name?: string | null;
-  task_family?:
-    | "text_classification"
-    | "tabular_classification"
-    | "ir_reranking"
-    | null;
+  task_family?: AutoResearchTaskFamily | null;
   package_id: string;
   package_fingerprint?: string | null;
   bundle_kind: "review_bundle" | "final_publish_bundle";
@@ -1334,6 +1386,8 @@ export type AutoResearchPublicationManifest = {
   final_publish_ready: boolean;
   publication_tier: AutoResearchPublicationTier;
   publication_readiness_score: number;
+  research_protocol_path?: string | null;
+  research_protocol_sha256?: string | null;
   publication_readiness_path?: string | null;
   publication_readiness_sha256?: string | null;
   archive_ready: boolean;
@@ -1369,11 +1423,7 @@ export type AutoResearchDeploymentFilters = {
   search?: string | null;
   final_publish_ready?: boolean | null;
   bundle_kind?: "review_bundle" | "final_publish_bundle" | null;
-  task_family?:
-    | "text_classification"
-    | "tabular_classification"
-    | "ir_reranking"
-    | null;
+  task_family?: AutoResearchTaskFamily | null;
 };
 
 export type AutoResearchDeploymentSummary = {
@@ -1429,6 +1479,7 @@ export type AutoResearchPublishPackage = {
   publication_readiness_score: number;
   completeness_status: "complete" | "incomplete";
   review_path?: string | null;
+  research_protocol_path?: string | null;
   publication_readiness_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;
@@ -1529,11 +1580,7 @@ export type AutoResearchOperatorRunSummary = {
   status: AutoResearchRunStatus;
   created_at: string;
   updated_at: string;
-  task_family?:
-    | "text_classification"
-    | "tabular_classification"
-    | "ir_reranking"
-    | null;
+  task_family?: AutoResearchTaskFamily | null;
   benchmark_name?: string | null;
   selected_candidate_id?: string | null;
   candidate_count: number;

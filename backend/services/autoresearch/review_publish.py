@@ -17,6 +17,7 @@ from schemas.autoresearch import (
     AutoResearchDeploymentRefRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchPublicationReadinessRead,
+    AutoResearchResearchProtocolRead,
     AutoResearchPublishExportRead,
     AutoResearchPublishExportRequest,
     AutoResearchPublishPackageRead,
@@ -37,14 +38,17 @@ from schemas.autoresearch import (
 from services.autoresearch.repository import (
     PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME,
     PAPER_COMPILED_PDF_FILENAME,
+    RESEARCH_PROTOCOL_FILENAME,
     PUBLICATION_READINESS_FILENAME,
     load_run,
     load_run_bundle_index,
     load_run_registry,
     publication_readiness_file_path,
+    research_protocol_file_path,
     run_dir,
     save_run,
 )
+from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import build_publication_readiness
 from services.projects.repository import get_project
 from services.autoresearch.writer import PaperWriter
@@ -76,6 +80,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_research_protocol_json",
     "run_publication_readiness_json",
     "run_paper_compile_report_json",
     "run_paper_build_script",
@@ -100,6 +105,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_research_protocol_json",
     "run_publication_readiness_json",
     "generated_code",
 }
@@ -631,6 +637,9 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
         if finding.category == "benchmark":
             blockers.append(f"Final publish requires a publication-grade benchmark: {finding.summary}")
             continue
+        if finding.category == "provenance" and "research protocol" in lowered_summary:
+            blockers.append(f"Final publish requires a complete research protocol: {finding.summary}")
+            continue
         if finding.category == "context":
             if (
                 "no literature insights were persisted" in lowered_summary
@@ -795,6 +804,7 @@ def _review_findings(
     selected_manifest_source: str | None,
     paper_markdown: str,
     novelty_assessment: AutoResearchNoveltyAssessmentRead,
+    research_protocol: AutoResearchResearchProtocolRead,
     publication_readiness: AutoResearchPublicationReadinessRead,
 ) -> tuple[
     list[AutoResearchReviewFindingRead],
@@ -933,6 +943,14 @@ def _review_findings(
             summary=summary,
             detail=detail,
             supporting_asset_ids=["run_claim_evidence_matrix_json", "run_paper_markdown"],
+        )
+    if research_protocol.blockers:
+        add_finding(
+            severity="error" if research_protocol.execution_profile == "publication" else "warning",
+            category="provenance",
+            summary="Research protocol is incomplete.",
+            detail="; ".join(research_protocol.blockers),
+            supporting_asset_ids=["run_research_protocol_json", "run_spec_json"],
         )
 
     if missing_required_assets:
@@ -1672,6 +1690,9 @@ def build_run_review(
         return None
 
     paper_markdown = _paper_markdown(run)
+    research_protocol = build_research_protocol(run)
+    research_protocol_path = Path(research_protocol_file_path(project_id, run_id))
+    _write_json(research_protocol_path, research_protocol.model_dump(mode="json"))
     publication_readiness = build_publication_readiness(
         run,
         paper_markdown=paper_markdown,
@@ -1695,6 +1716,7 @@ def build_run_review(
         selected_manifest_source=selected_entry.manifest_source if selected_entry is not None else None,
         paper_markdown=paper_markdown,
         novelty_assessment=novelty_assessment,
+        research_protocol=research_protocol,
         publication_readiness=publication_readiness,
     )
     scores = _review_scores(
@@ -1740,6 +1762,8 @@ def build_run_review(
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty_assessment,
+        research_protocol=research_protocol,
+        research_protocol_path=str(research_protocol_path),
         publication_readiness=publication_readiness,
         publication_readiness_path=str(publication_readiness_path),
         scores=scores,
@@ -1858,6 +1882,7 @@ def _publish_package_fingerprint(
         "selected_candidate_id": review.selected_candidate_id,
         "review_status": review.overall_status,
         "review_path": review.persisted_path,
+        "research_protocol_path": review.research_protocol_path,
         "publication_readiness_path": review.publication_readiness_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
@@ -2071,6 +2096,12 @@ def build_publication_manifest(
         code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
     compiled_paper_path = _compiled_paper_path(run)
     paper_compile_output_paths = _paper_compile_output_paths(run)
+    protocol_path = (
+        Path(package.research_protocol_path)
+        if package.research_protocol_path
+        else Path(research_protocol_file_path(project_id, run_id))
+    )
+    protocol_path_value = str(protocol_path) if protocol_path.is_file() else package.research_protocol_path
     readiness_path = (
         Path(package.publication_readiness_path)
         if package.publication_readiness_path
@@ -2098,6 +2129,8 @@ def build_publication_manifest(
         final_publish_ready=package.final_publish_ready,
         publication_tier=package.publication_tier,
         publication_readiness_score=package.publication_readiness_score,
+        research_protocol_path=protocol_path_value,
+        research_protocol_sha256=_file_sha256(protocol_path),
         publication_readiness_path=readiness_path_value,
         publication_readiness_sha256=_file_sha256(readiness_path),
         archive_ready=package.archive_ready,
@@ -2215,6 +2248,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
             if review.publication_readiness is not None
             else 0
         ),
+        research_protocol_path=review.research_protocol_path,
         publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
@@ -2377,6 +2411,7 @@ def _archive_manifest(
         "generated_files": [
             REVIEW_FILENAME,
             REVIEW_LOOP_FILENAME,
+            RESEARCH_PROTOCOL_FILENAME,
             PUBLICATION_READINESS_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,

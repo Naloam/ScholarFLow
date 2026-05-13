@@ -49,6 +49,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_paper_markdown",
     "run_narrative_report_markdown",
     "run_claim_evidence_matrix_json",
+    "run_research_protocol_json",
     "run_publication_readiness_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
@@ -94,6 +95,7 @@ AutoResearchLineageNodeKind = Literal[
     "benchmark",
     "narrative_report",
     "claim_evidence_matrix",
+    "research_protocol",
     "publication_readiness",
     "paper_plan",
     "figure_plan",
@@ -1183,6 +1185,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     paper_markdown: AutoResearchRegistryAssetRef | None = None
     narrative_report_markdown: AutoResearchRegistryAssetRef | None = None
     claim_evidence_matrix_json: AutoResearchRegistryAssetRef | None = None
+    research_protocol_json: AutoResearchRegistryAssetRef | None = None
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
@@ -1404,6 +1407,43 @@ class AutoResearchPublicationReadinessRead(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class AutoResearchResearchProtocolRead(BaseModel):
+    generated_at: datetime
+    protocol_id: str = "research_protocol_v1"
+    execution_profile: AutoResearchExecutionProfile = "exploratory"
+    topic: str | None = None
+    title: str | None = None
+    task_family: TaskFamily | None = None
+    benchmark_name: str | None = None
+    benchmark_publication_grade: bool = False
+    dataset_source_kind: BenchmarkKind | None = None
+    dataset_source_url: str | None = None
+    dataset_source_dataset_id: str | None = None
+    dataset_fingerprint: str | None = None
+    hypothesis: str | None = None
+    research_questions: list[str] = Field(default_factory=list)
+    primary_metric: str | None = None
+    baseline_systems: list[str] = Field(default_factory=list)
+    ablation_systems: list[str] = Field(default_factory=list)
+    planned_seed_count: int = 0
+    minimum_completed_seed_count: int = 0
+    planned_sweep_count: int = 0
+    acceptance_rule_count: int = 0
+    acceptance_rule_ids: list[str] = Field(default_factory=list)
+    required_statistics: list[AcceptanceStatistic] = Field(default_factory=list)
+    significance_required: bool = False
+    power_analysis_required: bool = False
+    literature_minimum: int = 0
+    evidence_requirements: list[str] = Field(default_factory=list)
+    reproducibility_requirements: list[str] = Field(default_factory=list)
+    threat_model: list[str] = Field(default_factory=list)
+    checks: list[AutoResearchReadinessCheckRead] = Field(default_factory=list)
+    complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    protocol_fingerprint: str
+
+
 class AutoResearchCitationCoverageRead(BaseModel):
     literature_item_count: int = 0
     citation_marker_count: int = 0
@@ -1467,6 +1507,8 @@ class AutoResearchRunReviewRead(BaseModel):
     evidence: AutoResearchReviewEvidenceRead
     citation_coverage: AutoResearchCitationCoverageRead
     novelty_assessment: AutoResearchNoveltyAssessmentRead | None = None
+    research_protocol: AutoResearchResearchProtocolRead | None = None
+    research_protocol_path: str | None = None
     publication_readiness: AutoResearchPublicationReadinessRead | None = None
     publication_readiness_path: str | None = None
     scores: AutoResearchReviewScoresRead
@@ -1561,6 +1603,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     final_publish_ready: bool = False
     publication_tier: AutoResearchPublicationTier = "exploratory"
     publication_readiness_score: int = 0
+    research_protocol_path: str | None = None
+    research_protocol_sha256: str | None = None
     publication_readiness_path: str | None = None
     publication_readiness_sha256: str | None = None
     archive_ready: bool = False
@@ -1650,6 +1694,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     final_publish_ready: bool = False
     publication_tier: AutoResearchPublicationTier = "exploratory"
     publication_readiness_score: int = 0
+    research_protocol_path: str | None = None
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
     publication_readiness_path: str | None = None

@@ -16,6 +16,16 @@ from schemas.autoresearch import (
 )
 
 
+PAPER_PIPELINE_REPAIR_KINDS: frozenset[AutoResearchRepairActionKind] = frozenset(
+    {
+        "rebuild_paper_sources",
+        "repair_claim_evidence",
+        "refresh_literature",
+        "rebuild_publish_package",
+    }
+)
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -140,6 +150,28 @@ def _expected_outputs(kind: AutoResearchRepairActionKind) -> list[str]:
 
 def _status(kind: AutoResearchRepairActionKind) -> str:
     return "pending" if _auto_applicable(kind) else "blocked"
+
+
+def selected_pending_auto_repair_actions(
+    repair_plan: AutoResearchPublicationRepairPlanRead,
+) -> list[AutoResearchPublicationRepairActionRead]:
+    next_action_ids = set(repair_plan.next_action_ids)
+    return [
+        action
+        for action in repair_plan.actions
+        if action.status == "pending"
+        and action.auto_applicable
+        and (not next_action_ids or action.action_id in next_action_ids)
+    ]
+
+
+def repair_plan_allows_paper_pipeline_rebuild(
+    repair_plan: AutoResearchPublicationRepairPlanRead | None,
+) -> bool:
+    if repair_plan is None or repair_plan.action_count < 1:
+        return True
+    pending_actions = selected_pending_auto_repair_actions(repair_plan)
+    return any(action.kind in PAPER_PIPELINE_REPAIR_KINDS for action in pending_actions)
 
 
 def _action(

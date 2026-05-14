@@ -714,6 +714,7 @@ def test_apply_review_actions_respects_repair_plan_action_kind() -> None:
         generated_at=datetime.now(UTC).replace(tzinfo=None),
         project_id="project_repair_gate",
         run_id="run_repair_gate",
+        action_count=1,
         pending_action_count=1,
         auto_applicable_action_count=1,
         next_action_ids=["paper_repair"],
@@ -751,6 +752,121 @@ def test_apply_review_actions_respects_repair_plan_action_kind() -> None:
     )
     with pytest.raises(ValueError, match="non-paper repair actions"):
         autoresearch_orchestrator._ensure_repair_plan_allows_paper_rebuild(experiment_plan)
+
+    blocked_plan = paper_plan.model_copy(
+        update={
+            "pending_action_count": 0,
+            "blocked_action_count": 1,
+            "auto_applicable_action_count": 0,
+            "next_action_ids": [],
+            "actions": [
+                AutoResearchPublicationRepairActionRead(
+                    action_id="manual_review",
+                    kind="manual_review",
+                    source="evidence_index",
+                    title="Close manual provenance",
+                    detail="Attach operator-reviewed provenance.",
+                    status="blocked",
+                    blockers=["Requires operator-supplied provenance."],
+                )
+            ],
+            "repair_plan_fingerprint": "manual-repair",
+        }
+    )
+    with pytest.raises(ValueError, match="manual repair"):
+        autoresearch_orchestrator._ensure_repair_plan_allows_paper_rebuild(blocked_plan)
+
+
+def test_operator_console_disables_apply_review_actions_for_non_paper_repair_plan() -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_console_repair_action_gate",
+        project_id="project_console_repair_action_gate",
+        topic="Console repair action gate",
+        status="done",
+        task_family="text_classification",
+        created_at=now,
+        updated_at=now,
+    )
+    review_loop = review_publish.AutoResearchReviewLoopRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        generated_at=now,
+        current_round=1,
+        pending_action_count=1,
+        pending_revision_actions=["Rerun experiments"],
+    )
+    experiment_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=now,
+        project_id=run.project_id,
+        run_id=run.id,
+        action_count=1,
+        pending_action_count=1,
+        auto_applicable_action_count=1,
+        next_action_ids=["rerun_experiment"],
+        actions=[
+            AutoResearchPublicationRepairActionRead(
+                action_id="rerun_experiment",
+                kind="rerun_experiments",
+                source="readiness",
+                title="Rerun experiments",
+                detail="Add missing seed and ablation evidence.",
+                auto_applicable=True,
+                expected_outputs=["run_artifact_json"],
+            )
+        ],
+        repair_plan_fingerprint="experiment-repair",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        generated_at=now,
+        overall_status="needs_revision",
+        summary="Console repair action gate regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        publication_repair_plan=experiment_plan,
+    )
+
+    actions = autoresearch_console._run_actions(
+        run=run,
+        execution=AutoResearchRunExecutionRead(project_id=run.project_id, run_id=run.id),
+        bridge=None,
+        review=review,
+        review_loop=review_loop,
+        publish=None,
+    )
+
+    assert actions.apply_review_actions is False
+
+    paper_plan = experiment_plan.model_copy(
+        update={
+            "next_action_ids": ["repair_claims"],
+            "actions": [
+                AutoResearchPublicationRepairActionRead(
+                    action_id="repair_claims",
+                    kind="repair_claim_evidence",
+                    source="readiness",
+                    title="Repair claim evidence",
+                    detail="Refresh claim-evidence support.",
+                    auto_applicable=True,
+                    expected_outputs=["run_claim_evidence_matrix_json"],
+                )
+            ],
+            "repair_plan_fingerprint": "paper-repair",
+        }
+    )
+    paper_actions = autoresearch_console._run_actions(
+        run=run,
+        execution=AutoResearchRunExecutionRead(project_id=run.project_id, run_id=run.id),
+        bridge=None,
+        review=review.model_copy(update={"publication_repair_plan": paper_plan}),
+        review_loop=review_loop,
+        publish=None,
+    )
+
+    assert paper_actions.apply_review_actions is True
 
 
 def test_final_publish_blocks_unresolved_repair_state() -> None:

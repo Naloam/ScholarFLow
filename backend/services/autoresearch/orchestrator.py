@@ -30,6 +30,10 @@ from services.autoresearch.narrative_analyst import analyze as analyze_narrative
 from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.project_flow import gather_project_flow_context
 from services.autoresearch.repair import ExperimentRepairEngine
+from services.autoresearch.publication_repair_plan import (
+    PAPER_PIPELINE_REPAIR_KINDS,
+    selected_pending_auto_repair_actions,
+)
 from services.autoresearch.research_readiness import enforce_publication_protocol
 from services.autoresearch.repository import (
     paper_bibliography_file_path,
@@ -72,32 +76,19 @@ from services.telemetry.context import telemetry_context
 
 
 logger = logging.getLogger(__name__)
-_PAPER_PIPELINE_REPAIR_KINDS = {
-    "rebuild_paper_sources",
-    "repair_claim_evidence",
-    "refresh_literature",
-    "rebuild_publish_package",
-}
 
 
 def _ensure_repair_plan_allows_paper_rebuild(
     repair_plan: AutoResearchPublicationRepairPlanRead | None,
 ) -> None:
-    if repair_plan is None or repair_plan.pending_action_count < 1:
+    if repair_plan is None or repair_plan.action_count < 1:
         return
-    next_action_ids = set(repair_plan.next_action_ids)
-    pending_actions = [
-        action
-        for action in repair_plan.actions
-        if action.status == "pending"
-        and action.auto_applicable
-        and (not next_action_ids or action.action_id in next_action_ids)
-    ]
+    pending_actions = selected_pending_auto_repair_actions(repair_plan)
     if not pending_actions:
         raise ValueError(
             "Repair plan has no auto-applicable pending actions; manual repair is required before applying review actions"
         )
-    if not any(action.kind in _PAPER_PIPELINE_REPAIR_KINDS for action in pending_actions):
+    if not any(action.kind in PAPER_PIPELINE_REPAIR_KINDS for action in pending_actions):
         required = ", ".join(sorted({action.kind for action in pending_actions}))
         raise ValueError(
             "Repair plan requires non-paper repair actions before paper rebuild can apply revisions: "

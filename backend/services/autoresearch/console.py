@@ -23,6 +23,9 @@ from schemas.autoresearch import (
 )
 from services.autoresearch.bridge import build_bridge_state
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.publication_repair_plan import (
+    repair_plan_allows_paper_pipeline_rebuild,
+)
 from services.autoresearch.repository import list_runs, load_run, load_run_registry, load_run_registry_views
 from services.autoresearch.review_publish import build_publish_package, build_review_loop, build_run_review
 
@@ -40,12 +43,20 @@ def _run_actions(
     run: AutoResearchRunRead,
     execution: AutoResearchRunExecutionRead,
     bridge: AutoResearchExperimentBridgeRead | None,
+    review: AutoResearchRunReviewRead | None,
     review_loop: AutoResearchReviewLoopRead | None,
     publish: AutoResearchPublishPackageRead | None,
 ) -> AutoResearchOperatorRunActionsRead:
     active_or_queued = any(job.status in {"queued", "leased", "running"} for job in execution.jobs)
     bridge_waiting = bool(bridge is not None and bridge.current_session is not None and bridge.current_session.status == "waiting_result")
     final_publish_ready = bool(publish is not None and publish.final_publish_ready)
+    repair_plan = review.publication_repair_plan if review is not None else None
+    can_apply_review_actions = (
+        run.status == "done"
+        and review_loop is not None
+        and review_loop.pending_action_count > 0
+        and repair_plan_allows_paper_pipeline_rebuild(repair_plan)
+    )
     return AutoResearchOperatorRunActionsRead(
         resume=run.status != "done" and not bridge_waiting,
         retry=run.status in {"done", "failed", "canceled"},
@@ -53,11 +64,7 @@ def _run_actions(
         refresh_bridge=bool(bridge is not None and bridge.enabled),
         import_bridge_result=bridge_waiting,
         refresh_review=run.status == "done",
-        apply_review_actions=(
-            run.status == "done"
-            and review_loop is not None
-            and review_loop.pending_action_count > 0
-        ),
+        apply_review_actions=can_apply_review_actions,
         rebuild_paper=run.status == "done",
         export_publish=run.status == "done" and final_publish_ready,
         download_publish=bool(
@@ -452,6 +459,7 @@ def build_operator_console(
                     run=selected_run,
                     execution=execution,
                     bridge=bridge,
+                    review=review,
                     review_loop=review_loop,
                     publish=publish,
                 ),

@@ -430,6 +430,15 @@ export function OperatorConsolePanel({
                       / blocked {run.publication_repair_plan_blocked_count}
                     </small>
                     <small>
+                      repair exec{" "}
+                      {run.publication_repair_execution_attempted_count
+                        ? run.publication_repair_execution_success
+                          ? "success"
+                          : "partial"
+                        : "none"}{" "}
+                      / attempted {run.publication_repair_execution_attempted_count}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>
@@ -565,6 +574,20 @@ export function OperatorConsolePanel({
                     ? currentSummary.publication_repair_plan_complete
                       ? t("operator.complete")
                       : `${currentSummary.publication_repair_plan_auto_applicable_count} ${t("operator.auto")} / ${currentSummary.publication_repair_plan_blocked_count} ${t("operator.blocked")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.repairExecution")}
+                </span>
+                <strong data-testid="operator-repair-execution-summary">
+                  {currentSummary
+                    ? currentSummary.publication_repair_execution_attempted_count
+                      ? currentSummary.publication_repair_execution_success
+                        ? t("operator.success")
+                        : `${currentSummary.publication_repair_execution_partial_count} ${t("operator.partial")}`
+                      : t("operator.notBuilt")
                     : "n/a"}
                 </strong>
               </div>
@@ -1480,6 +1503,28 @@ export function OperatorConsolePanel({
                     </ul>
                   ) : (
                     <p>{t("operator.noRepairPlanActions")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-repair-execution">
+                  <span className="meta-label">
+                    {t("operator.repairExecution")}
+                  </span>
+                  <p>
+                    {currentSummary.publication_repair_execution_attempted_count
+                      ? `${currentSummary.publication_repair_execution_executed_count} ${t("operator.executed")} / ${currentSummary.publication_repair_execution_partial_count} ${t("operator.partial")} / ${currentSummary.publication_repair_execution_blocked_count} ${t("operator.blocked")}`
+                      : t("operator.notBuilt")}
+                  </p>
+                  {currentSummary.publication_repair_execution_missing_outputs.length ? (
+                    <ul>
+                      {currentSummary.publication_repair_execution_missing_outputs.map((output) => (
+                        <li key={output}>{output}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noRepairExecutionGaps")}</p>
                   )}
                 </div>
               ) : null}

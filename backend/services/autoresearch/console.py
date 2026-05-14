@@ -94,6 +94,9 @@ def _run_summary(
     publication_repair_plan = (
         review.publication_repair_plan if review is not None else None
     )
+    publication_repair_execution = (
+        review.publication_repair_execution if review is not None else None
+    )
     readiness = review.publication_readiness if review is not None else None
     audit_checks = methodology_audit.checks if methodology_audit is not None else []
     readiness_checks = readiness.checks if readiness is not None else []
@@ -242,6 +245,36 @@ def _run_summary(
                 if item.action_id in set(publication_repair_plan.next_action_ids)
             ][:3]
             if publication_repair_plan is not None
+            else []
+        ),
+        publication_repair_execution_success=(
+            publication_repair_execution.success
+            if publication_repair_execution is not None
+            else False
+        ),
+        publication_repair_execution_attempted_count=(
+            publication_repair_execution.attempted_action_count
+            if publication_repair_execution is not None
+            else 0
+        ),
+        publication_repair_execution_executed_count=(
+            publication_repair_execution.executed_action_count
+            if publication_repair_execution is not None
+            else 0
+        ),
+        publication_repair_execution_partial_count=(
+            publication_repair_execution.partial_action_count
+            if publication_repair_execution is not None
+            else 0
+        ),
+        publication_repair_execution_blocked_count=(
+            publication_repair_execution.blocked_action_count
+            if publication_repair_execution is not None
+            else 0
+        ),
+        publication_repair_execution_missing_outputs=(
+            publication_repair_execution.missing_output_asset_ids[:3]
+            if publication_repair_execution is not None
             else []
         ),
         publication_grade_benchmark=(

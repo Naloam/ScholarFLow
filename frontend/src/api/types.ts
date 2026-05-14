@@ -1962,6 +1962,12 @@ export type AutoResearchOperatorRunSummary = {
   publication_repair_plan_blocked_count: number;
   publication_repair_plan_auto_applicable_count: number;
   publication_repair_plan_next_actions: string[];
+  publication_repair_execution_success: boolean;
+  publication_repair_execution_attempted_count: number;
+  publication_repair_execution_executed_count: number;
+  publication_repair_execution_partial_count: number;
+  publication_repair_execution_blocked_count: number;
+  publication_repair_execution_missing_outputs: string[];
   publication_grade_benchmark: boolean;
   publication_blocker_count: number;
   publication_blockers: string[];

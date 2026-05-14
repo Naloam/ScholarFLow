@@ -2216,6 +2216,12 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     publication_repair_plan_blocked_count: int = 0
     publication_repair_plan_auto_applicable_count: int = 0
     publication_repair_plan_next_actions: list[str] = Field(default_factory=list)
+    publication_repair_execution_success: bool = False
+    publication_repair_execution_attempted_count: int = 0
+    publication_repair_execution_executed_count: int = 0
+    publication_repair_execution_partial_count: int = 0
+    publication_repair_execution_blocked_count: int = 0
+    publication_repair_execution_missing_outputs: list[str] = Field(default_factory=list)
     publication_grade_benchmark: bool = False
     publication_blocker_count: int = 0
     publication_blockers: list[str] = Field(default_factory=list)

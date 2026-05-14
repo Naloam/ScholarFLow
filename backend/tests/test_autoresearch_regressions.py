@@ -753,6 +753,248 @@ def test_apply_review_actions_respects_repair_plan_action_kind() -> None:
         autoresearch_orchestrator._ensure_repair_plan_allows_paper_rebuild(experiment_plan)
 
 
+def test_final_publish_blocks_unresolved_repair_state() -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    repair_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=now,
+        project_id="project_repair_state_gate",
+        run_id="run_repair_state_gate",
+        action_count=2,
+        pending_action_count=1,
+        blocked_action_count=1,
+        auto_applicable_action_count=1,
+        next_action_ids=["repair_claims"],
+        actions=[
+            AutoResearchPublicationRepairActionRead(
+                action_id="repair_claims",
+                kind="repair_claim_evidence",
+                source="readiness",
+                priority="high",
+                title="Repair claim evidence",
+                detail="Refresh claim-evidence support.",
+                auto_applicable=True,
+                expected_outputs=["run_claim_evidence_matrix_json"],
+            ),
+            AutoResearchPublicationRepairActionRead(
+                action_id="manual_provenance",
+                kind="manual_review",
+                source="evidence_index",
+                priority="high",
+                title="Close manual provenance",
+                detail="Attach operator-reviewed provenance.",
+                status="blocked",
+                blockers=["Requires operator-supplied provenance."],
+            ),
+        ],
+        blockers=["Blocked repair action requires manual input: Close manual provenance"],
+        repair_plan_fingerprint="current-repair-plan",
+    )
+    repair_execution = AutoResearchPublicationRepairExecutionRead(
+        generated_at=now,
+        project_id=repair_plan.project_id,
+        run_id=repair_plan.run_id,
+        repair_plan_fingerprint="stale-repair-plan",
+        attempted_action_count=1,
+        partial_action_count=1,
+        missing_output_asset_ids=["run_claim_evidence_matrix_json"],
+        action_results=[
+            AutoResearchPublicationRepairExecutionActionRead(
+                action_id="repair_claims",
+                kind="repair_claim_evidence",
+                title="Repair claim evidence",
+                status="partial",
+                auto_applicable=True,
+                expected_output_asset_ids=["run_claim_evidence_matrix_json"],
+                missing_output_asset_ids=["run_claim_evidence_matrix_json"],
+                detail="Repair action ran but expected outputs are still missing.",
+            )
+        ],
+        success=False,
+        execution_fingerprint="repair-execution",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=repair_plan.project_id,
+        run_id=repair_plan.run_id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Repair state gate regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        publication_repair_plan=repair_plan,
+        publication_repair_execution=repair_execution,
+    )
+
+    blockers = review_publish._repair_state_final_blockers(review)
+
+    assert any("pending publication repair action" in item for item in blockers)
+    assert any("blocked publication repair action" in item for item in blockers)
+    assert any("repair plan blocker" in item for item in blockers)
+    assert any("stale relative to the current repair plan" in item for item in blockers)
+    assert any("incomplete action results" in item for item in blockers)
+    assert any("missing expected outputs" in item for item in blockers)
+    assert any("did not complete successfully" in item for item in blockers)
+
+
+def test_repair_plan_classifies_final_asset_gaps_as_auto_repairable() -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    evidence_index = AutoResearchPublicationEvidenceIndexRead(
+        generated_at=now,
+        project_id="project_repair_asset_kind",
+        run_id="run_repair_asset_kind",
+        evidence_item_count=2,
+        required_evidence_count=2,
+        present_required_evidence_count=0,
+        missing_required_evidence_count=2,
+        blockers=[
+            "Missing final publish asset: run_generated_code.",
+            "Missing final publish asset: run_paper_build_script.",
+        ],
+        complete=False,
+        evidence_index_fingerprint="asset-kind-evidence",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=evidence_index.project_id,
+        run_id=evidence_index.run_id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Repair asset kind regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        publication_evidence_index=evidence_index,
+    )
+
+    repair_plan = review_publish.build_publication_repair_plan(
+        review=review,
+        review_loop=None,
+    )
+
+    assert repair_plan.pending_action_count == 2
+    assert repair_plan.blocked_action_count == 0
+    assert any(action.kind == "rerun_experiments" for action in repair_plan.actions)
+    assert any(action.kind == "rebuild_paper_sources" for action in repair_plan.actions)
+
+
+def test_publish_package_blocks_unresolved_repair_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    project_id = "project_package_repair_state_gate"
+    run_id = "run_package_repair_state_gate"
+    repair_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        action_count=1,
+        pending_action_count=1,
+        auto_applicable_action_count=1,
+        next_action_ids=["repair_claims"],
+        actions=[
+            AutoResearchPublicationRepairActionRead(
+                action_id="repair_claims",
+                kind="repair_claim_evidence",
+                source="readiness",
+                priority="high",
+                title="Repair claim evidence",
+                detail="Refresh claim-evidence support.",
+                auto_applicable=True,
+                expected_outputs=["run_claim_evidence_matrix_json"],
+            )
+        ],
+        repair_plan_fingerprint="package-repair-plan",
+    )
+    evidence_index = AutoResearchPublicationEvidenceIndexRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        evidence_item_count=0,
+        required_evidence_count=0,
+        present_required_evidence_count=0,
+        missing_required_evidence_count=0,
+        complete=True,
+        evidence_index_fingerprint="package-evidence-index",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Package repair state gate regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        publication_evidence_index=evidence_index,
+        publication_repair_plan=repair_plan,
+    )
+    bundle = review_publish.AutoResearchBundleRead(
+        id="selected_candidate_repro",
+        name="Selected candidate",
+        description="Regression bundle.",
+        asset_count=1,
+        existing_asset_count=1,
+        assets=[
+            review_publish.AutoResearchBundleAssetRead(
+                asset_id="run_json",
+                label="Run",
+                role="run_json",
+                required=True,
+                ref=AutoResearchRegistryAssetRef(
+                    path=str(tmp_path / "run.json"),
+                    exists=True,
+                    sha256="run-json",
+                ),
+            )
+        ],
+    )
+    review_loop = review_publish.AutoResearchReviewLoopRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        current_round=1,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        latest_review_fingerprint="review-fingerprint",
+    )
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Package repair state gate",
+        status="done",
+        task_family="text_classification",
+        created_at=now,
+        updated_at=now,
+    )
+    monkeypatch.setattr(review_publish, "build_run_review", lambda *_args: review)
+    monkeypatch.setattr(
+        review_publish,
+        "load_run_bundle_index",
+        lambda *_args: review_publish.AutoResearchBundleIndexRead(
+            project_id=project_id,
+            run_id=run_id,
+            bundles=[bundle],
+        ),
+    )
+    monkeypatch.setattr(review_publish, "load_run", lambda *_args: run)
+    monkeypatch.setattr(review_publish, "_load_review_loop", lambda *_args: review_loop)
+    monkeypatch.setattr(review_publish, "_compile_ready_final_blockers", lambda *_args: [])
+
+    package = review_publish.build_publish_package(project_id, run_id)
+
+    assert package is not None
+    assert package.status == "blocked"
+    assert package.final_publish_ready is False
+    assert any(
+        "pending publication repair action" in item
+        for item in package.final_blockers
+    )
+
+
 def test_publication_readiness_is_persisted_registered_and_packaged(
     monkeypatch,
     tmp_path: Path,

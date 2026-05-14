@@ -706,6 +706,62 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
     return deduped
 
 
+def _repair_state_final_blockers(review: AutoResearchRunReviewRead) -> list[str]:
+    blockers: list[str] = []
+    repair_plan = review.publication_repair_plan
+    repair_execution = review.publication_repair_execution
+    if repair_plan is not None:
+        if repair_plan.pending_action_count:
+            blockers.append(
+                "Final publish requires applying or explicitly resolving "
+                f"{repair_plan.pending_action_count} pending publication repair action(s)."
+            )
+        if repair_plan.blocked_action_count:
+            blockers.append(
+                "Final publish requires manual closure for "
+                f"{repair_plan.blocked_action_count} blocked publication repair action(s)."
+            )
+        for item in repair_plan.blockers[:5]:
+            blockers.append(f"Final publish repair plan blocker: {item}")
+        if (
+            not repair_plan.complete
+            and not repair_plan.pending_action_count
+            and not repair_plan.blocked_action_count
+            and not repair_plan.blockers
+        ):
+            blockers.append("Final publish requires closing the publication repair plan.")
+    if repair_execution is not None:
+        if (
+            repair_plan is not None
+            and repair_execution.repair_plan_fingerprint
+            and repair_plan.repair_plan_fingerprint
+            and repair_execution.repair_plan_fingerprint != repair_plan.repair_plan_fingerprint
+            and not repair_plan.complete
+        ):
+            blockers.append("Final publish repair execution is stale relative to the current repair plan.")
+        if repair_execution.partial_action_count or repair_execution.blocked_action_count:
+            blockers.append(
+                "Final publish repair execution has incomplete action results: "
+                f"{repair_execution.partial_action_count} partial, "
+                f"{repair_execution.blocked_action_count} blocked."
+            )
+        if repair_execution.missing_output_asset_ids:
+            missing = ", ".join(repair_execution.missing_output_asset_ids[:6])
+            if len(repair_execution.missing_output_asset_ids) > 6:
+                missing = f"{missing}, ..."
+            blockers.append(f"Final publish repair execution is missing expected outputs: {missing}.")
+        if repair_execution.attempted_action_count and not repair_execution.success:
+            blockers.append("Final publish repair execution did not complete successfully.")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in blockers:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
 def _build_novelty_assessment(
     *,
     run: AutoResearchRunRead,
@@ -2497,7 +2553,11 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     missing_required_assets = [item for item in required_assets if not item.ref.exists]
     missing_final_assets = [item for item in final_required_assets if not item.ref.exists]
     blockers = [item.summary for item in review.findings if item.severity == "error"]
-    semantic_final_blockers = _semantic_final_publish_blockers(review)
+    repair_state_final_blockers = _repair_state_final_blockers(review)
+    semantic_final_blockers = [
+        *_semantic_final_publish_blockers(review),
+        *repair_state_final_blockers,
+    ]
     compile_final_blockers = _compile_ready_final_blockers(run)
     evidence_index_final_blockers = (
         review.publication_evidence_index.blockers

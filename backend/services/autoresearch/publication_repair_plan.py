@@ -52,7 +52,18 @@ def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResea
         return "update_benchmark_provenance"
     if any(
         marker in lowered
-        for marker in ("seed", "sweep", "ablation", "significance", "power", "statistic", "artifact")
+        for marker in (
+            "seed",
+            "sweep",
+            "ablation",
+            "significance",
+            "power",
+            "statistic",
+            "artifact",
+            "generated_code",
+            "generated code",
+            "run_generated_code",
+        )
     ):
         return "rerun_experiments"
     if any(
@@ -63,8 +74,14 @@ def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResea
             "bibliography",
             "compile",
             "build script",
+            "paper_build_script",
             "source manifest",
             "paper_sources",
+            "paper_markdown",
+            "paper_latex_source",
+            "paper_bibliography_bib",
+            "paper_sources_manifest",
+            "paper_compile_report",
         )
     ):
         return "rebuild_paper_sources"

@@ -56,6 +56,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_publication_repair_plan_json",
+    "run_publication_repair_execution_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_history_markdown",
@@ -107,6 +108,7 @@ AutoResearchLineageNodeKind = Literal[
     "revision_dossier",
     "publication_evidence_index",
     "publication_repair_plan",
+    "publication_repair_execution",
     "paper_plan",
     "figure_plan",
     "paper_revision_history",
@@ -1203,6 +1205,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     revision_dossier_json: AutoResearchRegistryAssetRef | None = None
     publication_evidence_index_json: AutoResearchRegistryAssetRef | None = None
     publication_repair_plan_json: AutoResearchRegistryAssetRef | None = None
+    publication_repair_execution_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None
@@ -1596,6 +1599,43 @@ class AutoResearchPublicationRepairPlanRead(BaseModel):
     repair_plan_fingerprint: str
 
 
+AutoResearchRepairExecutionActionStatus = Literal["executed", "partial", "blocked", "skipped"]
+
+
+class AutoResearchPublicationRepairExecutionActionRead(BaseModel):
+    action_id: str
+    kind: AutoResearchRepairActionKind
+    title: str
+    status: AutoResearchRepairExecutionActionStatus = "skipped"
+    auto_applicable: bool = False
+    expected_output_asset_ids: list[str] = Field(default_factory=list)
+    materialized_output_asset_ids: list[str] = Field(default_factory=list)
+    missing_output_asset_ids: list[str] = Field(default_factory=list)
+    detail: str
+
+
+class AutoResearchPublicationRepairExecutionRead(BaseModel):
+    generated_at: datetime
+    execution_id: str = "publication_repair_execution_v1"
+    project_id: str
+    run_id: str
+    selected_candidate_id: str | None = None
+    repair_plan_fingerprint: str | None = None
+    review_round_before: int = 0
+    review_fingerprint_before: str | None = None
+    review_round_after: int = 0
+    review_fingerprint_after: str | None = None
+    attempted_action_count: int = 0
+    executed_action_count: int = 0
+    partial_action_count: int = 0
+    blocked_action_count: int = 0
+    materialized_output_asset_ids: list[str] = Field(default_factory=list)
+    missing_output_asset_ids: list[str] = Field(default_factory=list)
+    action_results: list[AutoResearchPublicationRepairExecutionActionRead] = Field(default_factory=list)
+    success: bool = False
+    execution_fingerprint: str
+
+
 class AutoResearchMethodologyAuditRead(BaseModel):
     generated_at: datetime
     audit_id: str = "methodology_audit_v1"
@@ -1711,6 +1751,8 @@ class AutoResearchRunReviewRead(BaseModel):
     publication_evidence_index_path: str | None = None
     publication_repair_plan: AutoResearchPublicationRepairPlanRead | None = None
     publication_repair_plan_path: str | None = None
+    publication_repair_execution: AutoResearchPublicationRepairExecutionRead | None = None
+    publication_repair_execution_path: str | None = None
 
 
 class AutoResearchReviewLoopRoundRead(BaseModel):
@@ -1852,6 +1894,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publication_evidence_index_sha256: str | None = None
     publication_repair_plan_path: str | None = None
     publication_repair_plan_sha256: str | None = None
+    publication_repair_execution_path: str | None = None
+    publication_repair_execution_sha256: str | None = None
     archive_ready: bool = False
     archive_current: bool = False
     review_round: int = 0
@@ -1945,6 +1989,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     revision_dossier_path: str | None = None
     publication_evidence_index_path: str | None = None
     publication_repair_plan_path: str | None = None
+    publication_repair_execution_path: str | None = None
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
     review_path: str | None = None
     publication_readiness_path: str | None = None

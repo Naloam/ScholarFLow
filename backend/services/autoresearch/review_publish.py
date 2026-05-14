@@ -19,6 +19,7 @@ from schemas.autoresearch import (
     AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchPublicationReadinessRead,
+    AutoResearchPublicationRepairExecutionRead,
     AutoResearchResearchProtocolRead,
     AutoResearchPublishExportRead,
     AutoResearchPublishExportRequest,
@@ -48,6 +49,7 @@ from services.autoresearch.repository import (
     PUBLICATION_READINESS_FILENAME,
     PUBLICATION_EVIDENCE_INDEX_FILENAME,
     PUBLICATION_REPAIR_PLAN_FILENAME,
+    PUBLICATION_REPAIR_EXECUTION_FILENAME,
     REVISION_DOSSIER_FILENAME,
     load_run,
     load_run_bundle_index,
@@ -57,6 +59,7 @@ from services.autoresearch.repository import (
     publication_readiness_file_path,
     publication_evidence_index_file_path,
     publication_repair_plan_file_path,
+    publication_repair_execution_file_path,
     research_protocol_file_path,
     revision_dossier_file_path,
     run_dir,
@@ -135,6 +138,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_publication_repair_plan_json",
+    "run_publication_repair_execution_json",
     "generated_code",
 }
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
@@ -1497,6 +1501,21 @@ def _load_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRea
         return None
 
 
+def _load_publication_repair_execution(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchPublicationRepairExecutionRead | None:
+    path = Path(publication_repair_execution_file_path(project_id, run_id))
+    if not path.is_file():
+        return None
+    try:
+        return AutoResearchPublicationRepairExecutionRead.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+    except Exception:
+        return None
+
+
 def _sync_paper_revision_state(
     *,
     run: AutoResearchRunRead,
@@ -1990,6 +2009,17 @@ def build_run_review(
             "publication_repair_plan_path": str(publication_repair_plan_path),
         }
     )
+    publication_repair_execution = _load_publication_repair_execution(project_id, run_id)
+    if publication_repair_execution is not None:
+        review = review.model_copy(
+            update={
+                "publication_repair_execution": publication_repair_execution,
+                "publication_repair_execution_path": publication_repair_execution_file_path(
+                    project_id,
+                    run_id,
+                ),
+            }
+        )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     _sync_paper_revision_state(
         run=run,
@@ -2101,6 +2131,7 @@ def _publish_package_fingerprint(
         "revision_dossier_path": review.revision_dossier_path,
         "publication_evidence_index_path": review.publication_evidence_index_path,
         "publication_repair_plan_path": review.publication_repair_plan_path,
+        "publication_repair_execution_path": review.publication_repair_execution_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
             review_loop.latest_review_fingerprint
@@ -2363,6 +2394,16 @@ def build_publication_manifest(
     repair_plan_path_value = (
         str(repair_plan_path) if repair_plan_path.is_file() else package.publication_repair_plan_path
     )
+    repair_execution_path = (
+        Path(package.publication_repair_execution_path)
+        if package.publication_repair_execution_path
+        else Path(publication_repair_execution_file_path(project_id, run_id))
+    )
+    repair_execution_path_value = (
+        str(repair_execution_path)
+        if repair_execution_path.is_file()
+        else package.publication_repair_execution_path
+    )
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -2398,6 +2439,8 @@ def build_publication_manifest(
         publication_evidence_index_sha256=_file_sha256(evidence_index_path),
         publication_repair_plan_path=repair_plan_path_value,
         publication_repair_plan_sha256=_file_sha256(repair_plan_path),
+        publication_repair_execution_path=repair_execution_path_value,
+        publication_repair_execution_sha256=_file_sha256(repair_execution_path),
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,
@@ -2526,6 +2569,11 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         revision_dossier_path=review.revision_dossier_path,
         publication_evidence_index_path=review.publication_evidence_index_path,
         publication_repair_plan_path=review.publication_repair_plan_path,
+        publication_repair_execution_path=(
+            str(Path(publication_repair_execution_file_path(project_id, run_id)))
+            if Path(publication_repair_execution_file_path(project_id, run_id)).is_file()
+            else review.publication_repair_execution_path
+        ),
         publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
@@ -2695,6 +2743,7 @@ def _archive_manifest(
             REVISION_DOSSIER_FILENAME,
             PUBLICATION_EVIDENCE_INDEX_FILENAME,
             PUBLICATION_REPAIR_PLAN_FILENAME,
+            PUBLICATION_REPAIR_EXECUTION_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,
         ],
@@ -2746,6 +2795,7 @@ def export_publish_package(
             _review_loop_path(project_id, run_id),
             Path(publication_evidence_index_file_path(project_id, run_id)),
             Path(publication_repair_plan_file_path(project_id, run_id)),
+            Path(publication_repair_execution_file_path(project_id, run_id)),
             _publish_manifest_path(project_id, run_id),
             archive_manifest_path,
         ):

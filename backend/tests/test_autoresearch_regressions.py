@@ -56,6 +56,7 @@ from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
 from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.methodology_audit import build_methodology_audit
+from services.autoresearch.publication_repair_execution import build_publication_repair_execution
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import (
     PUBLICATION_MIN_COMPLETED_SEEDS,
@@ -760,6 +761,9 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     repair_plan_path = Path(
         autoresearch_repository.publication_repair_plan_file_path(project_id, run_id)
     )
+    repair_execution_path = Path(
+        autoresearch_repository.publication_repair_execution_file_path(project_id, run_id)
+    )
     assert not readiness_path.is_file()
     assert not benchmark_card_path.is_file()
     assert not protocol_path.is_file()
@@ -767,6 +771,7 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert not dossier_path.is_file()
     assert not evidence_index_path.is_file()
     assert not repair_plan_path.is_file()
+    assert not repair_execution_path.is_file()
 
     review = review_publish.build_run_review(project_id, run_id)
 
@@ -826,6 +831,26 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert repair_plan_payload["action_count"] > 0
     assert repair_plan_payload["pending_action_count"] > 0
     assert any(action["source"] == "evidence_index" for action in repair_plan_payload["actions"])
+    review_loop = review_publish.build_review_loop(project_id, run_id)
+    assert review_loop is not None
+    repair_execution = build_publication_repair_execution(
+        project_id=project_id,
+        run_id=run_id,
+        repair_plan=review.publication_repair_plan,
+        review_loop_before=review_loop,
+        review_loop_after=review_loop,
+    )
+    repair_execution_path.write_text(
+        repair_execution.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    review = review_publish.build_run_review(project_id, run_id)
+    assert review is not None
+    assert review.publication_repair_execution is not None
+    assert review.publication_repair_execution_path == str(repair_execution_path)
+    assert review.publication_repair_execution.execution_fingerprint == (
+        repair_execution.execution_fingerprint
+    )
     evidence_ids = {item["evidence_id"] for item in evidence_index_payload["evidence_items"]}
     assert {
         "benchmark_card",
@@ -859,6 +884,8 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert registry.files.publication_evidence_index_json.exists is True
     assert registry.files.publication_repair_plan_json is not None
     assert registry.files.publication_repair_plan_json.exists is True
+    assert registry.files.publication_repair_execution_json is not None
+    assert registry.files.publication_repair_execution_json.exists is True
     assert any(
         edge.relation == "has_asset"
         and edge.target_kind == "research_protocol"
@@ -944,6 +971,18 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert any(
         edge.relation == "has_asset"
+        and edge.target_kind == "publication_repair_execution"
+        and edge.target_path == str(repair_execution_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "publication_repair_execution"
+        and edge.source_kind in {"publication_repair_plan", "paper_revision_action_index"}
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "has_asset"
         and edge.target_kind == "publication_readiness"
         and edge.target_path == str(readiness_path)
         for edge in registry.lineage.edges
@@ -986,6 +1025,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         item for item in selected_bundle.assets if item.role == "run_publication_repair_plan_json"
     )
     assert repair_plan_asset.ref.exists is True
+    repair_execution_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_publication_repair_execution_json"
+    )
+    assert repair_execution_asset.ref.exists is True
 
     package = review_publish.build_publish_package(project_id, run_id)
     assert package is not None
@@ -995,6 +1038,7 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert package.revision_dossier_path == str(dossier_path)
     assert package.publication_evidence_index_path == str(evidence_index_path)
     assert package.publication_repair_plan_path == str(repair_plan_path)
+    assert package.publication_repair_execution_path == str(repair_execution_path)
     assert package.publication_readiness_path == str(readiness_path)
     assert any(
         item.role == "run_benchmark_card_json"
@@ -1074,13 +1118,30 @@ def test_publication_manifest_records_readiness_artifact_identity(
     dossier_path = Path(review.revision_dossier_path)
     evidence_index_path = Path(review.publication_evidence_index_path)
     repair_plan_path = Path(review.publication_repair_plan_path)
+    repair_execution_path = Path(
+        autoresearch_repository.publication_repair_execution_file_path(project_id, run_id)
+    )
     readiness_path = Path(review.publication_readiness_path)
+    review_loop = review_publish.build_review_loop(project_id, run_id)
+    assert review_loop is not None
+    repair_execution = build_publication_repair_execution(
+        project_id=project_id,
+        run_id=run_id,
+        repair_plan=review.publication_repair_plan,
+        review_loop_before=review_loop,
+        review_loop_after=review_loop,
+    )
+    repair_execution_path.write_text(
+        repair_execution.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
     assert benchmark_card_path.is_file()
     assert protocol_path.is_file()
     assert audit_path.is_file()
     assert dossier_path.is_file()
     assert evidence_index_path.is_file()
     assert repair_plan_path.is_file()
+    assert repair_execution_path.is_file()
     assert readiness_path.is_file()
     expected_benchmark_card_sha256 = hashlib.sha256(benchmark_card_path.read_bytes()).hexdigest()
     expected_protocol_sha256 = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
@@ -1088,6 +1149,7 @@ def test_publication_manifest_records_readiness_artifact_identity(
     expected_dossier_sha256 = hashlib.sha256(dossier_path.read_bytes()).hexdigest()
     expected_evidence_index_sha256 = hashlib.sha256(evidence_index_path.read_bytes()).hexdigest()
     expected_repair_plan_sha256 = hashlib.sha256(repair_plan_path.read_bytes()).hexdigest()
+    expected_repair_execution_sha256 = hashlib.sha256(repair_execution_path.read_bytes()).hexdigest()
     expected_readiness_sha256 = hashlib.sha256(readiness_path.read_bytes()).hexdigest()
 
     code_package_path = review_publish._code_package_path(project_id, run_id)
@@ -1110,6 +1172,7 @@ def test_publication_manifest_records_readiness_artifact_identity(
         revision_dossier_path=str(dossier_path),
         publication_evidence_index_path=str(evidence_index_path),
         publication_repair_plan_path=str(repair_plan_path),
+        publication_repair_execution_path=str(repair_execution_path),
         publication_readiness_path=str(readiness_path),
         manifest_path=str(review_publish._publish_manifest_path(project_id, run_id)),
         archive_path=str(review_publish._publish_archive_path(project_id, run_id)),
@@ -1138,6 +1201,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert manifest.publication_evidence_index_sha256 == expected_evidence_index_sha256
     assert manifest.publication_repair_plan_path == str(repair_plan_path)
     assert manifest.publication_repair_plan_sha256 == expected_repair_plan_sha256
+    assert manifest.publication_repair_execution_path == str(repair_execution_path)
+    assert manifest.publication_repair_execution_sha256 == expected_repair_execution_sha256
     assert manifest.publication_readiness_path == str(readiness_path)
     assert manifest.publication_readiness_sha256 == expected_readiness_sha256
     persisted = json.loads(Path(manifest.publication_manifest_path).read_text(encoding="utf-8"))
@@ -1153,6 +1218,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert persisted["publication_evidence_index_sha256"] == expected_evidence_index_sha256
     assert persisted["publication_repair_plan_path"] == str(repair_plan_path)
     assert persisted["publication_repair_plan_sha256"] == expected_repair_plan_sha256
+    assert persisted["publication_repair_execution_path"] == str(repair_execution_path)
+    assert persisted["publication_repair_execution_sha256"] == expected_repair_execution_sha256
     assert persisted["publication_readiness_path"] == str(readiness_path)
     assert persisted["publication_readiness_sha256"] == expected_readiness_sha256
 

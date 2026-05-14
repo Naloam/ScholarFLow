@@ -710,6 +710,7 @@ export type AutoResearchLineageEdge = {
     | "revision_dossier"
     | "publication_evidence_index"
     | "publication_repair_plan"
+    | "publication_repair_execution"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -758,6 +759,7 @@ export type AutoResearchLineageEdge = {
     | "revision_dossier"
     | "publication_evidence_index"
     | "publication_repair_plan"
+    | "publication_repair_execution"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -801,6 +803,7 @@ export type AutoResearchRunRegistryFiles = {
   revision_dossier_json?: AutoResearchRegistryAssetRef | null;
   publication_evidence_index_json?: AutoResearchRegistryAssetRef | null;
   publication_repair_plan_json?: AutoResearchRegistryAssetRef | null;
+  publication_repair_execution_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
@@ -947,6 +950,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_revision_dossier_json"
     | "run_publication_evidence_index_json"
     | "run_publication_repair_plan_json"
+    | "run_publication_repair_execution_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
     | "run_paper_revision_history_markdown"
@@ -1211,6 +1215,46 @@ export type AutoResearchPublicationRepairPlan = {
   repair_plan_fingerprint: string;
 };
 
+export type AutoResearchRepairExecutionActionStatus =
+  | "executed"
+  | "partial"
+  | "blocked"
+  | "skipped";
+
+export type AutoResearchPublicationRepairExecutionAction = {
+  action_id: string;
+  kind: AutoResearchRepairActionKind;
+  title: string;
+  status: AutoResearchRepairExecutionActionStatus;
+  auto_applicable: boolean;
+  expected_output_asset_ids: string[];
+  materialized_output_asset_ids: string[];
+  missing_output_asset_ids: string[];
+  detail: string;
+};
+
+export type AutoResearchPublicationRepairExecution = {
+  generated_at: string;
+  execution_id: string;
+  project_id: string;
+  run_id: string;
+  selected_candidate_id?: string | null;
+  repair_plan_fingerprint?: string | null;
+  review_round_before: number;
+  review_fingerprint_before?: string | null;
+  review_round_after: number;
+  review_fingerprint_after?: string | null;
+  attempted_action_count: number;
+  executed_action_count: number;
+  partial_action_count: number;
+  blocked_action_count: number;
+  materialized_output_asset_ids: string[];
+  missing_output_asset_ids: string[];
+  action_results: AutoResearchPublicationRepairExecutionAction[];
+  success: boolean;
+  execution_fingerprint: string;
+};
+
 export type AutoResearchResearchProtocol = {
   generated_at: string;
   protocol_id: string;
@@ -1367,6 +1411,8 @@ export type AutoResearchRunReview = {
   publication_evidence_index_path?: string | null;
   publication_repair_plan?: AutoResearchPublicationRepairPlan | null;
   publication_repair_plan_path?: string | null;
+  publication_repair_execution?: AutoResearchPublicationRepairExecution | null;
+  publication_repair_execution_path?: string | null;
   scores: AutoResearchReviewScores;
   findings: AutoResearchReviewFinding[];
   revision_plan: AutoResearchRevisionAction[];
@@ -1641,6 +1687,8 @@ export type AutoResearchPublicationManifest = {
   publication_evidence_index_sha256?: string | null;
   publication_repair_plan_path?: string | null;
   publication_repair_plan_sha256?: string | null;
+  publication_repair_execution_path?: string | null;
+  publication_repair_execution_sha256?: string | null;
   archive_ready: boolean;
   archive_current: boolean;
   review_round: number;
@@ -1736,6 +1784,7 @@ export type AutoResearchPublishPackage = {
   revision_dossier_path?: string | null;
   publication_evidence_index_path?: string | null;
   publication_repair_plan_path?: string | null;
+  publication_repair_execution_path?: string | null;
   publication_readiness_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;

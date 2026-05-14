@@ -1155,12 +1155,33 @@ class AutoResearchOrchestrator:
         review = build_run_review(project_id, run_id)
         repair_plan = review.publication_repair_plan if review is not None else None
         _ensure_repair_plan_allows_paper_rebuild(repair_plan)
-        return self._rebuild_paper_pipeline(
+        rebuilt_run = self._rebuild_paper_pipeline(
             db=db,
             project_id=project_id,
             run_id=run_id,
             refresh_review_after_rebuild=True,
         )
+        if repair_plan is not None:
+            from services.autoresearch.publication_repair_execution import (
+                build_publication_repair_execution,
+            )
+            from services.autoresearch.repository import publication_repair_execution_file_path
+
+            review_loop_after = build_review_loop(project_id, run_id)
+            repair_execution = build_publication_repair_execution(
+                project_id=project_id,
+                run_id=run_id,
+                repair_plan=repair_plan,
+                review_loop_before=review_loop,
+                review_loop_after=review_loop_after,
+            )
+            repair_execution_path = Path(publication_repair_execution_file_path(project_id, run_id))
+            repair_execution_path.parent.mkdir(parents=True, exist_ok=True)
+            repair_execution_path.write_text(
+                repair_execution.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+        return rebuilt_run
 
     def rebuild_paper_pipeline(
         self,

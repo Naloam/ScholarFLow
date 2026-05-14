@@ -48,6 +48,7 @@ from services.autoresearch.repository import (
     RESEARCH_PROTOCOL_FILENAME,
     PUBLICATION_READINESS_FILENAME,
     PUBLICATION_EVIDENCE_INDEX_FILENAME,
+    ARTIFACT_INTEGRITY_AUDIT_FILENAME,
     PUBLICATION_REPAIR_PLAN_FILENAME,
     PUBLICATION_REPAIR_EXECUTION_FILENAME,
     REVISION_DOSSIER_FILENAME,
@@ -58,6 +59,7 @@ from services.autoresearch.repository import (
     methodology_audit_file_path,
     publication_readiness_file_path,
     publication_evidence_index_file_path,
+    artifact_integrity_audit_file_path,
     publication_repair_plan_file_path,
     publication_repair_execution_file_path,
     research_protocol_file_path,
@@ -66,6 +68,7 @@ from services.autoresearch.repository import (
     save_run,
 )
 from services.autoresearch.benchmark_card import build_benchmark_card
+from services.autoresearch.artifact_integrity_audit import build_artifact_integrity_audit
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_evidence_index import build_publication_evidence_index
 from services.autoresearch.publication_repair_plan import build_publication_repair_plan
@@ -107,6 +110,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_publication_readiness_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
+    "run_artifact_integrity_audit_json",
     "run_publication_repair_plan_json",
     "run_paper_compile_report_json",
     "run_paper_build_script",
@@ -137,6 +141,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_publication_readiness_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
+    "run_artifact_integrity_audit_json",
     "run_publication_repair_plan_json",
     "run_publication_repair_execution_json",
     "generated_code",
@@ -661,6 +666,11 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
     if review.publication_readiness is not None:
         for item in review.publication_readiness.blockers:
             blockers.append(f"Final publish readiness gate: {item}")
+    if review.artifact_integrity_audit is not None:
+        for item in review.artifact_integrity_audit.blockers:
+            blockers.append(f"Final publish artifact integrity gate: {item}")
+    else:
+        blockers.append("Final publish requires an artifact registry and lineage integrity audit.")
     for finding in review.findings:
         lowered_summary = finding.summary.lower()
         if finding.category == "citation":
@@ -1936,6 +1946,19 @@ def build_run_review(
     bundle_index = load_run_bundle_index(project_id, run_id)
     if registry is None or bundle_index is None:
         return None
+    artifact_integrity_audit = build_artifact_integrity_audit(
+        registry=registry,
+        bundle_index=bundle_index,
+    )
+    artifact_integrity_audit_path = Path(artifact_integrity_audit_file_path(project_id, run_id))
+    _write_json(
+        artifact_integrity_audit_path,
+        artifact_integrity_audit.model_dump(mode="json"),
+    )
+    registry = load_run_registry(project_id, run_id)
+    bundle_index = load_run_bundle_index(project_id, run_id)
+    if registry is None or bundle_index is None:
+        return None
 
     bundle = _selected_bundle(bundle_index)
     selected_entry = next((item for item in registry.candidates if item.selected), None)
@@ -2008,6 +2031,8 @@ def build_run_review(
         scores=scores,
         findings=findings,
         revision_plan=revision_plan,
+        artifact_integrity_audit=artifact_integrity_audit,
+        artifact_integrity_audit_path=str(artifact_integrity_audit_path),
     )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     review_loop = _build_review_loop(
@@ -2186,6 +2211,7 @@ def _publish_package_fingerprint(
         "publication_readiness_path": review.publication_readiness_path,
         "revision_dossier_path": review.revision_dossier_path,
         "publication_evidence_index_path": review.publication_evidence_index_path,
+        "artifact_integrity_audit_path": review.artifact_integrity_audit_path,
         "publication_repair_plan_path": review.publication_repair_plan_path,
         "publication_repair_execution_path": review.publication_repair_execution_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
@@ -2442,6 +2468,16 @@ def build_publication_manifest(
         if evidence_index_path.is_file()
         else package.publication_evidence_index_path
     )
+    artifact_integrity_audit_path = (
+        Path(package.artifact_integrity_audit_path)
+        if package.artifact_integrity_audit_path
+        else Path(artifact_integrity_audit_file_path(project_id, run_id))
+    )
+    artifact_integrity_audit_path_value = (
+        str(artifact_integrity_audit_path)
+        if artifact_integrity_audit_path.is_file()
+        else package.artifact_integrity_audit_path
+    )
     repair_plan_path = (
         Path(package.publication_repair_plan_path)
         if package.publication_repair_plan_path
@@ -2493,6 +2529,8 @@ def build_publication_manifest(
         revision_dossier_sha256=_file_sha256(dossier_path),
         publication_evidence_index_path=evidence_index_path_value,
         publication_evidence_index_sha256=_file_sha256(evidence_index_path),
+        artifact_integrity_audit_path=artifact_integrity_audit_path_value,
+        artifact_integrity_audit_sha256=_file_sha256(artifact_integrity_audit_path),
         publication_repair_plan_path=repair_plan_path_value,
         publication_repair_plan_sha256=_file_sha256(repair_plan_path),
         publication_repair_execution_path=repair_execution_path_value,
@@ -2628,6 +2666,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         methodology_audit_path=review.methodology_audit_path,
         revision_dossier_path=review.revision_dossier_path,
         publication_evidence_index_path=review.publication_evidence_index_path,
+        artifact_integrity_audit_path=review.artifact_integrity_audit_path,
         publication_repair_plan_path=review.publication_repair_plan_path,
         publication_repair_execution_path=(
             str(Path(publication_repair_execution_file_path(project_id, run_id)))
@@ -2802,6 +2841,7 @@ def _archive_manifest(
             PUBLICATION_READINESS_FILENAME,
             REVISION_DOSSIER_FILENAME,
             PUBLICATION_EVIDENCE_INDEX_FILENAME,
+            ARTIFACT_INTEGRITY_AUDIT_FILENAME,
             PUBLICATION_REPAIR_PLAN_FILENAME,
             PUBLICATION_REPAIR_EXECUTION_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
@@ -2854,6 +2894,7 @@ def export_publish_package(
             _review_path(project_id, run_id),
             _review_loop_path(project_id, run_id),
             Path(publication_evidence_index_file_path(project_id, run_id)),
+            Path(artifact_integrity_audit_file_path(project_id, run_id)),
             Path(publication_repair_plan_file_path(project_id, run_id)),
             Path(publication_repair_execution_file_path(project_id, run_id)),
             _publish_manifest_path(project_id, run_id),

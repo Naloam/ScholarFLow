@@ -709,6 +709,7 @@ export type AutoResearchLineageEdge = {
     | "publication_readiness"
     | "revision_dossier"
     | "publication_evidence_index"
+    | "artifact_integrity_audit"
     | "publication_repair_plan"
     | "publication_repair_execution"
     | "paper_plan"
@@ -758,6 +759,7 @@ export type AutoResearchLineageEdge = {
     | "publication_readiness"
     | "revision_dossier"
     | "publication_evidence_index"
+    | "artifact_integrity_audit"
     | "publication_repair_plan"
     | "publication_repair_execution"
     | "paper_plan"
@@ -802,6 +804,7 @@ export type AutoResearchRunRegistryFiles = {
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
   revision_dossier_json?: AutoResearchRegistryAssetRef | null;
   publication_evidence_index_json?: AutoResearchRegistryAssetRef | null;
+  artifact_integrity_audit_json?: AutoResearchRegistryAssetRef | null;
   publication_repair_plan_json?: AutoResearchRegistryAssetRef | null;
   publication_repair_execution_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
@@ -949,6 +952,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_publication_readiness_json"
     | "run_revision_dossier_json"
     | "run_publication_evidence_index_json"
+    | "run_artifact_integrity_audit_json"
     | "run_publication_repair_plan_json"
     | "run_publication_repair_execution_json"
     | "run_paper_plan_json"
@@ -1125,6 +1129,7 @@ export type AutoResearchEvidenceIndexCategory =
   | "paper"
   | "code"
   | "review"
+  | "lineage"
   | "package";
 
 export type AutoResearchEvidenceIndexItem = {
@@ -1161,6 +1166,42 @@ export type AutoResearchPublicationEvidenceIndex = {
   warnings: string[];
   complete: boolean;
   evidence_index_fingerprint: string;
+};
+
+export type AutoResearchArtifactIntegrityIssue = {
+  issue_id: string;
+  severity: "error" | "warning";
+  category: "registry" | "bundle" | "lineage" | "identity";
+  summary: string;
+  detail: string;
+  asset_id?: string | null;
+  role?: AutoResearchBundleAssetRead["role"] | null;
+  path?: string | null;
+};
+
+export type AutoResearchArtifactIntegrityAudit = {
+  generated_at: string;
+  audit_id: string;
+  project_id: string;
+  run_id: string;
+  selected_candidate_id?: string | null;
+  registry_asset_count: number;
+  existing_registry_asset_count: number;
+  missing_registry_asset_count: number;
+  bundle_count: number;
+  selected_bundle_asset_count: number;
+  selected_bundle_missing_required_count: number;
+  lineage_edge_count: number;
+  missing_lineage_target_count: number;
+  untraced_existing_asset_count: number;
+  issue_count: number;
+  blocker_count: number;
+  warning_count: number;
+  issues: AutoResearchArtifactIntegrityIssue[];
+  blockers: string[];
+  warnings: string[];
+  complete: boolean;
+  audit_fingerprint: string;
 };
 
 export type AutoResearchRepairActionKind =
@@ -1409,6 +1450,8 @@ export type AutoResearchRunReview = {
   revision_dossier_path?: string | null;
   publication_evidence_index?: AutoResearchPublicationEvidenceIndex | null;
   publication_evidence_index_path?: string | null;
+  artifact_integrity_audit?: AutoResearchArtifactIntegrityAudit | null;
+  artifact_integrity_audit_path?: string | null;
   publication_repair_plan?: AutoResearchPublicationRepairPlan | null;
   publication_repair_plan_path?: string | null;
   publication_repair_execution?: AutoResearchPublicationRepairExecution | null;
@@ -1685,6 +1728,8 @@ export type AutoResearchPublicationManifest = {
   revision_dossier_sha256?: string | null;
   publication_evidence_index_path?: string | null;
   publication_evidence_index_sha256?: string | null;
+  artifact_integrity_audit_path?: string | null;
+  artifact_integrity_audit_sha256?: string | null;
   publication_repair_plan_path?: string | null;
   publication_repair_plan_sha256?: string | null;
   publication_repair_execution_path?: string | null;
@@ -1783,6 +1828,7 @@ export type AutoResearchPublishPackage = {
   methodology_audit_path?: string | null;
   revision_dossier_path?: string | null;
   publication_evidence_index_path?: string | null;
+  artifact_integrity_audit_path?: string | null;
   publication_repair_plan_path?: string | null;
   publication_repair_execution_path?: string | null;
   publication_readiness_path?: string | null;

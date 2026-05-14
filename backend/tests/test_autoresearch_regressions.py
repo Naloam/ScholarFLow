@@ -1151,6 +1151,9 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     evidence_index_path = Path(
         autoresearch_repository.publication_evidence_index_file_path(project_id, run_id)
     )
+    artifact_integrity_audit_path = Path(
+        autoresearch_repository.artifact_integrity_audit_file_path(project_id, run_id)
+    )
     repair_plan_path = Path(
         autoresearch_repository.publication_repair_plan_file_path(project_id, run_id)
     )
@@ -1163,6 +1166,7 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert not audit_path.is_file()
     assert not dossier_path.is_file()
     assert not evidence_index_path.is_file()
+    assert not artifact_integrity_audit_path.is_file()
     assert not repair_plan_path.is_file()
     assert not repair_execution_path.is_file()
 
@@ -1214,6 +1218,25 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert "paper_build_script" in evidence_index_payload["missing_required_evidence_ids"]
     assert "paper_sources_manifest" in evidence_index_payload["missing_required_evidence_ids"]
+    assert review.artifact_integrity_audit is not None
+    assert review.artifact_integrity_audit_path == str(artifact_integrity_audit_path)
+    assert artifact_integrity_audit_path.is_file()
+    artifact_integrity_audit_payload = json.loads(
+        artifact_integrity_audit_path.read_text(encoding="utf-8")
+    )
+    assert artifact_integrity_audit_payload["audit_fingerprint"] == (
+        review.artifact_integrity_audit.audit_fingerprint
+    )
+    assert artifact_integrity_audit_payload["complete"] is False
+    assert artifact_integrity_audit_payload["blocker_count"] >= 2
+    assert any(
+        issue["asset_id"] == f"{run_id}:program_json"
+        for issue in artifact_integrity_audit_payload["issues"]
+    )
+    assert any(
+        issue["asset_id"] == f"{run_id}:portfolio_json"
+        for issue in artifact_integrity_audit_payload["issues"]
+    )
     assert review.publication_repair_plan is not None
     assert review.publication_repair_plan_path == str(repair_plan_path)
     assert repair_plan_path.is_file()
@@ -1251,6 +1274,7 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         "methodology_audit",
         "publication_readiness",
         "revision_dossier",
+        "artifact_integrity_audit",
         "claim_evidence_matrix",
         "paper_latex_source",
     }.issubset(evidence_ids)
@@ -1275,6 +1299,8 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert registry.files.revision_dossier_json.exists is True
     assert registry.files.publication_evidence_index_json is not None
     assert registry.files.publication_evidence_index_json.exists is True
+    assert registry.files.artifact_integrity_audit_json is not None
+    assert registry.files.artifact_integrity_audit_json.exists is True
     assert registry.files.publication_repair_plan_json is not None
     assert registry.files.publication_repair_plan_json.exists is True
     assert registry.files.publication_repair_execution_json is not None
@@ -1348,6 +1374,18 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert any(
         edge.relation == "has_asset"
+        and edge.target_kind == "artifact_integrity_audit"
+        and edge.target_path == str(artifact_integrity_audit_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "artifact_integrity_audit"
+        and edge.source_kind == "run"
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "has_asset"
         and edge.target_kind == "publication_repair_plan"
         and edge.target_path == str(repair_plan_path)
         for edge in registry.lineage.edges
@@ -1414,6 +1452,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         item for item in selected_bundle.assets if item.role == "run_publication_evidence_index_json"
     )
     assert evidence_index_asset.ref.exists is True
+    artifact_integrity_audit_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_artifact_integrity_audit_json"
+    )
+    assert artifact_integrity_audit_asset.ref.exists is True
     repair_plan_asset = next(
         item for item in selected_bundle.assets if item.role == "run_publication_repair_plan_json"
     )
@@ -1430,6 +1472,7 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert package.methodology_audit_path == str(audit_path)
     assert package.revision_dossier_path == str(dossier_path)
     assert package.publication_evidence_index_path == str(evidence_index_path)
+    assert package.artifact_integrity_audit_path == str(artifact_integrity_audit_path)
     assert package.publication_repair_plan_path == str(repair_plan_path)
     assert package.publication_repair_execution_path == str(repair_execution_path)
     assert package.publication_readiness_path == str(readiness_path)
@@ -1455,6 +1498,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert any(
         item.role == "run_publication_evidence_index_json"
+        for item in package.final_required_assets
+    )
+    assert any(
+        item.role == "run_artifact_integrity_audit_json"
         for item in package.final_required_assets
     )
     assert any(

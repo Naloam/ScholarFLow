@@ -57,6 +57,7 @@ METHODOLOGY_AUDIT_FILENAME = "methodology_audit.json"
 PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
 REVISION_DOSSIER_FILENAME = "revision_dossier.json"
 PUBLICATION_EVIDENCE_INDEX_FILENAME = "publication_evidence_index.json"
+ARTIFACT_INTEGRITY_AUDIT_FILENAME = "artifact_integrity_audit.json"
 PUBLICATION_REPAIR_PLAN_FILENAME = "publication_repair_plan.json"
 PUBLICATION_REPAIR_EXECUTION_FILENAME = "publication_repair_execution.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
@@ -824,6 +825,13 @@ def _run_derivation_lineage_edges(
             target_attr="publication_repair_plan_json",
             target_kind="publication_repair_plan",
         )
+    if run_assets.artifact_integrity_audit_json is not None:
+        add_derivation(
+            source_kind="run",
+            source_id=run.id,
+            target_attr="artifact_integrity_audit_json",
+            target_kind="artifact_integrity_audit",
+        )
     if run_assets.publication_readiness_json is not None:
         add_derivation(
             source_kind="publication_readiness",
@@ -916,6 +924,7 @@ def _run_lineage_edges(
         ("publication_readiness_json", "publication_readiness"),
         ("revision_dossier_json", "revision_dossier"),
         ("publication_evidence_index_json", "publication_evidence_index"),
+        ("artifact_integrity_audit_json", "artifact_integrity_audit"),
         ("publication_repair_plan_json", "publication_repair_plan"),
         ("publication_repair_execution_json", "publication_repair_execution"),
         ("paper_plan_json", "paper_plan"),
@@ -1126,6 +1135,18 @@ def _run_bundle_assets(
             )
             if files.publication_evidence_index_json is not None
             and files.publication_evidence_index_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_artifact_integrity_audit_json",
+                label="Selected run artifact integrity audit",
+                role="run_artifact_integrity_audit_json",
+                ref=files.artifact_integrity_audit_json,
+                required=False,
+            )
+            if files.artifact_integrity_audit_json is not None
+            and files.artifact_integrity_audit_json.exists
             else None
         ),
         (
@@ -1813,6 +1834,10 @@ def publication_evidence_index_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PUBLICATION_EVIDENCE_INDEX_FILENAME)
 
 
+def artifact_integrity_audit_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / ARTIFACT_INTEGRITY_AUDIT_FILENAME)
+
+
 def publication_repair_plan_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PUBLICATION_REPAIR_PLAN_FILENAME)
 
@@ -1982,6 +2007,7 @@ def load_candidate_registry(
             publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
             revision_dossier_json=_asset_ref(run_base / REVISION_DOSSIER_FILENAME),
             publication_evidence_index_json=_asset_ref(run_base / PUBLICATION_EVIDENCE_INDEX_FILENAME),
+            artifact_integrity_audit_json=_asset_ref(run_base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
             publication_repair_plan_json=_asset_ref(run_base / PUBLICATION_REPAIR_PLAN_FILENAME),
             publication_repair_execution_json=_asset_ref(run_base / PUBLICATION_REPAIR_EXECUTION_FILENAME),
             paper_plan_json=_asset_ref(
@@ -2140,6 +2166,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),
         revision_dossier_json=_asset_ref(base / REVISION_DOSSIER_FILENAME),
         publication_evidence_index_json=_asset_ref(base / PUBLICATION_EVIDENCE_INDEX_FILENAME),
+        artifact_integrity_audit_json=_asset_ref(base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
         publication_repair_plan_json=_asset_ref(base / PUBLICATION_REPAIR_PLAN_FILENAME),
         publication_repair_execution_json=_asset_ref(base / PUBLICATION_REPAIR_EXECUTION_FILENAME),
         paper_plan_json=_asset_ref(

@@ -16,6 +16,7 @@ from schemas.autoresearch import (
 )
 from services.autoresearch.repository import (
     ARTIFACT_FILENAME,
+    ARTIFACT_INTEGRITY_AUDIT_FILENAME,
     BENCHMARK_FILENAME,
     CLAIM_EVIDENCE_MATRIX_FILENAME,
     PAPER_BIB_FILENAME,
@@ -226,6 +227,15 @@ def build_publication_evidence_index(
             path=review.revision_dossier_path,
             required_for_final_publish=True,
             supports=["review response", "required action closure"],
+        ),
+        _item(
+            evidence_id="artifact_integrity_audit",
+            label="Artifact integrity audit",
+            category="lineage",
+            role="run_artifact_integrity_audit_json",
+            path=review.artifact_integrity_audit_path or (base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
+            required_for_final_publish=True,
+            supports=["registry integrity", "lineage completeness", "bundle consistency"],
         ),
         _item(
             evidence_id="paper_markdown",

@@ -55,6 +55,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_publication_readiness_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
+    "run_artifact_integrity_audit_json",
     "run_publication_repair_plan_json",
     "run_publication_repair_execution_json",
     "run_paper_plan_json",
@@ -107,6 +108,7 @@ AutoResearchLineageNodeKind = Literal[
     "publication_readiness",
     "revision_dossier",
     "publication_evidence_index",
+    "artifact_integrity_audit",
     "publication_repair_plan",
     "publication_repair_execution",
     "paper_plan",
@@ -1204,6 +1206,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
     revision_dossier_json: AutoResearchRegistryAssetRef | None = None
     publication_evidence_index_json: AutoResearchRegistryAssetRef | None = None
+    artifact_integrity_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_repair_plan_json: AutoResearchRegistryAssetRef | None = None
     publication_repair_execution_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
@@ -1504,6 +1507,7 @@ AutoResearchEvidenceIndexCategory = Literal[
     "paper",
     "code",
     "review",
+    "lineage",
     "package",
 ]
 
@@ -1542,6 +1546,46 @@ class AutoResearchPublicationEvidenceIndexRead(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     complete: bool = False
     evidence_index_fingerprint: str
+
+
+AutoResearchArtifactIntegritySeverity = Literal["error", "warning"]
+AutoResearchArtifactIntegrityCategory = Literal["registry", "bundle", "lineage", "identity"]
+
+
+class AutoResearchArtifactIntegrityIssueRead(BaseModel):
+    issue_id: str
+    severity: AutoResearchArtifactIntegritySeverity
+    category: AutoResearchArtifactIntegrityCategory
+    summary: str
+    detail: str
+    asset_id: str | None = None
+    role: AutoResearchBundleAssetRole | None = None
+    path: str | None = None
+
+
+class AutoResearchArtifactIntegrityAuditRead(BaseModel):
+    generated_at: datetime
+    audit_id: str = "artifact_integrity_audit_v1"
+    project_id: str
+    run_id: str
+    selected_candidate_id: str | None = None
+    registry_asset_count: int = 0
+    existing_registry_asset_count: int = 0
+    missing_registry_asset_count: int = 0
+    bundle_count: int = 0
+    selected_bundle_asset_count: int = 0
+    selected_bundle_missing_required_count: int = 0
+    lineage_edge_count: int = 0
+    missing_lineage_target_count: int = 0
+    untraced_existing_asset_count: int = 0
+    issue_count: int = 0
+    blocker_count: int = 0
+    warning_count: int = 0
+    issues: list[AutoResearchArtifactIntegrityIssueRead] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    complete: bool = False
+    audit_fingerprint: str
 
 
 AutoResearchRepairActionKind = Literal[
@@ -1749,6 +1793,8 @@ class AutoResearchRunReviewRead(BaseModel):
     revision_dossier_path: str | None = None
     publication_evidence_index: AutoResearchPublicationEvidenceIndexRead | None = None
     publication_evidence_index_path: str | None = None
+    artifact_integrity_audit: AutoResearchArtifactIntegrityAuditRead | None = None
+    artifact_integrity_audit_path: str | None = None
     publication_repair_plan: AutoResearchPublicationRepairPlanRead | None = None
     publication_repair_plan_path: str | None = None
     publication_repair_execution: AutoResearchPublicationRepairExecutionRead | None = None
@@ -1892,6 +1938,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     revision_dossier_sha256: str | None = None
     publication_evidence_index_path: str | None = None
     publication_evidence_index_sha256: str | None = None
+    artifact_integrity_audit_path: str | None = None
+    artifact_integrity_audit_sha256: str | None = None
     publication_repair_plan_path: str | None = None
     publication_repair_plan_sha256: str | None = None
     publication_repair_execution_path: str | None = None
@@ -1988,6 +2036,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     methodology_audit_path: str | None = None
     revision_dossier_path: str | None = None
     publication_evidence_index_path: str | None = None
+    artifact_integrity_audit_path: str | None = None
     publication_repair_plan_path: str | None = None
     publication_repair_execution_path: str | None = None
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"

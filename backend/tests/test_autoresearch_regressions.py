@@ -2529,10 +2529,18 @@ def test_export_publish_package_rewrites_archive_with_final_manifests(
                 review_publish._code_package_path(current_project_id, current_run_id)
             ),
             run_api_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}",
-            registry_api_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/registry",
-            publish_api_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish",
-            publish_download_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish/download",
-            code_package_download_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish/code/download",
+            registry_api_path=(
+                f"/api/projects/{current_project_id}/auto-research/{current_run_id}/registry"
+            ),
+            publish_api_path=(
+                f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish"
+            ),
+            publish_download_path=(
+                f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish/download"
+            ),
+            code_package_download_path=(
+                f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish/code/download"
+            ),
             deployments=[deployment],
         )
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2582,6 +2590,148 @@ def test_export_publish_package_rewrites_archive_with_final_manifests(
     assert code_package_ref["sha256"] == hashlib.sha256(
         Path(export.code_package_path).read_bytes()
     ).hexdigest()
+
+
+def test_export_publish_package_rejects_incomplete_archive(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project_export_archive_integrity"
+    run_id = "run_export_archive_integrity"
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run_root = autoresearch_repository.run_dir(project_id, run_id)
+    run_root.mkdir(parents=True, exist_ok=True)
+    code_path = run_root / "candidate.py"
+    code_path.write_text("print('ready')\n", encoding="utf-8")
+    asset = review_publish.AutoResearchBundleAssetRead(
+        asset_id=f"{run_id}:run_generated_code",
+        label="Generated code",
+        role="run_generated_code",
+        required=True,
+        ref=AutoResearchRegistryAssetRef(
+            path=str(code_path),
+            exists=True,
+            size_bytes=code_path.stat().st_size,
+            sha256=hashlib.sha256(code_path.read_bytes()).hexdigest(),
+        ),
+    )
+    bundle = review_publish.AutoResearchBundleRead(
+        id="selected_candidate_repro",
+        name="Selected Candidate Repro Bundle",
+        description="Regression bundle.",
+        asset_count=1,
+        existing_asset_count=1,
+        assets=[asset],
+    )
+    bundle_index = review_publish.AutoResearchBundleIndexRead(
+        project_id=project_id,
+        run_id=run_id,
+        bundles=[bundle],
+    )
+    package = AutoResearchPublishPackageRead(
+        project_id=project_id,
+        run_id=run_id,
+        package_id="publish_ready_bundle",
+        generated_at=now,
+        source_bundle_id=bundle.id,
+        status="publish_ready",
+        publish_ready=True,
+        review_bundle_ready=True,
+        final_publish_ready=True,
+        manifest_path=str(review_publish._publish_manifest_path(project_id, run_id)),
+        archive_path=str(review_publish._publish_archive_path(project_id, run_id)),
+        asset_count=1,
+        existing_asset_count=1,
+        required_assets=[asset],
+        final_required_assets=[asset],
+        package_fingerprint="integrity-package-fingerprint",
+        review_round=3,
+        review_fingerprint="review-fingerprint",
+    )
+    monkeypatch.setattr(
+        review_publish,
+        "build_publish_package",
+        lambda current_project_id, current_run_id: package,
+    )
+    monkeypatch.setattr(
+        review_publish,
+        "load_run_bundle_index",
+        lambda current_project_id, current_run_id: bundle_index,
+    )
+
+    def fake_publication_manifest(
+        current_project_id: str,
+        current_run_id: str,
+        *,
+        deployment_id: str | None = None,
+        deployment_label: str | None = None,
+    ) -> review_publish.AutoResearchPublicationManifestRead:
+        manifest_path = review_publish._publication_manifest_path(
+            current_project_id,
+            current_run_id,
+        )
+        deployment = review_publish.AutoResearchDeploymentRefRead(
+            deployment_id=deployment_id or "local_default",
+            label=deployment_label or "Local Deployment",
+            listed_at=now,
+        )
+        manifest = review_publish.AutoResearchPublicationManifestRead(
+            publication_id=f"publication_{current_run_id}",
+            project_id=current_project_id,
+            run_id=current_run_id,
+            topic="Archive integrity regression",
+            paper_title="Archive integrity regression",
+            generated_at=now,
+            updated_at=now,
+            package_id=package.package_id,
+            package_fingerprint=package.package_fingerprint,
+            bundle_kind="final_publish_bundle",
+            review_bundle_ready=True,
+            final_publish_ready=True,
+            publication_manifest_path=str(manifest_path),
+            publish_manifest_path=str(
+                review_publish._publish_manifest_path(current_project_id, current_run_id)
+            ),
+            publish_archive_path=str(
+                review_publish._publish_archive_path(current_project_id, current_run_id)
+            ),
+            code_package_path=str(
+                review_publish._code_package_path(current_project_id, current_run_id)
+            ),
+            run_api_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}",
+            registry_api_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/registry",
+            publish_api_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish",
+            publish_download_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish/download",
+            code_package_download_path=f"/api/projects/{current_project_id}/auto-research/{current_run_id}/publish/code/download",
+            deployments=[deployment],
+        )
+        manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        return manifest
+
+    def write_incomplete_archive(**kwargs: object) -> None:
+        archive_path = kwargs["archive_path"]
+        assert isinstance(archive_path, Path)
+        with ZipFile(archive_path, "w"):
+            pass
+
+    monkeypatch.setattr(
+        review_publish,
+        "build_publication_manifest",
+        fake_publication_manifest,
+    )
+    monkeypatch.setattr(review_publish, "_write_publish_archive", write_incomplete_archive)
+
+    with pytest.raises(ValueError, match="integrity verification failed"):
+        review_publish.export_publish_package(project_id, run_id)
+
+    persisted_package = json.loads(
+        review_publish._publish_manifest_path(project_id, run_id).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted_package["archive_status"] == "stale"
+    assert persisted_package["archive_current"] is False
 
 
 def test_autoresearch_resume_preserves_checkpointed_literature_synthesis(

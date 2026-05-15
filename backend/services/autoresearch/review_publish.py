@@ -3202,6 +3202,23 @@ def export_publish_package(
         archive_path=archive_path,
         bundle=bundle,
     )
+    if not _archive_contents_match_publish_state(
+        project_id=project_id,
+        run_id=run_id,
+        archive_path=archive_path,
+        archive_manifest=archive_manifest,
+        assets=[*package.required_assets, *package.optional_assets],
+    ):
+        package = package.model_copy(
+            update={
+                "archive_status": "stale",
+                "archive_current": False,
+            }
+        )
+        _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
+        raise ValueError(
+            "Publish archive integrity verification failed; export did not produce a complete archive"
+        )
     deployment = publication_manifest.deployments[0] if publication_manifest is not None and publication_manifest.deployments else None
     return AutoResearchPublishExportRead(
         project_id=project_id,

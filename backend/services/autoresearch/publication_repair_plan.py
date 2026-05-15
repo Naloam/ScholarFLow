@@ -54,7 +54,7 @@ def _priority(text: str, *, required_for_final_publish: bool = False) -> AutoRes
 
 def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResearchRepairActionKind:
     lowered = f"{text} {' '.join(supporting_asset_ids or [])}".lower()
-    if any(marker in lowered for marker in ("claim", "unsupported", "evidence matrix")):
+    if any(marker in lowered for marker in ("claim", "unsupported", "evidence matrix", "contribution")):
         return "repair_claim_evidence"
     if any(marker in lowered for marker in ("literature", "citation", "related work", "references")):
         return "refresh_literature"
@@ -121,6 +121,7 @@ def _expected_outputs(kind: AutoResearchRepairActionKind) -> list[str]:
         ],
         "repair_claim_evidence": [
             "run_claim_evidence_matrix_json",
+            "run_contribution_assessment_json",
             "run_paper_markdown",
             "run_publication_readiness_json",
         ],
@@ -325,6 +326,24 @@ def build_publication_repair_plan(
                     source="readiness",
                     title="Resolve publication readiness blocker",
                     detail=blocker,
+                    required_for_final_publish=True,
+                )
+            )
+
+    if review.contribution_assessment is not None:
+        for blocker in review.contribution_assessment.blockers:
+            kind = _kind(blocker)
+            add(
+                _action(
+                    action_id=f"contribution_{_slug(blocker)}_{_slug(kind)}",
+                    kind=kind,
+                    source="contribution_assessment",
+                    title="Resolve contribution gate blocker",
+                    detail=blocker,
+                    supporting_asset_ids=[
+                        "run_contribution_assessment_json",
+                        "run_claim_evidence_matrix_json",
+                    ],
                     required_for_final_publish=True,
                 )
             )

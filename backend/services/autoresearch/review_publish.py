@@ -17,6 +17,7 @@ from schemas.autoresearch import (
     AutoResearchBenchmarkCardRead,
     AutoResearchCitationCoverageRead,
     AutoResearchDeploymentRefRead,
+    AutoResearchContributionAssessmentRead,
     AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchPaperRevisionStateRead,
@@ -60,6 +61,7 @@ from services.autoresearch.repository import (
     benchmark_card_file_path,
     methodology_audit_file_path,
     publication_readiness_file_path,
+    contribution_assessment_file_path,
     publication_evidence_index_file_path,
     artifact_integrity_audit_file_path,
     publication_repair_plan_file_path,
@@ -71,6 +73,7 @@ from services.autoresearch.repository import (
 )
 from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.artifact_integrity_audit import build_artifact_integrity_audit
+from services.autoresearch.contribution_assessment import build_contribution_assessment
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_evidence_index import build_publication_evidence_index
 from services.autoresearch.publication_repair_plan import build_publication_repair_plan
@@ -110,6 +113,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
+    "run_contribution_assessment_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -141,6 +145,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
+    "run_contribution_assessment_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -154,6 +159,7 @@ _VOLATILE_GENERATED_DIGEST_ROLES = {
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
+    "run_contribution_assessment_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -682,6 +688,13 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
     if review.publication_readiness is not None:
         for item in review.publication_readiness.blockers:
             blockers.append(f"Final publish readiness gate: {item}")
+    if review.contribution_assessment is None:
+        blockers.append(
+            "Final publish contribution gate: contribution assessment is required before publication."
+        )
+    else:
+        for item in review.contribution_assessment.blockers:
+            blockers.append(f"Final publish contribution gate: {item}")
     if review.artifact_integrity_audit is not None:
         for item in review.artifact_integrity_audit.blockers:
             blockers.append(f"Final publish artifact integrity gate: {item}")
@@ -1959,6 +1972,24 @@ def _build_and_persist_artifact_integrity_audit(
     return audit, str(audit_path)
 
 
+def _build_and_persist_contribution_assessment(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+    publication_readiness: AutoResearchPublicationReadinessRead,
+    novelty_assessment: AutoResearchNoveltyAssessmentRead,
+) -> tuple[AutoResearchContributionAssessmentRead, str]:
+    assessment = build_contribution_assessment(
+        run,
+        publication_readiness=publication_readiness,
+        novelty_assessment=novelty_assessment,
+    )
+    assessment_path = Path(contribution_assessment_file_path(project_id, run_id))
+    _write_json(assessment_path, assessment.model_dump(mode="json"))
+    return assessment, str(assessment_path)
+
+
 def build_run_review(
     project_id: str,
     run_id: str,
@@ -2003,6 +2034,19 @@ def build_run_review(
         run=run,
         selected_candidate_id=registry.selected_candidate_id,
     )
+    contribution_assessment, contribution_assessment_path = _build_and_persist_contribution_assessment(
+        run=run,
+        project_id=project_id,
+        run_id=run_id,
+        publication_readiness=publication_readiness,
+        novelty_assessment=novelty_assessment,
+    )
+    registry = load_run_registry(project_id, run_id)
+    bundle_index = load_run_bundle_index(project_id, run_id)
+    if registry is None or bundle_index is None:
+        return None
+    bundle = _selected_bundle(bundle_index)
+    selected_entry = next((item for item in registry.candidates if item.selected), None)
     findings, evidence, citation_coverage = _review_findings(
         run=run,
         bundle=bundle,
@@ -2014,6 +2058,20 @@ def build_run_review(
         methodology_audit=methodology_audit,
         publication_readiness=publication_readiness,
     )
+    if contribution_assessment.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="error",
+                category="publish",
+                summary="Contribution assessment blocks final publish.",
+                detail="; ".join(contribution_assessment.blockers),
+                supporting_asset_ids=[
+                    "run_contribution_assessment_json",
+                    "run_claim_evidence_matrix_json",
+                ],
+            )
+        )
     scores = _review_scores(
         run=run,
         bundle=bundle,
@@ -2042,7 +2100,9 @@ def build_run_review(
         f"Candidates={evidence.candidate_count}, seeds={evidence.seed_count}, sweeps={evidence.sweep_count}, "
         f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}, "
         f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}, "
-        f"publication_tier={publication_readiness.tier}, readiness_score={publication_readiness.score}."
+        f"publication_tier={publication_readiness.tier}, readiness_score={publication_readiness.score}, "
+        f"contribution_score={contribution_assessment.publishability_score}, "
+        f"strong_core_claims={contribution_assessment.strong_core_claim_count}."
     )
     review = AutoResearchRunReviewRead(
         project_id=project_id,
@@ -2065,6 +2125,8 @@ def build_run_review(
         methodology_audit_path=str(methodology_audit_path),
         publication_readiness=publication_readiness,
         publication_readiness_path=str(publication_readiness_path),
+        contribution_assessment=contribution_assessment,
+        contribution_assessment_path=contribution_assessment_path,
         scores=scores,
         findings=findings,
         revision_plan=revision_plan,
@@ -2294,6 +2356,7 @@ def _publish_package_fingerprint(
         "research_protocol_path": review.research_protocol_path,
         "methodology_audit_path": review.methodology_audit_path,
         "publication_readiness_path": review.publication_readiness_path,
+        "contribution_assessment_path": review.contribution_assessment_path,
         "revision_dossier_path": review.revision_dossier_path,
         "publication_evidence_index_path": review.publication_evidence_index_path,
         "artifact_integrity_audit_path": review.artifact_integrity_audit_path,
@@ -2532,6 +2595,7 @@ def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
         Path(research_protocol_file_path(project_id, run_id)),
         Path(methodology_audit_file_path(project_id, run_id)),
         Path(publication_readiness_file_path(project_id, run_id)),
+        Path(contribution_assessment_file_path(project_id, run_id)),
         Path(revision_dossier_file_path(project_id, run_id)),
         Path(publication_evidence_index_file_path(project_id, run_id)),
         Path(artifact_integrity_audit_file_path(project_id, run_id)),
@@ -2647,6 +2711,16 @@ def build_publication_manifest(
         else Path(publication_readiness_file_path(project_id, run_id))
     )
     readiness_path_value = str(readiness_path) if readiness_path.is_file() else package.publication_readiness_path
+    contribution_assessment_path = (
+        Path(package.contribution_assessment_path)
+        if package.contribution_assessment_path
+        else Path(contribution_assessment_file_path(project_id, run_id))
+    )
+    contribution_assessment_path_value = (
+        str(contribution_assessment_path)
+        if contribution_assessment_path.is_file()
+        else package.contribution_assessment_path
+    )
     dossier_path = (
         Path(package.revision_dossier_path)
         if package.revision_dossier_path
@@ -2720,6 +2794,8 @@ def build_publication_manifest(
         methodology_audit_sha256=_file_sha256(audit_path),
         publication_readiness_path=readiness_path_value,
         publication_readiness_sha256=_file_sha256(readiness_path),
+        contribution_assessment_path=contribution_assessment_path_value,
+        contribution_assessment_sha256=_file_sha256(contribution_assessment_path),
         revision_dossier_path=dossier_path_value,
         revision_dossier_sha256=_file_sha256(dossier_path),
         publication_evidence_index_path=evidence_index_path_value,
@@ -2859,6 +2935,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         benchmark_card_path=review.benchmark_card_path,
         research_protocol_path=review.research_protocol_path,
         methodology_audit_path=review.methodology_audit_path,
+        contribution_assessment_path=review.contribution_assessment_path,
         revision_dossier_path=review.revision_dossier_path,
         publication_evidence_index_path=review.publication_evidence_index_path,
         artifact_integrity_audit_path=review.artifact_integrity_audit_path,

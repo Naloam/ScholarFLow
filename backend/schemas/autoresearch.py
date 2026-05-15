@@ -53,6 +53,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
+    "run_contribution_assessment_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -106,6 +107,7 @@ AutoResearchLineageNodeKind = Literal[
     "research_protocol",
     "methodology_audit",
     "publication_readiness",
+    "contribution_assessment",
     "revision_dossier",
     "publication_evidence_index",
     "artifact_integrity_audit",
@@ -183,6 +185,21 @@ AutoResearchBudgetStatus = Literal["default", "constrained"]
 AutoResearchClaimSupportStatus = Literal["supported", "partial", "unsupported"]
 AutoResearchClaimCategory = Literal["problem", "method", "result", "context", "limitation"]
 AutoResearchEvidenceSourceKind = Literal["plan", "portfolio", "artifact", "literature", "attempts"]
+AutoResearchContributionType = Literal[
+    "new_method",
+    "new_system",
+    "experimental_finding",
+    "new_benchmark",
+    "analysis_framework",
+]
+AutoResearchClaimStrength = Literal[
+    "unsupported",
+    "weakly_supported",
+    "artifact_supported",
+    "statistically_supported",
+    "literature_positioned",
+]
+AutoResearchNoveltyRiskSeverity = Literal["low", "medium", "high"]
 AutoResearchFigureAssetKind = Literal["table", "chart", "diagram"]
 AutoResearchFigureStatus = Literal["planned", "ready", "not_available"]
 AutoResearchPaperRevisionStatus = Literal["drafted", "needs_review", "revising", "ready_for_publish"]
@@ -1204,6 +1221,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     research_protocol_json: AutoResearchRegistryAssetRef | None = None
     methodology_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
+    contribution_assessment_json: AutoResearchRegistryAssetRef | None = None
     revision_dossier_json: AutoResearchRegistryAssetRef | None = None
     publication_evidence_index_json: AutoResearchRegistryAssetRef | None = None
     artifact_integrity_audit_json: AutoResearchRegistryAssetRef | None = None
@@ -1429,6 +1447,48 @@ class AutoResearchPublicationReadinessRead(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class AutoResearchContributionClaimRead(BaseModel):
+    claim_id: str
+    text: str
+    contribution_type: AutoResearchContributionType
+    claim_strength: AutoResearchClaimStrength = "unsupported"
+    core: bool = False
+    evidence_sources: list[str] = Field(default_factory=list)
+    rationale: str
+
+
+class AutoResearchNoveltyRiskRead(BaseModel):
+    risk_id: str
+    risk_type: Literal[
+        "duplicate_risk",
+        "incremental_risk",
+        "evidence_gap",
+        "literature_gap",
+        "claim_overreach",
+    ]
+    severity: AutoResearchNoveltyRiskSeverity = "medium"
+    summary: str
+    detail: str
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchContributionAssessmentRead(BaseModel):
+    generated_at: datetime
+    assessment_id: str = "contribution_assessment_v1"
+    contribution_claims: list[AutoResearchContributionClaimRead] = Field(default_factory=list)
+    novelty_risks: list[AutoResearchNoveltyRiskRead] = Field(default_factory=list)
+    publishability_score: int = 0
+    clear_contribution_count: int = 0
+    strong_core_claim_count: int = 0
+    artifact_supported_claim_count: int = 0
+    statistically_supported_claim_count: int = 0
+    literature_positioned_claim_count: int = 0
+    complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    assessment_fingerprint: str
+
+
 class AutoResearchResearchProtocolRead(BaseModel):
     generated_at: datetime
     protocol_id: str = "research_protocol_v1"
@@ -1502,6 +1562,7 @@ AutoResearchEvidenceIndexCategory = Literal[
     "protocol",
     "methodology",
     "readiness",
+    "contribution",
     "revision",
     "claims",
     "paper",
@@ -1605,6 +1666,7 @@ AutoResearchRepairActionSource = Literal[
     "evidence_index",
     "artifact_integrity_audit",
     "readiness",
+    "contribution_assessment",
 ]
 
 
@@ -1787,6 +1849,8 @@ class AutoResearchRunReviewRead(BaseModel):
     methodology_audit_path: str | None = None
     publication_readiness: AutoResearchPublicationReadinessRead | None = None
     publication_readiness_path: str | None = None
+    contribution_assessment: AutoResearchContributionAssessmentRead | None = None
+    contribution_assessment_path: str | None = None
     scores: AutoResearchReviewScoresRead
     findings: list[AutoResearchReviewFindingRead] = Field(default_factory=list)
     revision_plan: list[AutoResearchRevisionActionRead] = Field(default_factory=list)
@@ -1935,6 +1999,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     methodology_audit_sha256: str | None = None
     publication_readiness_path: str | None = None
     publication_readiness_sha256: str | None = None
+    contribution_assessment_path: str | None = None
+    contribution_assessment_sha256: str | None = None
     revision_dossier_path: str | None = None
     revision_dossier_sha256: str | None = None
     publication_evidence_index_path: str | None = None
@@ -2035,6 +2101,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     benchmark_card_path: str | None = None
     research_protocol_path: str | None = None
     methodology_audit_path: str | None = None
+    contribution_assessment_path: str | None = None
     revision_dossier_path: str | None = None
     publication_evidence_index_path: str | None = None
     artifact_integrity_audit_path: str | None = None

@@ -19,6 +19,7 @@ from services.autoresearch.repository import (
     ARTIFACT_INTEGRITY_AUDIT_FILENAME,
     BENCHMARK_FILENAME,
     CLAIM_EVIDENCE_MATRIX_FILENAME,
+    CONTRIBUTION_ASSESSMENT_FILENAME,
     PAPER_BIB_FILENAME,
     PAPER_BUILD_SCRIPT_FILENAME,
     PAPER_COMPILE_REPORT_FILENAME,
@@ -218,6 +219,15 @@ def build_publication_evidence_index(
             path=review.publication_readiness_path,
             required_for_final_publish=True,
             supports=["publish tier", "final gate decisions"],
+        ),
+        _item(
+            evidence_id="contribution_assessment",
+            label="Contribution assessment",
+            category="contribution",
+            role="run_contribution_assessment_json",
+            path=review.contribution_assessment_path or (base / CONTRIBUTION_ASSESSMENT_FILENAME),
+            required_for_final_publish=True,
+            supports=["contribution claims", "claim strength", "novelty risks", "publishability"],
         ),
         _item(
             evidence_id="revision_dossier",

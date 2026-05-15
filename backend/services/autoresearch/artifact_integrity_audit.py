@@ -32,6 +32,7 @@ _LINEAGE_REQUIRED_ROLE_KINDS = {
     "run_research_protocol_json": "research_protocol",
     "run_methodology_audit_json": "methodology_audit",
     "run_publication_readiness_json": "publication_readiness",
+    "run_contribution_assessment_json": "contribution_assessment",
     "run_revision_dossier_json": "revision_dossier",
     "run_publication_evidence_index_json": "publication_evidence_index",
     "run_publication_repair_plan_json": "publication_repair_plan",

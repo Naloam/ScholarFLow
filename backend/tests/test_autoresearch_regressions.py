@@ -1281,6 +1281,138 @@ def test_publish_package_blocks_unresolved_repair_state(
     )
 
 
+def test_publish_package_marks_archive_stale_when_asset_digest_changes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    project_id = "project_archive_digest_stale"
+    run_id = "run_archive_digest_stale"
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Archive digest stale regression",
+        status="done",
+        created_at=now,
+        updated_at=now,
+    )
+    evidence_index = AutoResearchPublicationEvidenceIndexRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        evidence_item_count=0,
+        required_evidence_count=0,
+        present_required_evidence_count=0,
+        missing_required_evidence_count=0,
+        complete=True,
+        evidence_index_fingerprint="archive-digest-evidence",
+    )
+    artifact_audit = AutoResearchArtifactIntegrityAuditRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        registry_asset_count=1,
+        existing_registry_asset_count=1,
+        bundle_count=1,
+        selected_bundle_asset_count=1,
+        complete=True,
+        audit_fingerprint="archive-digest-integrity",
+    )
+    repair_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        complete=True,
+        repair_plan_fingerprint="archive-digest-repair-plan",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Archive digest stale regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        publication_evidence_index=evidence_index,
+        artifact_integrity_audit=artifact_audit,
+        publication_repair_plan=repair_plan,
+    )
+    review_loop = review_publish.AutoResearchReviewLoopRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        current_round=1,
+        latest_review_fingerprint="archive-digest-review",
+    )
+    current_sha = "old-digest"
+
+    def bundle_index_for_current_sha() -> review_publish.AutoResearchBundleIndexRead:
+        asset = review_publish.AutoResearchBundleAssetRead(
+            asset_id=f"{run_id}:run_json",
+            label="Run snapshot",
+            role="run_json",
+            required=True,
+            ref=AutoResearchRegistryAssetRef(
+                path=str(tmp_path / "run.json"),
+                exists=True,
+                size_bytes=12,
+                sha256=current_sha,
+            ),
+        )
+        bundle = review_publish.AutoResearchBundleRead(
+            id="selected_candidate_repro",
+            name="Selected candidate",
+            description="Regression bundle.",
+            asset_count=1,
+            existing_asset_count=1,
+            assets=[asset],
+        )
+        return review_publish.AutoResearchBundleIndexRead(
+            project_id=project_id,
+            run_id=run_id,
+            bundles=[bundle],
+        )
+
+    monkeypatch.setattr(review_publish, "build_run_review", lambda *_args, **_kwargs: review)
+    monkeypatch.setattr(review_publish, "load_run", lambda *_args: run)
+    monkeypatch.setattr(review_publish, "_load_review_loop", lambda *_args: review_loop)
+    monkeypatch.setattr(review_publish, "_compile_ready_final_blockers", lambda *_args: [])
+    monkeypatch.setattr(
+        review_publish,
+        "load_run_bundle_index",
+        lambda *_args: bundle_index_for_current_sha(),
+    )
+
+    initial_package = review_publish.build_publish_package(project_id, run_id)
+    assert initial_package is not None
+    archive_manifest_path = review_publish._publish_archive_manifest_path(project_id, run_id)
+    archive_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    archive_manifest_path.write_text(
+        json.dumps(
+            {
+                "generated_at": now.isoformat(),
+                "bundle_kind": "final_publish_bundle",
+                "package_fingerprint": initial_package.package_fingerprint,
+                "review_round": initial_package.review_round,
+                "review_fingerprint": initial_package.review_fingerprint,
+            }
+        ),
+        encoding="utf-8",
+    )
+    review_publish._publish_archive_path(project_id, run_id).write_bytes(b"old archive")
+    current_sha = "new-digest"
+
+    package = review_publish.build_publish_package(project_id, run_id)
+
+    assert package is not None
+    assert package.archive_ready is True
+    assert package.archive_current is False
+    assert package.archive_status == "stale"
+
+
 def test_publication_readiness_is_persisted_registered_and_packaged(
     monkeypatch,
     tmp_path: Path,

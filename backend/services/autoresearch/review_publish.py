@@ -2234,7 +2234,10 @@ def _publish_asset_fingerprint_payload(
             "role": asset.role,
             "required": asset.required,
             "path": asset.ref.path,
+            "kind": asset.ref.kind,
             "exists": asset.ref.exists,
+            "size_bytes": asset.ref.size_bytes,
+            "sha256": asset.ref.sha256,
         }
         for asset in assets
     ]

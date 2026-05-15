@@ -129,11 +129,18 @@ def _run_summary(
         else 0
     )
     publication_blockers = (
-        readiness.blockers[:3]
+        publish.final_blockers[:3]
+        if publish is not None and publish.final_blockers
+        else readiness.blockers[:3]
         if readiness is not None
-        else publish.final_blockers[:3]
-        if publish is not None
         else []
+    )
+    publication_blocker_count = (
+        publish.final_blocker_count
+        if publish is not None
+        else len(readiness.blockers)
+        if readiness is not None
+        else 0
     )
     budget_status = (
         "constrained"
@@ -326,7 +333,7 @@ def _run_summary(
             if readiness is not None
             else False
         ),
-        publication_blocker_count=len(readiness.blockers) if readiness is not None else 0,
+        publication_blocker_count=publication_blocker_count,
         publication_blockers=publication_blockers,
         readiness_checks_passed=sum(1 for item in readiness_checks if item.passed),
         readiness_checks_total=len(readiness_checks),

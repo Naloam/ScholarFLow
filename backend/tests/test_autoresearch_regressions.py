@@ -740,6 +740,67 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
     )
 
 
+def test_operator_console_summary_prefers_publish_final_blockers() -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    project_id = "project_console_publish_blockers"
+    run_id = "run_console_publish_blockers"
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Console publish blocker visibility",
+        status="done",
+        created_at=now,
+        updated_at=now,
+    )
+    readiness = review_publish.AutoResearchPublicationReadinessRead(
+        generated_at=now,
+        tier="publish_ready",
+        score=100,
+        summary="Readiness checks have no blockers.",
+        final_publish_ready=True,
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Ready review with downstream publish blockers.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        publication_readiness=readiness,
+        scores=review_publish.AutoResearchReviewScoresRead(),
+    )
+    publish = AutoResearchPublishPackageRead(
+        project_id=project_id,
+        run_id=run_id,
+        package_id="publish_ready_bundle",
+        generated_at=now,
+        status="revision_required",
+        publish_ready=False,
+        review_bundle_ready=True,
+        final_publish_ready=False,
+        publication_tier="publish_ready",
+        publication_readiness_score=100,
+        final_blocker_count=1,
+        final_blockers=["Final publish requires artifact integrity audit."],
+    )
+
+    summary = autoresearch_console._run_summary(
+        run=run,
+        execution=AutoResearchRunExecutionRead(project_id=project_id, run_id=run_id),
+        bridge=None,
+        review=review,
+        review_loop=None,
+        publish=publish,
+    )
+
+    assert summary.publication_blocker_count == 1
+    assert summary.publication_blockers == [
+        "Final publish requires artifact integrity audit."
+    ]
+
+
 def test_apply_review_actions_respects_repair_plan_action_kind() -> None:
     paper_plan = AutoResearchPublicationRepairPlanRead(
         generated_at=datetime.now(UTC).replace(tzinfo=None),

@@ -2476,6 +2476,7 @@ def build_publication_manifest(
         or package is None
         or not package.final_publish_ready
         or not package.archive_ready
+        or not package.archive_current
     ):
         return None
     manifest_path = _publication_manifest_path(project_id, run_id)

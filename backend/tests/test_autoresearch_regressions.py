@@ -1413,6 +1413,48 @@ def test_publish_package_marks_archive_stale_when_asset_digest_changes(
     assert package.archive_status == "stale"
 
 
+def test_publication_manifest_requires_current_archive(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    project_id = "project_manifest_current_archive"
+    run_id = "run_manifest_current_archive"
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Manifest current archive gate",
+        status="done",
+        created_at=now,
+        updated_at=now,
+    )
+    autoresearch_repository.save_run(run)
+    package = AutoResearchPublishPackageRead(
+        project_id=project_id,
+        run_id=run_id,
+        package_id="publish_ready_bundle",
+        generated_at=now,
+        status="publish_ready",
+        publish_ready=True,
+        review_bundle_ready=True,
+        final_publish_ready=True,
+        archive_ready=True,
+        archive_current=False,
+        archive_status="stale",
+        package_fingerprint="stale-package-fingerprint",
+    )
+    monkeypatch.setattr(
+        review_publish,
+        "build_publish_package",
+        lambda current_project_id, current_run_id: package,
+    )
+
+    manifest = review_publish.build_publication_manifest(project_id, run_id)
+
+    assert manifest is None
+
+
 def test_publication_readiness_is_persisted_registered_and_packaged(
     monkeypatch,
     tmp_path: Path,

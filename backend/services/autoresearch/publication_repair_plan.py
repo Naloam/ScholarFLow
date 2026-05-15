@@ -292,6 +292,29 @@ def build_publication_repair_plan(
                 )
             )
 
+    if review.artifact_integrity_audit is not None:
+        for issue in review.artifact_integrity_audit.issues:
+            if issue.severity != "error":
+                continue
+            supporting_asset_ids = [issue.asset_id] if issue.asset_id else []
+            detail = f"{issue.summary}: {issue.detail}"
+            kind = _kind(
+                f"{issue.summary} {issue.detail} {issue.role or ''}",
+                supporting_asset_ids,
+            )
+            add(
+                _action(
+                    action_id=f"artifact_integrity_{issue.issue_id}_{_slug(kind)}",
+                    kind=kind,
+                    source="artifact_integrity_audit",
+                    source_ids=[issue.issue_id],
+                    title="Resolve artifact integrity blocker",
+                    detail=detail,
+                    supporting_asset_ids=supporting_asset_ids,
+                    required_for_final_publish=True,
+                )
+            )
+
     if review.publication_readiness is not None:
         for blocker in review.publication_readiness.blockers:
             kind = _kind(blocker)

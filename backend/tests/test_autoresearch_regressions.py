@@ -31,6 +31,7 @@ from schemas.autoresearch import (
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
     AutoResearchArtifactIntegrityAuditRead,
+    AutoResearchArtifactIntegrityIssueRead,
     AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublicationRepairExecutionActionRead,
     AutoResearchPublicationRepairExecutionRead,
@@ -1019,6 +1020,64 @@ def test_repair_plan_classifies_final_asset_gaps_as_auto_repairable() -> None:
     assert any(action.kind == "rebuild_paper_sources" for action in repair_plan.actions)
 
 
+def test_repair_plan_includes_artifact_integrity_blockers() -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    issue = AutoResearchArtifactIntegrityIssueRead(
+        issue_id="lineage_missing_program",
+        severity="error",
+        category="lineage",
+        summary="Existing selected run asset is missing lineage.",
+        detail="Asset run_repair_integrity:program_json exists but no lineage edge targets it.",
+        asset_id="run_repair_integrity:program_json",
+        role="program_json",
+        path="/tmp/program.json",
+    )
+    artifact_integrity_audit = AutoResearchArtifactIntegrityAuditRead(
+        generated_at=now,
+        project_id="project_repair_integrity",
+        run_id="run_repair_integrity",
+        registry_asset_count=4,
+        existing_registry_asset_count=4,
+        bundle_count=1,
+        selected_bundle_asset_count=4,
+        lineage_edge_count=1,
+        missing_lineage_target_count=0,
+        untraced_existing_asset_count=1,
+        issue_count=1,
+        blocker_count=1,
+        issues=[issue],
+        blockers=[issue.summary],
+        complete=False,
+        audit_fingerprint="artifact-integrity-blocker",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=artifact_integrity_audit.project_id,
+        run_id=artifact_integrity_audit.run_id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Artifact integrity repair plan regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        artifact_integrity_audit=artifact_integrity_audit,
+    )
+
+    repair_plan = review_publish.build_publication_repair_plan(
+        review=review,
+        review_loop=None,
+    )
+
+    action = next(
+        item for item in repair_plan.actions if item.source == "artifact_integrity_audit"
+    )
+    assert action.source_ids == [issue.issue_id]
+    assert action.supporting_asset_ids == [issue.asset_id]
+    assert action.priority == "high"
+    assert action.status == "blocked"
+    assert action.kind == "manual_review"
+
+
 def test_publish_package_blocks_unresolved_repair_state(
     monkeypatch,
     tmp_path: Path,
@@ -1262,6 +1321,15 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         issue["asset_id"] == f"{run_id}:portfolio_json"
         for issue in artifact_integrity_audit_payload["issues"]
     )
+    artifact_integrity_evidence = next(
+        item
+        for item in evidence_index_payload["evidence_items"]
+        if item["evidence_id"] == "artifact_integrity_audit"
+    )
+    assert artifact_integrity_evidence["exists"] is True
+    assert artifact_integrity_evidence["sha256"] == hashlib.sha256(
+        artifact_integrity_audit_path.read_bytes()
+    ).hexdigest()
     assert review.publication_repair_plan is not None
     assert review.publication_repair_plan_path == str(repair_plan_path)
     assert repair_plan_path.is_file()
@@ -1271,6 +1339,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert repair_plan_payload["action_count"] > 0
     assert repair_plan_payload["pending_action_count"] > 0
+    assert any(
+        action["source"] == "artifact_integrity_audit"
+        for action in repair_plan_payload["actions"]
+    )
     assert any(action["source"] == "evidence_index" for action in repair_plan_payload["actions"])
     review_loop = review_publish.build_review_loop(project_id, run_id)
     assert review_loop is not None

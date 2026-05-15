@@ -1218,6 +1218,7 @@ export type AutoResearchRepairActionSource =
   | "revision_action"
   | "revision_dossier"
   | "evidence_index"
+  | "artifact_integrity_audit"
   | "readiness";
 
 export type AutoResearchPublicationRepairAction = {

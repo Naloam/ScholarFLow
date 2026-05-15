@@ -1603,6 +1603,7 @@ AutoResearchRepairActionSource = Literal[
     "revision_action",
     "revision_dossier",
     "evidence_index",
+    "artifact_integrity_audit",
     "readiness",
 ]
 

@@ -10,6 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from config import db as db_module
 from schemas.autoresearch import (
+    AutoResearchArtifactIntegrityAuditRead,
     AutoResearchBundleAssetRead,
     AutoResearchBundleIndexRead,
     AutoResearchBundleRead,
@@ -1916,6 +1917,23 @@ def _build_revision_dossier(
     )
 
 
+def _build_and_persist_artifact_integrity_audit(
+    project_id: str,
+    run_id: str,
+) -> tuple[AutoResearchArtifactIntegrityAuditRead, str] | None:
+    registry = load_run_registry(project_id, run_id)
+    bundle_index = load_run_bundle_index(project_id, run_id)
+    if registry is None or bundle_index is None:
+        return None
+    audit = build_artifact_integrity_audit(
+        registry=registry,
+        bundle_index=bundle_index,
+    )
+    audit_path = Path(artifact_integrity_audit_file_path(project_id, run_id))
+    _write_json(audit_path, audit.model_dump(mode="json"))
+    return audit, str(audit_path)
+
+
 def build_run_review(
     project_id: str,
     run_id: str,
@@ -1942,19 +1960,13 @@ def build_run_review(
     )
     publication_readiness_path = Path(publication_readiness_file_path(project_id, run_id))
     _write_json(publication_readiness_path, publication_readiness.model_dump(mode="json"))
-    registry = load_run_registry(project_id, run_id)
-    bundle_index = load_run_bundle_index(project_id, run_id)
-    if registry is None or bundle_index is None:
+    artifact_integrity_result = _build_and_persist_artifact_integrity_audit(
+        project_id,
+        run_id,
+    )
+    if artifact_integrity_result is None:
         return None
-    artifact_integrity_audit = build_artifact_integrity_audit(
-        registry=registry,
-        bundle_index=bundle_index,
-    )
-    artifact_integrity_audit_path = Path(artifact_integrity_audit_file_path(project_id, run_id))
-    _write_json(
-        artifact_integrity_audit_path,
-        artifact_integrity_audit.model_dump(mode="json"),
-    )
+    artifact_integrity_audit, artifact_integrity_audit_path = artifact_integrity_result
     registry = load_run_registry(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
     if registry is None or bundle_index is None:
@@ -2032,7 +2044,7 @@ def build_run_review(
         findings=findings,
         revision_plan=revision_plan,
         artifact_integrity_audit=artifact_integrity_audit,
-        artifact_integrity_audit_path=str(artifact_integrity_audit_path),
+        artifact_integrity_audit_path=artifact_integrity_audit_path,
     )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     review_loop = _build_review_loop(
@@ -2099,6 +2111,49 @@ def build_run_review(
                     project_id,
                     run_id,
                 ),
+            }
+        )
+    final_artifact_integrity_result = _build_and_persist_artifact_integrity_audit(
+        project_id,
+        run_id,
+    )
+    if final_artifact_integrity_result is not None:
+        artifact_integrity_audit, artifact_integrity_audit_path = final_artifact_integrity_result
+        review = review.model_copy(
+            update={
+                "artifact_integrity_audit": artifact_integrity_audit,
+                "artifact_integrity_audit_path": artifact_integrity_audit_path,
+            }
+        )
+        publication_evidence_index = build_publication_evidence_index(
+            run,
+            review=review,
+            review_loop=review_loop,
+            review_path=_review_path(project_id, run_id),
+            review_loop_path=_review_loop_path(project_id, run_id),
+        )
+        _write_json(
+            publication_evidence_index_path,
+            publication_evidence_index.model_dump(mode="json"),
+        )
+        review = review.model_copy(
+            update={
+                "publication_evidence_index": publication_evidence_index,
+                "publication_evidence_index_path": str(publication_evidence_index_path),
+            }
+        )
+        publication_repair_plan = build_publication_repair_plan(
+            review=review,
+            review_loop=review_loop,
+        )
+        _write_json(
+            publication_repair_plan_path,
+            publication_repair_plan.model_dump(mode="json"),
+        )
+        review = review.model_copy(
+            update={
+                "publication_repair_plan": publication_repair_plan,
+                "publication_repair_plan_path": str(publication_repair_plan_path),
             }
         )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))

@@ -1353,12 +1353,12 @@ def test_publish_package_marks_archive_stale_when_asset_digest_changes(
 
     def bundle_index_for_current_sha() -> review_publish.AutoResearchBundleIndexRead:
         asset = review_publish.AutoResearchBundleAssetRead(
-            asset_id=f"{run_id}:run_json",
-            label="Run snapshot",
-            role="run_json",
+            asset_id=f"{run_id}:run_generated_code",
+            label="Generated code",
+            role="run_generated_code",
             required=True,
             ref=AutoResearchRegistryAssetRef(
-                path=str(tmp_path / "run.json"),
+                path=str(tmp_path / "generated_code.py"),
                 exists=True,
                 size_bytes=12,
                 sha256=current_sha,

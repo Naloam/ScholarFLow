@@ -19,6 +19,7 @@ from schemas.autoresearch import (
     AutoResearchDeploymentRefRead,
     AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
+    AutoResearchPaperRevisionStateRead,
     AutoResearchPublicationReadinessRead,
     AutoResearchPublicationRepairExecutionRead,
     AutoResearchResearchProtocolRead,
@@ -146,6 +147,20 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_publication_repair_plan_json",
     "run_publication_repair_execution_json",
     "generated_code",
+}
+_VOLATILE_GENERATED_DIGEST_ROLES = {
+    "run_json",
+    "run_benchmark_card_json",
+    "run_research_protocol_json",
+    "run_methodology_audit_json",
+    "run_publication_readiness_json",
+    "run_revision_dossier_json",
+    "run_publication_evidence_index_json",
+    "run_artifact_integrity_audit_json",
+    "run_publication_repair_plan_json",
+    "run_publication_repair_execution_json",
+    "run_paper_compile_report_json",
+    "run_paper_sources_manifest_json",
 }
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
 _REFERENCE_SECTION_MARKERS = ("references", "bibliography")
@@ -1583,6 +1598,14 @@ def _load_publication_repair_execution(
         return None
 
 
+def _paper_revision_state_semantic_payload(
+    state: AutoResearchPaperRevisionStateRead,
+) -> dict[str, object]:
+    payload = state.model_dump(mode="json")
+    payload.pop("generated_at", None)
+    return payload
+
+
 def _sync_paper_revision_state(
     *,
     run: AutoResearchRunRead,
@@ -1606,7 +1629,9 @@ def _sync_paper_revision_state(
         paper_plan=run.paper_plan,
         figure_plan=run.figure_plan,
     )
-    if existing_state.model_dump(mode="json") == synced_state.model_dump(mode="json"):
+    existing_payload = _paper_revision_state_semantic_payload(existing_state)
+    synced_payload = _paper_revision_state_semantic_payload(synced_state)
+    if existing_payload == synced_payload:
         return
     save_run(
         run.model_copy(update={"paper_revision_state": synced_state}),
@@ -2228,19 +2253,21 @@ def _compile_ready_final_blockers(run: AutoResearchRunRead | None) -> list[str]:
 def _publish_asset_fingerprint_payload(
     assets: list[AutoResearchBundleAssetRead],
 ) -> list[dict[str, object]]:
-    return [
-        {
+    payloads: list[dict[str, object]] = []
+    for asset in assets:
+        payload: dict[str, object] = {
             "asset_id": asset.asset_id,
             "role": asset.role,
             "required": asset.required,
             "path": asset.ref.path,
             "kind": asset.ref.kind,
             "exists": asset.ref.exists,
-            "size_bytes": asset.ref.size_bytes,
-            "sha256": asset.ref.sha256,
         }
-        for asset in assets
-    ]
+        if asset.role not in _VOLATILE_GENERATED_DIGEST_ROLES:
+            payload["size_bytes"] = asset.ref.size_bytes
+            payload["sha256"] = asset.ref.sha256
+        payloads.append(payload)
+    return payloads
 
 
 def _publish_package_fingerprint(

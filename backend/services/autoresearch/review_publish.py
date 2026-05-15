@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from config import db as db_module
 from schemas.autoresearch import (
@@ -2376,6 +2376,93 @@ def _file_sha256(path: Path | None) -> str | None:
     return digest.hexdigest()
 
 
+def _zip_entry_sha256(handle: ZipFile, name: str) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with handle.open(name, "r") as entry:
+            for chunk in iter(lambda: entry.read(65536), b""):
+                digest.update(chunk)
+    except KeyError:
+        return None
+    return digest.hexdigest()
+
+
+def _archive_generated_refs(
+    archive_manifest: dict[str, object] | None,
+) -> list[dict[str, object]] | None:
+    if archive_manifest is None:
+        return None
+    refs = archive_manifest.get("generated_file_refs")
+    if not isinstance(refs, list):
+        return None
+    normalized: list[dict[str, object]] = []
+    for item in refs:
+        if isinstance(item, dict) and isinstance(item.get("file_name"), str):
+            normalized.append(item)
+    return normalized
+
+
+def _archive_contents_match_publish_state(
+    *,
+    project_id: str,
+    run_id: str,
+    archive_path: Path,
+    archive_manifest: dict[str, object] | None,
+    assets: list[AutoResearchBundleAssetRead],
+) -> bool:
+    generated_refs = _archive_generated_refs(archive_manifest)
+    if not archive_path.is_file() or not generated_refs:
+        return False
+    run_root = run_dir(project_id, run_id)
+    try:
+        with ZipFile(archive_path, "r") as handle:
+            names = set(handle.namelist())
+            generated_names: set[str] = set()
+            for ref in generated_refs:
+                file_name = ref["file_name"]
+                if not isinstance(file_name, str):
+                    return False
+                if not ref.get("exists"):
+                    continue
+                generated_names.add(file_name)
+                if file_name not in names:
+                    return False
+                if ref.get("digest_tracked") is False:
+                    continue
+                expected_size = ref.get("size_bytes")
+                if (
+                    isinstance(expected_size, int)
+                    and handle.getinfo(file_name).file_size != expected_size
+                ):
+                    return False
+                expected_sha256 = ref.get("sha256")
+                if (
+                    isinstance(expected_sha256, str)
+                    and _zip_entry_sha256(handle, file_name) != expected_sha256
+                ):
+                    return False
+            for asset in assets:
+                if not asset.ref.exists or asset.ref.kind != "file":
+                    continue
+                arcname = _arcname_for_path(run_root, Path(asset.ref.path))
+                if arcname in generated_names:
+                    continue
+                if arcname not in names:
+                    return False
+                if asset.role in _VOLATILE_GENERATED_DIGEST_ROLES:
+                    continue
+                if (
+                    isinstance(asset.ref.size_bytes, int)
+                    and handle.getinfo(arcname).file_size != asset.ref.size_bytes
+                ):
+                    return False
+                if asset.ref.sha256 and _zip_entry_sha256(handle, arcname) != asset.ref.sha256:
+                    return False
+    except (BadZipFile, OSError, KeyError):
+        return False
+    return True
+
+
 def _paper_title(run: AutoResearchRunRead) -> str:
     markdown = _paper_markdown(run)
     for line in markdown.splitlines():
@@ -2827,6 +2914,13 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     archive_current = (
         archive_ready
         and archive_manifest.get("package_fingerprint") == package_fingerprint
+        and _archive_contents_match_publish_state(
+            project_id=project_id,
+            run_id=run_id,
+            archive_path=archive_path,
+            archive_manifest=archive_manifest,
+            assets=[*required_assets, *optional_assets],
+        )
     )
     archive_status = "current" if archive_current else "stale" if archive_ready else "missing"
     current_publication_manifest = publication_manifest if archive_current else None

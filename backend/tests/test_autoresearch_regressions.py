@@ -1593,6 +1593,153 @@ def test_publish_package_marks_archive_stale_when_asset_digest_changes(
     assert package.deployment_ids == []
 
 
+def test_publish_package_marks_archive_stale_when_zip_generated_file_is_missing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    project_id = "project_archive_zip_contents"
+    run_id = "run_archive_zip_contents"
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Archive zip content integrity",
+        status="done",
+        created_at=now,
+        updated_at=now,
+    )
+    evidence_index = AutoResearchPublicationEvidenceIndexRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        complete=True,
+        evidence_index_fingerprint="archive-zip-evidence",
+    )
+    artifact_audit = AutoResearchArtifactIntegrityAuditRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        registry_asset_count=1,
+        existing_registry_asset_count=1,
+        bundle_count=1,
+        selected_bundle_asset_count=1,
+        complete=True,
+        audit_fingerprint="archive-zip-integrity",
+    )
+    repair_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        complete=True,
+        repair_plan_fingerprint="archive-zip-repair-plan",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Archive zip content regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        publication_evidence_index=evidence_index,
+        artifact_integrity_audit=artifact_audit,
+        publication_repair_plan=repair_plan,
+    )
+    review_loop = review_publish.AutoResearchReviewLoopRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        current_round=1,
+        latest_review_fingerprint="archive-zip-review",
+    )
+    code_path = tmp_path / "generated_code.py"
+    code_path.write_text("print('stable')\n", encoding="utf-8")
+    code_sha = hashlib.sha256(code_path.read_bytes()).hexdigest()
+    asset = review_publish.AutoResearchBundleAssetRead(
+        asset_id=f"{run_id}:run_generated_code",
+        label="Generated code",
+        role="run_generated_code",
+        required=True,
+        ref=AutoResearchRegistryAssetRef(
+            path=str(code_path),
+            exists=True,
+            size_bytes=code_path.stat().st_size,
+            sha256=code_sha,
+        ),
+    )
+    bundle = review_publish.AutoResearchBundleRead(
+        id="selected_candidate_repro",
+        name="Selected Candidate Repro Bundle",
+        description="Regression bundle.",
+        asset_count=1,
+        existing_asset_count=1,
+        assets=[asset],
+    )
+    bundle_index = review_publish.AutoResearchBundleIndexRead(
+        project_id=project_id,
+        run_id=run_id,
+        bundles=[bundle],
+    )
+    monkeypatch.setattr(review_publish, "build_run_review", lambda *_args, **_kwargs: review)
+    monkeypatch.setattr(review_publish, "load_run", lambda *_args: run)
+    monkeypatch.setattr(review_publish, "_load_review_loop", lambda *_args: review_loop)
+    monkeypatch.setattr(review_publish, "_compile_ready_final_blockers", lambda *_args: [])
+    monkeypatch.setattr(review_publish, "load_run_bundle_index", lambda *_args: bundle_index)
+
+    initial_package = review_publish.build_publish_package(project_id, run_id)
+    assert initial_package is not None
+    publication_manifest_path = review_publish._publication_manifest_path(project_id, run_id)
+    publication_manifest_path.write_text('{"publication_id":"stale"}', encoding="utf-8")
+    code_package_path = review_publish._code_package_path(project_id, run_id)
+    code_package_path.write_bytes(b"code package")
+    archive_manifest = {
+        "generated_at": now.isoformat(),
+        "bundle_kind": "final_publish_bundle",
+        "package_fingerprint": initial_package.package_fingerprint,
+        "review_round": initial_package.review_round,
+        "review_fingerprint": initial_package.review_fingerprint,
+        "generated_file_refs": [
+            {
+                "file_name": review_publish.PUBLICATION_MANIFEST_FILENAME,
+                "path": str(publication_manifest_path),
+                "exists": True,
+                "digest_tracked": True,
+                "size_bytes": publication_manifest_path.stat().st_size,
+                "sha256": hashlib.sha256(
+                    publication_manifest_path.read_bytes()
+                ).hexdigest(),
+            },
+            {
+                "file_name": review_publish.CODE_PACKAGE_FILENAME,
+                "path": str(code_package_path),
+                "exists": True,
+                "digest_tracked": True,
+                "size_bytes": code_package_path.stat().st_size,
+                "sha256": hashlib.sha256(
+                    code_package_path.read_bytes()
+                ).hexdigest(),
+            },
+        ],
+    }
+    archive_manifest_path = review_publish._publish_archive_manifest_path(project_id, run_id)
+    archive_manifest_path.write_text(json.dumps(archive_manifest), encoding="utf-8")
+    with ZipFile(review_publish._publish_archive_path(project_id, run_id), "w") as archive:
+        archive.write(
+            publication_manifest_path,
+            arcname=review_publish.PUBLICATION_MANIFEST_FILENAME,
+        )
+
+    package = review_publish.build_publish_package(project_id, run_id)
+
+    assert package is not None
+    assert package.archive_ready is True
+    assert package.archive_current is False
+    assert package.archive_status == "stale"
+
+
 def test_publication_manifest_requires_current_archive(
     monkeypatch,
     tmp_path: Path,

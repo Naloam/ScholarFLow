@@ -870,6 +870,7 @@ def test_operator_console_disables_apply_review_actions_for_non_paper_repair_pla
     )
 
     assert actions.apply_review_actions is False
+    assert actions.rebuild_paper is False
 
     paper_plan = experiment_plan.model_copy(
         update={
@@ -898,6 +899,7 @@ def test_operator_console_disables_apply_review_actions_for_non_paper_repair_pla
     )
 
     assert paper_actions.apply_review_actions is True
+    assert paper_actions.rebuild_paper is True
 
 
 def test_final_publish_blocks_unresolved_repair_state() -> None:

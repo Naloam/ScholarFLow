@@ -51,11 +51,15 @@ def _run_actions(
     bridge_waiting = bool(bridge is not None and bridge.current_session is not None and bridge.current_session.status == "waiting_result")
     final_publish_ready = bool(publish is not None and publish.final_publish_ready)
     repair_plan = review.publication_repair_plan if review is not None else None
+    can_rebuild_paper = (
+        run.status == "done"
+        and repair_plan_allows_paper_pipeline_rebuild(repair_plan)
+    )
     can_apply_review_actions = (
         run.status == "done"
         and review_loop is not None
         and review_loop.pending_action_count > 0
-        and repair_plan_allows_paper_pipeline_rebuild(repair_plan)
+        and can_rebuild_paper
     )
     return AutoResearchOperatorRunActionsRead(
         resume=run.status != "done" and not bridge_waiting,
@@ -65,7 +69,7 @@ def _run_actions(
         import_bridge_result=bridge_waiting,
         refresh_review=run.status == "done",
         apply_review_actions=can_apply_review_actions,
-        rebuild_paper=run.status == "done",
+        rebuild_paper=can_rebuild_paper,
         export_publish=run.status == "done" and final_publish_ready,
         download_publish=bool(
             publish is not None

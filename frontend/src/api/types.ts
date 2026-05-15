@@ -2003,6 +2003,12 @@ export type AutoResearchOperatorRunSummary = {
   publication_evidence_index_complete: boolean;
   publication_evidence_index_missing_count: number;
   publication_evidence_index_blockers: string[];
+  artifact_integrity_audit_complete: boolean;
+  artifact_integrity_audit_blocker_count: number;
+  artifact_integrity_audit_warning_count: number;
+  artifact_integrity_audit_untraced_asset_count: number;
+  artifact_integrity_audit_missing_lineage_target_count: number;
+  artifact_integrity_audit_blockers: string[];
   publication_repair_plan_complete: boolean;
   publication_repair_plan_pending_count: number;
   publication_repair_plan_blocked_count: number;

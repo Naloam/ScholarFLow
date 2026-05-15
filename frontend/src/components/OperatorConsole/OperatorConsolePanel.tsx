@@ -424,6 +424,13 @@ export function OperatorConsolePanel({
                       / missing {run.publication_evidence_index_missing_count}
                     </small>
                     <small>
+                      integrity{" "}
+                      {run.artifact_integrity_audit_complete
+                        ? "complete"
+                        : "gaps"}{" "}
+                      / blocked {run.artifact_integrity_audit_blocker_count}
+                    </small>
+                    <small>
                       repair{" "}
                       {run.publication_repair_plan_complete ? "complete" : "pending"}{" "}
                       / auto {run.publication_repair_plan_auto_applicable_count}{" "}
@@ -562,6 +569,18 @@ export function OperatorConsolePanel({
                     ? currentSummary.publication_evidence_index_complete
                       ? t("operator.complete")
                       : `${currentSummary.publication_evidence_index_missing_count} ${t("operator.missing")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.artifactIntegrity")}
+                </span>
+                <strong data-testid="operator-artifact-integrity-summary">
+                  {currentSummary
+                    ? currentSummary.artifact_integrity_audit_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.artifact_integrity_audit_blocker_count} ${t("operator.blocked")}`
                     : "n/a"}
                 </strong>
               </div>
@@ -1481,6 +1500,32 @@ export function OperatorConsolePanel({
                     </ul>
                   ) : (
                     <p>{t("operator.noEvidenceIndexBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-artifact-integrity">
+                  <span className="meta-label">
+                    {t("operator.artifactIntegrity")}
+                  </span>
+                  <p>
+                    {currentSummary.artifact_integrity_audit_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.artifact_integrity_audit_blocker_count} ${t("operator.blocked")} / ${currentSummary.artifact_integrity_audit_warning_count} ${t("operator.warnings")}`}
+                  </p>
+                  <p>
+                    lineage={currentSummary.artifact_integrity_audit_missing_lineage_target_count}{" "}
+                    untraced={currentSummary.artifact_integrity_audit_untraced_asset_count}
+                  </p>
+                  {currentSummary.artifact_integrity_audit_blockers.length ? (
+                    <ul>
+                      {currentSummary.artifact_integrity_audit_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noArtifactIntegrityBlockers")}</p>
                   )}
                 </div>
               ) : null}

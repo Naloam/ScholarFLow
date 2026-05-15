@@ -98,6 +98,9 @@ def _run_summary(
     publication_evidence_index = (
         review.publication_evidence_index if review is not None else None
     )
+    artifact_integrity_audit = (
+        review.artifact_integrity_audit if review is not None else None
+    )
     publication_repair_plan = (
         review.publication_repair_plan if review is not None else None
     )
@@ -223,6 +226,36 @@ def _run_summary(
         publication_evidence_index_blockers=(
             publication_evidence_index.blockers[:3]
             if publication_evidence_index is not None
+            else []
+        ),
+        artifact_integrity_audit_complete=(
+            artifact_integrity_audit.complete
+            if artifact_integrity_audit is not None
+            else False
+        ),
+        artifact_integrity_audit_blocker_count=(
+            artifact_integrity_audit.blocker_count
+            if artifact_integrity_audit is not None
+            else 0
+        ),
+        artifact_integrity_audit_warning_count=(
+            artifact_integrity_audit.warning_count
+            if artifact_integrity_audit is not None
+            else 0
+        ),
+        artifact_integrity_audit_untraced_asset_count=(
+            artifact_integrity_audit.untraced_existing_asset_count
+            if artifact_integrity_audit is not None
+            else 0
+        ),
+        artifact_integrity_audit_missing_lineage_target_count=(
+            artifact_integrity_audit.missing_lineage_target_count
+            if artifact_integrity_audit is not None
+            else 0
+        ),
+        artifact_integrity_audit_blockers=(
+            artifact_integrity_audit.blockers[:3]
+            if artifact_integrity_audit is not None
             else []
         ),
         publication_repair_plan_complete=(

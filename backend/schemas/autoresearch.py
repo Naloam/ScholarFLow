@@ -2260,6 +2260,12 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     publication_evidence_index_complete: bool = False
     publication_evidence_index_missing_count: int = 0
     publication_evidence_index_blockers: list[str] = Field(default_factory=list)
+    artifact_integrity_audit_complete: bool = False
+    artifact_integrity_audit_blocker_count: int = 0
+    artifact_integrity_audit_warning_count: int = 0
+    artifact_integrity_audit_untraced_asset_count: int = 0
+    artifact_integrity_audit_missing_lineage_target_count: int = 0
+    artifact_integrity_audit_blockers: list[str] = Field(default_factory=list)
     publication_repair_plan_complete: bool = False
     publication_repair_plan_pending_count: int = 0
     publication_repair_plan_blocked_count: int = 0

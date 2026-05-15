@@ -30,6 +30,7 @@ from schemas.autoresearch import (
     AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
+    AutoResearchArtifactIntegrityAuditRead,
     AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublicationRepairExecutionActionRead,
     AutoResearchPublicationRepairExecutionRead,
@@ -565,6 +566,23 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         complete=True,
         evidence_index_fingerprint="evidence-index-fingerprint",
     )
+    artifact_integrity_audit = AutoResearchArtifactIntegrityAuditRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        project_id=run.project_id,
+        run_id=run.id,
+        selected_candidate_id=run.portfolio.selected_candidate_id if run.portfolio is not None else None,
+        registry_asset_count=32,
+        existing_registry_asset_count=32,
+        missing_registry_asset_count=0,
+        bundle_count=2,
+        selected_bundle_asset_count=24,
+        selected_bundle_missing_required_count=0,
+        lineage_edge_count=48,
+        missing_lineage_target_count=0,
+        untraced_existing_asset_count=0,
+        complete=True,
+        audit_fingerprint="artifact-integrity-fingerprint",
+    )
     repair_plan = AutoResearchPublicationRepairPlanRead(
         generated_at=datetime.now(UTC).replace(tzinfo=None),
         project_id=run.project_id,
@@ -639,6 +657,7 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
         publication_readiness=readiness,
         revision_dossier=dossier,
         publication_evidence_index=evidence_index,
+        artifact_integrity_audit=artifact_integrity_audit,
         publication_repair_plan=repair_plan,
         publication_repair_execution=repair_execution,
         scores=review_publish.AutoResearchReviewScoresRead(),
@@ -682,6 +701,12 @@ def test_operator_console_summary_surfaces_publication_readiness() -> None:
     assert summary.publication_evidence_index_complete is True
     assert summary.publication_evidence_index_missing_count == 0
     assert summary.publication_evidence_index_blockers == []
+    assert summary.artifact_integrity_audit_complete is True
+    assert summary.artifact_integrity_audit_blocker_count == 0
+    assert summary.artifact_integrity_audit_warning_count == 0
+    assert summary.artifact_integrity_audit_untraced_asset_count == 0
+    assert summary.artifact_integrity_audit_missing_lineage_target_count == 0
+    assert summary.artifact_integrity_audit_blockers == []
     assert summary.publication_repair_plan_complete is False
     assert summary.publication_repair_plan_pending_count == 1
     assert summary.publication_repair_plan_blocked_count == 0

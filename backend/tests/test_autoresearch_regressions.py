@@ -1227,6 +1227,89 @@ def test_artifact_integrity_requires_matching_lineage_target_kind(tmp_path: Path
     )
 
 
+def test_artifact_integrity_detects_stale_registry_checksum(tmp_path: Path) -> None:
+    run_id = "run_registry_checksum_audit"
+    root = tmp_path / "run"
+    root.mkdir()
+    run_path = root / "run.json"
+    program_path = root / "program.json"
+    run_path.write_text("{}", encoding="utf-8")
+    program_path.write_text('{"version": 2}', encoding="utf-8")
+    stale_program_ref = AutoResearchRegistryAssetRef(
+        path=str(program_path),
+        exists=True,
+        sha256="0" * 64,
+    )
+    registry = AutoResearchRunRegistryRead(
+        project_id="project_registry_checksum_audit",
+        run_id=run_id,
+        topic="Registry checksum audit",
+        status="done",
+        root_path=str(root),
+        files=AutoResearchRunRegistryFiles(
+            root=AutoResearchRegistryAssetRef(
+                path=str(root),
+                kind="directory",
+                exists=True,
+            ),
+            run_json=AutoResearchRegistryAssetRef(
+                path=str(run_path),
+                exists=True,
+                sha256=hashlib.sha256(run_path.read_bytes()).hexdigest(),
+            ),
+            program_json=stale_program_ref,
+        ),
+        lineage=AutoResearchRunLineageRead(
+            edges=[
+                AutoResearchLineageEdgeRead(
+                    source_kind="run",
+                    source_id=run_id,
+                    relation="has_asset",
+                    target_kind="program",
+                    target_id=f"{run_id}:program",
+                    target_path=str(program_path),
+                    exists=True,
+                )
+            ]
+        ),
+    )
+    bundle_index = review_publish.AutoResearchBundleIndexRead(
+        project_id=registry.project_id,
+        run_id=registry.run_id,
+        bundles=[
+            review_publish.AutoResearchBundleRead(
+                id="selected_candidate_repro",
+                name="Selected Candidate Repro Bundle",
+                description="Regression bundle.",
+                asset_count=1,
+                existing_asset_count=1,
+                assets=[
+                    review_publish.AutoResearchBundleAssetRead(
+                        asset_id=f"{run_id}:program_json",
+                        label="Program snapshot",
+                        role="program_json",
+                        ref=stale_program_ref,
+                    )
+                ],
+            )
+        ],
+    )
+
+    audit = artifact_integrity_audit.build_artifact_integrity_audit(
+        registry=registry,
+        bundle_index=bundle_index,
+    )
+
+    assert audit.complete is False
+    assert any(
+        issue.category == "registry"
+        and issue.summary == "Registry file checksum is stale."
+        and issue.severity == "error"
+        and issue.path == str(program_path)
+        for issue in audit.issues
+    )
+
+
 def test_publish_package_blocks_unresolved_repair_state(
     monkeypatch,
     tmp_path: Path,

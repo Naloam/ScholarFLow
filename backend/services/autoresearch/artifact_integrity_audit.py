@@ -67,6 +67,16 @@ def _actual_exists(ref: AutoResearchRegistryAssetRef) -> bool:
     return Path(ref.path).exists()
 
 
+def _sha256_file(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _iter_file_refs(
     registry: AutoResearchRunRegistryRead,
 ) -> Iterable[tuple[str, str, AutoResearchRegistryAssetRef]]:
@@ -253,6 +263,21 @@ def _registry_ref_issues(
                     path=ref.path,
                 )
             )
+        if actual_exists and ref.kind == "file" and ref.sha256:
+            actual_sha256 = _sha256_file(candidate)
+            if actual_sha256 is not None and actual_sha256 != ref.sha256:
+                issues.append(
+                    _issue(
+                        severity="error",
+                        category="registry",
+                        summary="Registry file checksum is stale.",
+                        detail=(
+                            f"{owner_id}.{field_name} records sha256={ref.sha256}, "
+                            f"but filesystem reports sha256={actual_sha256}."
+                        ),
+                        path=ref.path,
+                    )
+                )
     return issues
 
 

@@ -262,8 +262,8 @@ def _lineage_issues(
     selected_assets: list[AutoResearchBundleAssetRead],
 ) -> tuple[list[AutoResearchArtifactIntegrityIssueRead], int, int]:
     issues: list[AutoResearchArtifactIntegrityIssueRead] = []
-    lineage_paths = {
-        _norm_path(edge.target_path)
+    lineage_targets = {
+        (_norm_path(edge.target_path), edge.target_kind)
         for edge in registry.lineage.edges
         if edge.target_path
     }
@@ -295,7 +295,7 @@ def _lineage_issues(
         expected_kind = _LINEAGE_REQUIRED_ROLE_KINDS.get(asset.role)
         if expected_kind is None or not asset.ref.exists:
             continue
-        if _norm_path(asset.ref.path) in lineage_paths:
+        if (_norm_path(asset.ref.path), expected_kind) in lineage_targets:
             continue
         untraced_existing += 1
         issues.append(

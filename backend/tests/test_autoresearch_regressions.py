@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
+import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
@@ -26,6 +27,7 @@ from schemas.autoresearch import (
     AutoResearchClaimEvidenceEntryRead,
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
+    AutoResearchLineageEdgeRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchOperatorConsoleFiltersRead,
     AutoResearchPaperCompileReportRead,
@@ -42,8 +44,10 @@ from schemas.autoresearch import (
     AutoResearchRegistryAssetRef,
     AutoResearchRunConfig,
     AutoResearchRunExecutionRead,
+    AutoResearchRunLineageRead,
     AutoResearchRunRead,
     AutoResearchRunRegistryFiles,
+    AutoResearchRunRegistryRead,
     BenchmarkSource,
     ExperimentAttempt,
     ExperimentSpec,
@@ -1077,6 +1081,87 @@ def test_repair_plan_includes_artifact_integrity_blockers() -> None:
     assert action.priority == "high"
     assert action.status == "blocked"
     assert action.kind == "manual_review"
+
+
+def test_artifact_integrity_requires_matching_lineage_target_kind(tmp_path: Path) -> None:
+    run_id = "run_lineage_kind_audit"
+    root = tmp_path / "run"
+    root.mkdir()
+    run_path = root / "run.json"
+    program_path = root / "program.json"
+    run_path.write_text("{}", encoding="utf-8")
+    program_path.write_text("{}", encoding="utf-8")
+    program_ref = AutoResearchRegistryAssetRef(
+        path=str(program_path),
+        exists=True,
+        sha256=hashlib.sha256(program_path.read_bytes()).hexdigest(),
+    )
+    registry = AutoResearchRunRegistryRead(
+        project_id="project_lineage_kind_audit",
+        run_id=run_id,
+        topic="Lineage target kind audit",
+        status="done",
+        root_path=str(root),
+        files=AutoResearchRunRegistryFiles(
+            root=AutoResearchRegistryAssetRef(
+                path=str(root),
+                kind="directory",
+                exists=True,
+            ),
+            run_json=AutoResearchRegistryAssetRef(
+                path=str(run_path),
+                exists=True,
+                sha256=hashlib.sha256(run_path.read_bytes()).hexdigest(),
+            ),
+            program_json=program_ref,
+        ),
+        lineage=AutoResearchRunLineageRead(
+            edges=[
+                AutoResearchLineageEdgeRead(
+                    source_kind="run",
+                    source_id=run_id,
+                    relation="has_asset",
+                    target_kind="artifact",
+                    target_id=f"{run_id}:program_json",
+                    target_path=str(program_path),
+                    exists=True,
+                )
+            ]
+        ),
+    )
+    bundle_index = review_publish.AutoResearchBundleIndexRead(
+        project_id=registry.project_id,
+        run_id=registry.run_id,
+        bundles=[
+            review_publish.AutoResearchBundleRead(
+                id="selected_candidate_repro",
+                name="Selected Candidate Repro Bundle",
+                description="Regression bundle.",
+                asset_count=1,
+                existing_asset_count=1,
+                assets=[
+                    review_publish.AutoResearchBundleAssetRead(
+                        asset_id=f"{run_id}:program_json",
+                        label="Program snapshot",
+                        role="program_json",
+                        ref=program_ref,
+                    )
+                ],
+            )
+        ],
+    )
+
+    audit = artifact_integrity_audit.build_artifact_integrity_audit(
+        registry=registry,
+        bundle_index=bundle_index,
+    )
+
+    assert any(
+        issue.category == "lineage"
+        and issue.asset_id == f"{run_id}:program_json"
+        and issue.severity == "error"
+        for issue in audit.issues
+    )
 
 
 def test_publish_package_blocks_unresolved_repair_state(

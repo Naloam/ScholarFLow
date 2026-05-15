@@ -1310,6 +1310,79 @@ def test_artifact_integrity_detects_stale_registry_checksum(tmp_path: Path) -> N
     )
 
 
+def test_artifact_integrity_detects_unregistered_selected_bundle_asset(
+    tmp_path: Path,
+) -> None:
+    run_id = "run_unregistered_bundle_asset"
+    root = tmp_path / "run"
+    root.mkdir()
+    run_path = root / "run.json"
+    external_path = tmp_path / "external_candidate.py"
+    run_path.write_text("{}", encoding="utf-8")
+    external_path.write_text("print('unregistered')\n", encoding="utf-8")
+    unregistered_ref = AutoResearchRegistryAssetRef(
+        path=str(external_path),
+        exists=True,
+        size_bytes=external_path.stat().st_size,
+        sha256=hashlib.sha256(external_path.read_bytes()).hexdigest(),
+    )
+    registry = AutoResearchRunRegistryRead(
+        project_id="project_unregistered_bundle_asset",
+        run_id=run_id,
+        topic="Unregistered bundle asset audit",
+        status="done",
+        root_path=str(root),
+        files=AutoResearchRunRegistryFiles(
+            root=AutoResearchRegistryAssetRef(
+                path=str(root),
+                kind="directory",
+                exists=True,
+            ),
+            run_json=AutoResearchRegistryAssetRef(
+                path=str(run_path),
+                exists=True,
+                sha256=hashlib.sha256(run_path.read_bytes()).hexdigest(),
+            ),
+        ),
+        lineage=AutoResearchRunLineageRead(),
+    )
+    bundle_index = review_publish.AutoResearchBundleIndexRead(
+        project_id=registry.project_id,
+        run_id=registry.run_id,
+        bundles=[
+            review_publish.AutoResearchBundleRead(
+                id="selected_candidate_repro",
+                name="Selected Candidate Repro Bundle",
+                description="Regression bundle.",
+                asset_count=1,
+                existing_asset_count=1,
+                assets=[
+                    review_publish.AutoResearchBundleAssetRead(
+                        asset_id=f"{run_id}:run_generated_code",
+                        label="Generated code",
+                        role="run_generated_code",
+                        ref=unregistered_ref,
+                    )
+                ],
+            )
+        ],
+    )
+
+    audit = artifact_integrity_audit.build_artifact_integrity_audit(
+        registry=registry,
+        bundle_index=bundle_index,
+    )
+
+    assert audit.complete is False
+    assert any(
+        issue.category == "bundle"
+        and issue.summary == "Selected bundle asset is not backed by the registry."
+        and issue.severity == "error"
+        and issue.asset_id == f"{run_id}:run_generated_code"
+        for issue in audit.issues
+    )
+
+
 def test_publish_package_blocks_unresolved_repair_state(
     monkeypatch,
     tmp_path: Path,

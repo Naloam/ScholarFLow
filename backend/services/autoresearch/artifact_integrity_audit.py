@@ -128,6 +128,13 @@ def _duplicate_values(values: list[str]) -> list[str]:
     return sorted(duplicates)
 
 
+def _registry_ref_keys(registry: AutoResearchRunRegistryRead) -> set[tuple[str | None, str]]:
+    return {
+        (_norm_path(ref.path), ref.kind)
+        for _owner_id, _field_name, ref in _iter_file_refs(registry)
+    }
+
+
 def _bundle_issues(
     *,
     registry: AutoResearchRunRegistryRead,
@@ -193,9 +200,25 @@ def _bundle_issues(
                 asset_id=duplicate_id,
             )
         )
+    registry_refs = _registry_ref_keys(registry)
     for asset in selected_assets:
         if asset.role == _SELF_AUDIT_ROLE:
             continue
+        if asset.ref.exists and (_norm_path(asset.ref.path), asset.ref.kind) not in registry_refs:
+            issues.append(
+                _issue(
+                    severity="error",
+                    category="bundle",
+                    summary="Selected bundle asset is not backed by the registry.",
+                    detail=(
+                        f"Asset {asset.asset_id} ({asset.role}) points to {asset.ref.path}, "
+                        "but no registry file entry records that path and kind."
+                    ),
+                    asset_id=asset.asset_id,
+                    role=asset.role,
+                    path=asset.ref.path,
+                )
+            )
         if asset.required and not asset.ref.exists:
             issues.append(
                 _issue(

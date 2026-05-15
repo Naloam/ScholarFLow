@@ -2407,6 +2407,21 @@ def _export_code_package(
     return archive_path
 
 
+def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
+    return [
+        _review_path(project_id, run_id),
+        _review_loop_path(project_id, run_id),
+        Path(publication_evidence_index_file_path(project_id, run_id)),
+        Path(artifact_integrity_audit_file_path(project_id, run_id)),
+        Path(publication_repair_plan_file_path(project_id, run_id)),
+        Path(publication_repair_execution_file_path(project_id, run_id)),
+        _publish_manifest_path(project_id, run_id),
+        _publish_archive_manifest_path(project_id, run_id),
+        _publication_manifest_path(project_id, run_id),
+        _code_package_path(project_id, run_id),
+    ]
+
+
 def _updated_deployments(
     existing: list[AutoResearchDeploymentRefRead],
     new_ref: AutoResearchDeploymentRefRead,
@@ -2476,9 +2491,11 @@ def build_publication_manifest(
                 deployment_label=deployment_label,
             ),
         )
-    code_package_path = _code_package_path(project_id, run_id)
-    if not code_package_path.is_file():
-        code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
+    code_package_path = _export_code_package(
+        project_id=project_id,
+        run_id=run_id,
+        package=package,
+    )
     compiled_paper_path = _compiled_paper_path(run)
     paper_compile_output_paths = _paper_compile_output_paths(run)
     benchmark_card_path = (
@@ -2847,6 +2864,26 @@ def _add_path_to_zip(handle: ZipFile, *, run_root: Path, path: Path, added: set[
     added.add(arcname)
 
 
+def _write_publish_archive(
+    *,
+    project_id: str,
+    run_id: str,
+    archive_path: Path,
+    bundle: AutoResearchBundleRead,
+) -> None:
+    run_root = run_dir(project_id, run_id)
+    added: set[str] = set()
+    with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
+        for generated_path in _publish_generated_paths(project_id, run_id):
+            if generated_path.is_file():
+                handle.write(generated_path, arcname=generated_path.name)
+                added.add(generated_path.name)
+        for asset in bundle.assets:
+            if not asset.ref.exists:
+                continue
+            _add_path_to_zip(handle, run_root=run_root, path=Path(asset.ref.path), added=added)
+
+
 def _archive_bundle_kind(package: AutoResearchPublishPackageRead) -> str:
     return "final_publish_bundle" if package.final_publish_ready else "review_bundle"
 
@@ -2901,6 +2938,8 @@ def _archive_manifest(
             PUBLICATION_REPAIR_EXECUTION_FILENAME,
             PUBLISH_PACKAGE_FILENAME,
             PUBLISH_ARCHIVE_MANIFEST_FILENAME,
+            PUBLICATION_MANIFEST_FILENAME,
+            CODE_PACKAGE_FILENAME,
         ],
         "included_asset_count": len(included_assets),
         "omitted_asset_count": len(omitted_assets),
@@ -2934,7 +2973,6 @@ def export_publish_package(
     if bundle is None:
         return None
 
-    run_root = run_dir(project_id, run_id)
     archive_path = _publish_archive_path(project_id, run_id)
     archive_manifest_path = _publish_archive_manifest_path(project_id, run_id)
     archive_manifest = _archive_manifest(
@@ -2943,25 +2981,12 @@ def export_publish_package(
         package=package,
     )
     _write_json(archive_manifest_path, archive_manifest)
-    added: set[str] = set()
-    with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
-        for generated_path in (
-            _review_path(project_id, run_id),
-            _review_loop_path(project_id, run_id),
-            Path(publication_evidence_index_file_path(project_id, run_id)),
-            Path(artifact_integrity_audit_file_path(project_id, run_id)),
-            Path(publication_repair_plan_file_path(project_id, run_id)),
-            Path(publication_repair_execution_file_path(project_id, run_id)),
-            _publish_manifest_path(project_id, run_id),
-            archive_manifest_path,
-        ):
-            if generated_path.is_file():
-                handle.write(generated_path, arcname=generated_path.name)
-                added.add(generated_path.name)
-        for asset in bundle.assets:
-            if not asset.ref.exists:
-                continue
-            _add_path_to_zip(handle, run_root=run_root, path=Path(asset.ref.path), added=added)
+    _write_publish_archive(
+        project_id=project_id,
+        run_id=run_id,
+        archive_path=archive_path,
+        bundle=bundle,
+    )
 
     code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
     publication_manifest = build_publication_manifest(
@@ -2998,6 +3023,12 @@ def export_publish_package(
         }
     )
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
+    _write_publish_archive(
+        project_id=project_id,
+        run_id=run_id,
+        archive_path=archive_path,
+        bundle=bundle,
+    )
     deployment = publication_manifest.deployments[0] if publication_manifest is not None and publication_manifest.deployments else None
     return AutoResearchPublishExportRead(
         project_id=project_id,

@@ -2824,6 +2824,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         and archive_manifest.get("package_fingerprint") == package_fingerprint
     )
     archive_status = "current" if archive_current else "stale" if archive_ready else "missing"
+    current_publication_manifest = publication_manifest if archive_current else None
     package = package.model_copy(
         update={
             "archive_manifest_path": str(_publish_archive_manifest_path(project_id, run_id)),
@@ -2845,18 +2846,24 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
                 if archive_manifest is not None
                 else None
             ),
-            "publication_id": publication_manifest.publication_id if publication_manifest is not None else None,
+            "publication_id": (
+                current_publication_manifest.publication_id
+                if current_publication_manifest is not None
+                else None
+            ),
             "publication_manifest_path": (
-                publication_manifest.publication_manifest_path
-                if publication_manifest is not None
+                current_publication_manifest.publication_manifest_path
+                if current_publication_manifest is not None
                 else str(_publication_manifest_path(project_id, run_id))
             ),
             "code_package_path": (
-                publication_manifest.code_package_path if publication_manifest is not None else str(_code_package_path(project_id, run_id))
+                current_publication_manifest.code_package_path
+                if current_publication_manifest is not None
+                else str(_code_package_path(project_id, run_id))
             ),
             "deployment_ids": (
-                [item.deployment_id for item in publication_manifest.deployments]
-                if publication_manifest is not None
+                [item.deployment_id for item in current_publication_manifest.deployments]
+                if current_publication_manifest is not None
                 else []
             ),
             "revision_actions": revision_actions,

@@ -1405,6 +1405,38 @@ def test_publish_package_marks_archive_stale_when_asset_digest_changes(
         encoding="utf-8",
     )
     review_publish._publish_archive_path(project_id, run_id).write_bytes(b"old archive")
+    stale_publication_manifest = review_publish.AutoResearchPublicationManifestRead(
+        publication_id=f"publication_{run_id}",
+        project_id=project_id,
+        run_id=run_id,
+        topic="Archive digest stale regression.",
+        paper_title="Archive digest stale regression.",
+        generated_at=now,
+        updated_at=now,
+        package_id=initial_package.package_id,
+        package_fingerprint=initial_package.package_fingerprint,
+        bundle_kind="final_publish_bundle",
+        review_bundle_ready=True,
+        final_publish_ready=True,
+        publication_manifest_path=str(review_publish._publication_manifest_path(project_id, run_id)),
+        publish_manifest_path=str(review_publish._publish_manifest_path(project_id, run_id)),
+        publish_archive_path=str(review_publish._publish_archive_path(project_id, run_id)),
+        run_api_path=f"/api/projects/{project_id}/auto-research/{run_id}",
+        registry_api_path=f"/api/projects/{project_id}/auto-research/{run_id}/registry",
+        publish_api_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish",
+        publish_download_path=f"/api/projects/{project_id}/auto-research/{run_id}/publish/download",
+        deployments=[
+            review_publish.AutoResearchDeploymentRefRead(
+                deployment_id="stale_live",
+                label="Stale Live",
+                listed_at=now,
+            )
+        ],
+    )
+    review_publish._publication_manifest_path(project_id, run_id).write_text(
+        stale_publication_manifest.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
     current_sha = "new-digest"
 
     package = review_publish.build_publish_package(project_id, run_id)
@@ -1413,6 +1445,8 @@ def test_publish_package_marks_archive_stale_when_asset_digest_changes(
     assert package.archive_ready is True
     assert package.archive_current is False
     assert package.archive_status == "stale"
+    assert package.publication_id is None
+    assert package.deployment_ids == []
 
 
 def test_publication_manifest_requires_current_archive(

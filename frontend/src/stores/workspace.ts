@@ -240,7 +240,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   ): boolean => {
     const publish = consoleState?.current_run?.publish;
     return Boolean(
-      publish && publish.final_publish_ready && publish.archive_ready,
+      publish &&
+        publish.final_publish_ready &&
+        publish.archive_ready &&
+        publish.archive_current,
     );
   };
   const loadPublicationManifest = async (

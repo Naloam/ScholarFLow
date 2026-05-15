@@ -2441,6 +2441,11 @@ def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
     return [
         _review_path(project_id, run_id),
         _review_loop_path(project_id, run_id),
+        Path(benchmark_card_file_path(project_id, run_id)),
+        Path(research_protocol_file_path(project_id, run_id)),
+        Path(methodology_audit_file_path(project_id, run_id)),
+        Path(publication_readiness_file_path(project_id, run_id)),
+        Path(revision_dossier_file_path(project_id, run_id)),
         Path(publication_evidence_index_file_path(project_id, run_id)),
         Path(artifact_integrity_audit_file_path(project_id, run_id)),
         Path(publication_repair_plan_file_path(project_id, run_id)),
@@ -2926,11 +2931,40 @@ def _archive_bundle_kind(package: AutoResearchPublishPackageRead) -> str:
     return "final_publish_bundle" if package.final_publish_ready else "review_bundle"
 
 
+_ARCHIVE_GENERATED_DIGEST_EXCLUDED_NAMES = {
+    PUBLISH_PACKAGE_FILENAME,
+    PUBLISH_ARCHIVE_MANIFEST_FILENAME,
+}
+
+
+def _archive_generated_file_ref(path: Path) -> dict[str, object]:
+    exists = path.is_file()
+    digest_tracked = path.name not in _ARCHIVE_GENERATED_DIGEST_EXCLUDED_NAMES
+    ref: dict[str, object] = {
+        "file_name": path.name,
+        "path": str(path),
+        "exists": exists,
+        "digest_tracked": digest_tracked,
+    }
+    if exists and digest_tracked:
+        ref["size_bytes"] = path.stat().st_size
+        ref["sha256"] = _file_sha256(path)
+    return ref
+
+
+def _archive_generated_file_refs(project_id: str, run_id: str) -> list[dict[str, object]]:
+    return [
+        _archive_generated_file_ref(path)
+        for path in _publish_generated_paths(project_id, run_id)
+    ]
+
+
 def _archive_manifest(
     *,
     project_id: str,
     run_id: str,
     package: AutoResearchPublishPackageRead,
+    generated_at: datetime | None = None,
 ) -> dict[str, object]:
     included_assets = [
         asset
@@ -2942,6 +2976,7 @@ def _archive_manifest(
         for asset in [*package.required_assets, *package.optional_assets]
         if not asset.ref.exists
     ]
+    generated_file_refs = _archive_generated_file_refs(project_id, run_id)
     omitted_required_assets = [asset.asset_id for asset in package.required_assets if not asset.ref.exists]
     omitted_final_assets = [asset.asset_id for asset in package.final_required_assets if not asset.ref.exists]
     omitted_optional_assets = [asset.asset_id for asset in package.optional_assets if not asset.ref.exists]
@@ -2949,7 +2984,7 @@ def _archive_manifest(
         "project_id": project_id,
         "run_id": run_id,
         "package_id": package.package_id,
-        "generated_at": _utcnow().isoformat(),
+        "generated_at": (generated_at or _utcnow()).isoformat(),
         "bundle_kind": _archive_bundle_kind(package),
         "package_fingerprint": package.package_fingerprint,
         "review_round": package.review_round,
@@ -2963,22 +2998,20 @@ def _archive_manifest(
         "source_bundle_id": package.source_bundle_id,
         "archive_file_name": PUBLISH_ARCHIVE_FILENAME,
         "generated_files": [
-            REVIEW_FILENAME,
-            REVIEW_LOOP_FILENAME,
-            BENCHMARK_CARD_FILENAME,
-            RESEARCH_PROTOCOL_FILENAME,
-            METHODOLOGY_AUDIT_FILENAME,
-            PUBLICATION_READINESS_FILENAME,
-            REVISION_DOSSIER_FILENAME,
-            PUBLICATION_EVIDENCE_INDEX_FILENAME,
-            ARTIFACT_INTEGRITY_AUDIT_FILENAME,
-            PUBLICATION_REPAIR_PLAN_FILENAME,
-            PUBLICATION_REPAIR_EXECUTION_FILENAME,
-            PUBLISH_PACKAGE_FILENAME,
-            PUBLISH_ARCHIVE_MANIFEST_FILENAME,
-            PUBLICATION_MANIFEST_FILENAME,
-            CODE_PACKAGE_FILENAME,
+            item["file_name"]
+            for item in generated_file_refs
+            if item["exists"]
         ],
+        "expected_generated_files": [
+            item["file_name"]
+            for item in generated_file_refs
+        ],
+        "missing_generated_files": [
+            item["file_name"]
+            for item in generated_file_refs
+            if not item["exists"]
+        ],
+        "generated_file_refs": generated_file_refs,
         "included_asset_count": len(included_assets),
         "omitted_asset_count": len(omitted_assets),
         "included_asset_ids": [asset.asset_id for asset in included_assets],
@@ -3033,6 +3066,7 @@ def export_publish_package(
         deployment_id=deployment_id,
         deployment_label=deployment_label,
     )
+    final_archive_generated_at = _utcnow()
     package = package.model_copy(update={"archive_path": str(archive_path)})
     package = package.model_copy(
         update={
@@ -3040,10 +3074,10 @@ def export_publish_package(
             "archive_status": "current",
             "archive_ready": archive_path.is_file() and archive_manifest_path.is_file(),
             "archive_current": archive_path.is_file() and archive_manifest_path.is_file(),
-            "archive_generated_at": _archive_manifest_generated_at(archive_manifest),
-            "archive_bundle_kind": archive_manifest["bundle_kind"],
-            "archive_review_round": archive_manifest["review_round"],
-            "archive_review_fingerprint": archive_manifest["review_fingerprint"],
+            "archive_generated_at": final_archive_generated_at,
+            "archive_bundle_kind": _archive_bundle_kind(package),
+            "archive_review_round": package.review_round,
+            "archive_review_fingerprint": package.review_fingerprint,
             "publication_id": (
                 publication_manifest.publication_id if publication_manifest is not None else None
             ),
@@ -3061,6 +3095,13 @@ def export_publish_package(
         }
     )
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
+    archive_manifest = _archive_manifest(
+        project_id=project_id,
+        run_id=run_id,
+        package=package,
+        generated_at=final_archive_generated_at,
+    )
+    _write_json(archive_manifest_path, archive_manifest)
     _write_publish_archive(
         project_id=project_id,
         run_id=run_id,

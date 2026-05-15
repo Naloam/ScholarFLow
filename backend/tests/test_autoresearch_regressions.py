@@ -2204,6 +2204,20 @@ def test_export_publish_package_rewrites_archive_with_final_manifests(
     )
     assert review_publish.PUBLICATION_MANIFEST_FILENAME in archived_manifest["generated_files"]
     assert review_publish.CODE_PACKAGE_FILENAME in archived_manifest["generated_files"]
+    generated_refs = {
+        item["file_name"]: item
+        for item in archived_manifest["generated_file_refs"]
+    }
+    publication_manifest_ref = generated_refs[review_publish.PUBLICATION_MANIFEST_FILENAME]
+    code_package_ref = generated_refs[review_publish.CODE_PACKAGE_FILENAME]
+    assert publication_manifest_ref["exists"] is True
+    assert publication_manifest_ref["sha256"] == hashlib.sha256(
+        Path(export.publication_manifest_path).read_bytes()
+    ).hexdigest()
+    assert code_package_ref["exists"] is True
+    assert code_package_ref["sha256"] == hashlib.sha256(
+        Path(export.code_package_path).read_bytes()
+    ).hexdigest()
 
 
 def test_autoresearch_resume_preserves_checkpointed_literature_synthesis(

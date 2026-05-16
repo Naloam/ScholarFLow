@@ -56,7 +56,10 @@ def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResea
     lowered = f"{text} {' '.join(supporting_asset_ids or [])}".lower()
     if any(marker in lowered for marker in ("claim", "unsupported", "evidence matrix", "contribution")):
         return "repair_claim_evidence"
-    if any(marker in lowered for marker in ("literature", "citation", "related work", "references")):
+    if any(
+        marker in lowered
+        for marker in ("literature", "citation", "related work", "references", "novelty", "duplicate", "incremental", "gap")
+    ):
         return "refresh_literature"
     if any(marker in lowered for marker in ("benchmark", "dataset", "provenance", "license", "source_kind")):
         return "update_benchmark_provenance"
@@ -70,6 +73,7 @@ def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResea
             "power",
             "statistic",
             "artifact",
+            "experiment design",
             "generated_code",
             "generated code",
             "run_generated_code",
@@ -128,6 +132,8 @@ def _expected_outputs(kind: AutoResearchRepairActionKind) -> list[str]:
         "refresh_literature": [
             "run_paper_markdown",
             "run_claim_evidence_matrix_json",
+            "run_literature_graph_json",
+            "run_novelty_validation_json",
             "run_publication_readiness_json",
         ],
         "rerun_experiments": [
@@ -343,6 +349,24 @@ def build_publication_repair_plan(
                     supporting_asset_ids=[
                         "run_contribution_assessment_json",
                         "run_claim_evidence_matrix_json",
+                    ],
+                    required_for_final_publish=True,
+                )
+            )
+
+    if review.novelty_validation is not None:
+        for blocker in review.novelty_validation.blockers:
+            kind = _kind(blocker)
+            add(
+                _action(
+                    action_id=f"novelty_{_slug(blocker)}_{_slug(kind)}",
+                    kind=kind,
+                    source="novelty_validation",
+                    title="Resolve novelty validation blocker",
+                    detail=blocker,
+                    supporting_asset_ids=[
+                        "run_literature_graph_json",
+                        "run_novelty_validation_json",
                     ],
                     required_for_final_publish=True,
                 )

@@ -707,6 +707,9 @@ export type AutoResearchLineageEdge = {
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
+    | "contribution_assessment"
+    | "literature_graph"
+    | "novelty_validation"
     | "revision_dossier"
     | "publication_evidence_index"
     | "artifact_integrity_audit"
@@ -757,6 +760,9 @@ export type AutoResearchLineageEdge = {
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
+    | "contribution_assessment"
+    | "literature_graph"
+    | "novelty_validation"
     | "revision_dossier"
     | "publication_evidence_index"
     | "artifact_integrity_audit"
@@ -802,6 +808,9 @@ export type AutoResearchRunRegistryFiles = {
   research_protocol_json?: AutoResearchRegistryAssetRef | null;
   methodology_audit_json?: AutoResearchRegistryAssetRef | null;
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
+  contribution_assessment_json?: AutoResearchRegistryAssetRef | null;
+  literature_graph_json?: AutoResearchRegistryAssetRef | null;
+  novelty_validation_json?: AutoResearchRegistryAssetRef | null;
   revision_dossier_json?: AutoResearchRegistryAssetRef | null;
   publication_evidence_index_json?: AutoResearchRegistryAssetRef | null;
   artifact_integrity_audit_json?: AutoResearchRegistryAssetRef | null;
@@ -950,6 +959,9 @@ export type AutoResearchBundleAssetRead = {
     | "run_research_protocol_json"
     | "run_methodology_audit_json"
     | "run_publication_readiness_json"
+    | "run_contribution_assessment_json"
+    | "run_literature_graph_json"
+    | "run_novelty_validation_json"
     | "run_revision_dossier_json"
     | "run_publication_evidence_index_json"
     | "run_artifact_integrity_audit_json"
@@ -1124,6 +1136,8 @@ export type AutoResearchEvidenceIndexCategory =
   | "protocol"
   | "methodology"
   | "readiness"
+  | "contribution"
+  | "novelty"
   | "revision"
   | "claims"
   | "paper"
@@ -1219,7 +1233,9 @@ export type AutoResearchRepairActionSource =
   | "revision_dossier"
   | "evidence_index"
   | "artifact_integrity_audit"
-  | "readiness";
+  | "readiness"
+  | "contribution_assessment"
+  | "novelty_validation";
 
 export type AutoResearchPublicationRepairAction = {
   action_id: string;
@@ -1402,6 +1418,173 @@ export type AutoResearchNoveltyAssessment = {
   top_related_work: AutoResearchRelatedWorkMatch[];
 };
 
+export type AutoResearchContributionType =
+  | "new_method"
+  | "new_system"
+  | "experimental_finding"
+  | "new_benchmark"
+  | "analysis_framework";
+
+export type AutoResearchClaimStrength =
+  | "unsupported"
+  | "weakly_supported"
+  | "artifact_supported"
+  | "statistically_supported"
+  | "literature_positioned";
+
+export type AutoResearchNoveltyRiskSeverity = "low" | "medium" | "high";
+
+export type AutoResearchContributionClaim = {
+  claim_id: string;
+  text: string;
+  contribution_type: AutoResearchContributionType;
+  claim_strength: AutoResearchClaimStrength;
+  core: boolean;
+  evidence_sources: string[];
+  rationale: string;
+};
+
+export type AutoResearchContributionNoveltyRisk = {
+  risk_id: string;
+  risk_type:
+    | "duplicate_risk"
+    | "incremental_risk"
+    | "evidence_gap"
+    | "literature_gap"
+    | "claim_overreach";
+  severity: AutoResearchNoveltyRiskSeverity;
+  summary: string;
+  detail: string;
+  evidence_refs: string[];
+};
+
+export type AutoResearchContributionAssessment = {
+  generated_at: string;
+  assessment_id: string;
+  contribution_claims: AutoResearchContributionClaim[];
+  novelty_risks: AutoResearchContributionNoveltyRisk[];
+  publishability_score: number;
+  clear_contribution_count: number;
+  strong_core_claim_count: number;
+  artifact_supported_claim_count: number;
+  statistically_supported_claim_count: number;
+  literature_positioned_claim_count: number;
+  complete: boolean;
+  blockers: string[];
+  warnings: string[];
+  assessment_fingerprint: string;
+};
+
+export type AutoResearchLiteratureGraphNodeKind =
+  | "paper"
+  | "method"
+  | "dataset"
+  | "metric"
+  | "claim";
+
+export type AutoResearchLiteratureGraphRelation =
+  | "mentions_method"
+  | "evaluates_dataset"
+  | "reports_metric"
+  | "supports_claim"
+  | "similar_to"
+  | "identifies_gap";
+
+export type AutoResearchNoveltyRiskLevel = "low" | "medium" | "high";
+export type AutoResearchGapValidityStatus = "valid" | "weak" | "invalid" | "missing";
+
+export type AutoResearchLiteratureGraphNode = {
+  node_id: string;
+  node_type: AutoResearchLiteratureGraphNodeKind;
+  label: string;
+  source_paper_id?: string | null;
+  synthetic: boolean;
+  attributes: Record<string, unknown>;
+};
+
+export type AutoResearchLiteratureGraphEdge = {
+  source_id: string;
+  relation: AutoResearchLiteratureGraphRelation;
+  target_id: string;
+  evidence: string;
+  weight: number;
+};
+
+export type AutoResearchLiteratureGraphMatch = {
+  match_id: string;
+  match_type: "method" | "task" | "benchmark";
+  paper_id?: string | null;
+  paper_title: string;
+  overlap_score: number;
+  shared_terms: string[];
+  rationale: string;
+};
+
+export type AutoResearchKnownSota = {
+  paper_id?: string | null;
+  paper_title: string;
+  method?: string | null;
+  dataset?: string | null;
+  metric?: string | null;
+  score?: string | null;
+  evidence: string;
+};
+
+export type AutoResearchLiteratureGraph = {
+  generated_at: string;
+  graph_id: string;
+  project_id: string;
+  run_id: string;
+  paper_nodes: AutoResearchLiteratureGraphNode[];
+  method_nodes: AutoResearchLiteratureGraphNode[];
+  dataset_nodes: AutoResearchLiteratureGraphNode[];
+  metric_nodes: AutoResearchLiteratureGraphNode[];
+  claim_nodes: AutoResearchLiteratureGraphNode[];
+  edges: AutoResearchLiteratureGraphEdge[];
+  similar_methods: AutoResearchLiteratureGraphMatch[];
+  similar_tasks: AutoResearchLiteratureGraphMatch[];
+  similar_benchmarks: AutoResearchLiteratureGraphMatch[];
+  known_sota: AutoResearchKnownSota[];
+  real_paper_count: number;
+  synthetic_paper_count: number;
+  graph_fingerprint: string;
+};
+
+export type AutoResearchGapValidation = {
+  gap_id: string;
+  description: string;
+  literature_evidence: string[];
+  experimentally_testable: boolean;
+  validation_target?: string | null;
+  status: AutoResearchGapValidityStatus;
+  blockers: string[];
+};
+
+export type AutoResearchNoveltyValidation = {
+  generated_at: string;
+  validation_id: string;
+  project_id: string;
+  run_id: string;
+  duplicate_risk: AutoResearchNoveltyRiskLevel;
+  incremental_risk: AutoResearchNoveltyRiskLevel;
+  gap_validity: AutoResearchGapValidityStatus;
+  experiment_coverage_risk: AutoResearchNoveltyRiskLevel;
+  duplicate_risk_detail: string;
+  incremental_risk_detail: string;
+  experiment_coverage_detail: string;
+  recommendation:
+    | "proceed"
+    | "reframe_positioning"
+    | "change_research_question"
+    | "change_experiment_design"
+    | "attach_literature";
+  gap_validations: AutoResearchGapValidation[];
+  blockers: string[];
+  warnings: string[];
+  complete: boolean;
+  validation_fingerprint: string;
+};
+
 export type AutoResearchReviewFinding = {
   id: string;
   severity: "info" | "warning" | "error";
@@ -1439,6 +1622,10 @@ export type AutoResearchRunReview = {
   evidence: AutoResearchReviewEvidence;
   citation_coverage: AutoResearchCitationCoverage;
   novelty_assessment?: AutoResearchNoveltyAssessment | null;
+  literature_graph?: AutoResearchLiteratureGraph | null;
+  literature_graph_path?: string | null;
+  novelty_validation?: AutoResearchNoveltyValidation | null;
+  novelty_validation_path?: string | null;
   benchmark_card?: AutoResearchBenchmarkCard | null;
   benchmark_card_path?: string | null;
   research_protocol?: AutoResearchResearchProtocol | null;
@@ -1447,6 +1634,8 @@ export type AutoResearchRunReview = {
   methodology_audit_path?: string | null;
   publication_readiness?: AutoResearchPublicationReadiness | null;
   publication_readiness_path?: string | null;
+  contribution_assessment?: AutoResearchContributionAssessment | null;
+  contribution_assessment_path?: string | null;
   revision_dossier?: AutoResearchRevisionDossier | null;
   revision_dossier_path?: string | null;
   publication_evidence_index?: AutoResearchPublicationEvidenceIndex | null;
@@ -1725,6 +1914,12 @@ export type AutoResearchPublicationManifest = {
   methodology_audit_sha256?: string | null;
   publication_readiness_path?: string | null;
   publication_readiness_sha256?: string | null;
+  contribution_assessment_path?: string | null;
+  contribution_assessment_sha256?: string | null;
+  literature_graph_path?: string | null;
+  literature_graph_sha256?: string | null;
+  novelty_validation_path?: string | null;
+  novelty_validation_sha256?: string | null;
   revision_dossier_path?: string | null;
   revision_dossier_sha256?: string | null;
   publication_evidence_index_path?: string | null;
@@ -1833,6 +2028,9 @@ export type AutoResearchPublishPackage = {
   publication_repair_plan_path?: string | null;
   publication_repair_execution_path?: string | null;
   publication_readiness_path?: string | null;
+  contribution_assessment_path?: string | null;
+  literature_graph_path?: string | null;
+  novelty_validation_path?: string | null;
   manifest_path?: string | null;
   archive_path?: string | null;
   archive_manifest_path?: string | null;

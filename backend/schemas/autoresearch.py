@@ -54,6 +54,8 @@ AutoResearchBundleAssetRole = Literal[
     "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_contribution_assessment_json",
+    "run_literature_graph_json",
+    "run_novelty_validation_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -108,6 +110,8 @@ AutoResearchLineageNodeKind = Literal[
     "methodology_audit",
     "publication_readiness",
     "contribution_assessment",
+    "literature_graph",
+    "novelty_validation",
     "revision_dossier",
     "publication_evidence_index",
     "artifact_integrity_audit",
@@ -181,6 +185,17 @@ AutoResearchBridgeNotificationEvent = Literal[
     "run_canceled",
 ]
 AutoResearchNoveltyStatus = Literal["missing_context", "grounded", "incremental", "weak"]
+AutoResearchLiteratureGraphNodeKind = Literal["paper", "method", "dataset", "metric", "claim"]
+AutoResearchLiteratureGraphRelation = Literal[
+    "mentions_method",
+    "evaluates_dataset",
+    "reports_metric",
+    "supports_claim",
+    "similar_to",
+    "identifies_gap",
+]
+AutoResearchNoveltyRiskLevel = Literal["low", "medium", "high"]
+AutoResearchGapValidityStatus = Literal["valid", "weak", "invalid", "missing"]
 AutoResearchBudgetStatus = Literal["default", "constrained"]
 AutoResearchClaimSupportStatus = Literal["supported", "partial", "unsupported"]
 AutoResearchClaimCategory = Literal["problem", "method", "result", "context", "limitation"]
@@ -1222,6 +1237,8 @@ class AutoResearchRunRegistryFiles(BaseModel):
     methodology_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
     contribution_assessment_json: AutoResearchRegistryAssetRef | None = None
+    literature_graph_json: AutoResearchRegistryAssetRef | None = None
+    novelty_validation_json: AutoResearchRegistryAssetRef | None = None
     revision_dossier_json: AutoResearchRegistryAssetRef | None = None
     publication_evidence_index_json: AutoResearchRegistryAssetRef | None = None
     artifact_integrity_audit_json: AutoResearchRegistryAssetRef | None = None
@@ -1563,6 +1580,7 @@ AutoResearchEvidenceIndexCategory = Literal[
     "methodology",
     "readiness",
     "contribution",
+    "novelty",
     "revision",
     "claims",
     "paper",
@@ -1667,6 +1685,7 @@ AutoResearchRepairActionSource = Literal[
     "artifact_integrity_audit",
     "readiness",
     "contribution_assessment",
+    "novelty_validation",
 ]
 
 
@@ -1811,6 +1830,99 @@ class AutoResearchNoveltyAssessmentRead(BaseModel):
     top_related_work: list[AutoResearchRelatedWorkMatchRead] = Field(default_factory=list)
 
 
+class AutoResearchLiteratureGraphNodeRead(BaseModel):
+    node_id: str
+    node_type: AutoResearchLiteratureGraphNodeKind
+    label: str
+    source_paper_id: str | None = None
+    synthetic: bool = False
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoResearchLiteratureGraphEdgeRead(BaseModel):
+    source_id: str
+    relation: AutoResearchLiteratureGraphRelation
+    target_id: str
+    evidence: str
+    weight: int = 1
+
+
+class AutoResearchLiteratureGraphMatchRead(BaseModel):
+    match_id: str
+    match_type: Literal["method", "task", "benchmark"]
+    paper_id: str | None = None
+    paper_title: str
+    overlap_score: int = 0
+    shared_terms: list[str] = Field(default_factory=list)
+    rationale: str
+
+
+class AutoResearchKnownSotaRead(BaseModel):
+    paper_id: str | None = None
+    paper_title: str
+    method: str | None = None
+    dataset: str | None = None
+    metric: str | None = None
+    score: str | None = None
+    evidence: str
+
+
+class AutoResearchLiteratureGraphRead(BaseModel):
+    generated_at: datetime
+    graph_id: str = "literature_graph_v1"
+    project_id: str
+    run_id: str
+    paper_nodes: list[AutoResearchLiteratureGraphNodeRead] = Field(default_factory=list)
+    method_nodes: list[AutoResearchLiteratureGraphNodeRead] = Field(default_factory=list)
+    dataset_nodes: list[AutoResearchLiteratureGraphNodeRead] = Field(default_factory=list)
+    metric_nodes: list[AutoResearchLiteratureGraphNodeRead] = Field(default_factory=list)
+    claim_nodes: list[AutoResearchLiteratureGraphNodeRead] = Field(default_factory=list)
+    edges: list[AutoResearchLiteratureGraphEdgeRead] = Field(default_factory=list)
+    similar_methods: list[AutoResearchLiteratureGraphMatchRead] = Field(default_factory=list)
+    similar_tasks: list[AutoResearchLiteratureGraphMatchRead] = Field(default_factory=list)
+    similar_benchmarks: list[AutoResearchLiteratureGraphMatchRead] = Field(default_factory=list)
+    known_sota: list[AutoResearchKnownSotaRead] = Field(default_factory=list)
+    real_paper_count: int = 0
+    synthetic_paper_count: int = 0
+    graph_fingerprint: str
+
+
+class AutoResearchGapValidationRead(BaseModel):
+    gap_id: str
+    description: str
+    literature_evidence: list[str] = Field(default_factory=list)
+    experimentally_testable: bool = False
+    validation_target: str | None = None
+    status: AutoResearchGapValidityStatus = "missing"
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchNoveltyValidationRead(BaseModel):
+    generated_at: datetime
+    validation_id: str = "novelty_validation_v1"
+    project_id: str
+    run_id: str
+    duplicate_risk: AutoResearchNoveltyRiskLevel = "medium"
+    incremental_risk: AutoResearchNoveltyRiskLevel = "medium"
+    gap_validity: AutoResearchGapValidityStatus = "missing"
+    experiment_coverage_risk: AutoResearchNoveltyRiskLevel = "medium"
+    duplicate_risk_detail: str
+    incremental_risk_detail: str
+    experiment_coverage_detail: str
+    recommendation: Literal[
+        "proceed",
+        "reframe_positioning",
+        "change_research_question",
+        "change_experiment_design",
+        "attach_literature",
+    ] = "attach_literature"
+    gap_validations: list[AutoResearchGapValidationRead] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    complete: bool = False
+    validation_fingerprint: str
+
+
 class AutoResearchReviewFindingRead(BaseModel):
     id: str
     severity: AutoResearchReviewSeverity
@@ -1841,6 +1953,10 @@ class AutoResearchRunReviewRead(BaseModel):
     evidence: AutoResearchReviewEvidenceRead
     citation_coverage: AutoResearchCitationCoverageRead
     novelty_assessment: AutoResearchNoveltyAssessmentRead | None = None
+    literature_graph: AutoResearchLiteratureGraphRead | None = None
+    literature_graph_path: str | None = None
+    novelty_validation: AutoResearchNoveltyValidationRead | None = None
+    novelty_validation_path: str | None = None
     benchmark_card: AutoResearchBenchmarkCardRead | None = None
     benchmark_card_path: str | None = None
     research_protocol: AutoResearchResearchProtocolRead | None = None
@@ -2001,6 +2117,10 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publication_readiness_sha256: str | None = None
     contribution_assessment_path: str | None = None
     contribution_assessment_sha256: str | None = None
+    literature_graph_path: str | None = None
+    literature_graph_sha256: str | None = None
+    novelty_validation_path: str | None = None
+    novelty_validation_sha256: str | None = None
     revision_dossier_path: str | None = None
     revision_dossier_sha256: str | None = None
     publication_evidence_index_path: str | None = None
@@ -2102,6 +2222,8 @@ class AutoResearchPublishPackageRead(BaseModel):
     research_protocol_path: str | None = None
     methodology_audit_path: str | None = None
     contribution_assessment_path: str | None = None
+    literature_graph_path: str | None = None
+    novelty_validation_path: str | None = None
     revision_dossier_path: str | None = None
     publication_evidence_index_path: str | None = None
     artifact_integrity_audit_path: str | None = None

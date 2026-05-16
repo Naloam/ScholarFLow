@@ -65,6 +65,7 @@ from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
 from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.contribution_assessment import build_contribution_assessment
+from services.autoresearch.literature_novelty import build_literature_graph, build_novelty_validation
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_repair_execution import build_publication_repair_execution
 from services.autoresearch.research_protocol import build_research_protocol
@@ -209,6 +210,9 @@ def _publication_literature() -> list[LiteratureInsight]:
             year=2024,
             source="semantic_scholar",
             insight="Provides real related-work context for compact retrieval benchmarks.",
+            method_hint="Compare compact retrieval pipelines with reproducible reranking baselines.",
+            gap_hint="Test whether compact reranking benchmarks preserve macro F1 gains across seeds.",
+            relevance="Matches the external compact reranking benchmark and macro F1 evaluation.",
         ),
         LiteratureInsight(
             paper_id="paper_pub_2",
@@ -216,6 +220,9 @@ def _publication_literature() -> list[LiteratureInsight]:
             year=2023,
             source="semantic_scholar",
             insight="Motivates lexical baselines and controlled reranking comparisons.",
+            method_hint="Use lightweight lexical reranking signals against conventional baselines.",
+            gap_hint="Ablate lexical feature groups to identify which reranking component drives macro F1.",
+            relevance="Supports the candidate ablation and seed-stable macro F1 experiment.",
         ),
     ]
 
@@ -571,6 +578,59 @@ def test_contribution_assessment_accepts_statistically_supported_core_claim() ->
         if item.core
     )
     assert not any("completed experiments alone" in item for item in assessment.blockers)
+
+
+def test_literature_graph_and_novelty_validation_accept_literature_backed_gap() -> None:
+    spec, benchmark = _external_publication_spec()
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+    )
+
+    graph = build_literature_graph(run)
+    validation = build_novelty_validation(run, literature_graph=graph)
+
+    assert graph.real_paper_count == 2
+    assert graph.paper_nodes
+    assert graph.method_nodes
+    assert graph.claim_nodes
+    assert graph.similar_methods
+    assert validation.complete is True
+    assert validation.gap_validity == "valid"
+    assert validation.recommendation in {"proceed", "reframe_positioning"}
+    assert validation.blockers == []
+
+
+def test_novelty_validation_blocks_when_gap_is_not_literature_backed_or_testable() -> None:
+    spec, benchmark = _external_publication_spec()
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+    ).model_copy(
+        update={
+            "literature": [
+                LiteratureInsight(
+                    paper_id="paper_no_gap",
+                    title="Generic Compact Retrieval Survey",
+                    year=2024,
+                    source="semantic_scholar",
+                    insight="Surveys compact retrieval systems without identifying a testable gap.",
+                    method_hint="Compare compact retrieval methods.",
+                )
+            ],
+            "literature_synthesis": None,
+        }
+    )
+
+    graph = build_literature_graph(run)
+    validation = build_novelty_validation(run, literature_graph=graph)
+
+    assert graph.real_paper_count == 1
+    assert validation.complete is False
+    assert validation.gap_validity == "missing"
+    assert any("literature-backed research gap" in item for item in validation.blockers)
 
 
 def test_publication_readiness_requires_ablation_in_final_selected_artifact() -> None:
@@ -1949,6 +2009,12 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     contribution_assessment_path = Path(
         autoresearch_repository.contribution_assessment_file_path(project_id, run_id)
     )
+    literature_graph_path = Path(
+        autoresearch_repository.literature_graph_file_path(project_id, run_id)
+    )
+    novelty_validation_path = Path(
+        autoresearch_repository.novelty_validation_file_path(project_id, run_id)
+    )
     benchmark_card_path = Path(
         autoresearch_repository.benchmark_card_file_path(project_id, run_id)
     )
@@ -1975,6 +2041,8 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert not readiness_path.is_file()
     assert not contribution_assessment_path.is_file()
+    assert not literature_graph_path.is_file()
+    assert not novelty_validation_path.is_file()
     assert not benchmark_card_path.is_file()
     assert not protocol_path.is_file()
     assert not audit_path.is_file()
@@ -2039,6 +2107,20 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert contribution_evidence["exists"] is True
     assert contribution_evidence["role"] == "run_contribution_assessment_json"
+    literature_graph_evidence = next(
+        item
+        for item in evidence_index_payload["evidence_items"]
+        if item["evidence_id"] == "literature_graph"
+    )
+    assert literature_graph_evidence["exists"] is True
+    assert literature_graph_evidence["role"] == "run_literature_graph_json"
+    novelty_validation_evidence = next(
+        item
+        for item in evidence_index_payload["evidence_items"]
+        if item["evidence_id"] == "novelty_validation"
+    )
+    assert novelty_validation_evidence["exists"] is True
+    assert novelty_validation_evidence["role"] == "run_novelty_validation_json"
     assert review.artifact_integrity_audit is not None
     assert review.artifact_integrity_audit_path == str(artifact_integrity_audit_path)
     assert artifact_integrity_audit_path.is_file()
@@ -2107,6 +2189,9 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         "research_protocol",
         "methodology_audit",
         "publication_readiness",
+        "contribution_assessment",
+        "literature_graph",
+        "novelty_validation",
         "revision_dossier",
         "artifact_integrity_audit",
         "claim_evidence_matrix",
@@ -2127,6 +2212,21 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert contribution_payload["assessment_fingerprint"] == (
         review.contribution_assessment.assessment_fingerprint
     )
+    assert review.literature_graph is not None
+    assert review.literature_graph_path == str(literature_graph_path)
+    assert literature_graph_path.is_file()
+    literature_graph_payload = json.loads(literature_graph_path.read_text(encoding="utf-8"))
+    assert literature_graph_payload["real_paper_count"] >= 2
+    assert literature_graph_payload["graph_fingerprint"] == review.literature_graph.graph_fingerprint
+    assert review.novelty_validation is not None
+    assert review.novelty_validation_path == str(novelty_validation_path)
+    assert novelty_validation_path.is_file()
+    novelty_validation_payload = json.loads(novelty_validation_path.read_text(encoding="utf-8"))
+    assert novelty_validation_payload["complete"] is True
+    assert novelty_validation_payload["gap_validity"] == "valid"
+    assert novelty_validation_payload["validation_fingerprint"] == (
+        review.novelty_validation.validation_fingerprint
+    )
 
     registry = autoresearch_repository.load_run_registry(project_id, run_id)
     assert registry is not None
@@ -2140,6 +2240,10 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert registry.files.publication_readiness_json.exists is True
     assert registry.files.contribution_assessment_json is not None
     assert registry.files.contribution_assessment_json.exists is True
+    assert registry.files.literature_graph_json is not None
+    assert registry.files.literature_graph_json.exists is True
+    assert registry.files.novelty_validation_json is not None
+    assert registry.files.novelty_validation_json.exists is True
     assert registry.files.revision_dossier_json is not None
     assert registry.files.revision_dossier_json.exists is True
     assert registry.files.publication_evidence_index_json is not None
@@ -2270,6 +2374,18 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         for edge in registry.lineage.edges
     )
     assert any(
+        edge.relation == "has_asset"
+        and edge.target_kind == "literature_graph"
+        and edge.target_path == str(literature_graph_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "has_asset"
+        and edge.target_kind == "novelty_validation"
+        and edge.target_path == str(novelty_validation_path)
+        for edge in registry.lineage.edges
+    )
+    assert any(
         edge.relation == "derived_from"
         and edge.target_kind == "publication_readiness"
         and edge.source_kind in {"artifact", "paper", "claim_evidence_matrix", "paper_compile_report"}
@@ -2279,6 +2395,18 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         edge.relation == "derived_from"
         and edge.target_kind == "contribution_assessment"
         and edge.source_kind in {"artifact", "paper", "claim_evidence_matrix", "publication_readiness"}
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "literature_graph"
+        and edge.source_kind in {"paper", "claim_evidence_matrix"}
+        for edge in registry.lineage.edges
+    )
+    assert any(
+        edge.relation == "derived_from"
+        and edge.target_kind == "novelty_validation"
+        and edge.source_kind in {"artifact", "literature_graph"}
         for edge in registry.lineage.edges
     )
 
@@ -2305,6 +2433,14 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
         item for item in selected_bundle.assets if item.role == "run_contribution_assessment_json"
     )
     assert contribution_asset.ref.exists is True
+    literature_graph_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_literature_graph_json"
+    )
+    assert literature_graph_asset.ref.exists is True
+    novelty_validation_asset = next(
+        item for item in selected_bundle.assets if item.role == "run_novelty_validation_json"
+    )
+    assert novelty_validation_asset.ref.exists is True
     dossier_asset = next(
         item for item in selected_bundle.assets if item.role == "run_revision_dossier_json"
     )
@@ -2338,6 +2474,8 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     assert package.publication_repair_execution_path == str(repair_execution_path)
     assert package.publication_readiness_path == str(readiness_path)
     assert package.contribution_assessment_path == str(contribution_assessment_path)
+    assert package.literature_graph_path == str(literature_graph_path)
+    assert package.novelty_validation_path == str(novelty_validation_path)
     assert any(
         item.role == "run_benchmark_card_json"
         for item in package.final_required_assets
@@ -2356,6 +2494,14 @@ def test_publication_readiness_is_persisted_registered_and_packaged(
     )
     assert any(
         item.role == "run_contribution_assessment_json"
+        for item in package.final_required_assets
+    )
+    assert any(
+        item.role == "run_literature_graph_json"
+        for item in package.final_required_assets
+    )
+    assert any(
+        item.role == "run_novelty_validation_json"
         for item in package.final_required_assets
     )
     assert any(
@@ -2420,6 +2566,10 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert review.publication_readiness_path is not None
     assert review.contribution_assessment is not None
     assert review.contribution_assessment_path is not None
+    assert review.literature_graph is not None
+    assert review.literature_graph_path is not None
+    assert review.novelty_validation is not None
+    assert review.novelty_validation_path is not None
     benchmark_card_path = Path(review.benchmark_card_path)
     protocol_path = Path(review.research_protocol_path)
     audit_path = Path(review.methodology_audit_path)
@@ -2431,6 +2581,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     )
     readiness_path = Path(review.publication_readiness_path)
     contribution_assessment_path = Path(review.contribution_assessment_path)
+    literature_graph_path = Path(review.literature_graph_path)
+    novelty_validation_path = Path(review.novelty_validation_path)
     review_loop = review_publish.build_review_loop(project_id, run_id)
     assert review_loop is not None
     repair_execution = build_publication_repair_execution(
@@ -2453,6 +2605,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert repair_execution_path.is_file()
     assert readiness_path.is_file()
     assert contribution_assessment_path.is_file()
+    assert literature_graph_path.is_file()
+    assert novelty_validation_path.is_file()
     expected_benchmark_card_sha256 = hashlib.sha256(benchmark_card_path.read_bytes()).hexdigest()
     expected_protocol_sha256 = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
     expected_audit_sha256 = hashlib.sha256(audit_path.read_bytes()).hexdigest()
@@ -2462,6 +2616,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
     expected_repair_execution_sha256 = hashlib.sha256(repair_execution_path.read_bytes()).hexdigest()
     expected_readiness_sha256 = hashlib.sha256(readiness_path.read_bytes()).hexdigest()
     expected_contribution_sha256 = hashlib.sha256(contribution_assessment_path.read_bytes()).hexdigest()
+    expected_literature_graph_sha256 = hashlib.sha256(literature_graph_path.read_bytes()).hexdigest()
+    expected_novelty_validation_sha256 = hashlib.sha256(novelty_validation_path.read_bytes()).hexdigest()
 
     code_package_path = review_publish._code_package_path(project_id, run_id)
     code_package_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2486,6 +2642,8 @@ def test_publication_manifest_records_readiness_artifact_identity(
         publication_repair_execution_path=str(repair_execution_path),
         publication_readiness_path=str(readiness_path),
         contribution_assessment_path=str(contribution_assessment_path),
+        literature_graph_path=str(literature_graph_path),
+        novelty_validation_path=str(novelty_validation_path),
         manifest_path=str(review_publish._publish_manifest_path(project_id, run_id)),
         archive_path=str(review_publish._publish_archive_path(project_id, run_id)),
         archive_ready=True,
@@ -2519,6 +2677,10 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert manifest.publication_readiness_sha256 == expected_readiness_sha256
     assert manifest.contribution_assessment_path == str(contribution_assessment_path)
     assert manifest.contribution_assessment_sha256 == expected_contribution_sha256
+    assert manifest.literature_graph_path == str(literature_graph_path)
+    assert manifest.literature_graph_sha256 == expected_literature_graph_sha256
+    assert manifest.novelty_validation_path == str(novelty_validation_path)
+    assert manifest.novelty_validation_sha256 == expected_novelty_validation_sha256
     persisted = json.loads(Path(manifest.publication_manifest_path).read_text(encoding="utf-8"))
     assert persisted["benchmark_card_path"] == str(benchmark_card_path)
     assert persisted["benchmark_card_sha256"] == expected_benchmark_card_sha256
@@ -2538,6 +2700,10 @@ def test_publication_manifest_records_readiness_artifact_identity(
     assert persisted["publication_readiness_sha256"] == expected_readiness_sha256
     assert persisted["contribution_assessment_path"] == str(contribution_assessment_path)
     assert persisted["contribution_assessment_sha256"] == expected_contribution_sha256
+    assert persisted["literature_graph_path"] == str(literature_graph_path)
+    assert persisted["literature_graph_sha256"] == expected_literature_graph_sha256
+    assert persisted["novelty_validation_path"] == str(novelty_validation_path)
+    assert persisted["novelty_validation_sha256"] == expected_novelty_validation_sha256
 
 
 def test_export_publish_package_rewrites_archive_with_final_manifests(

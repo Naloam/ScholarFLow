@@ -18,8 +18,10 @@ from schemas.autoresearch import (
     AutoResearchCitationCoverageRead,
     AutoResearchDeploymentRefRead,
     AutoResearchContributionAssessmentRead,
+    AutoResearchLiteratureGraphRead,
     AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
+    AutoResearchNoveltyValidationRead,
     AutoResearchPaperRevisionStateRead,
     AutoResearchPublicationReadinessRead,
     AutoResearchPublicationRepairExecutionRead,
@@ -62,6 +64,8 @@ from services.autoresearch.repository import (
     methodology_audit_file_path,
     publication_readiness_file_path,
     contribution_assessment_file_path,
+    literature_graph_file_path,
+    novelty_validation_file_path,
     publication_evidence_index_file_path,
     artifact_integrity_audit_file_path,
     publication_repair_plan_file_path,
@@ -74,6 +78,7 @@ from services.autoresearch.repository import (
 from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.artifact_integrity_audit import build_artifact_integrity_audit
 from services.autoresearch.contribution_assessment import build_contribution_assessment
+from services.autoresearch.literature_novelty import build_literature_graph, build_novelty_validation
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_evidence_index import build_publication_evidence_index
 from services.autoresearch.publication_repair_plan import build_publication_repair_plan
@@ -114,6 +119,8 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_contribution_assessment_json",
+    "run_literature_graph_json",
+    "run_novelty_validation_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -146,6 +153,8 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_contribution_assessment_json",
+    "run_literature_graph_json",
+    "run_novelty_validation_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -160,6 +169,8 @@ _VOLATILE_GENERATED_DIGEST_ROLES = {
     "run_methodology_audit_json",
     "run_publication_readiness_json",
     "run_contribution_assessment_json",
+    "run_literature_graph_json",
+    "run_novelty_validation_json",
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
@@ -695,6 +706,11 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
     else:
         for item in review.contribution_assessment.blockers:
             blockers.append(f"Final publish contribution gate: {item}")
+    if review.novelty_validation is None:
+        blockers.append("Final publish novelty gate: novelty validation is required before publication.")
+    else:
+        for item in review.novelty_validation.blockers:
+            blockers.append(f"Final publish novelty gate: {item}")
     if review.artifact_integrity_audit is not None:
         for item in review.artifact_integrity_audit.blockers:
             blockers.append(f"Final publish artifact integrity gate: {item}")
@@ -1990,6 +2006,21 @@ def _build_and_persist_contribution_assessment(
     return assessment, str(assessment_path)
 
 
+def _build_and_persist_literature_novelty(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+) -> tuple[AutoResearchLiteratureGraphRead, str, AutoResearchNoveltyValidationRead, str]:
+    graph = build_literature_graph(run)
+    graph_path = Path(literature_graph_file_path(project_id, run_id))
+    _write_json(graph_path, graph.model_dump(mode="json"))
+    validation = build_novelty_validation(run, literature_graph=graph)
+    validation_path = Path(novelty_validation_file_path(project_id, run_id))
+    _write_json(validation_path, validation.model_dump(mode="json"))
+    return graph, str(graph_path), validation, str(validation_path)
+
+
 def build_run_review(
     project_id: str,
     run_id: str,
@@ -2034,6 +2065,13 @@ def build_run_review(
         run=run,
         selected_candidate_id=registry.selected_candidate_id,
     )
+    literature_graph, literature_graph_path, novelty_validation, novelty_validation_path = (
+        _build_and_persist_literature_novelty(
+            run=run,
+            project_id=project_id,
+            run_id=run_id,
+        )
+    )
     contribution_assessment, contribution_assessment_path = _build_and_persist_contribution_assessment(
         run=run,
         project_id=project_id,
@@ -2072,6 +2110,20 @@ def build_run_review(
                 ],
             )
         )
+    if novelty_validation.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="warning",
+                category="context",
+                summary="Novelty validation blocks final publish.",
+                detail="; ".join(novelty_validation.blockers),
+                supporting_asset_ids=[
+                    "run_literature_graph_json",
+                    "run_novelty_validation_json",
+                ],
+            )
+        )
     scores = _review_scores(
         run=run,
         bundle=bundle,
@@ -2100,6 +2152,7 @@ def build_run_review(
         f"Candidates={evidence.candidate_count}, seeds={evidence.seed_count}, sweeps={evidence.sweep_count}, "
         f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}, "
         f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}, "
+        f"novelty_validation={novelty_validation.recommendation}, "
         f"publication_tier={publication_readiness.tier}, readiness_score={publication_readiness.score}, "
         f"contribution_score={contribution_assessment.publishability_score}, "
         f"strong_core_claims={contribution_assessment.strong_core_claim_count}."
@@ -2117,6 +2170,10 @@ def build_run_review(
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty_assessment,
+        literature_graph=literature_graph,
+        literature_graph_path=literature_graph_path,
+        novelty_validation=novelty_validation,
+        novelty_validation_path=novelty_validation_path,
         benchmark_card=benchmark_card,
         benchmark_card_path=str(benchmark_card_path),
         research_protocol=research_protocol,
@@ -2357,6 +2414,8 @@ def _publish_package_fingerprint(
         "methodology_audit_path": review.methodology_audit_path,
         "publication_readiness_path": review.publication_readiness_path,
         "contribution_assessment_path": review.contribution_assessment_path,
+        "literature_graph_path": review.literature_graph_path,
+        "novelty_validation_path": review.novelty_validation_path,
         "revision_dossier_path": review.revision_dossier_path,
         "publication_evidence_index_path": review.publication_evidence_index_path,
         "artifact_integrity_audit_path": review.artifact_integrity_audit_path,
@@ -2596,6 +2655,8 @@ def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
         Path(methodology_audit_file_path(project_id, run_id)),
         Path(publication_readiness_file_path(project_id, run_id)),
         Path(contribution_assessment_file_path(project_id, run_id)),
+        Path(literature_graph_file_path(project_id, run_id)),
+        Path(novelty_validation_file_path(project_id, run_id)),
         Path(revision_dossier_file_path(project_id, run_id)),
         Path(publication_evidence_index_file_path(project_id, run_id)),
         Path(artifact_integrity_audit_file_path(project_id, run_id)),
@@ -2721,6 +2782,26 @@ def build_publication_manifest(
         if contribution_assessment_path.is_file()
         else package.contribution_assessment_path
     )
+    literature_graph_path = (
+        Path(package.literature_graph_path)
+        if package.literature_graph_path
+        else Path(literature_graph_file_path(project_id, run_id))
+    )
+    literature_graph_path_value = (
+        str(literature_graph_path)
+        if literature_graph_path.is_file()
+        else package.literature_graph_path
+    )
+    novelty_validation_path = (
+        Path(package.novelty_validation_path)
+        if package.novelty_validation_path
+        else Path(novelty_validation_file_path(project_id, run_id))
+    )
+    novelty_validation_path_value = (
+        str(novelty_validation_path)
+        if novelty_validation_path.is_file()
+        else package.novelty_validation_path
+    )
     dossier_path = (
         Path(package.revision_dossier_path)
         if package.revision_dossier_path
@@ -2796,6 +2877,10 @@ def build_publication_manifest(
         publication_readiness_sha256=_file_sha256(readiness_path),
         contribution_assessment_path=contribution_assessment_path_value,
         contribution_assessment_sha256=_file_sha256(contribution_assessment_path),
+        literature_graph_path=literature_graph_path_value,
+        literature_graph_sha256=_file_sha256(literature_graph_path),
+        novelty_validation_path=novelty_validation_path_value,
+        novelty_validation_sha256=_file_sha256(novelty_validation_path),
         revision_dossier_path=dossier_path_value,
         revision_dossier_sha256=_file_sha256(dossier_path),
         publication_evidence_index_path=evidence_index_path_value,
@@ -2936,6 +3021,8 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         research_protocol_path=review.research_protocol_path,
         methodology_audit_path=review.methodology_audit_path,
         contribution_assessment_path=review.contribution_assessment_path,
+        literature_graph_path=review.literature_graph_path,
+        novelty_validation_path=review.novelty_validation_path,
         revision_dossier_path=review.revision_dossier_path,
         publication_evidence_index_path=review.publication_evidence_index_path,
         artifact_integrity_audit_path=review.artifact_integrity_audit_path,

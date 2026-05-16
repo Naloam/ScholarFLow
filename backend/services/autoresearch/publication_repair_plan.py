@@ -69,6 +69,8 @@ def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResea
             "seed",
             "sweep",
             "ablation",
+            "baseline",
+            "statistical test",
             "significance",
             "power",
             "statistic",
@@ -139,12 +141,14 @@ def _expected_outputs(kind: AutoResearchRepairActionKind) -> list[str]:
         "rerun_experiments": [
             "run_artifact_json",
             "run_generated_code",
+            "run_experiment_design_json",
             "run_methodology_audit_json",
             "run_publication_readiness_json",
         ],
         "update_benchmark_provenance": [
             "benchmark_json",
             "run_benchmark_card_json",
+            "run_experiment_design_json",
             "run_research_protocol_json",
         ],
         "rebuild_publish_package": [
@@ -367,6 +371,25 @@ def build_publication_repair_plan(
                     supporting_asset_ids=[
                         "run_literature_graph_json",
                         "run_novelty_validation_json",
+                    ],
+                    required_for_final_publish=True,
+                )
+            )
+
+    if review.experiment_design is not None:
+        for blocker in review.experiment_design.blockers:
+            kind = _kind(blocker, ["run_experiment_design_json"])
+            add(
+                _action(
+                    action_id=f"experiment_design_{_slug(blocker)}_{_slug(kind)}",
+                    kind=kind,
+                    source="experiment_design",
+                    title="Resolve experiment design blocker",
+                    detail=blocker,
+                    supporting_asset_ids=[
+                        "run_experiment_design_json",
+                        "run_spec_json",
+                        "run_artifact_json",
                     ],
                     required_for_final_publish=True,
                 )

@@ -704,6 +704,7 @@ export type AutoResearchLineageEdge = {
     | "benchmark_card"
     | "narrative_report"
     | "claim_evidence_matrix"
+    | "experiment_design"
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
@@ -757,6 +758,7 @@ export type AutoResearchLineageEdge = {
     | "benchmark_card"
     | "narrative_report"
     | "claim_evidence_matrix"
+    | "experiment_design"
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
@@ -805,6 +807,7 @@ export type AutoResearchRunRegistryFiles = {
   paper_markdown?: AutoResearchRegistryAssetRef | null;
   narrative_report_markdown?: AutoResearchRegistryAssetRef | null;
   claim_evidence_matrix_json?: AutoResearchRegistryAssetRef | null;
+  experiment_design_json?: AutoResearchRegistryAssetRef | null;
   research_protocol_json?: AutoResearchRegistryAssetRef | null;
   methodology_audit_json?: AutoResearchRegistryAssetRef | null;
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
@@ -956,6 +959,7 @@ export type AutoResearchBundleAssetRead = {
     | "run_paper_markdown"
     | "run_narrative_report_markdown"
     | "run_claim_evidence_matrix_json"
+    | "run_experiment_design_json"
     | "run_research_protocol_json"
     | "run_methodology_audit_json"
     | "run_publication_readiness_json"
@@ -1134,6 +1138,7 @@ export type AutoResearchEvidenceIndexCategory =
   | "run"
   | "benchmark"
   | "protocol"
+  | "design"
   | "methodology"
   | "readiness"
   | "contribution"
@@ -1235,7 +1240,8 @@ export type AutoResearchRepairActionSource =
   | "artifact_integrity_audit"
   | "readiness"
   | "contribution_assessment"
-  | "novelty_validation";
+  | "novelty_validation"
+  | "experiment_design";
 
 export type AutoResearchPublicationRepairAction = {
   action_id: string;
@@ -1311,6 +1317,107 @@ export type AutoResearchPublicationRepairExecution = {
   action_results: AutoResearchPublicationRepairExecutionAction[];
   success: boolean;
   execution_fingerprint: string;
+};
+
+export type AutoResearchExperimentBaselineType =
+  | "naive"
+  | "strong_conventional"
+  | "candidate_method";
+
+export type AutoResearchStatisticalTestChoice =
+  | "paired_t_test"
+  | "bootstrap"
+  | "permutation_test";
+
+export type AutoResearchExperimentDesignCompleteness =
+  | "complete"
+  | "partial"
+  | "blocked";
+
+export type AutoResearchExperimentBaselinePlan = {
+  name: string;
+  baseline_type: AutoResearchExperimentBaselineType;
+  required: boolean;
+  present_in_spec: boolean;
+  present_in_results: boolean;
+  fair_comparison: boolean;
+  rationale: string;
+};
+
+export type AutoResearchExperimentAblationPlan = {
+  component_id: string;
+  component: string;
+  ablation_name?: string | null;
+  planned: boolean;
+  observed: boolean;
+  rationale: string;
+};
+
+export type AutoResearchExperimentSeedPlan = {
+  planned_seeds: number[];
+  planned_seed_count: number;
+  minimum_completed_seed_count: number;
+  completed_seed_count: number;
+  sufficient_for_profile: boolean;
+  rationale: string;
+};
+
+export type AutoResearchExperimentSweepPlan = {
+  planned_sweeps: string[];
+  planned_sweep_count: number;
+  observed_sweeps: string[];
+  covers_search_space: boolean;
+  rationale: string;
+};
+
+export type AutoResearchExperimentStatisticalTestPlan = {
+  primary_metric?: string | null;
+  recommended_test: AutoResearchStatisticalTestChoice;
+  comparison_unit: "seed" | "example" | "aggregate";
+  requires_confidence_interval: boolean;
+  requires_effect_size: boolean;
+  requires_power_note: boolean;
+  planned_statistic_count: number;
+  observed_significance_test_count: number;
+  complete: boolean;
+  rationale: string;
+};
+
+export type AutoResearchExperimentFailureMode = {
+  mode_id: string;
+  category:
+    | "performance_failure"
+    | "baseline_fairness_failure"
+    | "ablation_coverage_failure"
+    | "statistical_power_failure"
+    | "artifact_failure";
+  trigger: string;
+  planned_response: string;
+  severity: "low" | "medium" | "high";
+};
+
+export type AutoResearchExperimentDesign = {
+  generated_at: string;
+  design_id: string;
+  project_id: string;
+  run_id: string;
+  execution_profile: AutoResearchExecutionProfile;
+  baseline_plan: AutoResearchExperimentBaselinePlan[];
+  ablation_plan: AutoResearchExperimentAblationPlan[];
+  seed_plan: AutoResearchExperimentSeedPlan;
+  sweep_plan: AutoResearchExperimentSweepPlan;
+  statistical_test_plan: AutoResearchExperimentStatisticalTestPlan;
+  failure_mode_analysis: AutoResearchExperimentFailureMode[];
+  naive_baseline_present: boolean;
+  strong_baseline_present: boolean;
+  candidate_method_present: boolean;
+  fair_baseline_count: number;
+  ablation_coverage: number;
+  completeness_score: number;
+  completeness: AutoResearchExperimentDesignCompleteness;
+  blockers: string[];
+  warnings: string[];
+  design_fingerprint: string;
 };
 
 export type AutoResearchResearchProtocol = {
@@ -1626,6 +1733,8 @@ export type AutoResearchRunReview = {
   literature_graph_path?: string | null;
   novelty_validation?: AutoResearchNoveltyValidation | null;
   novelty_validation_path?: string | null;
+  experiment_design?: AutoResearchExperimentDesign | null;
+  experiment_design_path?: string | null;
   benchmark_card?: AutoResearchBenchmarkCard | null;
   benchmark_card_path?: string | null;
   research_protocol?: AutoResearchResearchProtocol | null;
@@ -1914,6 +2023,8 @@ export type AutoResearchPublicationManifest = {
   methodology_audit_sha256?: string | null;
   publication_readiness_path?: string | null;
   publication_readiness_sha256?: string | null;
+  experiment_design_path?: string | null;
+  experiment_design_sha256?: string | null;
   contribution_assessment_path?: string | null;
   contribution_assessment_sha256?: string | null;
   literature_graph_path?: string | null;
@@ -2020,6 +2131,7 @@ export type AutoResearchPublishPackage = {
   completeness_status: "complete" | "incomplete";
   review_path?: string | null;
   benchmark_card_path?: string | null;
+  experiment_design_path?: string | null;
   research_protocol_path?: string | null;
   methodology_audit_path?: string | null;
   revision_dossier_path?: string | null;

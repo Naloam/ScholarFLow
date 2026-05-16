@@ -18,6 +18,7 @@ from schemas.autoresearch import (
     AutoResearchCitationCoverageRead,
     AutoResearchDeploymentRefRead,
     AutoResearchContributionAssessmentRead,
+    AutoResearchExperimentDesignRead,
     AutoResearchLiteratureGraphRead,
     AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
@@ -51,6 +52,7 @@ from services.autoresearch.repository import (
     PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME,
     PAPER_COMPILED_PDF_FILENAME,
     RESEARCH_PROTOCOL_FILENAME,
+    EXPERIMENT_DESIGN_FILENAME,
     PUBLICATION_READINESS_FILENAME,
     PUBLICATION_EVIDENCE_INDEX_FILENAME,
     ARTIFACT_INTEGRITY_AUDIT_FILENAME,
@@ -64,6 +66,7 @@ from services.autoresearch.repository import (
     methodology_audit_file_path,
     publication_readiness_file_path,
     contribution_assessment_file_path,
+    experiment_design_file_path,
     literature_graph_file_path,
     novelty_validation_file_path,
     publication_evidence_index_file_path,
@@ -78,6 +81,7 @@ from services.autoresearch.repository import (
 from services.autoresearch.benchmark_card import build_benchmark_card
 from services.autoresearch.artifact_integrity_audit import build_artifact_integrity_audit
 from services.autoresearch.contribution_assessment import build_contribution_assessment
+from services.autoresearch.experiment_design import build_experiment_design
 from services.autoresearch.literature_novelty import build_literature_graph, build_novelty_validation
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_evidence_index import build_publication_evidence_index
@@ -115,6 +119,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_experiment_design_json",
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
@@ -149,6 +154,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_experiment_design_json",
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
@@ -164,6 +170,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
 }
 _VOLATILE_GENERATED_DIGEST_ROLES = {
     "run_json",
+    "run_experiment_design_json",
     "run_benchmark_card_json",
     "run_research_protocol_json",
     "run_methodology_audit_json",
@@ -699,6 +706,11 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
     if review.publication_readiness is not None:
         for item in review.publication_readiness.blockers:
             blockers.append(f"Final publish readiness gate: {item}")
+    if review.experiment_design is None:
+        blockers.append("Final publish experiment design gate: experiment design is required before publication.")
+    else:
+        for item in review.experiment_design.blockers:
+            blockers.append(f"Final publish experiment design gate: {item}")
     if review.contribution_assessment is None:
         blockers.append(
             "Final publish contribution gate: contribution assessment is required before publication."
@@ -2006,6 +2018,18 @@ def _build_and_persist_contribution_assessment(
     return assessment, str(assessment_path)
 
 
+def _build_and_persist_experiment_design(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+) -> tuple[AutoResearchExperimentDesignRead, str]:
+    design = build_experiment_design(run)
+    design_path = Path(experiment_design_file_path(project_id, run_id))
+    _write_json(design_path, design.model_dump(mode="json"))
+    return design, str(design_path)
+
+
 def _build_and_persist_literature_novelty(
     *,
     run: AutoResearchRunRead,
@@ -2035,6 +2059,11 @@ def build_run_review(
     benchmark_card = build_benchmark_card(run)
     benchmark_card_path = Path(benchmark_card_file_path(project_id, run_id))
     _write_json(benchmark_card_path, benchmark_card.model_dump(mode="json"))
+    experiment_design, experiment_design_path = _build_and_persist_experiment_design(
+        run=run,
+        project_id=project_id,
+        run_id=run_id,
+    )
     research_protocol = build_research_protocol(run)
     research_protocol_path = Path(research_protocol_file_path(project_id, run_id))
     _write_json(research_protocol_path, research_protocol.model_dump(mode="json"))
@@ -2110,6 +2139,21 @@ def build_run_review(
                 ],
             )
         )
+    if experiment_design.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="warning",
+                category="statistics",
+                summary="Experiment design blocks final publish.",
+                detail="; ".join(experiment_design.blockers),
+                supporting_asset_ids=[
+                    "run_experiment_design_json",
+                    "run_spec_json",
+                    "run_artifact_json",
+                ],
+            )
+        )
     if novelty_validation.blockers:
         findings.append(
             AutoResearchReviewFindingRead(
@@ -2153,6 +2197,7 @@ def build_run_review(
         f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}, "
         f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}, "
         f"novelty_validation={novelty_validation.recommendation}, "
+        f"experiment_design={experiment_design.completeness}, "
         f"publication_tier={publication_readiness.tier}, readiness_score={publication_readiness.score}, "
         f"contribution_score={contribution_assessment.publishability_score}, "
         f"strong_core_claims={contribution_assessment.strong_core_claim_count}."
@@ -2174,6 +2219,8 @@ def build_run_review(
         literature_graph_path=literature_graph_path,
         novelty_validation=novelty_validation,
         novelty_validation_path=novelty_validation_path,
+        experiment_design=experiment_design,
+        experiment_design_path=experiment_design_path,
         benchmark_card=benchmark_card,
         benchmark_card_path=str(benchmark_card_path),
         research_protocol=research_protocol,
@@ -2410,6 +2457,7 @@ def _publish_package_fingerprint(
         "review_status": review.overall_status,
         "review_path": review.persisted_path,
         "benchmark_card_path": review.benchmark_card_path,
+        "experiment_design_path": review.experiment_design_path,
         "research_protocol_path": review.research_protocol_path,
         "methodology_audit_path": review.methodology_audit_path,
         "publication_readiness_path": review.publication_readiness_path,
@@ -2651,6 +2699,7 @@ def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
         _review_path(project_id, run_id),
         _review_loop_path(project_id, run_id),
         Path(benchmark_card_file_path(project_id, run_id)),
+        Path(experiment_design_file_path(project_id, run_id)),
         Path(research_protocol_file_path(project_id, run_id)),
         Path(methodology_audit_file_path(project_id, run_id)),
         Path(publication_readiness_file_path(project_id, run_id)),
@@ -2760,6 +2809,16 @@ def build_publication_manifest(
         else Path(research_protocol_file_path(project_id, run_id))
     )
     protocol_path_value = str(protocol_path) if protocol_path.is_file() else package.research_protocol_path
+    experiment_design_path = (
+        Path(package.experiment_design_path)
+        if package.experiment_design_path
+        else Path(experiment_design_file_path(project_id, run_id))
+    )
+    experiment_design_path_value = (
+        str(experiment_design_path)
+        if experiment_design_path.is_file()
+        else package.experiment_design_path
+    )
     audit_path = (
         Path(package.methodology_audit_path)
         if package.methodology_audit_path
@@ -2871,6 +2930,8 @@ def build_publication_manifest(
         benchmark_card_sha256=_file_sha256(benchmark_card_path),
         research_protocol_path=protocol_path_value,
         research_protocol_sha256=_file_sha256(protocol_path),
+        experiment_design_path=experiment_design_path_value,
+        experiment_design_sha256=_file_sha256(experiment_design_path),
         methodology_audit_path=audit_path_value,
         methodology_audit_sha256=_file_sha256(audit_path),
         publication_readiness_path=readiness_path_value,
@@ -3018,6 +3079,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
             else 0
         ),
         benchmark_card_path=review.benchmark_card_path,
+        experiment_design_path=review.experiment_design_path,
         research_protocol_path=review.research_protocol_path,
         methodology_audit_path=review.methodology_audit_path,
         contribution_assessment_path=review.contribution_assessment_path,

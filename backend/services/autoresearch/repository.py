@@ -52,6 +52,7 @@ PAPER_FILENAME = "paper.md"
 PROJECT_CONTEXT_FILENAME = "project_context.json"
 NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
+EXPERIMENT_DESIGN_FILENAME = "experiment_design.json"
 RESEARCH_PROTOCOL_FILENAME = "research_protocol.json"
 METHODOLOGY_AUDIT_FILENAME = "methodology_audit.json"
 PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
@@ -552,6 +553,7 @@ def _candidate_lineage_edges(
             ("paper_markdown", "paper"),
             ("narrative_report_markdown", "narrative_report"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("experiment_design_json", "experiment_design"),
             ("benchmark_card_json", "benchmark_card"),
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
@@ -656,6 +658,12 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="artifact",
             source_id=artifact_source_id,
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
             target_attr="publication_readiness_json",
             target_kind="publication_readiness",
         )
@@ -679,6 +687,7 @@ def _run_derivation_lineage_edges(
             ("spec_json", "spec"),
             ("artifact_json", "artifact"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("experiment_design_json", "experiment_design"),
             ("benchmark_card_json", "benchmark_card"),
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
@@ -707,6 +716,12 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="claim_evidence_matrix",
             source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
             target_attr="publication_readiness_json",
             target_kind="publication_readiness",
         )
@@ -732,6 +747,12 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="spec",
             source_id=f"{run.id}:spec",
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="spec",
+            source_id=f"{run.id}:spec",
             target_attr="research_protocol_json",
             target_kind="research_protocol",
         )
@@ -752,8 +773,33 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="plan",
             source_id=f"{run.id}:plan",
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="plan",
+            source_id=f"{run.id}:plan",
             target_attr="research_protocol_json",
             target_kind="research_protocol",
+        )
+    if run_assets.experiment_design_json is not None:
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="research_protocol_json",
+            target_kind="research_protocol",
+        )
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
         )
     if run_assets.research_protocol_json is not None:
         add_derivation(
@@ -1016,6 +1062,7 @@ def _run_lineage_edges(
         ("paper_markdown", "paper"),
         ("narrative_report_markdown", "narrative_report"),
         ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+        ("experiment_design_json", "experiment_design"),
         ("benchmark_card_json", "benchmark_card"),
         ("research_protocol_json", "research_protocol"),
         ("methodology_audit_json", "methodology_audit"),
@@ -1191,6 +1238,17 @@ def _run_bundle_assets(
                 required=False,
             )
             if files.research_protocol_json is not None and files.research_protocol_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_design_json",
+                label="Selected run experiment design",
+                role="run_experiment_design_json",
+                ref=files.experiment_design_json,
+                required=False,
+            )
+            if files.experiment_design_json is not None and files.experiment_design_json.exists
             else None
         ),
         (
@@ -1964,6 +2022,10 @@ def contribution_assessment_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / CONTRIBUTION_ASSESSMENT_FILENAME)
 
 
+def experiment_design_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / EXPERIMENT_DESIGN_FILENAME)
+
+
 def literature_graph_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / LITERATURE_GRAPH_FILENAME)
 
@@ -2148,6 +2210,7 @@ def load_candidate_registry(
             claim_evidence_matrix_json=_asset_ref(
                 current_run.claim_evidence_matrix_path or (run_base / CLAIM_EVIDENCE_MATRIX_FILENAME)
             ),
+            experiment_design_json=_asset_ref(run_base / EXPERIMENT_DESIGN_FILENAME),
             research_protocol_json=_asset_ref(run_base / RESEARCH_PROTOCOL_FILENAME),
             methodology_audit_json=_asset_ref(run_base / METHODOLOGY_AUDIT_FILENAME),
             publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
@@ -2310,6 +2373,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         claim_evidence_matrix_json=_asset_ref(
             run.claim_evidence_matrix_path or (base / CLAIM_EVIDENCE_MATRIX_FILENAME)
         ),
+        experiment_design_json=_asset_ref(base / EXPERIMENT_DESIGN_FILENAME),
         research_protocol_json=_asset_ref(base / RESEARCH_PROTOCOL_FILENAME),
         methodology_audit_json=_asset_ref(base / METHODOLOGY_AUDIT_FILENAME),
         publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),

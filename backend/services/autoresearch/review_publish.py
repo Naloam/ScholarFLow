@@ -2294,7 +2294,8 @@ def build_run_review(
         f"research_replan_actions={research_replan.action_count}, "
         f"publication_tier={publication_readiness.tier}, readiness_score={publication_readiness.score}, "
         f"contribution_score={contribution_assessment.publishability_score}, "
-        f"strong_core_claims={contribution_assessment.strong_core_claim_count}."
+        f"strong_core_claims={contribution_assessment.strong_core_claim_count}, "
+        f"paper_tier={run.paper_compile_report.paper_tier if run.paper_compile_report is not None else 'technical_report'}."
     )
     review = AutoResearchRunReviewRead(
         project_id=project_id,
@@ -2492,6 +2493,19 @@ def _compile_ready_final_blockers(run: AutoResearchRunRead | None) -> list[str]:
     if report is None:
         return ["Paper compile report is missing, so compile-ready publication coverage cannot be verified."]
     messages: list[str] = []
+    if report.evidence_blockers:
+        messages.extend(
+            f"Paper evidence compiler gate: {item}"
+            for item in report.evidence_blockers
+        )
+    if report.unregistered_claim_count > 0:
+        messages.append(
+            "Paper evidence compiler gate: the manuscript contains unregistered claims and must be reconciled with the claim ledger."
+        )
+    if report.contradiction_count > 0:
+        messages.append(
+            "Paper evidence compiler gate: the manuscript contains claim-strength contradictions against the evidence ledger."
+        )
     if report.missing_required_source_files:
         missing = ", ".join(report.missing_required_source_files[:6])
         if len(report.missing_required_source_files) > 6:
@@ -2511,6 +2525,10 @@ def _compile_ready_final_blockers(run: AutoResearchRunRead | None) -> list[str]:
         )
     if not report.ready_for_compile and not messages:
         messages.append("Paper source package is not currently marked ready for compile.")
+    if report.paper_tier == "technical_report":
+        messages.append(
+            "Paper evidence compiler gate: the manuscript is still tiered as a technical report and cannot enter final publish."
+        )
     return messages
 
 

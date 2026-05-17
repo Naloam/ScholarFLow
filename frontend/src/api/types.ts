@@ -296,6 +296,12 @@ export type AutoResearchPublicationTier =
   | "publish_candidate"
   | "publish_ready";
 
+export type AutoResearchPaperTier =
+  | "technical_report"
+  | "workshop_candidate"
+  | "conference_candidate"
+  | "strong_conference_candidate";
+
 export type AutoResearchReadinessCategory =
   | "benchmark"
   | "literature"
@@ -537,6 +543,49 @@ export type AutoResearchPaperSourcesManifest = {
   files: AutoResearchPaperSourceFile[];
 };
 
+export type AutoResearchPaperParagraphEvidence = {
+  paragraph_id: string;
+  section_id: string;
+  section_title: string;
+  paragraph_index: number;
+  excerpt: string;
+  claim_ids: string[];
+  evidence_kinds: Array<"artifact" | "statistic" | "literature" | "negative">;
+  evidence_refs: AutoResearchClaimEvidenceRef[];
+  missing_evidence_kinds: Array<"artifact" | "statistic" | "literature" | "negative">;
+  support_status: "supported" | "partial" | "unsupported";
+};
+
+export type AutoResearchPaperClaimLedgerEntry = {
+  claim_id: string;
+  claim: string;
+  category: "problem" | "method" | "result" | "context" | "limitation";
+  section_ids: string[];
+  paragraph_ids: string[];
+  support_status: "supported" | "partial" | "unsupported";
+  evidence_kinds: Array<"artifact" | "statistic" | "literature" | "negative">;
+  evidence_count: number;
+  strong: boolean;
+};
+
+export type AutoResearchPaperUnregisteredClaim = {
+  claim_id: string;
+  section_id: string;
+  section_title: string;
+  excerpt: string;
+  reason: string;
+};
+
+export type AutoResearchPaperContradiction = {
+  contradiction_id: string;
+  section_id: string;
+  section_title: string;
+  severity: "warning" | "blocker";
+  claim_id?: string | null;
+  summary: string;
+  detail: string;
+};
+
 export type AutoResearchPaperCompileReport = {
   generated_at: string;
   entrypoint: string;
@@ -552,6 +601,21 @@ export type AutoResearchPaperCompileReport = {
   source_package_complete: boolean;
   all_expected_outputs_materialized: boolean;
   ready_for_compile: boolean;
+  paper_tier: AutoResearchPaperTier;
+  evidence_bound_paragraph_count: number;
+  evidence_unbound_paragraph_count: number;
+  strong_claim_count: number;
+  registered_strong_claim_count: number;
+  unregistered_claim_count: number;
+  contradiction_count: number;
+  blocker_count: number;
+  paragraph_evidence: AutoResearchPaperParagraphEvidence[];
+  claim_ledger: AutoResearchPaperClaimLedgerEntry[];
+  unregistered_claims: AutoResearchPaperUnregisteredClaim[];
+  contradictions: AutoResearchPaperContradiction[];
+  evidence_blockers: string[];
+  evidence_warnings: string[];
+  evidence_compiler_fingerprint?: string | null;
 };
 
 export type AutoResearchRun = {

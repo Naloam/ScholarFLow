@@ -50,6 +50,7 @@ from services.llm.prompting import load_prompt
 from services.llm.response_utils import get_message_content
 from config.settings import settings
 from services.autoresearch.figure_generator import FigureGenerator
+from services.autoresearch.paper_evidence_compiler import compile_paper_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -4263,6 +4264,11 @@ Program objective:
         self,
         *,
         paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+        paper_markdown: str | None = None,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead | None = None,
+        artifact: ResultArtifact | None = None,
+        literature_count: int = 0,
     ) -> AutoResearchPaperCompileReportRead:
         workspace_files = {item.relative_path for item in paper_sources_manifest.files}
         required_inputs = [paper_sources_manifest.entrypoint]
@@ -4278,7 +4284,7 @@ Program objective:
         materialized_outputs = [item for item in expected_outputs if item in workspace_files]
         source_package_complete = True
         all_expected_outputs_materialized = not expected_outputs
-        return AutoResearchPaperCompileReportRead(
+        report = AutoResearchPaperCompileReportRead(
             generated_at=_utcnow(),
             entrypoint=paper_sources_manifest.entrypoint,
             bibliography=paper_sources_manifest.bibliography,
@@ -4293,6 +4299,14 @@ Program objective:
             source_package_complete=source_package_complete,
             all_expected_outputs_materialized=all_expected_outputs_materialized,
             ready_for_compile=not missing_required_inputs and source_package_complete,
+        )
+        return compile_paper_evidence(
+            report,
+            paper_markdown=paper_markdown,
+            paper_plan=paper_plan,
+            claim_evidence_matrix=claim_evidence_matrix,
+            artifact=artifact,
+            literature_count=literature_count,
         )
 
     def _build_research_brief(
@@ -4548,6 +4562,11 @@ Program objective:
         )
         paper_compile_report = self.build_paper_compile_report(
             paper_sources_manifest=paper_sources_manifest,
+            paper_markdown=paper_markdown,
+            paper_plan=paper_plan,
+            claim_evidence_matrix=claim_evidence_matrix,
+            artifact=artifact,
+            literature_count=len(literature),
         )
         return AutoResearchPaperPipelineArtifactsRead(
             narrative_report_markdown=narrative_report_markdown,
@@ -4703,6 +4722,7 @@ Program objective:
             best_detail_parts.append(best_ci_text)
         best_detail = f" ({'; '.join(best_detail_parts)})" if best_detail_parts else ""
         seed_phrase = f"{seed_count} experimental seed" + ("" if seed_count == 1 else "s")
+        has_positive_significance = any(item.significant for item in artifact.significance_tests)
 
         comparison_sentence = (
             f"The best-performing system was `{best_system_name}`, achieving a "
@@ -4888,7 +4908,13 @@ Program objective:
                     f"Our experiments demonstrate that "
                     f"`{best_system_name or 'the best system'}` achieves a mean {artifact.primary_metric} "
                     f"of {best_metric:.4f}{best_detail}, "
-                    + ("significantly outperforming the baseline. " if majority_metric is not None and best_metric is not None and best_metric > majority_metric else "")
+                    + (
+                        "with statistically significant evidence over the baseline. "
+                        if has_positive_significance
+                        else "scoring above the baseline descriptively in this artifact. "
+                        if majority_metric is not None and best_metric is not None and best_metric > majority_metric
+                        else ""
+                    )
                     if best_metric is not None
                     else "Our experiments provide a systematic evaluation of multiple approaches, "
                 )

@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field, field_validator
 TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking", "llm_evaluation"]
 AutoResearchExecutionProfile = Literal["exploratory", "publication"]
 AutoResearchPublicationTier = Literal["exploratory", "review_ready", "publish_candidate", "publish_ready"]
+AutoResearchPaperTier = Literal[
+    "technical_report",
+    "workshop_candidate",
+    "conference_candidate",
+    "strong_conference_candidate",
+]
 AutoResearchReadinessCategory = Literal[
     "benchmark",
     "literature",
@@ -206,6 +212,7 @@ AutoResearchBudgetStatus = Literal["default", "constrained"]
 AutoResearchClaimSupportStatus = Literal["supported", "partial", "unsupported"]
 AutoResearchClaimCategory = Literal["problem", "method", "result", "context", "limitation"]
 AutoResearchEvidenceSourceKind = Literal["plan", "portfolio", "artifact", "literature", "attempts"]
+AutoResearchPaperEvidenceKind = Literal["artifact", "statistic", "literature", "negative"]
 AutoResearchExperimentBaselineType = Literal["naive", "strong_conventional", "candidate_method"]
 AutoResearchStatisticalTestChoice = Literal["paired_t_test", "bootstrap", "permutation_test"]
 AutoResearchExperimentDesignCompleteness = Literal["complete", "partial", "blocked"]
@@ -1050,6 +1057,49 @@ class AutoResearchPaperSourcesManifestRead(BaseModel):
     files: list[AutoResearchPaperSourceFileRead] = Field(default_factory=list)
 
 
+class AutoResearchPaperParagraphEvidenceRead(BaseModel):
+    paragraph_id: str
+    section_id: str
+    section_title: str
+    paragraph_index: int = 0
+    excerpt: str
+    claim_ids: list[str] = Field(default_factory=list)
+    evidence_kinds: list[AutoResearchPaperEvidenceKind] = Field(default_factory=list)
+    evidence_refs: list[AutoResearchClaimEvidenceRefRead] = Field(default_factory=list)
+    missing_evidence_kinds: list[AutoResearchPaperEvidenceKind] = Field(default_factory=list)
+    support_status: AutoResearchClaimSupportStatus = "unsupported"
+
+
+class AutoResearchPaperClaimLedgerEntryRead(BaseModel):
+    claim_id: str
+    claim: str
+    category: AutoResearchClaimCategory
+    section_ids: list[str] = Field(default_factory=list)
+    paragraph_ids: list[str] = Field(default_factory=list)
+    support_status: AutoResearchClaimSupportStatus = "unsupported"
+    evidence_kinds: list[AutoResearchPaperEvidenceKind] = Field(default_factory=list)
+    evidence_count: int = 0
+    strong: bool = False
+
+
+class AutoResearchPaperUnregisteredClaimRead(BaseModel):
+    claim_id: str
+    section_id: str
+    section_title: str
+    excerpt: str
+    reason: str
+
+
+class AutoResearchPaperContradictionRead(BaseModel):
+    contradiction_id: str
+    section_id: str
+    section_title: str
+    severity: Literal["warning", "blocker"] = "warning"
+    claim_id: str | None = None
+    summary: str
+    detail: str
+
+
 class AutoResearchPaperCompileReportRead(BaseModel):
     generated_at: datetime
     entrypoint: str
@@ -1065,6 +1115,21 @@ class AutoResearchPaperCompileReportRead(BaseModel):
     source_package_complete: bool = False
     all_expected_outputs_materialized: bool = False
     ready_for_compile: bool = False
+    paper_tier: AutoResearchPaperTier = "technical_report"
+    evidence_bound_paragraph_count: int = 0
+    evidence_unbound_paragraph_count: int = 0
+    strong_claim_count: int = 0
+    registered_strong_claim_count: int = 0
+    unregistered_claim_count: int = 0
+    contradiction_count: int = 0
+    blocker_count: int = 0
+    paragraph_evidence: list[AutoResearchPaperParagraphEvidenceRead] = Field(default_factory=list)
+    claim_ledger: list[AutoResearchPaperClaimLedgerEntryRead] = Field(default_factory=list)
+    unregistered_claims: list[AutoResearchPaperUnregisteredClaimRead] = Field(default_factory=list)
+    contradictions: list[AutoResearchPaperContradictionRead] = Field(default_factory=list)
+    evidence_blockers: list[str] = Field(default_factory=list)
+    evidence_warnings: list[str] = Field(default_factory=list)
+    evidence_compiler_fingerprint: str | None = None
 
 
 class AutoResearchPaperPipelineArtifactsRead(BaseModel):

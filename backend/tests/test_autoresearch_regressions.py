@@ -69,6 +69,7 @@ from services.autoresearch.contribution_assessment import build_contribution_ass
 from services.autoresearch.experiment_design import build_experiment_design
 from services.autoresearch.failure_replanning import build_failure_analysis, build_research_replan
 from services.autoresearch.literature_novelty import build_literature_graph, build_novelty_validation
+from services.autoresearch.paper_evidence_compiler import compile_paper_evidence
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_repair_execution import build_publication_repair_execution
 from services.autoresearch.research_protocol import build_research_protocol
@@ -161,6 +162,7 @@ def _publication_compile_report() -> AutoResearchPaperCompileReportRead:
         source_package_complete=True,
         all_expected_outputs_materialized=False,
         ready_for_compile=True,
+        paper_tier="technical_report",
     )
 
 
@@ -202,6 +204,37 @@ def _publication_claim_matrix(*, partial: bool = False) -> AutoResearchClaimEvid
         supported_claim_count=sum(1 for item in entries if item.support_status == "supported"),
         unsupported_claim_count=sum(1 for item in entries if item.support_status != "supported"),
         entries=entries,
+    )
+
+
+def _paper_plan_with_claims() -> AutoResearchPaperPlanRead:
+    return AutoResearchPaperPlanRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        title="Publication Readiness Paper",
+        narrative_summary="A paper plan with registered claim ids.",
+        sections=[
+            AutoResearchPaperPlanSectionRead(
+                section_id="abstract",
+                title="Abstract",
+                objective="Summarize the study.",
+                claim_ids=["claim_supported_result"],
+                evidence_focus=["artifact.summary"],
+            ),
+            AutoResearchPaperPlanSectionRead(
+                section_id="results",
+                title="Results",
+                objective="Report the main results.",
+                claim_ids=["claim_supported_result"],
+                evidence_focus=["artifact.tables", "artifact.significance_tests"],
+            ),
+            AutoResearchPaperPlanSectionRead(
+                section_id="conclusion",
+                title="Conclusion",
+                objective="Close the paper.",
+                claim_ids=["claim_supported_result"],
+                evidence_focus=["claim_evidence_matrix"],
+            ),
+        ],
     )
 
 
@@ -447,6 +480,30 @@ def _readiness_run(
         paper_compile_report=_publication_compile_report(),
         artifact=artifact,
         paper_markdown="# Publication Readiness\n\nThis paper cites related work [1, 2].",
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
+def _paper_compile_run(*, paper_markdown: str, claim_matrix: AutoResearchClaimEvidenceMatrixRead) -> AutoResearchRunRead:
+    spec, benchmark = _external_publication_spec()
+    artifact = _publication_artifact(include_ablation=True, seed_count=5)
+    timestamp = datetime.now(UTC).replace(tzinfo=None)
+    return AutoResearchRunRead(
+        id="run_paper_compile",
+        project_id="project_paper_compile",
+        topic="Paper compile regression",
+        status="done",
+        request=AutoResearchRunConfig(execution_profile="publication"),
+        task_family="text_classification",
+        benchmark=benchmark,
+        spec=spec,
+        literature=_publication_literature(),
+        claim_evidence_matrix=claim_matrix,
+        paper_compile_report=_publication_compile_report(),
+        artifact=artifact,
+        paper_markdown=paper_markdown,
+        paper_plan=_paper_plan_with_claims(),
         created_at=timestamp,
         updated_at=timestamp,
     )
@@ -776,6 +833,75 @@ def test_publication_readiness_requires_ablation_in_final_selected_artifact() ->
         item.check_id == "planned_ablations_observed" and not item.passed
         for item in readiness.checks
     )
+
+
+def test_paper_evidence_compiler_blocks_unregistered_claims_and_overclaiming() -> None:
+    claim_matrix = _publication_claim_matrix()
+    run = _paper_compile_run(
+        claim_matrix=claim_matrix,
+        paper_markdown=(
+            "# Publication Readiness Paper\n\n"
+            "## Abstract\n"
+            "We demonstrate a novel method that significantly outperforms all prior work.\n\n"
+            "## 1. Results\n"
+            "The candidate outperforms the majority baseline on macro F1.\n\n"
+            "## 2. Conclusion\n"
+            "This work establishes a broad, generalizable system-level improvement."
+        ),
+    )
+
+    report = compile_paper_evidence(
+        run.paper_compile_report,
+        run=run,
+        paper_markdown=run.paper_markdown,
+        paper_plan=run.paper_plan,
+        claim_evidence_matrix=run.claim_evidence_matrix,
+        artifact=run.artifact,
+        literature_count=len(run.literature),
+    )
+
+    assert report.paper_tier == "technical_report"
+    assert report.unregistered_claim_count >= 1
+    assert report.contradiction_count >= 1
+    assert report.blocker_count >= 1
+    assert report.evidence_blockers
+    assert any(item.claim_id == "claim_supported_result" for item in report.claim_ledger)
+    assert any(item.strong for item in report.claim_ledger)
+
+
+def test_paper_evidence_compiler_promotes_claim_ledgers_when_paper_is_bounded() -> None:
+    claim_matrix = _publication_claim_matrix(partial=True)
+    run = _paper_compile_run(
+        claim_matrix=claim_matrix,
+        paper_markdown=(
+            "# Publication Readiness Paper\n\n"
+            "## Abstract\n"
+            "We report the candidate result on the benchmark.\n\n"
+            "## 1. Results\n"
+            "The candidate outperforms the majority baseline on macro F1.\n\n"
+            "## 2. Conclusion\n"
+            "This paper stays bounded to the executed artifact and evidence ledger."
+        ),
+    )
+
+    report = compile_paper_evidence(
+        run.paper_compile_report,
+        run=run,
+        paper_markdown=run.paper_markdown,
+        paper_plan=run.paper_plan,
+        claim_evidence_matrix=run.claim_evidence_matrix,
+        artifact=run.artifact,
+        literature_count=len(run.literature),
+    )
+
+    assert report.paper_tier in {
+        "workshop_candidate",
+        "conference_candidate",
+        "strong_conference_candidate",
+    }
+    assert report.unregistered_claim_count == 0
+    assert report.contradiction_count == 0
+    assert report.evidence_bound_paragraph_count >= 1
 
 
 def test_autoresearch_attempt_preference_keeps_richer_tied_artifact() -> None:

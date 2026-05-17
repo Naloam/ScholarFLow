@@ -38,6 +38,7 @@ from schemas.autoresearch import (
     ResearchPlan,
 )
 from services.autoresearch.writer import PaperWriter, _compile_required_source_files
+from services.autoresearch.paper_evidence_compiler import compile_paper_evidence
 from services.workspace import autoresearch_dir
 
 
@@ -1757,8 +1758,30 @@ def _refresh_paper_compile_report(
         or len(materialized_outputs) == len(report.expected_outputs)
     )
     ready_for_compile = not missing_required_inputs and source_package_complete
+    compile_report = report.model_copy(
+        update={
+            "generated_at": _utcnow(),
+            "missing_required_inputs": missing_required_inputs,
+            "required_source_files": required_source_files,
+            "missing_required_source_files": missing_required_source_files,
+            "materialized_outputs": materialized_outputs,
+            "source_package_complete": source_package_complete,
+            "all_expected_outputs_materialized": all_expected_outputs_materialized,
+            "ready_for_compile": ready_for_compile,
+        }
+    )
+    compile_report = compile_paper_evidence(
+        compile_report,
+        run=payload,
+        paper_markdown=payload.paper_markdown,
+        paper_plan=payload.paper_plan,
+        claim_evidence_matrix=payload.claim_evidence_matrix,
+        artifact=payload.artifact,
+        literature_count=len(payload.literature),
+    )
     if (
-        report.missing_required_inputs == missing_required_inputs
+        compile_report.model_dump(mode="json") == report.model_dump(mode="json")
+        and report.missing_required_inputs == missing_required_inputs
         and report.required_source_files == required_source_files
         and report.missing_required_source_files == missing_required_source_files
         and report.materialized_outputs == materialized_outputs
@@ -1767,22 +1790,7 @@ def _refresh_paper_compile_report(
         and report.ready_for_compile == ready_for_compile
     ):
         return payload
-    return payload.model_copy(
-        update={
-            "paper_compile_report": report.model_copy(
-                update={
-                    "generated_at": _utcnow(),
-                    "missing_required_inputs": missing_required_inputs,
-                    "required_source_files": required_source_files,
-                    "missing_required_source_files": missing_required_source_files,
-                    "materialized_outputs": materialized_outputs,
-                    "source_package_complete": source_package_complete,
-                    "all_expected_outputs_materialized": all_expected_outputs_materialized,
-                    "ready_for_compile": ready_for_compile,
-                }
-            )
-        }
-    )
+    return payload.model_copy(update={"paper_compile_report": compile_report})
 
 
 def _hydrate_run(payload: AutoResearchRunRead) -> AutoResearchRunRead:

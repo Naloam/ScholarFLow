@@ -51,6 +51,8 @@ AutoResearchBundleAssetRole = Literal[
     "run_narrative_report_markdown",
     "run_claim_evidence_matrix_json",
     "run_experiment_design_json",
+    "run_failure_analysis_json",
+    "run_research_replan_json",
     "run_research_protocol_json",
     "run_methodology_audit_json",
     "run_publication_readiness_json",
@@ -108,6 +110,8 @@ AutoResearchLineageNodeKind = Literal[
     "narrative_report",
     "claim_evidence_matrix",
     "experiment_design",
+    "failure_analysis",
+    "research_replan",
     "research_protocol",
     "methodology_audit",
     "publication_readiness",
@@ -205,6 +209,24 @@ AutoResearchEvidenceSourceKind = Literal["plan", "portfolio", "artifact", "liter
 AutoResearchExperimentBaselineType = Literal["naive", "strong_conventional", "candidate_method"]
 AutoResearchStatisticalTestChoice = Literal["paired_t_test", "bootstrap", "permutation_test"]
 AutoResearchExperimentDesignCompleteness = Literal["complete", "partial", "blocked"]
+AutoResearchFailureType = Literal[
+    "performance_failure",
+    "baseline_insufficient",
+    "ablation_unsupported_claim",
+    "statistical_not_significant",
+    "novelty_insufficient",
+    "artifact_incomplete",
+]
+AutoResearchResearchActionKind = Literal[
+    "modify_hypothesis",
+    "adjust_task_scope",
+    "add_baseline",
+    "add_ablation",
+    "downgrade_contribution_claim",
+    "abandon_direction",
+    "repair_experiment_design",
+    "rerun_plan",
+]
 AutoResearchContributionType = Literal[
     "new_method",
     "new_system",
@@ -1239,6 +1261,8 @@ class AutoResearchRunRegistryFiles(BaseModel):
     narrative_report_markdown: AutoResearchRegistryAssetRef | None = None
     claim_evidence_matrix_json: AutoResearchRegistryAssetRef | None = None
     experiment_design_json: AutoResearchRegistryAssetRef | None = None
+    failure_analysis_json: AutoResearchRegistryAssetRef | None = None
+    research_replan_json: AutoResearchRegistryAssetRef | None = None
     research_protocol_json: AutoResearchRegistryAssetRef | None = None
     methodology_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_readiness_json: AutoResearchRegistryAssetRef | None = None
@@ -1599,6 +1623,71 @@ class AutoResearchExperimentDesignRead(BaseModel):
     design_fingerprint: str
 
 
+class AutoResearchFailureFindingRead(BaseModel):
+    failure_id: str
+    failure_type: AutoResearchFailureType
+    severity: Literal["low", "medium", "high"] = "medium"
+    summary: str
+    detail: str
+    trigger: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    recommended_action: AutoResearchResearchActionKind = "rerun_plan"
+    blocks_publication: bool = False
+
+
+class AutoResearchFailureAnalysisRead(BaseModel):
+    generated_at: datetime
+    analysis_id: str = "failure_analysis_v1"
+    project_id: str
+    run_id: str
+    selected_candidate_id: str | None = None
+    finding_count: int = 0
+    high_severity_count: int = 0
+    publication_blocker_count: int = 0
+    performance_failure_count: int = 0
+    baseline_failure_count: int = 0
+    ablation_failure_count: int = 0
+    statistical_failure_count: int = 0
+    novelty_failure_count: int = 0
+    artifact_failure_count: int = 0
+    findings: list[AutoResearchFailureFindingRead] = Field(default_factory=list)
+    complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    analysis_fingerprint: str
+
+
+class AutoResearchResearchReplanActionRead(BaseModel):
+    action_id: str
+    action_kind: AutoResearchResearchActionKind
+    priority: AutoResearchRevisionPriority = "medium"
+    title: str
+    rationale: str
+    target: str | None = None
+    source_failure_ids: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchResearchReplanRead(BaseModel):
+    generated_at: datetime
+    replan_id: str = "research_replan_v1"
+    project_id: str
+    run_id: str
+    selected_candidate_id: str | None = None
+    hypothesis_update: str | None = None
+    task_scope_update: str | None = None
+    actions: list[AutoResearchResearchReplanActionRead] = Field(default_factory=list)
+    action_count: int = 0
+    rerun_required: bool = False
+    abandon_recommended: bool = False
+    claim_downgrade_required: bool = False
+    experiment_design_repair_required: bool = False
+    complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    replan_fingerprint: str
+
+
 class AutoResearchResearchProtocolRead(BaseModel):
     generated_at: datetime
     protocol_id: str = "research_protocol_v1"
@@ -1671,6 +1760,8 @@ AutoResearchEvidenceIndexCategory = Literal[
     "benchmark",
     "protocol",
     "design",
+    "failure",
+    "replan",
     "methodology",
     "readiness",
     "contribution",
@@ -1766,6 +1857,8 @@ AutoResearchRepairActionKind = Literal[
     "repair_claim_evidence",
     "refresh_literature",
     "rerun_experiments",
+    "repair_experiment_design",
+    "research_replan",
     "update_benchmark_provenance",
     "rebuild_publish_package",
     "manual_review",
@@ -1781,6 +1874,8 @@ AutoResearchRepairActionSource = Literal[
     "contribution_assessment",
     "novelty_validation",
     "experiment_design",
+    "failure_analysis",
+    "research_replan",
 ]
 
 
@@ -2054,6 +2149,10 @@ class AutoResearchRunReviewRead(BaseModel):
     novelty_validation_path: str | None = None
     experiment_design: AutoResearchExperimentDesignRead | None = None
     experiment_design_path: str | None = None
+    failure_analysis: AutoResearchFailureAnalysisRead | None = None
+    failure_analysis_path: str | None = None
+    research_replan: AutoResearchResearchReplanRead | None = None
+    research_replan_path: str | None = None
     benchmark_card: AutoResearchBenchmarkCardRead | None = None
     benchmark_card_path: str | None = None
     research_protocol: AutoResearchResearchProtocolRead | None = None
@@ -2214,6 +2313,10 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publication_readiness_sha256: str | None = None
     experiment_design_path: str | None = None
     experiment_design_sha256: str | None = None
+    failure_analysis_path: str | None = None
+    failure_analysis_sha256: str | None = None
+    research_replan_path: str | None = None
+    research_replan_sha256: str | None = None
     contribution_assessment_path: str | None = None
     contribution_assessment_sha256: str | None = None
     literature_graph_path: str | None = None
@@ -2319,6 +2422,8 @@ class AutoResearchPublishPackageRead(BaseModel):
     publication_readiness_score: int = 0
     benchmark_card_path: str | None = None
     experiment_design_path: str | None = None
+    failure_analysis_path: str | None = None
+    research_replan_path: str | None = None
     research_protocol_path: str | None = None
     methodology_audit_path: str | None = None
     contribution_assessment_path: str | None = None

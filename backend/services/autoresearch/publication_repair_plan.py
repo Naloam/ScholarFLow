@@ -61,6 +61,24 @@ def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResea
         for marker in ("literature", "citation", "related work", "references", "novelty", "duplicate", "incremental", "gap")
     ):
         return "refresh_literature"
+    if any(
+        marker in lowered
+        for marker in (
+            "research replan",
+            "failure analysis",
+            "modify_hypothesis",
+            "adjust_task_scope",
+            "abandon_direction",
+            "downgrade_contribution_claim",
+            "hypothesis",
+            "task scope",
+            "abandon",
+            "reframe",
+        )
+    ):
+        return "research_replan"
+    if any(marker in lowered for marker in ("experiment design", "add_baseline", "add_ablation", "repair_experiment_design")):
+        return "repair_experiment_design"
     if any(marker in lowered for marker in ("benchmark", "dataset", "provenance", "license", "source_kind")):
         return "update_benchmark_provenance"
     if any(
@@ -75,7 +93,6 @@ def _kind(text: str, supporting_asset_ids: list[str] | None = None) -> AutoResea
             "power",
             "statistic",
             "artifact",
-            "experiment design",
             "generated_code",
             "generated code",
             "run_generated_code",
@@ -112,6 +129,8 @@ def _auto_applicable(kind: AutoResearchRepairActionKind) -> bool:
         "repair_claim_evidence",
         "refresh_literature",
         "rerun_experiments",
+        "repair_experiment_design",
+        "research_replan",
         "rebuild_publish_package",
     }
 
@@ -142,8 +161,24 @@ def _expected_outputs(kind: AutoResearchRepairActionKind) -> list[str]:
             "run_artifact_json",
             "run_generated_code",
             "run_experiment_design_json",
+            "run_failure_analysis_json",
+            "run_research_replan_json",
             "run_methodology_audit_json",
             "run_publication_readiness_json",
+        ],
+        "repair_experiment_design": [
+            "run_spec_json",
+            "run_experiment_design_json",
+            "run_research_protocol_json",
+            "run_failure_analysis_json",
+            "run_research_replan_json",
+        ],
+        "research_replan": [
+            "run_failure_analysis_json",
+            "run_research_replan_json",
+            "run_spec_json",
+            "run_contribution_assessment_json",
+            "run_novelty_validation_json",
         ],
         "update_benchmark_provenance": [
             "benchmark_json",
@@ -392,6 +427,70 @@ def build_publication_repair_plan(
                         "run_artifact_json",
                     ],
                     required_for_final_publish=True,
+                )
+            )
+
+    if review.failure_analysis is not None:
+        for finding in review.failure_analysis.findings:
+            if not finding.blocks_publication:
+                continue
+            kind: AutoResearchRepairActionKind
+            if finding.recommended_action in {"add_baseline", "add_ablation", "repair_experiment_design"}:
+                kind = "repair_experiment_design"
+            elif finding.recommended_action == "rerun_plan":
+                kind = "rerun_experiments"
+            else:
+                kind = "research_replan"
+            add(
+                _action(
+                    action_id=f"failure_analysis_{finding.failure_id}_{_slug(kind)}",
+                    kind=kind,
+                    source="failure_analysis",
+                    source_ids=[finding.failure_id],
+                    title=f"Resolve research failure: {finding.summary}",
+                    detail=finding.detail,
+                    supporting_asset_ids=[
+                        "run_failure_analysis_json",
+                        *finding.evidence_refs,
+                    ],
+                    required_for_final_publish=True,
+                )
+            )
+
+    if review.research_replan is not None:
+        publication_blocking_failure_ids = {
+            finding.failure_id
+            for finding in review.failure_analysis.findings
+            if finding.blocks_publication
+        } if review.failure_analysis is not None else set()
+        for research_action in review.research_replan.actions:
+            if (
+                not review.research_replan.blockers
+                and not publication_blocking_failure_ids.intersection(
+                    research_action.source_failure_ids
+                )
+            ):
+                continue
+            if research_action.action_kind in {"add_baseline", "add_ablation", "repair_experiment_design"}:
+                kind = "repair_experiment_design"
+            elif research_action.action_kind == "rerun_plan":
+                kind = "rerun_experiments"
+            else:
+                kind = "research_replan"
+            add(
+                _action(
+                    action_id=f"research_replan_{research_action.action_id}_{_slug(kind)}",
+                    kind=kind,
+                    source="research_replan",
+                    source_ids=[research_action.action_id],
+                    title=research_action.title,
+                    detail=research_action.rationale,
+                    supporting_asset_ids=[
+                        "run_research_replan_json",
+                        "run_failure_analysis_json",
+                    ],
+                    priority=research_action.priority,
+                    required_for_final_publish=research_action.priority == "high",
                 )
             )
 

@@ -30,6 +30,8 @@ _LINEAGE_REQUIRED_ROLE_KINDS = {
     "run_benchmark_card_json": "benchmark_card",
     "run_claim_evidence_matrix_json": "claim_evidence_matrix",
     "run_experiment_design_json": "experiment_design",
+    "run_failure_analysis_json": "failure_analysis",
+    "run_research_replan_json": "research_replan",
     "run_research_protocol_json": "research_protocol",
     "run_methodology_audit_json": "methodology_audit",
     "run_publication_readiness_json": "publication_readiness",

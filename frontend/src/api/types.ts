@@ -705,6 +705,8 @@ export type AutoResearchLineageEdge = {
     | "narrative_report"
     | "claim_evidence_matrix"
     | "experiment_design"
+    | "failure_analysis"
+    | "research_replan"
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
@@ -759,6 +761,8 @@ export type AutoResearchLineageEdge = {
     | "narrative_report"
     | "claim_evidence_matrix"
     | "experiment_design"
+    | "failure_analysis"
+    | "research_replan"
     | "research_protocol"
     | "methodology_audit"
     | "publication_readiness"
@@ -808,6 +812,8 @@ export type AutoResearchRunRegistryFiles = {
   narrative_report_markdown?: AutoResearchRegistryAssetRef | null;
   claim_evidence_matrix_json?: AutoResearchRegistryAssetRef | null;
   experiment_design_json?: AutoResearchRegistryAssetRef | null;
+  failure_analysis_json?: AutoResearchRegistryAssetRef | null;
+  research_replan_json?: AutoResearchRegistryAssetRef | null;
   research_protocol_json?: AutoResearchRegistryAssetRef | null;
   methodology_audit_json?: AutoResearchRegistryAssetRef | null;
   publication_readiness_json?: AutoResearchRegistryAssetRef | null;
@@ -960,6 +966,8 @@ export type AutoResearchBundleAssetRead = {
     | "run_narrative_report_markdown"
     | "run_claim_evidence_matrix_json"
     | "run_experiment_design_json"
+    | "run_failure_analysis_json"
+    | "run_research_replan_json"
     | "run_research_protocol_json"
     | "run_methodology_audit_json"
     | "run_publication_readiness_json"
@@ -1139,6 +1147,8 @@ export type AutoResearchEvidenceIndexCategory =
   | "benchmark"
   | "protocol"
   | "design"
+  | "failure"
+  | "replan"
   | "methodology"
   | "readiness"
   | "contribution"
@@ -1228,6 +1238,8 @@ export type AutoResearchRepairActionKind =
   | "repair_claim_evidence"
   | "refresh_literature"
   | "rerun_experiments"
+  | "repair_experiment_design"
+  | "research_replan"
   | "update_benchmark_provenance"
   | "rebuild_publish_package"
   | "manual_review";
@@ -1241,7 +1253,9 @@ export type AutoResearchRepairActionSource =
   | "readiness"
   | "contribution_assessment"
   | "novelty_validation"
-  | "experiment_design";
+  | "experiment_design"
+  | "failure_analysis"
+  | "research_replan";
 
 export type AutoResearchPublicationRepairAction = {
   action_id: string;
@@ -1418,6 +1432,89 @@ export type AutoResearchExperimentDesign = {
   blockers: string[];
   warnings: string[];
   design_fingerprint: string;
+};
+
+export type AutoResearchFailureType =
+  | "performance_failure"
+  | "baseline_insufficient"
+  | "ablation_unsupported_claim"
+  | "statistical_not_significant"
+  | "novelty_insufficient"
+  | "artifact_incomplete";
+
+export type AutoResearchResearchActionKind =
+  | "modify_hypothesis"
+  | "adjust_task_scope"
+  | "add_baseline"
+  | "add_ablation"
+  | "downgrade_contribution_claim"
+  | "abandon_direction"
+  | "repair_experiment_design"
+  | "rerun_plan";
+
+export type AutoResearchFailureFinding = {
+  failure_id: string;
+  failure_type: AutoResearchFailureType;
+  severity: "low" | "medium" | "high";
+  summary: string;
+  detail: string;
+  trigger: string;
+  evidence_refs: string[];
+  recommended_action: AutoResearchResearchActionKind;
+  blocks_publication: boolean;
+};
+
+export type AutoResearchFailureAnalysis = {
+  generated_at: string;
+  analysis_id: string;
+  project_id: string;
+  run_id: string;
+  selected_candidate_id?: string | null;
+  finding_count: number;
+  high_severity_count: number;
+  publication_blocker_count: number;
+  performance_failure_count: number;
+  baseline_failure_count: number;
+  ablation_failure_count: number;
+  statistical_failure_count: number;
+  novelty_failure_count: number;
+  artifact_failure_count: number;
+  findings: AutoResearchFailureFinding[];
+  complete: boolean;
+  blockers: string[];
+  warnings: string[];
+  analysis_fingerprint: string;
+};
+
+export type AutoResearchResearchReplanAction = {
+  action_id: string;
+  action_kind: AutoResearchResearchActionKind;
+  priority: "high" | "medium" | "low";
+  title: string;
+  rationale: string;
+  target?: string | null;
+  source_failure_ids: string[];
+  expected_outputs: string[];
+};
+
+export type AutoResearchResearchReplan = {
+  generated_at: string;
+  replan_id: string;
+  project_id: string;
+  run_id: string;
+  selected_candidate_id?: string | null;
+  hypothesis_update?: string | null;
+  task_scope_update?: string | null;
+  actions: AutoResearchResearchReplanAction[];
+  action_count: number;
+  rerun_required: boolean;
+  abandon_recommended: boolean;
+  claim_downgrade_required: boolean;
+  experiment_design_repair_required: boolean;
+  complete: boolean;
+  blockers: string[];
+  warnings: string[];
+  replan_fingerprint: string;
 };
 
 export type AutoResearchResearchProtocol = {
@@ -1735,6 +1832,10 @@ export type AutoResearchRunReview = {
   novelty_validation_path?: string | null;
   experiment_design?: AutoResearchExperimentDesign | null;
   experiment_design_path?: string | null;
+  failure_analysis?: AutoResearchFailureAnalysis | null;
+  failure_analysis_path?: string | null;
+  research_replan?: AutoResearchResearchReplan | null;
+  research_replan_path?: string | null;
   benchmark_card?: AutoResearchBenchmarkCard | null;
   benchmark_card_path?: string | null;
   research_protocol?: AutoResearchResearchProtocol | null;
@@ -2025,6 +2126,10 @@ export type AutoResearchPublicationManifest = {
   publication_readiness_sha256?: string | null;
   experiment_design_path?: string | null;
   experiment_design_sha256?: string | null;
+  failure_analysis_path?: string | null;
+  failure_analysis_sha256?: string | null;
+  research_replan_path?: string | null;
+  research_replan_sha256?: string | null;
   contribution_assessment_path?: string | null;
   contribution_assessment_sha256?: string | null;
   literature_graph_path?: string | null;
@@ -2132,6 +2237,8 @@ export type AutoResearchPublishPackage = {
   review_path?: string | null;
   benchmark_card_path?: string | null;
   experiment_design_path?: string | null;
+  failure_analysis_path?: string | null;
+  research_replan_path?: string | null;
   research_protocol_path?: string | null;
   methodology_audit_path?: string | null;
   revision_dossier_path?: string | null;

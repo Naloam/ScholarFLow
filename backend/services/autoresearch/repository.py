@@ -53,6 +53,8 @@ PROJECT_CONTEXT_FILENAME = "project_context.json"
 NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
 EXPERIMENT_DESIGN_FILENAME = "experiment_design.json"
+FAILURE_ANALYSIS_FILENAME = "failure_analysis.json"
+RESEARCH_REPLAN_FILENAME = "research_replan.json"
 RESEARCH_PROTOCOL_FILENAME = "research_protocol.json"
 METHODOLOGY_AUDIT_FILENAME = "methodology_audit.json"
 PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
@@ -554,6 +556,8 @@ def _candidate_lineage_edges(
             ("narrative_report_markdown", "narrative_report"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
             ("experiment_design_json", "experiment_design"),
+            ("failure_analysis_json", "failure_analysis"),
+            ("research_replan_json", "research_replan"),
             ("benchmark_card_json", "benchmark_card"),
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
@@ -664,6 +668,12 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="artifact",
             source_id=artifact_source_id,
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
             target_attr="publication_readiness_json",
             target_kind="publication_readiness",
         )
@@ -688,6 +698,8 @@ def _run_derivation_lineage_edges(
             ("artifact_json", "artifact"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
             ("experiment_design_json", "experiment_design"),
+            ("failure_analysis_json", "failure_analysis"),
+            ("research_replan_json", "research_replan"),
             ("benchmark_card_json", "benchmark_card"),
             ("research_protocol_json", "research_protocol"),
             ("methodology_audit_json", "methodology_audit"),
@@ -718,6 +730,12 @@ def _run_derivation_lineage_edges(
             source_id=f"{run.id}:claim_evidence_matrix",
             target_attr="experiment_design_json",
             target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
         )
         add_derivation(
             source_kind="claim_evidence_matrix",
@@ -801,6 +819,12 @@ def _run_derivation_lineage_edges(
             target_attr="publication_evidence_index_json",
             target_kind="publication_evidence_index",
         )
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
     if run_assets.research_protocol_json is not None:
         add_derivation(
             source_kind="research_protocol",
@@ -852,6 +876,12 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="publication_readiness",
             source_id=f"{run.id}:publication_readiness",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
             target_attr="revision_dossier_json",
             target_kind="revision_dossier",
         )
@@ -861,6 +891,12 @@ def _run_derivation_lineage_edges(
             source_id=f"{run.id}:contribution_assessment",
             target_attr="revision_dossier_json",
             target_kind="revision_dossier",
+        )
+        add_derivation(
+            source_kind="contribution_assessment",
+            source_id=f"{run.id}:contribution_assessment",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
         )
         add_derivation(
             source_kind="contribution_assessment",
@@ -887,6 +923,12 @@ def _run_derivation_lineage_edges(
             source_id=f"{run.id}:novelty_validation",
             target_attr="revision_dossier_json",
             target_kind="revision_dossier",
+        )
+        add_derivation(
+            source_kind="novelty_validation",
+            source_id=f"{run.id}:novelty_validation",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
         )
         add_derivation(
             source_kind="novelty_validation",
@@ -952,6 +994,38 @@ def _run_derivation_lineage_edges(
         add_derivation(
             source_kind="publication_evidence_index",
             source_id=f"{run.id}:publication_evidence_index",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.failure_analysis_json is not None:
+        add_derivation(
+            source_kind="failure_analysis",
+            source_id=f"{run.id}:failure_analysis",
+            target_attr="research_replan_json",
+            target_kind="research_replan",
+        )
+        add_derivation(
+            source_kind="failure_analysis",
+            source_id=f"{run.id}:failure_analysis",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+        add_derivation(
+            source_kind="failure_analysis",
+            source_id=f"{run.id}:failure_analysis",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.research_replan_json is not None:
+        add_derivation(
+            source_kind="research_replan",
+            source_id=f"{run.id}:research_replan",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+        add_derivation(
+            source_kind="research_replan",
+            source_id=f"{run.id}:research_replan",
             target_attr="publication_repair_plan_json",
             target_kind="publication_repair_plan",
         )
@@ -1063,6 +1137,8 @@ def _run_lineage_edges(
         ("narrative_report_markdown", "narrative_report"),
         ("claim_evidence_matrix_json", "claim_evidence_matrix"),
         ("experiment_design_json", "experiment_design"),
+        ("failure_analysis_json", "failure_analysis"),
+        ("research_replan_json", "research_replan"),
         ("benchmark_card_json", "benchmark_card"),
         ("research_protocol_json", "research_protocol"),
         ("methodology_audit_json", "methodology_audit"),
@@ -1249,6 +1325,28 @@ def _run_bundle_assets(
                 required=False,
             )
             if files.experiment_design_json is not None and files.experiment_design_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_failure_analysis_json",
+                label="Selected run failure analysis",
+                role="run_failure_analysis_json",
+                ref=files.failure_analysis_json,
+                required=False,
+            )
+            if files.failure_analysis_json is not None and files.failure_analysis_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_research_replan_json",
+                label="Selected run research replan",
+                role="run_research_replan_json",
+                ref=files.research_replan_json,
+                required=False,
+            )
+            if files.research_replan_json is not None and files.research_replan_json.exists
             else None
         ),
         (
@@ -2026,6 +2124,14 @@ def experiment_design_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / EXPERIMENT_DESIGN_FILENAME)
 
 
+def failure_analysis_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / FAILURE_ANALYSIS_FILENAME)
+
+
+def research_replan_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / RESEARCH_REPLAN_FILENAME)
+
+
 def literature_graph_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / LITERATURE_GRAPH_FILENAME)
 
@@ -2211,6 +2317,8 @@ def load_candidate_registry(
                 current_run.claim_evidence_matrix_path or (run_base / CLAIM_EVIDENCE_MATRIX_FILENAME)
             ),
             experiment_design_json=_asset_ref(run_base / EXPERIMENT_DESIGN_FILENAME),
+            failure_analysis_json=_asset_ref(run_base / FAILURE_ANALYSIS_FILENAME),
+            research_replan_json=_asset_ref(run_base / RESEARCH_REPLAN_FILENAME),
             research_protocol_json=_asset_ref(run_base / RESEARCH_PROTOCOL_FILENAME),
             methodology_audit_json=_asset_ref(run_base / METHODOLOGY_AUDIT_FILENAME),
             publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
@@ -2374,6 +2482,8 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
             run.claim_evidence_matrix_path or (base / CLAIM_EVIDENCE_MATRIX_FILENAME)
         ),
         experiment_design_json=_asset_ref(base / EXPERIMENT_DESIGN_FILENAME),
+        failure_analysis_json=_asset_ref(base / FAILURE_ANALYSIS_FILENAME),
+        research_replan_json=_asset_ref(base / RESEARCH_REPLAN_FILENAME),
         research_protocol_json=_asset_ref(base / RESEARCH_PROTOCOL_FILENAME),
         methodology_audit_json=_asset_ref(base / METHODOLOGY_AUDIT_FILENAME),
         publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),

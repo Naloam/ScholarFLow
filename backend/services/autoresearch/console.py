@@ -23,11 +23,13 @@ from schemas.autoresearch import (
 )
 from services.autoresearch.bridge import build_bridge_state
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.publication_repair_plan import (
     repair_plan_allows_paper_pipeline_rebuild,
 )
 from services.autoresearch.repository import list_runs, load_run, load_run_registry, load_run_registry_views
 from services.autoresearch.review_publish import build_publish_package, build_review_loop, build_run_review
+from services.autoresearch.system_evaluation import build_system_evaluation
 
 
 def _benchmark_name(run: AutoResearchRunRead) -> str | None:
@@ -61,6 +63,17 @@ def _run_actions(
         and review_loop.pending_action_count > 0
         and can_rebuild_paper
     )
+    can_replan_research = bool(
+        run.status == "done"
+        and review is not None
+        and (
+            (review.research_replan is not None and review.research_replan.action_count > 0)
+            or (
+                review.reviewer_simulation is not None
+                and review.reviewer_simulation.response_plan_action_count > 0
+            )
+        )
+    )
     return AutoResearchOperatorRunActionsRead(
         resume=run.status != "done" and not bridge_waiting,
         retry=run.status in {"done", "failed", "canceled"},
@@ -77,8 +90,48 @@ def _run_actions(
             and publish.archive_ready
             and publish.archive_current
         ),
+        replan_research=can_replan_research,
         update_controls=True,
     )
+
+
+def _weakest_reviewer_role(review: AutoResearchRunReviewRead | None):
+    simulation = review.reviewer_simulation if review is not None else None
+    if simulation is None or not simulation.reviews:
+        return None
+    return min(simulation.reviews, key=lambda item: item.score).role
+
+
+def _next_research_action(
+    *,
+    run: AutoResearchRunRead,
+    review: AutoResearchRunReviewRead | None,
+    publish: AutoResearchPublishPackageRead | None,
+) -> tuple[str | None, str | None]:
+    if run.status != "done":
+        return "wait_for_execution", "Run execution is not complete."
+    if review is None:
+        return "refresh_review", "Build the research review and publish gates."
+    if review.experiment_design is not None and review.experiment_design.blockers:
+        return "repair_experiment_design", review.experiment_design.blockers[0]
+    if review.research_replan is not None and review.research_replan.rerun_required:
+        return "rerun_experiments", "Research replan requires new experiment evidence."
+    if review.research_replan is not None and review.research_replan.action_count > 0:
+        return "research_replan", review.research_replan.actions[0].title
+    if review.reviewer_simulation is not None and review.reviewer_simulation.response_plan:
+        action = review.reviewer_simulation.response_plan[0]
+        if action.action_kind == "paper":
+            return "rebuild_paper", action.title
+        if action.action_kind == "research_replan":
+            return "research_replan", action.title
+        if action.action_kind == "experiment":
+            return "rerun_experiments", action.title
+        return "repair_experiment_design", action.title
+    if publish is not None and publish.final_publish_ready:
+        return "export_publish", "Final publish gate is ready."
+    if publish is not None and publish.final_blockers:
+        return "rebuild_paper", publish.final_blockers[0]
+    return "meta_analyze", "Compare this run with related project runs."
 
 
 def _run_summary(
@@ -111,6 +164,10 @@ def _run_summary(
     publication_repair_execution = (
         review.publication_repair_execution if review is not None else None
     )
+    reviewer_simulation = review.reviewer_simulation if review is not None else None
+    contribution_assessment = review.contribution_assessment if review is not None else None
+    novelty_validation = review.novelty_validation if review is not None else None
+    experiment_design = review.experiment_design if review is not None else None
     readiness = review.publication_readiness if review is not None else None
     audit_checks = methodology_audit.checks if methodology_audit is not None else []
     readiness_checks = readiness.checks if readiness is not None else []
@@ -150,6 +207,11 @@ def _run_summary(
             or request.max_rounds != 3
         )
         else "default"
+    )
+    next_action, next_action_detail = _next_research_action(
+        run=run,
+        review=review,
+        publish=publish,
     )
     return AutoResearchOperatorRunSummaryRead(
         run_id=run.id,
@@ -239,6 +301,45 @@ def _run_summary(
             if publication_evidence_index is not None
             else []
         ),
+        reviewer_simulation_complete=(
+            reviewer_simulation.complete if reviewer_simulation is not None else False
+        ),
+        reviewer_simulation_average_score=(
+            reviewer_simulation.average_score if reviewer_simulation is not None else 0.0
+        ),
+        reviewer_simulation_minimum_score=(
+            reviewer_simulation.minimum_score if reviewer_simulation is not None else 0
+        ),
+        reviewer_simulation_minimum_decision=(
+            reviewer_simulation.minimum_decision if reviewer_simulation is not None else None
+        ),
+        reviewer_simulation_weak_reject_or_worse_count=(
+            reviewer_simulation.weak_reject_or_worse_count if reviewer_simulation is not None else 0
+        ),
+        reviewer_simulation_publication_blocker_count=(
+            reviewer_simulation.publication_blocker_count if reviewer_simulation is not None else 0
+        ),
+        reviewer_simulation_response_plan_action_count=(
+            reviewer_simulation.response_plan_action_count if reviewer_simulation is not None else 0
+        ),
+        reviewer_simulation_blockers=(
+            reviewer_simulation.blockers[:3] if reviewer_simulation is not None else []
+        ),
+        weakest_reviewer_role=_weakest_reviewer_role(review),
+        contribution_score=(
+            contribution_assessment.publishability_score if contribution_assessment is not None else 0
+        ),
+        novelty_duplicate_risk=(
+            novelty_validation.duplicate_risk if novelty_validation is not None else None
+        ),
+        novelty_incremental_risk=(
+            novelty_validation.incremental_risk if novelty_validation is not None else None
+        ),
+        experiment_design_completeness=(
+            experiment_design.completeness if experiment_design is not None else None
+        ),
+        next_research_action=next_action,
+        next_research_action_detail=next_action_detail,
         artifact_integrity_audit_complete=(
             artifact_integrity_audit.complete
             if artifact_integrity_audit is not None
@@ -509,6 +610,8 @@ def build_operator_console(
                 ),
             )
 
+    meta_analysis = build_cross_run_meta_analysis(project_id)
+    system_evaluation = build_system_evaluation(project_id)
     return AutoResearchOperatorConsoleRead(
         project_id=project_id,
         run_count=len(runs),
@@ -516,9 +619,15 @@ def build_operator_console(
         latest_run_id=runs[0].id if runs else None,
         selected_run_id=current_run.run.id if current_run is not None else None,
         filters=filters,
-        actions=AutoResearchOperatorProjectActionsRead(start_run=True),
+        actions=AutoResearchOperatorProjectActionsRead(
+            start_run=True,
+            build_meta_analysis=True,
+            build_system_evaluation=True,
+        ),
         queue=queue_telemetry,
         workers=workers,
+        meta_analysis=meta_analysis,
+        system_evaluation=system_evaluation,
         runs=summaries,
         current_run=current_run,
     )

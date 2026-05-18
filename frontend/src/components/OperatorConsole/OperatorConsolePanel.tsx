@@ -28,6 +28,7 @@ type OperatorConsolePanelProps = {
   onRefreshReview: () => void;
   onImportBridgeResult: (payload: AutoResearchBridgeImportRequest) => void;
   onApplyReviewActions: () => void;
+  onApplyResearchReplan: () => void;
   onRebuildPaper: () => void;
   onExportPublish: (payload?: {
     deployment_id?: string | null;
@@ -49,6 +50,13 @@ function formatScore(value: unknown): string {
 }
 
 function formatTaskFamily(value: string | null | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  return value.replaceAll("_", " ");
+}
+
+function formatLabel(value: string | null | undefined): string {
   if (!value) {
     return "n/a";
   }
@@ -83,6 +91,7 @@ export function OperatorConsolePanel({
   onRefreshReview,
   onImportBridgeResult,
   onApplyReviewActions,
+  onApplyResearchReplan,
   onRebuildPaper,
   onExportPublish,
   onDownloadPublish,
@@ -401,6 +410,21 @@ export function OperatorConsolePanel({
                       {run.readiness_checks_passed}/{run.readiness_checks_total}
                     </small>
                     <small>
+                      contribution {run.contribution_score}/100 / duplicate{" "}
+                      {run.novelty_duplicate_risk ?? "n/a"} / design{" "}
+                      {run.experiment_design_completeness ?? "n/a"}
+                    </small>
+                    <small>
+                      reviewer {run.reviewer_simulation_average_score.toFixed(1)}
+                      {" "}/ min {run.reviewer_simulation_minimum_score}{" "}
+                      {run.reviewer_simulation_minimum_decision ?? "n/a"} /
+                      weak {run.reviewer_simulation_weak_reject_or_worse_count}
+                    </small>
+                    <small>
+                      next {formatLabel(run.next_research_action)}:{" "}
+                      {run.next_research_action_detail ?? "n/a"}
+                    </small>
+                    <small>
                       card{" "}
                       {run.benchmark_card_publication_grade ? "grade" : "gaps"}{" "}
                       / provenance{" "}
@@ -520,6 +544,64 @@ export function OperatorConsolePanel({
               </div>
               <div>
                 <span className="meta-label">
+                  {t("operator.contributionScore")}
+                </span>
+                <strong data-testid="operator-contribution-score">
+                  {currentSummary
+                    ? `${currentSummary.contribution_score}/100`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.noveltyRisk")}
+                </span>
+                <strong data-testid="operator-novelty-risk">
+                  {currentSummary
+                    ? `${currentSummary.novelty_duplicate_risk ?? "n/a"} / ${currentSummary.novelty_incremental_risk ?? "n/a"}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.experimentDesign")}
+                </span>
+                <strong data-testid="operator-experiment-design">
+                  {currentSummary?.experiment_design_completeness ?? "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.reviewerScore")}
+                </span>
+                <strong data-testid="operator-reviewer-score">
+                  {currentSummary
+                    ? `${currentSummary.reviewer_simulation_average_score.toFixed(1)} / ${currentSummary.reviewer_simulation_minimum_score}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.weakestReviewer")}
+                </span>
+                <strong data-testid="operator-weakest-reviewer">
+                  {currentSummary
+                    ? `${formatLabel(currentSummary.weakest_reviewer_role)} / ${currentSummary.reviewer_simulation_minimum_decision ?? "n/a"}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.nextResearchAction")}
+                </span>
+                <strong data-testid="operator-next-research-action">
+                  {currentSummary
+                    ? formatLabel(currentSummary.next_research_action)
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
                   {t("operator.readinessChecks")}
                 </span>
                 <strong data-testid="operator-readiness-checks">
@@ -620,6 +702,63 @@ export function OperatorConsolePanel({
               </div>
             </div>
           )}
+
+          {currentSummary ? (
+            <div className="meta-block" data-testid="operator-next-action-detail">
+              <span className="meta-label">
+                {t("operator.nextResearchAction")}
+              </span>
+              <p>
+                {formatLabel(currentSummary.next_research_action)} ·{" "}
+                {currentSummary.next_research_action_detail ?? "n/a"}
+              </p>
+            </div>
+          ) : null}
+
+          {activeConsole?.meta_analysis || activeConsole?.system_evaluation ? (
+            <div className="summary-banner operator-summary-grid">
+              <div>
+                <span className="meta-label">
+                  {t("operator.metaAnalysis")}
+                </span>
+                <strong data-testid="operator-meta-analysis-summary">
+                  {activeConsole.meta_analysis
+                    ? `${activeConsole.meta_analysis.comparable_run_count}/${activeConsole.meta_analysis.run_count}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.projectPaper")}
+                </span>
+                <strong>
+                  {activeConsole.meta_analysis?.project_level_paper_recommended
+                    ? t("operator.yes")
+                    : t("operator.no")}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.systemEvaluation")}
+                </span>
+                <strong data-testid="operator-system-evaluation-summary">
+                  {activeConsole.system_evaluation
+                    ? `${activeConsole.system_evaluation.overall_score}/100`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.evaluationTasks")}
+                </span>
+                <strong>
+                  {activeConsole.system_evaluation
+                    ? `${activeConsole.system_evaluation.completed_task_count}/${activeConsole.system_evaluation.task_count}`
+                    : "n/a"}
+                </strong>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
 
@@ -1373,6 +1512,15 @@ export function OperatorConsolePanel({
                 <button
                   type="button"
                   className="ghost-btn"
+                  onClick={onApplyResearchReplan}
+                  disabled={disabled || !current.actions.replan_research}
+                  data-testid="apply-research-replan-button"
+                >
+                  {t("operator.applyResearchReplan")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
                   onClick={onRebuildPaper}
                   disabled={disabled || !current.actions.rebuild_paper}
                   data-testid="rebuild-paper-button"
@@ -1427,6 +1575,54 @@ export function OperatorConsolePanel({
                   <strong>{novelty?.status ?? "n/a"}</strong>
                 </div>
                 <div>
+                  <span className="meta-label">
+                    {t("operator.contributionScore")}
+                  </span>
+                  <strong data-testid="operator-review-contribution-score">
+                    {currentSummary
+                      ? `${currentSummary.contribution_score}/100`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.noveltyRisk")}
+                  </span>
+                  <strong data-testid="operator-review-novelty-risk">
+                    {currentSummary
+                      ? `${currentSummary.novelty_duplicate_risk ?? "n/a"} / ${currentSummary.novelty_incremental_risk ?? "n/a"}`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.experimentDesign")}
+                  </span>
+                  <strong data-testid="operator-review-experiment-design">
+                    {currentSummary?.experiment_design_completeness ?? "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.reviewerScore")}
+                  </span>
+                  <strong data-testid="operator-review-reviewer-score">
+                    {currentSummary
+                      ? `${currentSummary.reviewer_simulation_average_score.toFixed(1)} / ${currentSummary.reviewer_simulation_minimum_score}`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.nextResearchAction")}
+                  </span>
+                  <strong data-testid="operator-review-next-action">
+                    {currentSummary
+                      ? formatLabel(currentSummary.next_research_action)
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
                   <span className="meta-label">{t("operator.budget")}</span>
                   <strong>
                     {currentSummary
@@ -1453,6 +1649,33 @@ export function OperatorConsolePanel({
                   <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
                 </div>
               </div>
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-research-action">
+                  <span className="meta-label">
+                    {t("operator.nextResearchAction")}
+                  </span>
+                  <p>
+                    {formatLabel(currentSummary.next_research_action)} ·{" "}
+                    {currentSummary.next_research_action_detail ?? "n/a"}
+                  </p>
+                  <p>
+                    reviewer={currentSummary.reviewer_simulation_average_score.toFixed(1)}{" "}
+                    min={currentSummary.reviewer_simulation_minimum_score}{" "}
+                    {currentSummary.reviewer_simulation_minimum_decision ?? "n/a"}{" "}
+                    weakest={formatLabel(currentSummary.weakest_reviewer_role)}
+                  </p>
+                  {currentSummary.reviewer_simulation_blockers.length ? (
+                    <ul>
+                      {currentSummary.reviewer_simulation_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noReviewerBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
 
               {currentSummary ? (
                 <div className="meta-block" data-testid="operator-benchmark-card">

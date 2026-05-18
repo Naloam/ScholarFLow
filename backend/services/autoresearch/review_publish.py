@@ -24,7 +24,9 @@ from schemas.autoresearch import (
     AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchNoveltyValidationRead,
+    AutoResearchPaperCompileReportRead,
     AutoResearchPaperRevisionStateRead,
+    AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublicationReadinessRead,
     AutoResearchPublicationRepairExecutionRead,
     AutoResearchResearchProtocolRead,
@@ -41,6 +43,7 @@ from schemas.autoresearch import (
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopRoundRead,
     AutoResearchReviewScoresRead,
+    AutoResearchReviewerSimulationRead,
     AutoResearchRevisionDossierItemRead,
     AutoResearchRevisionDossierRead,
     AutoResearchRevisionActionRead,
@@ -77,6 +80,7 @@ from services.autoresearch.repository import (
     artifact_integrity_audit_file_path,
     publication_repair_plan_file_path,
     publication_repair_execution_file_path,
+    reviewer_simulation_file_path,
     research_protocol_file_path,
     revision_dossier_file_path,
     run_dir,
@@ -93,6 +97,7 @@ from services.autoresearch.publication_evidence_index import build_publication_e
 from services.autoresearch.publication_repair_plan import build_publication_repair_plan
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import build_publication_readiness
+from services.autoresearch.reviewer_simulator import build_reviewer_simulation
 from services.projects.repository import get_project
 from services.autoresearch.writer import PaperWriter
 
@@ -138,6 +143,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "run_artifact_integrity_audit_json",
     "run_publication_repair_plan_json",
     "run_paper_compile_report_json",
+    "run_reviewer_simulation_json",
     "run_paper_build_script",
     "run_paper_latex_source",
     "run_paper_bibliography_bib",
@@ -175,6 +181,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "run_artifact_integrity_audit_json",
     "run_publication_repair_plan_json",
     "run_publication_repair_execution_json",
+    "run_reviewer_simulation_json",
     "generated_code",
 }
 _VOLATILE_GENERATED_DIGEST_ROLES = {
@@ -192,6 +199,7 @@ _VOLATILE_GENERATED_DIGEST_ROLES = {
     "run_revision_dossier_json",
     "run_publication_evidence_index_json",
     "run_artifact_integrity_audit_json",
+    "run_reviewer_simulation_json",
     "run_publication_repair_plan_json",
     "run_publication_repair_execution_json",
     "run_paper_compile_report_json",
@@ -749,6 +757,20 @@ def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[
             blockers.append(f"Final publish artifact integrity gate: {item}")
     else:
         blockers.append("Final publish requires an artifact registry and lineage integrity audit.")
+    if review.reviewer_simulation is None:
+        blockers.append("Final publish reviewer gate: reviewer simulation is required before publication.")
+    else:
+        if review.reviewer_simulation.blockers:
+            for item in review.reviewer_simulation.blockers:
+                blockers.append(f"Final publish reviewer gate: {item}")
+        if review.reviewer_simulation.weak_reject_or_worse_count > 0:
+            blockers.append(
+                "Final publish reviewer gate: weak reject or reject reviewer decisions must be resolved."
+            )
+        if review.reviewer_simulation.minimum_decision in {"weak_reject", "reject"}:
+            blockers.append(
+                f"Final publish reviewer gate: weakest reviewer decision is {review.reviewer_simulation.minimum_decision}."
+            )
     for finding in review.findings:
         lowered_summary = finding.summary.lower()
         if finding.category == "citation":
@@ -2082,6 +2104,44 @@ def _build_and_persist_failure_replanning(
     return failure_analysis, str(failure_analysis_path), research_replan, str(research_replan_path)
 
 
+def _build_and_persist_reviewer_simulation(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+    experiment_design: AutoResearchExperimentDesignRead,
+    research_protocol: AutoResearchResearchProtocolRead,
+    methodology_audit: AutoResearchMethodologyAuditRead,
+    publication_readiness: AutoResearchPublicationReadinessRead,
+    contribution_assessment: AutoResearchContributionAssessmentRead,
+    novelty_validation: AutoResearchNoveltyValidationRead,
+    literature_graph: AutoResearchLiteratureGraphRead,
+    failure_analysis: AutoResearchFailureAnalysisRead,
+    research_replan: AutoResearchResearchReplanRead,
+    publication_evidence_index: AutoResearchPublicationEvidenceIndexRead | None,
+    artifact_integrity_audit: AutoResearchArtifactIntegrityAuditRead,
+    paper_compile_report: AutoResearchPaperCompileReportRead | None,
+) -> tuple[AutoResearchReviewerSimulationRead, str]:
+    simulation = build_reviewer_simulation(
+        run,
+        experiment_design=experiment_design,
+        research_protocol=research_protocol,
+        methodology_audit=methodology_audit,
+        publication_readiness=publication_readiness,
+        contribution_assessment=contribution_assessment,
+        novelty_validation=novelty_validation,
+        literature_graph=literature_graph,
+        failure_analysis=failure_analysis,
+        research_replan=research_replan,
+        publication_evidence_index=publication_evidence_index,
+        artifact_integrity_audit=artifact_integrity_audit,
+        paper_compile_report=paper_compile_report,
+    )
+    simulation_path = Path(reviewer_simulation_file_path(project_id, run_id))
+    _write_json(simulation_path, simulation.model_dump(mode="json"))
+    return simulation, str(simulation_path)
+
+
 def _build_and_persist_literature_novelty(
     *,
     run: AutoResearchRunRead,
@@ -2375,6 +2435,51 @@ def build_run_review(
         update={
             "publication_evidence_index": publication_evidence_index,
             "publication_evidence_index_path": str(publication_evidence_index_path),
+            "reviewer_simulation_path": str(Path(reviewer_simulation_file_path(project_id, run_id))),
+        }
+    )
+    reviewer_simulation, reviewer_simulation_path = _build_and_persist_reviewer_simulation(
+        run=run,
+        project_id=project_id,
+        run_id=run_id,
+        experiment_design=experiment_design,
+        research_protocol=research_protocol,
+        methodology_audit=methodology_audit,
+        publication_readiness=publication_readiness,
+        contribution_assessment=contribution_assessment,
+        novelty_validation=novelty_validation,
+        literature_graph=literature_graph,
+        failure_analysis=failure_analysis,
+        research_replan=research_replan,
+        publication_evidence_index=publication_evidence_index,
+        artifact_integrity_audit=artifact_integrity_audit,
+        paper_compile_report=run.paper_compile_report,
+    )
+    review = review.model_copy(
+        update={
+            "reviewer_simulation": reviewer_simulation,
+            "reviewer_simulation_path": reviewer_simulation_path,
+        }
+    )
+    _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
+    publication_evidence_index = build_publication_evidence_index(
+        run,
+        review=review,
+        review_loop=review_loop,
+        review_path=_review_path(project_id, run_id),
+        review_loop_path=_review_loop_path(project_id, run_id),
+    )
+    publication_evidence_index_path = Path(
+        publication_evidence_index_file_path(project_id, run_id)
+    )
+    _write_json(
+        publication_evidence_index_path,
+        publication_evidence_index.model_dump(mode="json"),
+    )
+    review = review.model_copy(
+        update={
+            "publication_evidence_index": publication_evidence_index,
+            "publication_evidence_index_path": str(publication_evidence_index_path),
         }
     )
     publication_repair_plan = build_publication_repair_plan(
@@ -2585,6 +2690,7 @@ def _publish_package_fingerprint(
         "revision_dossier_path": review.revision_dossier_path,
         "publication_evidence_index_path": review.publication_evidence_index_path,
         "artifact_integrity_audit_path": review.artifact_integrity_audit_path,
+        "reviewer_simulation_path": review.reviewer_simulation_path,
         "publication_repair_plan_path": review.publication_repair_plan_path,
         "publication_repair_execution_path": review.publication_repair_execution_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
@@ -2829,6 +2935,7 @@ def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
         Path(revision_dossier_file_path(project_id, run_id)),
         Path(publication_evidence_index_file_path(project_id, run_id)),
         Path(artifact_integrity_audit_file_path(project_id, run_id)),
+        Path(reviewer_simulation_file_path(project_id, run_id)),
         Path(publication_repair_plan_file_path(project_id, run_id)),
         Path(publication_repair_execution_file_path(project_id, run_id)),
         _publish_manifest_path(project_id, run_id),
@@ -3027,6 +3134,16 @@ def build_publication_manifest(
         if artifact_integrity_audit_path.is_file()
         else package.artifact_integrity_audit_path
     )
+    reviewer_simulation_path = (
+        Path(package.reviewer_simulation_path)
+        if package.reviewer_simulation_path
+        else Path(reviewer_simulation_file_path(project_id, run_id))
+    )
+    reviewer_simulation_path_value = (
+        str(reviewer_simulation_path)
+        if reviewer_simulation_path.is_file()
+        else package.reviewer_simulation_path
+    )
     repair_plan_path = (
         Path(package.publication_repair_plan_path)
         if package.publication_repair_plan_path
@@ -3092,6 +3209,8 @@ def build_publication_manifest(
         publication_evidence_index_sha256=_file_sha256(evidence_index_path),
         artifact_integrity_audit_path=artifact_integrity_audit_path_value,
         artifact_integrity_audit_sha256=_file_sha256(artifact_integrity_audit_path),
+        reviewer_simulation_path=reviewer_simulation_path_value,
+        reviewer_simulation_sha256=_file_sha256(reviewer_simulation_path),
         publication_repair_plan_path=repair_plan_path_value,
         publication_repair_plan_sha256=_file_sha256(repair_plan_path),
         publication_repair_execution_path=repair_execution_path_value,
@@ -3163,6 +3282,15 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         if review.publication_evidence_index is not None
         else ["Final publish requires a publication evidence index."]
     )
+    reviewer_simulation_final_blockers = (
+        [f"Final publish reviewer gate: {item}" for item in review.reviewer_simulation.blockers]
+        if review.reviewer_simulation is not None
+        else ["Final publish reviewer gate: reviewer simulation is required before publication."]
+    )
+    if review.reviewer_simulation is not None and review.reviewer_simulation.weak_reject_or_worse_count > 0:
+        reviewer_simulation_final_blockers.append(
+            "Final publish reviewer gate: weak reject or reject reviewer decisions must be resolved."
+        )
     status_semantic_blockers = [
         item
         for item in semantic_final_blockers
@@ -3181,6 +3309,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     )
     final_blockers = [
         *semantic_final_blockers,
+        *reviewer_simulation_final_blockers,
         *compile_final_blockers,
         *evidence_index_final_blockers,
         *review_loop_requirements,
@@ -3191,6 +3320,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         review.overall_status == "ready"
         and not missing_final_assets
         and not semantic_final_blockers
+        and not reviewer_simulation_final_blockers
         and not compile_final_blockers
         and not evidence_index_final_blockers
         and not review_loop_requirements
@@ -3236,6 +3366,7 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         revision_dossier_path=review.revision_dossier_path,
         publication_evidence_index_path=review.publication_evidence_index_path,
         artifact_integrity_audit_path=review.artifact_integrity_audit_path,
+        reviewer_simulation_path=review.reviewer_simulation_path,
         publication_repair_plan_path=review.publication_repair_plan_path,
         publication_repair_execution_path=(
             str(Path(publication_repair_execution_file_path(project_id, run_id)))

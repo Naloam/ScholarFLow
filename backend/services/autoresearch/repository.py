@@ -21,6 +21,7 @@ from schemas.autoresearch import (
     AutoResearchPaperRevisionDiffRead,
     AutoResearchPaperSectionRewriteIndexRead,
     AutoResearchRegistryAssetRef,
+    AutoResearchReviewerSimulationRead,
     AutoResearchReviewLoopRead,
     AutoResearchRegistryViewCounts,
     AutoResearchRegistryViewRead,
@@ -67,6 +68,7 @@ PUBLICATION_EVIDENCE_INDEX_FILENAME = "publication_evidence_index.json"
 ARTIFACT_INTEGRITY_AUDIT_FILENAME = "artifact_integrity_audit.json"
 PUBLICATION_REPAIR_PLAN_FILENAME = "publication_repair_plan.json"
 PUBLICATION_REPAIR_EXECUTION_FILENAME = "publication_repair_execution.json"
+REVIEWER_SIMULATION_FILENAME = "reviewer_simulation.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
 PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
@@ -567,6 +569,11 @@ def _candidate_lineage_edges(
             ("literature_graph_json", "literature_graph"),
             ("novelty_validation_json", "novelty_validation"),
             ("revision_dossier_json", "revision_dossier"),
+            ("publication_evidence_index_json", "publication_evidence_index"),
+            ("artifact_integrity_audit_json", "artifact_integrity_audit"),
+            ("publication_repair_plan_json", "publication_repair_plan"),
+            ("publication_repair_execution_json", "publication_repair_execution"),
+            ("reviewer_simulation_json", "reviewer_simulation"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
             ("paper_revision_history_markdown", "paper_revision_history"),
@@ -712,6 +719,7 @@ def _run_derivation_lineage_edges(
             ("publication_evidence_index_json", "publication_evidence_index"),
             ("publication_repair_plan_json", "publication_repair_plan"),
             ("publication_repair_execution_json", "publication_repair_execution"),
+            ("reviewer_simulation_json", "reviewer_simulation"),
             ("narrative_report_markdown", "narrative_report"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
@@ -998,6 +1006,13 @@ def _run_derivation_lineage_edges(
             target_attr="publication_repair_plan_json",
             target_kind="publication_repair_plan",
         )
+    if run_assets.reviewer_simulation_json is not None:
+        add_derivation(
+            source_kind="reviewer_simulation",
+            source_id=f"{run.id}:reviewer_simulation",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
     if run_assets.failure_analysis_json is not None:
         add_derivation(
             source_kind="failure_analysis",
@@ -1152,6 +1167,7 @@ def _run_lineage_edges(
         ("artifact_integrity_audit_json", "artifact_integrity_audit"),
         ("publication_repair_plan_json", "publication_repair_plan"),
         ("publication_repair_execution_json", "publication_repair_execution"),
+        ("reviewer_simulation_json", "reviewer_simulation"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
         ("paper_revision_history_markdown", "paper_revision_history"),
@@ -1462,6 +1478,18 @@ def _run_bundle_assets(
             )
             if files.publication_repair_execution_json is not None
             and files.publication_repair_execution_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_reviewer_simulation_json",
+                label="Selected run reviewer simulation",
+                role="run_reviewer_simulation_json",
+                ref=files.reviewer_simulation_json,
+                required=False,
+            )
+            if files.reviewer_simulation_json is not None
+            and files.reviewer_simulation_json.exists
             else None
         ),
         _bundle_asset(
@@ -1793,12 +1821,31 @@ def _refresh_paper_compile_report(
     return payload.model_copy(update={"paper_compile_report": compile_report})
 
 
+def _load_reviewer_simulation(payload: AutoResearchRunRead, *, base: Path) -> AutoResearchRunRead:
+    if payload.reviewer_simulation is not None:
+        return payload
+    path = base / REVIEWER_SIMULATION_FILENAME
+    if not path.is_file():
+        return payload
+    try:
+        simulation = AutoResearchReviewerSimulationRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return payload
+    return payload.model_copy(
+        update={
+            "reviewer_simulation": simulation,
+            "reviewer_simulation_path": str(path),
+        }
+    )
+
+
 def _hydrate_run(payload: AutoResearchRunRead) -> AutoResearchRunRead:
     base = run_dir(payload.project_id, payload.id)
     hydrated = _refresh_paper_section_rewrite_index(payload)
     hydrated = _refresh_paper_revision_diff(hydrated, base=base)
     hydrated = _refresh_paper_revision_action_index(hydrated, base=base)
     hydrated = _refresh_paper_compile_report(hydrated, base=base)
+    hydrated = _load_reviewer_simulation(hydrated, base=base)
     return hydrated
 
 
@@ -1937,6 +1984,11 @@ def save_run(
         _write_json(
             base / PAPER_REVISION_ACTION_INDEX_FILENAME,
             payload.paper_revision_action_index.model_dump(mode="json"),
+        )
+    if payload.reviewer_simulation is not None:
+        _write_json(
+            base / REVIEWER_SIMULATION_FILENAME,
+            payload.reviewer_simulation.model_dump(mode="json"),
         )
     if payload.paper_section_rewrite_index is not None:
         _write_json(
@@ -2168,6 +2220,10 @@ def publication_repair_execution_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PUBLICATION_REPAIR_EXECUTION_FILENAME)
 
 
+def reviewer_simulation_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / REVIEWER_SIMULATION_FILENAME)
+
+
 def paper_plan_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_PLAN_FILENAME)
 
@@ -2338,6 +2394,9 @@ def load_candidate_registry(
             artifact_integrity_audit_json=_asset_ref(run_base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
             publication_repair_plan_json=_asset_ref(run_base / PUBLICATION_REPAIR_PLAN_FILENAME),
             publication_repair_execution_json=_asset_ref(run_base / PUBLICATION_REPAIR_EXECUTION_FILENAME),
+            reviewer_simulation_json=_asset_ref(
+                current_run.reviewer_simulation_path or (run_base / REVIEWER_SIMULATION_FILENAME)
+            ),
             paper_plan_json=_asset_ref(
                 current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
             ),
@@ -2503,6 +2562,9 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         artifact_integrity_audit_json=_asset_ref(base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
         publication_repair_plan_json=_asset_ref(base / PUBLICATION_REPAIR_PLAN_FILENAME),
         publication_repair_execution_json=_asset_ref(base / PUBLICATION_REPAIR_EXECUTION_FILENAME),
+        reviewer_simulation_json=_asset_ref(
+            run.reviewer_simulation_path or (base / REVIEWER_SIMULATION_FILENAME)
+        ),
         paper_plan_json=_asset_ref(
             run.paper_plan_path or (base / PAPER_PLAN_FILENAME)
         ),

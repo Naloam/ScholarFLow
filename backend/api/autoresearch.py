@@ -14,6 +14,7 @@ from schemas.autoresearch import (
     AutoResearchBudgetStatus,
     AutoResearchBundleIndexRead,
     AutoResearchCandidateRegistryRead,
+    AutoResearchCrossRunMetaAnalysisRead,
     AutoResearchExecutionCommandResponse,
     AutoResearchExperimentBridgeRead,
     AutoResearchNoveltyStatus,
@@ -35,10 +36,12 @@ from schemas.autoresearch import (
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopApplyRead,
     AutoResearchReviewLoopApplyRequest,
+    AutoResearchResearchReplanApplyRead,
     AutoResearchRunRegistryRead,
     AutoResearchRunRegistryViewsRead,
     AutoResearchRunRequest,
     AutoResearchRunExecutionRead,
+    AutoResearchSystemEvaluationRead,
     AutoResearchUnsupportedClaimRisk,
 )
 from schemas.common import IdResponse
@@ -49,6 +52,7 @@ from services.autoresearch.bridge import (
 )
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
 from services.autoresearch.review_publish import (
     build_publish_package,
@@ -58,6 +62,7 @@ from services.autoresearch.review_publish import (
     export_publish_package,
     get_publish_archive_path,
 )
+from services.autoresearch.system_evaluation import build_system_evaluation
 from services.autoresearch.repository import (
     create_run,
     list_runs,
@@ -145,6 +150,24 @@ def get_auto_research_operator_console(
         budget_status=budget_status,
         queue_priority=queue_priority,
     )
+
+
+@router.get("/meta-analysis", response_model=AutoResearchCrossRunMetaAnalysisRead)
+def get_auto_research_meta_analysis(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchCrossRunMetaAnalysisRead:
+    del db
+    return build_cross_run_meta_analysis(project_id)
+
+
+@router.get("/system-evaluation", response_model=AutoResearchSystemEvaluationRead)
+def get_auto_research_system_evaluation(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchSystemEvaluationRead:
+    del db
+    return build_system_evaluation(project_id)
 
 
 @router.get("/{run_id}", response_model=AutoResearchRunRead)
@@ -439,6 +462,45 @@ def apply_auto_research_review_loop_actions(
         run=run,
         review=review,
         review_loop=review_loop,
+    )
+
+
+@router.post("/{run_id}/research-replan/apply", response_model=AutoResearchResearchReplanApplyRead)
+def apply_auto_research_research_replan(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchReviewLoopApplyRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchReplanApplyRead:
+    try:
+        (
+            run,
+            review,
+            review_loop,
+            repair_execution,
+            applied_action_ids,
+            queued_rerun_required,
+        ) = AutoResearchOrchestrator().apply_research_replan(
+            db=db,
+            project_id=project_id,
+            run_id=run_id,
+            expected_review_fingerprint=(
+                payload.expected_review_fingerprint
+                if payload is not None
+                else None
+            ),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return AutoResearchResearchReplanApplyRead(
+        run=run,
+        review=review,
+        review_loop=review_loop,
+        repair_execution=repair_execution,
+        applied_action_ids=applied_action_ids,
+        queued_rerun_required=queued_rerun_required,
     )
 
 

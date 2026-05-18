@@ -70,6 +70,7 @@ AutoResearchBundleAssetRole = Literal[
     "run_artifact_integrity_audit_json",
     "run_publication_repair_plan_json",
     "run_publication_repair_execution_json",
+    "run_reviewer_simulation_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_history_markdown",
@@ -129,6 +130,7 @@ AutoResearchLineageNodeKind = Literal[
     "artifact_integrity_audit",
     "publication_repair_plan",
     "publication_repair_execution",
+    "reviewer_simulation",
     "paper_plan",
     "figure_plan",
     "paper_revision_history",
@@ -256,6 +258,35 @@ AutoResearchPaperRevisionDiffStatus = Literal["initial", "updated", "unchanged"]
 AutoResearchPaperRevisionActionMaterializationStatus = Literal["pending", "completed"]
 AutoResearchPaperSourceKind = Literal["latex", "bibtex", "json", "markdown", "shell"]
 AutoResearchPaperRevisionActionStatus = Literal["open", "done"]
+AutoResearchReviewerRole = Literal[
+    "novelty_reviewer",
+    "methodology_reviewer",
+    "reproducibility_reviewer",
+    "writing_reviewer",
+    "skeptical_reviewer",
+]
+AutoResearchReviewerDecision = Literal["accept", "weak_accept", "borderline", "weak_reject", "reject"]
+AutoResearchReviewerResponseActionKind = Literal["experiment", "evidence", "paper", "research_replan"]
+AutoResearchMetaAnalysisComparisonAxis = Literal["topic_hypothesis", "method_dataset", "dataset_method"]
+AutoResearchConclusionStability = Literal["stable", "conditional", "unreproducible"]
+AutoResearchEvaluationTaskKind = Literal[
+    "toy_task",
+    "medium_benchmark_task",
+    "literature_heavy_task",
+    "ablation_heavy_task",
+    "failed_hypothesis_task",
+]
+AutoResearchResearchActionRecommendation = Literal[
+    "refresh_review",
+    "repair_experiment_design",
+    "rerun_experiments",
+    "research_replan",
+    "rebuild_paper",
+    "export_publish",
+    "meta_analyze",
+    "system_evaluate",
+    "wait_for_execution",
+]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
 PortfolioDecisionOutcome = Literal[
@@ -1274,6 +1305,8 @@ class AutoResearchRunRead(BaseModel):
     paper_bibliography_path: str | None = None
     paper_sources_manifest: AutoResearchPaperSourcesManifestRead | None = None
     paper_sources_manifest_path: str | None = None
+    reviewer_simulation: "AutoResearchReviewerSimulationRead | None" = None
+    reviewer_simulation_path: str | None = None
     candidates: list[HypothesisCandidate] = Field(default_factory=list)
     portfolio: PortfolioSummary | None = None
     attempts: list[ExperimentAttempt] = Field(default_factory=list)
@@ -1339,6 +1372,7 @@ class AutoResearchRunRegistryFiles(BaseModel):
     artifact_integrity_audit_json: AutoResearchRegistryAssetRef | None = None
     publication_repair_plan_json: AutoResearchRegistryAssetRef | None = None
     publication_repair_execution_json: AutoResearchRegistryAssetRef | None = None
+    reviewer_simulation_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None
@@ -1877,6 +1911,142 @@ class AutoResearchPublicationEvidenceIndexRead(BaseModel):
     evidence_index_fingerprint: str
 
 
+class AutoResearchReviewerSimulationReviewRead(BaseModel):
+    review_id: str
+    role: AutoResearchReviewerRole
+    summary: str
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    questions: list[str] = Field(default_factory=list)
+    score: int = 0
+    confidence: int = 0
+    decision: AutoResearchReviewerDecision = "borderline"
+    reject_reason: str | None = None
+
+
+class AutoResearchReviewerResponseActionRead(BaseModel):
+    action_id: str
+    reviewer_role: AutoResearchReviewerRole
+    action_kind: AutoResearchReviewerResponseActionKind
+    priority: AutoResearchRevisionPriority = "medium"
+    title: str
+    detail: str
+    maps_to: str
+    source_review_ids: list[str] = Field(default_factory=list)
+
+
+class AutoResearchReviewerSimulationRead(BaseModel):
+    generated_at: datetime
+    simulation_id: str = "reviewer_simulation_v1"
+    project_id: str
+    run_id: str
+    selected_candidate_id: str | None = None
+    reviews: list[AutoResearchReviewerSimulationReviewRead] = Field(default_factory=list)
+    average_score: float = 0.0
+    minimum_score: int = 0
+    minimum_decision: AutoResearchReviewerDecision = "borderline"
+    weak_reject_or_worse_count: int = 0
+    confidence_mean: float = 0.0
+    publication_blocker_count: int = 0
+    response_plan: list[AutoResearchReviewerResponseActionRead] = Field(default_factory=list)
+    response_plan_action_count: int = 0
+    complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    simulation_fingerprint: str
+
+
+class AutoResearchMetaAnalysisRunSummaryRead(BaseModel):
+    run_id: str
+    topic: str
+    hypothesis: str | None = None
+    method: str | None = None
+    dataset: str | None = None
+    primary_metric: str | None = None
+    objective_score: float | None = None
+    seed_count: int = 0
+    significant_result_count: int = 0
+    contribution_score: int = 0
+    novelty_risk: AutoResearchNoveltyRiskLevel = "medium"
+    publication_tier: AutoResearchPublicationTier | None = None
+    final_publish_ready: bool = False
+
+
+class AutoResearchMetaAnalysisComparisonRead(BaseModel):
+    comparison_id: str
+    axis: AutoResearchMetaAnalysisComparisonAxis
+    label: str
+    run_ids: list[str] = Field(default_factory=list)
+    best_run_id: str | None = None
+    metric: str | None = None
+    score_range: list[float] = Field(default_factory=list)
+    stability: AutoResearchConclusionStability = "conditional"
+    rationale: str
+
+
+class AutoResearchStableConclusionRead(BaseModel):
+    conclusion_id: str
+    text: str
+    stability: AutoResearchConclusionStability = "conditional"
+    supporting_run_ids: list[str] = Field(default_factory=list)
+    scope: str
+    caveats: list[str] = Field(default_factory=list)
+
+
+class AutoResearchCrossRunMetaAnalysisRead(BaseModel):
+    generated_at: datetime
+    analysis_id: str = "cross_run_meta_analysis_v1"
+    project_id: str
+    topic_key: str | None = None
+    run_count: int = 0
+    comparable_run_count: int = 0
+    publication_ready_run_count: int = 0
+    run_summaries: list[AutoResearchMetaAnalysisRunSummaryRead] = Field(default_factory=list)
+    comparisons: list[AutoResearchMetaAnalysisComparisonRead] = Field(default_factory=list)
+    stable_conclusions: list[AutoResearchStableConclusionRead] = Field(default_factory=list)
+    project_level_paper_recommended: bool = False
+    recommended_run_ids: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    analysis_fingerprint: str
+
+
+class AutoResearchSystemEvaluationTaskRead(BaseModel):
+    task_id: str
+    task_kind: AutoResearchEvaluationTaskKind
+    title: str
+    description: str
+    target_capabilities: list[str] = Field(default_factory=list)
+    required_artifacts: list[str] = Field(default_factory=list)
+    mapped_run_ids: list[str] = Field(default_factory=list)
+    score: int = 0
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchSystemEvaluationMetricRead(BaseModel):
+    metric_id: str
+    label: str
+    score: int = 0
+    numerator: int = 0
+    denominator: int = 0
+    rationale: str
+
+
+class AutoResearchSystemEvaluationRead(BaseModel):
+    generated_at: datetime
+    evaluation_id: str = "system_level_evaluation_v1"
+    project_id: str
+    task_count: int = 0
+    completed_task_count: int = 0
+    overall_score: int = 0
+    tasks: list[AutoResearchSystemEvaluationTaskRead] = Field(default_factory=list)
+    metrics: list[AutoResearchSystemEvaluationMetricRead] = Field(default_factory=list)
+    scholarflow_paper_materials: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    evaluation_fingerprint: str
+
+
 AutoResearchArtifactIntegritySeverity = Literal["error", "warning"]
 AutoResearchArtifactIntegrityCategory = Literal["registry", "bundle", "lineage", "identity"]
 
@@ -1935,6 +2105,7 @@ AutoResearchRepairActionSource = Literal[
     "revision_dossier",
     "evidence_index",
     "artifact_integrity_audit",
+    "reviewer_simulation",
     "readiness",
     "contribution_assessment",
     "novelty_validation",
@@ -2235,6 +2406,8 @@ class AutoResearchRunReviewRead(BaseModel):
     revision_dossier_path: str | None = None
     publication_evidence_index: AutoResearchPublicationEvidenceIndexRead | None = None
     publication_evidence_index_path: str | None = None
+    reviewer_simulation: AutoResearchReviewerSimulationRead | None = None
+    reviewer_simulation_path: str | None = None
     artifact_integrity_audit: AutoResearchArtifactIntegrityAuditRead | None = None
     artifact_integrity_audit_path: str | None = None
     publication_repair_plan: AutoResearchPublicationRepairPlanRead | None = None
@@ -2394,6 +2567,8 @@ class AutoResearchPublicationManifestRead(BaseModel):
     publication_evidence_index_sha256: str | None = None
     artifact_integrity_audit_path: str | None = None
     artifact_integrity_audit_sha256: str | None = None
+    reviewer_simulation_path: str | None = None
+    reviewer_simulation_sha256: str | None = None
     publication_repair_plan_path: str | None = None
     publication_repair_plan_sha256: str | None = None
     publication_repair_execution_path: str | None = None
@@ -2497,6 +2672,7 @@ class AutoResearchPublishPackageRead(BaseModel):
     revision_dossier_path: str | None = None
     publication_evidence_index_path: str | None = None
     artifact_integrity_audit_path: str | None = None
+    reviewer_simulation_path: str | None = None
     publication_repair_plan_path: str | None = None
     publication_repair_execution_path: str | None = None
     completeness_status: AutoResearchPublishCompletenessStatus = "incomplete"
@@ -2635,6 +2811,8 @@ class AutoResearchExperimentBridgeRead(BaseModel):
 
 class AutoResearchOperatorProjectActionsRead(BaseModel):
     start_run: bool = True
+    build_meta_analysis: bool = True
+    build_system_evaluation: bool = True
 
 
 class AutoResearchOperatorConsoleFiltersRead(BaseModel):
@@ -2659,6 +2837,7 @@ class AutoResearchOperatorRunActionsRead(BaseModel):
     rebuild_paper: bool = False
     export_publish: bool = False
     download_publish: bool = False
+    replan_research: bool = False
     update_controls: bool = False
 
 
@@ -2720,6 +2899,21 @@ class AutoResearchOperatorRunSummaryRead(BaseModel):
     publication_evidence_index_complete: bool = False
     publication_evidence_index_missing_count: int = 0
     publication_evidence_index_blockers: list[str] = Field(default_factory=list)
+    reviewer_simulation_complete: bool = False
+    reviewer_simulation_average_score: float = 0.0
+    reviewer_simulation_minimum_score: int = 0
+    reviewer_simulation_minimum_decision: AutoResearchReviewerDecision | None = None
+    reviewer_simulation_weak_reject_or_worse_count: int = 0
+    reviewer_simulation_publication_blocker_count: int = 0
+    reviewer_simulation_response_plan_action_count: int = 0
+    reviewer_simulation_blockers: list[str] = Field(default_factory=list)
+    weakest_reviewer_role: AutoResearchReviewerRole | None = None
+    contribution_score: int = 0
+    novelty_duplicate_risk: AutoResearchNoveltyRiskLevel | None = None
+    novelty_incremental_risk: AutoResearchNoveltyRiskLevel | None = None
+    experiment_design_completeness: AutoResearchExperimentDesignCompleteness | None = None
+    next_research_action: AutoResearchResearchActionRecommendation | None = None
+    next_research_action_detail: str | None = None
     artifact_integrity_audit_complete: bool = False
     artifact_integrity_audit_blocker_count: int = 0
     artifact_integrity_audit_warning_count: int = 0
@@ -2773,6 +2967,8 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     actions: AutoResearchOperatorProjectActionsRead
     queue: "AutoResearchQueueTelemetryRead | None" = None
     workers: list["AutoResearchWorkerState"] = Field(default_factory=list)
+    meta_analysis: AutoResearchCrossRunMetaAnalysisRead | None = None
+    system_evaluation: AutoResearchSystemEvaluationRead | None = None
     runs: list[AutoResearchOperatorRunSummaryRead] = Field(default_factory=list)
     current_run: AutoResearchOperatorRunDetailRead | None = None
 
@@ -2911,3 +3107,12 @@ class AutoResearchReviewLoopApplyRead(BaseModel):
     run: AutoResearchRunRead
     review: AutoResearchRunReviewRead
     review_loop: AutoResearchReviewLoopRead
+
+
+class AutoResearchResearchReplanApplyRead(BaseModel):
+    run: AutoResearchRunRead
+    review: AutoResearchRunReviewRead
+    review_loop: AutoResearchReviewLoopRead
+    repair_execution: AutoResearchPublicationRepairExecutionRead | None = None
+    applied_action_ids: list[str] = Field(default_factory=list)
+    queued_rerun_required: bool = False

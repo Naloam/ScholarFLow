@@ -3,6 +3,7 @@ import type {
   AutoResearchBridgeUpdate,
   AutoResearchBundleIndex,
   AutoResearchCandidateRegistry,
+  AutoResearchCrossRunMetaAnalysis,
   AutoResearchDeployment,
   AutoResearchDeploymentFilters,
   AutoResearchDeploymentList,
@@ -16,6 +17,7 @@ import type {
   AutoResearchPublishExportRequest,
   AutoResearchPublishPackage,
   AutoResearchPublicationManifest,
+  AutoResearchResearchReplanApply,
   AutoResearchReviewLoopApply,
   AutoResearchReviewLoopApplyRequest,
   AutoResearchReviewLoop,
@@ -26,6 +28,7 @@ import type {
   AutoResearchRunRegistry,
   AutoResearchRunRegistryViews,
   AutoResearchRunRequest,
+  AutoResearchSystemEvaluation,
   AuthConfig,
   AuthSessionPayload,
   AuthSessionResponse,
@@ -445,6 +448,18 @@ export const api = {
     return request(`/api/projects/${projectId}/auto-research/console${query}`);
   },
 
+  getAutoResearchMetaAnalysis(
+    projectId: string,
+  ): Promise<AutoResearchCrossRunMetaAnalysis> {
+    return request(`/api/projects/${projectId}/auto-research/meta-analysis`);
+  },
+
+  getAutoResearchSystemEvaluation(
+    projectId: string,
+  ): Promise<AutoResearchSystemEvaluation> {
+    return request(`/api/projects/${projectId}/auto-research/system-evaluation`);
+  },
+
   getAutoResearchRegistry(
     projectId: string,
     runId: string,
@@ -520,6 +535,20 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  applyAutoResearchResearchReplan(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchReviewLoopApplyRequest,
+  ): Promise<AutoResearchResearchReplanApply> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/research-replan/apply`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
       },
     );
   },

@@ -1759,6 +1759,47 @@ export type AutoResearchLiteratureGraphRelation =
   | "identifies_gap";
 
 export type AutoResearchNoveltyRiskLevel = "low" | "medium" | "high";
+export type AutoResearchReviewerRole =
+  | "novelty_reviewer"
+  | "methodology_reviewer"
+  | "reproducibility_reviewer"
+  | "writing_reviewer"
+  | "skeptical_reviewer";
+export type AutoResearchReviewerDecision =
+  | "accept"
+  | "weak_accept"
+  | "borderline"
+  | "weak_reject"
+  | "reject";
+export type AutoResearchReviewerResponseActionKind =
+  | "experiment"
+  | "evidence"
+  | "paper"
+  | "research_replan";
+export type AutoResearchResearchActionRecommendation =
+  | "refresh_review"
+  | "repair_experiment_design"
+  | "rerun_experiments"
+  | "research_replan"
+  | "rebuild_paper"
+  | "export_publish"
+  | "meta_analyze"
+  | "system_evaluate"
+  | "wait_for_execution";
+export type AutoResearchConclusionStability =
+  | "stable"
+  | "conditional"
+  | "unreproducible";
+export type AutoResearchMetaAnalysisComparisonAxis =
+  | "topic_hypothesis"
+  | "method_dataset"
+  | "dataset_method";
+export type AutoResearchEvaluationTaskKind =
+  | "toy_task"
+  | "medium_benchmark_task"
+  | "literature_heavy_task"
+  | "ablation_heavy_task"
+  | "failed_hypothesis_task";
 export type AutoResearchGapValidityStatus = "valid" | "weak" | "invalid" | "missing";
 
 export type AutoResearchLiteratureGraphNode = {
@@ -1914,6 +1955,8 @@ export type AutoResearchRunReview = {
   revision_dossier_path?: string | null;
   publication_evidence_index?: AutoResearchPublicationEvidenceIndex | null;
   publication_evidence_index_path?: string | null;
+  reviewer_simulation?: AutoResearchReviewerSimulation | null;
+  reviewer_simulation_path?: string | null;
   artifact_integrity_audit?: AutoResearchArtifactIntegrityAudit | null;
   artifact_integrity_audit_path?: string | null;
   publication_repair_plan?: AutoResearchPublicationRepairPlan | null;
@@ -1923,6 +1966,51 @@ export type AutoResearchRunReview = {
   scores: AutoResearchReviewScores;
   findings: AutoResearchReviewFinding[];
   revision_plan: AutoResearchRevisionAction[];
+};
+
+export type AutoResearchReviewerSimulationReview = {
+  review_id: string;
+  role: AutoResearchReviewerRole;
+  summary: string;
+  strengths: string[];
+  weaknesses: string[];
+  questions: string[];
+  score: number;
+  confidence: number;
+  decision: AutoResearchReviewerDecision;
+  reject_reason?: string | null;
+};
+
+export type AutoResearchReviewerResponseAction = {
+  action_id: string;
+  reviewer_role: AutoResearchReviewerRole;
+  action_kind: AutoResearchReviewerResponseActionKind;
+  priority: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  maps_to: string;
+  source_review_ids: string[];
+};
+
+export type AutoResearchReviewerSimulation = {
+  generated_at: string;
+  simulation_id: string;
+  project_id: string;
+  run_id: string;
+  selected_candidate_id?: string | null;
+  reviews: AutoResearchReviewerSimulationReview[];
+  average_score: number;
+  minimum_score: number;
+  minimum_decision: AutoResearchReviewerDecision;
+  weak_reject_or_worse_count: number;
+  confidence_mean: number;
+  publication_blocker_count: number;
+  response_plan: AutoResearchReviewerResponseAction[];
+  response_plan_action_count: number;
+  complete: boolean;
+  blockers: string[];
+  warnings: string[];
+  simulation_fingerprint: string;
 };
 
 export type AutoResearchReviewLoopRound = {
@@ -2041,6 +2129,15 @@ export type AutoResearchReviewLoopApply = {
   run: AutoResearchRun;
   review: AutoResearchRunReview;
   review_loop: AutoResearchReviewLoop;
+};
+
+export type AutoResearchResearchReplanApply = {
+  run: AutoResearchRun;
+  review: AutoResearchRunReview;
+  review_loop: AutoResearchReviewLoop;
+  repair_execution?: AutoResearchPublicationRepairExecution | null;
+  applied_action_ids: string[];
+  queued_rerun_required: boolean;
 };
 
 export type AutoResearchBridgeImportedArtifact = {
@@ -2206,6 +2303,8 @@ export type AutoResearchPublicationManifest = {
   publication_evidence_index_sha256?: string | null;
   artifact_integrity_audit_path?: string | null;
   artifact_integrity_audit_sha256?: string | null;
+  reviewer_simulation_path?: string | null;
+  reviewer_simulation_sha256?: string | null;
   publication_repair_plan_path?: string | null;
   publication_repair_plan_sha256?: string | null;
   publication_repair_execution_path?: string | null;
@@ -2308,6 +2407,7 @@ export type AutoResearchPublishPackage = {
   revision_dossier_path?: string | null;
   publication_evidence_index_path?: string | null;
   artifact_integrity_audit_path?: string | null;
+  reviewer_simulation_path?: string | null;
   publication_repair_plan_path?: string | null;
   publication_repair_execution_path?: string | null;
   publication_readiness_path?: string | null;
@@ -2375,6 +2475,8 @@ export type AutoResearchPublishExport = {
 
 export type AutoResearchOperatorProjectActions = {
   start_run: boolean;
+  build_meta_analysis: boolean;
+  build_system_evaluation: boolean;
 };
 
 export type AutoResearchOperatorConsoleFilters = {
@@ -2404,6 +2506,7 @@ export type AutoResearchOperatorRunActions = {
   rebuild_paper: boolean;
   export_publish: boolean;
   download_publish: boolean;
+  replan_research: boolean;
   update_controls: boolean;
 };
 
@@ -2485,6 +2588,21 @@ export type AutoResearchOperatorRunSummary = {
   publication_evidence_index_complete: boolean;
   publication_evidence_index_missing_count: number;
   publication_evidence_index_blockers: string[];
+  reviewer_simulation_complete: boolean;
+  reviewer_simulation_average_score: number;
+  reviewer_simulation_minimum_score: number;
+  reviewer_simulation_minimum_decision?: AutoResearchReviewerDecision | null;
+  reviewer_simulation_weak_reject_or_worse_count: number;
+  reviewer_simulation_publication_blocker_count: number;
+  reviewer_simulation_response_plan_action_count: number;
+  reviewer_simulation_blockers: string[];
+  weakest_reviewer_role?: AutoResearchReviewerRole | null;
+  contribution_score: number;
+  novelty_duplicate_risk?: AutoResearchNoveltyRiskLevel | null;
+  novelty_incremental_risk?: AutoResearchNoveltyRiskLevel | null;
+  experiment_design_completeness?: AutoResearchExperimentDesignCompleteness | null;
+  next_research_action?: AutoResearchResearchActionRecommendation | null;
+  next_research_action_detail?: string | null;
   artifact_integrity_audit_complete: boolean;
   artifact_integrity_audit_blocker_count: number;
   artifact_integrity_audit_warning_count: number;
@@ -2548,8 +2666,101 @@ export type AutoResearchOperatorConsole = {
   actions: AutoResearchOperatorProjectActions;
   queue?: AutoResearchQueueTelemetry | null;
   workers: AutoResearchWorkerState[];
+  meta_analysis?: AutoResearchCrossRunMetaAnalysis | null;
+  system_evaluation?: AutoResearchSystemEvaluation | null;
   runs: AutoResearchOperatorRunSummary[];
   current_run?: AutoResearchOperatorRunDetail | null;
+};
+
+export type AutoResearchMetaAnalysisRunSummary = {
+  run_id: string;
+  topic: string;
+  hypothesis?: string | null;
+  method?: string | null;
+  dataset?: string | null;
+  primary_metric?: string | null;
+  objective_score?: number | null;
+  seed_count: number;
+  significant_result_count: number;
+  contribution_score: number;
+  novelty_risk: AutoResearchNoveltyRiskLevel;
+  publication_tier?: AutoResearchPublicationTier | null;
+  final_publish_ready: boolean;
+};
+
+export type AutoResearchMetaAnalysisComparison = {
+  comparison_id: string;
+  axis: AutoResearchMetaAnalysisComparisonAxis;
+  label: string;
+  run_ids: string[];
+  best_run_id?: string | null;
+  metric?: string | null;
+  score_range: number[];
+  stability: AutoResearchConclusionStability;
+  rationale: string;
+};
+
+export type AutoResearchStableConclusion = {
+  conclusion_id: string;
+  text: string;
+  stability: AutoResearchConclusionStability;
+  supporting_run_ids: string[];
+  scope: string;
+  caveats: string[];
+};
+
+export type AutoResearchCrossRunMetaAnalysis = {
+  generated_at: string;
+  analysis_id: string;
+  project_id: string;
+  topic_key?: string | null;
+  run_count: number;
+  comparable_run_count: number;
+  publication_ready_run_count: number;
+  run_summaries: AutoResearchMetaAnalysisRunSummary[];
+  comparisons: AutoResearchMetaAnalysisComparison[];
+  stable_conclusions: AutoResearchStableConclusion[];
+  project_level_paper_recommended: boolean;
+  recommended_run_ids: string[];
+  blockers: string[];
+  warnings: string[];
+  analysis_fingerprint: string;
+};
+
+export type AutoResearchSystemEvaluationTask = {
+  task_id: string;
+  task_kind: AutoResearchEvaluationTaskKind;
+  title: string;
+  description: string;
+  target_capabilities: string[];
+  required_artifacts: string[];
+  mapped_run_ids: string[];
+  score: number;
+  blockers: string[];
+};
+
+export type AutoResearchSystemEvaluationMetric = {
+  metric_id: string;
+  label: string;
+  score: number;
+  numerator: number;
+  denominator: number;
+  rationale: string;
+};
+
+export type AutoResearchSystemEvaluation = {
+  generated_at: string;
+  evaluation_id: string;
+  project_id: string;
+  task_count: number;
+  completed_task_count: number;
+  overall_score: number;
+  tasks: AutoResearchSystemEvaluationTask[];
+  metrics: AutoResearchSystemEvaluationMetric[];
+  scholarflow_paper_materials: string[];
+  blockers: string[];
+  warnings: string[];
+  evaluation_fingerprint: string;
 };
 
 export type GenerateDraftPayload = {

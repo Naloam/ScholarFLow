@@ -361,6 +361,32 @@ def build_publication_repair_plan(
                 )
             )
 
+    if review.reviewer_simulation is not None:
+        reviewer_kind_map = {
+            "experiment": "rerun_experiments",
+            "evidence": "repair_claim_evidence",
+            "paper": "rebuild_paper_sources",
+            "research_replan": "research_replan",
+        }
+        for response_action in review.reviewer_simulation.response_plan:
+            kind = reviewer_kind_map.get(response_action.action_kind, "manual_review")
+            add(
+                _action(
+                    action_id=f"reviewer_{response_action.action_id}_{_slug(kind)}",
+                    kind=kind,
+                    source="reviewer_simulation",
+                    source_ids=list(response_action.source_review_ids),
+                    title=response_action.title,
+                    detail=response_action.detail,
+                    supporting_asset_ids=[
+                        "run_reviewer_simulation_json",
+                        "run_publication_evidence_index_json",
+                    ],
+                    priority=response_action.priority,
+                    required_for_final_publish=response_action.priority == "high",
+                )
+            )
+
     if review.publication_readiness is not None:
         for blocker in review.publication_readiness.blockers:
             kind = _kind(blocker)

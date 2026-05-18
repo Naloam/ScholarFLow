@@ -35,6 +35,7 @@ from services.autoresearch.repository import (
     PORTFOLIO_FILENAME,
     PROGRAM_FILENAME,
     RESEARCH_REPLAN_FILENAME,
+    REVIEWER_SIMULATION_FILENAME,
     RUN_FILENAME,
     SPEC_FILENAME,
     run_dir,
@@ -315,6 +316,15 @@ def build_publication_evidence_index(
             path=review.artifact_integrity_audit_path or (base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
             required_for_final_publish=True,
             supports=["registry integrity", "lineage completeness", "bundle consistency"],
+        ),
+        _item(
+            evidence_id="reviewer_simulation",
+            label="Reviewer simulation",
+            category="review",
+            role="run_reviewer_simulation_json",
+            path=review.reviewer_simulation_path or (base / REVIEWER_SIMULATION_FILENAME),
+            required_for_final_publish=True,
+            supports=["reviewer score", "reject reasons", "response plan"],
         ),
         _item(
             evidence_id="paper_markdown",

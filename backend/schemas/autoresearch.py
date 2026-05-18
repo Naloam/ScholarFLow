@@ -71,6 +71,9 @@ AutoResearchBundleAssetRole = Literal[
     "run_publication_repair_plan_json",
     "run_publication_repair_execution_json",
     "run_reviewer_simulation_json",
+    "run_experiment_factory_plan_json",
+    "run_evidence_ledger_json",
+    "run_experiment_factory_repair_plan_json",
     "run_paper_plan_json",
     "run_figure_plan_json",
     "run_paper_revision_history_markdown",
@@ -131,6 +134,9 @@ AutoResearchLineageNodeKind = Literal[
     "publication_repair_plan",
     "publication_repair_execution",
     "reviewer_simulation",
+    "experiment_factory_plan",
+    "evidence_ledger",
+    "experiment_factory_repair_plan",
     "paper_plan",
     "figure_plan",
     "paper_revision_history",
@@ -286,6 +292,15 @@ AutoResearchResearchActionRecommendation = Literal[
     "meta_analyze",
     "system_evaluate",
     "wait_for_execution",
+]
+AutoResearchExperimentFactoryJobKind = Literal["baseline", "candidate_method", "ablation", "seed", "sweep"]
+AutoResearchExperimentFactoryJobStatus = Literal["planned", "done", "failed"]
+AutoResearchExperimentFactoryRepairAction = Literal[
+    "none",
+    "add_missing_baseline",
+    "add_missing_ablation",
+    "increase_seed_count",
+    "rerun_failed_job",
 ]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
@@ -747,6 +762,107 @@ class AutoResearchIdeaRunCreateRequest(BaseModel):
         if value is not None and value < 1:
             raise ValueError("candidate_execution_limit must be at least 1")
         return value
+
+
+class AutoResearchExperimentFactoryRetryPolicyRead(BaseModel):
+    max_retries: int = 1
+    retry_on: list[str] = Field(default_factory=lambda: ["runtime_contract_failure", "missing_output"])
+
+
+class AutoResearchExperimentFactoryResourceEstimateRead(BaseModel):
+    backend: ExecutionBackendKind = "auto"
+    cpu_seconds: int = 30
+    memory_mb: int = 512
+    gpu_required: bool = False
+
+
+class AutoResearchExperimentFactoryJobRead(BaseModel):
+    job_id: str
+    job_kind: AutoResearchExperimentFactoryJobKind
+    command: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    inputs: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    retry_policy: AutoResearchExperimentFactoryRetryPolicyRead = Field(default_factory=AutoResearchExperimentFactoryRetryPolicyRead)
+    resource_estimate: AutoResearchExperimentFactoryResourceEstimateRead = Field(default_factory=AutoResearchExperimentFactoryResourceEstimateRead)
+    failure_handling: str
+    status: AutoResearchExperimentFactoryJobStatus = "planned"
+
+
+class AutoResearchExperimentFactoryPlanRead(BaseModel):
+    plan_id: str = "experiment_factory_v1"
+    project_id: str
+    brief_id: str | None = None
+    hypothesis_id: str | None = None
+    run_id: str | None = None
+    generated_at: datetime
+    execution_backend: ExecutionBackendSpec = Field(default_factory=ExecutionBackendSpec)
+    selected_direction_id: str | None = None
+    selected_hypothesis: str | None = None
+    jobs: list[AutoResearchExperimentFactoryJobRead] = Field(default_factory=list)
+    job_count: int = 0
+    baseline_job_count: int = 0
+    candidate_job_count: int = 0
+    ablation_job_count: int = 0
+    seed_job_count: int = 0
+    sweep_job_count: int = 0
+    expected_artifacts: list[str] = Field(default_factory=list)
+    bridge_ready: bool = False
+    toy_backend_supported: bool = True
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    factory_fingerprint: str
+
+
+class AutoResearchEvidenceLedgerEntryRead(BaseModel):
+    evidence_id: str
+    source_job_id: str | None = None
+    evidence_kind: Literal["metric", "baseline", "ablation", "seed", "sweep", "artifact"] = "artifact"
+    claim: str
+    artifact_ref: str
+    metric: str | None = None
+    value: float | None = None
+    support_status: Literal["supported", "partial", "missing"] = "supported"
+
+
+class AutoResearchEvidenceLedgerRead(BaseModel):
+    ledger_id: str = "experiment_evidence_ledger_v1"
+    project_id: str
+    run_id: str | None = None
+    brief_id: str | None = None
+    hypothesis_id: str | None = None
+    generated_at: datetime
+    entries: list[AutoResearchEvidenceLedgerEntryRead] = Field(default_factory=list)
+    entry_count: int = 0
+    complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    ledger_fingerprint: str
+
+
+class AutoResearchExperimentFactoryRepairPlanRead(BaseModel):
+    repair_id: str = "experiment_factory_repair_v1"
+    project_id: str
+    run_id: str | None = None
+    brief_id: str | None = None
+    generated_at: datetime
+    actions: list[AutoResearchExperimentFactoryRepairAction] = Field(default_factory=list)
+    action_reasons: list[str] = Field(default_factory=list)
+    rerun_plan: AutoResearchExperimentFactoryPlanRead | None = None
+    complete: bool = False
+    repair_fingerprint: str
+
+
+class AutoResearchExperimentFactoryExecutionRead(BaseModel):
+    project_id: str
+    run_id: str | None = None
+    brief_id: str | None = None
+    hypothesis_id: str | None = None
+    generated_at: datetime
+    execution_plan: AutoResearchExperimentFactoryPlanRead
+    result_artifact: ResultArtifact
+    evidence_ledger: AutoResearchEvidenceLedgerRead
+    repair_plan: AutoResearchExperimentFactoryRepairPlanRead | None = None
 
 
 class AutoResearchRunControlPatch(BaseModel):
@@ -1576,6 +1692,12 @@ class AutoResearchRunRead(BaseModel):
     paper_revision_action_index_path: str | None = None
     paper_section_rewrite_index: AutoResearchPaperSectionRewriteIndexRead | None = None
     paper_section_rewrite_index_path: str | None = None
+    experiment_factory_plan: AutoResearchExperimentFactoryPlanRead | None = None
+    experiment_factory_plan_path: str | None = None
+    evidence_ledger: AutoResearchEvidenceLedgerRead | None = None
+    evidence_ledger_path: str | None = None
+    experiment_factory_repair_plan: AutoResearchExperimentFactoryRepairPlanRead | None = None
+    experiment_factory_repair_plan_path: str | None = None
     paper_sources_dir: str | None = None
     paper_section_rewrite_packets_dir: str | None = None
     paper_latex_source: str | None = None
@@ -1652,6 +1774,9 @@ class AutoResearchRunRegistryFiles(BaseModel):
     publication_repair_plan_json: AutoResearchRegistryAssetRef | None = None
     publication_repair_execution_json: AutoResearchRegistryAssetRef | None = None
     reviewer_simulation_json: AutoResearchRegistryAssetRef | None = None
+    experiment_factory_plan_json: AutoResearchRegistryAssetRef | None = None
+    evidence_ledger_json: AutoResearchRegistryAssetRef | None = None
+    experiment_factory_repair_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
     figure_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_revision_history_markdown: AutoResearchRegistryAssetRef | None = None

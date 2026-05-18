@@ -11,6 +11,8 @@ import type {
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
   AutoResearchExperimentBridge,
+  AutoResearchExperimentFactoryExecution,
+  AutoResearchExperimentFactoryPlan,
   AutoResearchHypothesisBank,
   AutoResearchIdeaRequest,
   AutoResearchIdeaRunCreateRequest,
@@ -399,6 +401,22 @@ export const api = {
     );
   },
 
+  buildAutoResearchIdeaExperimentFactory(
+    projectId: string,
+    briefId: string,
+    hypothesisId?: string | null,
+  ): Promise<AutoResearchExperimentFactoryPlan> {
+    const params = new URLSearchParams();
+    if (hypothesisId) {
+      params.set("hypothesis_id", hypothesisId);
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}/experiment-factory${query}`,
+      { method: "POST" },
+    );
+  },
+
   createAutoResearchRunFromIdeaBrief(
     projectId: string,
     briefId: string,
@@ -410,6 +428,26 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload ?? {}),
       },
+    );
+  },
+
+  buildAutoResearchRunExperimentFactory(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExperimentFactoryPlan> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory`,
+      { method: "POST" },
+    );
+  },
+
+  executeAutoResearchRunExperimentFactoryToy(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExperimentFactoryExecution> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/toy-execute`,
+      { method: "POST" },
     );
   },
 

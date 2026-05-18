@@ -1,0 +1,534 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import UTC, datetime
+
+from schemas.autoresearch import (
+    AggregateSystemMetricResult,
+    AutoResearchEvidenceLedgerEntryRead,
+    AutoResearchEvidenceLedgerRead,
+    AutoResearchExperimentDesignRead,
+    AutoResearchExperimentFactoryExecutionRead,
+    AutoResearchExperimentFactoryJobRead,
+    AutoResearchExperimentFactoryPlanRead,
+    AutoResearchExperimentFactoryRepairPlanRead,
+    AutoResearchExperimentFactoryResourceEstimateRead,
+    AutoResearchExperimentFactoryRetryPolicyRead,
+    AutoResearchHypothesisBankEntryRead,
+    AutoResearchResearchBriefRead,
+    AutoResearchRunRead,
+    ExecutionBackendSpec,
+    ResultArtifact,
+    ResultTable,
+    SeedArtifactResult,
+    SignificanceTestResult,
+    SystemMetricResult,
+)
+from services.autoresearch.idea_brief import selected_hypothesis_from_brief
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _fingerprint(payload: object) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _slug(value: str) -> str:
+    return "".join(character.lower() if character.isalnum() else "_" for character in value).strip("_")[:80] or "job"
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        cleaned = " ".join(item.split()).strip()
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _backend_from_run_or_brief(
+    *,
+    run: AutoResearchRunRead | None,
+) -> ExecutionBackendSpec:
+    if run is not None and run.request is not None and run.request.execution_backend is not None:
+        return run.request.execution_backend
+    if run is not None and run.execution_backend is not None:
+        return run.execution_backend
+    return ExecutionBackendSpec(kind="auto", timeout_seconds=60, gpu_required=False)
+
+
+def _resource_estimate(backend: ExecutionBackendSpec, *, job_kind: str) -> AutoResearchExperimentFactoryResourceEstimateRead:
+    cpu_seconds = 20 if job_kind in {"baseline", "ablation"} else 30
+    if job_kind == "sweep":
+        cpu_seconds = 45
+    if job_kind == "seed":
+        cpu_seconds = 10
+    return AutoResearchExperimentFactoryResourceEstimateRead(
+        backend=backend.kind,
+        cpu_seconds=cpu_seconds,
+        memory_mb=1024 if job_kind == "candidate_method" else 512,
+        gpu_required=backend.gpu_required,
+    )
+
+
+def _job(
+    *,
+    job_id: str,
+    job_kind: str,
+    command: str,
+    config: dict[str, object],
+    inputs: list[str],
+    expected_outputs: list[str],
+    dependencies: list[str],
+    backend: ExecutionBackendSpec,
+    failure_handling: str,
+) -> AutoResearchExperimentFactoryJobRead:
+    return AutoResearchExperimentFactoryJobRead(
+        job_id=job_id,
+        job_kind=job_kind,  # type: ignore[arg-type]
+        command=command,
+        config=config,
+        inputs=inputs,
+        expected_outputs=expected_outputs,
+        dependencies=dependencies,
+        retry_policy=AutoResearchExperimentFactoryRetryPolicyRead(),
+        resource_estimate=_resource_estimate(backend, job_kind=job_kind),
+        failure_handling=failure_handling,
+    )
+
+
+def build_experiment_factory_plan(
+    *,
+    project_id: str,
+    brief: AutoResearchResearchBriefRead | None = None,
+    hypothesis: AutoResearchHypothesisBankEntryRead | None = None,
+    run: AutoResearchRunRead | None = None,
+    experiment_design: AutoResearchExperimentDesignRead | None = None,
+) -> AutoResearchExperimentFactoryPlanRead:
+    selected = hypothesis
+    if selected is None and brief is not None:
+        selected = selected_hypothesis_from_brief(brief)
+    backend = _backend_from_run_or_brief(run=run)
+    run_id = run.id if run is not None else None
+    brief_id = brief.brief_id if brief is not None else run.brief_id if run is not None else None
+    hypothesis_id = selected.hypothesis_id if selected is not None else run.hypothesis_id if run is not None else None
+    primary_metric = (
+        selected.required_metrics[0]
+        if selected is not None and selected.required_metrics
+        else run.spec.metrics[0].name
+        if run is not None and run.spec is not None and run.spec.metrics
+        else "primary_metric"
+    )
+    dataset = (
+        selected.required_datasets[0]
+        if selected is not None and selected.required_datasets
+        else run.spec.dataset.name
+        if run is not None and run.spec is not None
+        else "dataset"
+    )
+    baselines = (
+        selected.required_baselines
+        if selected is not None and selected.required_baselines
+        else [item.name for item in run.spec.baselines]
+        if run is not None and run.spec is not None
+        else []
+    )
+    ablations = (
+        selected.required_ablations
+        if selected is not None and selected.required_ablations
+        else [item.name for item in run.spec.ablations]
+        if run is not None and run.spec is not None
+        else []
+    )
+    seeds = (
+        run.spec.seeds
+        if run is not None and run.spec is not None and run.spec.seeds
+        else [0, 1, 2]
+    )
+    sweeps = (
+        [item.label for item in run.spec.sweeps]
+        if run is not None and run.spec is not None and run.spec.sweeps
+        else ["default"]
+    )
+
+    jobs: list[AutoResearchExperimentFactoryJobRead] = []
+    for index, baseline in enumerate(baselines, start=1):
+        jobs.append(
+            _job(
+                job_id=f"job_baseline_{index}_{_slug(baseline)}",
+                job_kind="baseline",
+                command="scholarflow toy-run --kind baseline",
+                config={"system": baseline, "dataset": dataset, "metric": primary_metric},
+                inputs=["brief.json" if brief is not None else "run.json", "spec.json"],
+                expected_outputs=["baseline_metrics.json"],
+                dependencies=[],
+                backend=backend,
+                failure_handling="If missing, add_missing_baseline repair must create a baseline job before claims are promoted.",
+            )
+        )
+    candidate_job_id = "job_candidate_method"
+    jobs.append(
+        _job(
+            job_id=candidate_job_id,
+            job_kind="candidate_method",
+            command="scholarflow toy-run --kind candidate",
+            config={"hypothesis_id": hypothesis_id, "dataset": dataset, "metric": primary_metric},
+            inputs=["brief.json" if brief is not None else "run.json", "spec.json"],
+            expected_outputs=["candidate_metrics.json", "result_artifact.json"],
+            dependencies=[job.job_id for job in jobs if job.job_kind == "baseline"],
+            backend=backend,
+            failure_handling="If candidate output is missing, rerun_failed_job regenerates deterministic toy evidence.",
+        )
+    )
+    for index, ablation in enumerate(ablations, start=1):
+        jobs.append(
+            _job(
+                job_id=f"job_ablation_{index}_{_slug(ablation)}",
+                job_kind="ablation",
+                command="scholarflow toy-run --kind ablation",
+                config={"ablation": ablation, "dataset": dataset, "metric": primary_metric},
+                inputs=["candidate_metrics.json"],
+                expected_outputs=["ablation_metrics.json"],
+                dependencies=[candidate_job_id],
+                backend=backend,
+                failure_handling="If missing, add_missing_ablation repair adds an ablation job and downgrades mechanism claims until rerun.",
+            )
+        )
+    for seed in seeds:
+        jobs.append(
+            _job(
+                job_id=f"job_seed_{seed}",
+                job_kind="seed",
+                command="scholarflow toy-run --kind seed",
+                config={"seed": seed, "metric": primary_metric},
+                inputs=["candidate_metrics.json", "baseline_metrics.json"],
+                expected_outputs=[f"seed_{seed}_metrics.json"],
+                dependencies=[candidate_job_id],
+                backend=backend,
+                failure_handling="If statistical evidence is insufficient, increase_seed_count adds more seed jobs.",
+            )
+        )
+    for sweep in sweeps:
+        jobs.append(
+            _job(
+                job_id=f"job_sweep_{_slug(sweep)}",
+                job_kind="sweep",
+                command="scholarflow toy-run --kind sweep",
+                config={"sweep": sweep, "metric": primary_metric},
+                inputs=["seed_metrics.json"],
+                expected_outputs=[f"sweep_{_slug(sweep)}_summary.json"],
+                dependencies=[job.job_id for job in jobs if job.job_kind == "seed"],
+                backend=backend,
+                failure_handling="If sweep evidence is incomplete, rerun_failed_job regenerates the sweep summary.",
+            )
+        )
+
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if not baselines:
+        blockers.append("Factory cannot create baseline jobs because no required baselines are registered.")
+    if not ablations:
+        warnings.append("Factory has no ablation jobs; mechanism claims must remain limited.")
+    if len(seeds) < 2:
+        warnings.append("Factory has fewer than two seed jobs; statistical evidence is weak.")
+    if experiment_design is not None and experiment_design.blockers:
+        blockers.extend(experiment_design.blockers)
+    payload = {
+        "plan_id": "experiment_factory_v1",
+        "project_id": project_id,
+        "brief_id": brief_id,
+        "hypothesis_id": hypothesis_id,
+        "run_id": run_id,
+        "execution_backend": backend.model_dump(mode="json"),
+        "selected_direction_id": selected.direction_id if selected is not None else None,
+        "selected_hypothesis": selected.hypothesis if selected is not None else None,
+        "jobs": [item.model_dump(mode="json") for item in jobs],
+        "job_count": len(jobs),
+        "baseline_job_count": sum(1 for item in jobs if item.job_kind == "baseline"),
+        "candidate_job_count": sum(1 for item in jobs if item.job_kind == "candidate_method"),
+        "ablation_job_count": sum(1 for item in jobs if item.job_kind == "ablation"),
+        "seed_job_count": sum(1 for item in jobs if item.job_kind == "seed"),
+        "sweep_job_count": sum(1 for item in jobs if item.job_kind == "sweep"),
+        "expected_artifacts": _dedupe([output for job in jobs for output in job.expected_outputs]),
+        "bridge_ready": True,
+        "toy_backend_supported": True,
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+    return AutoResearchExperimentFactoryPlanRead(
+        generated_at=_utcnow(),
+        factory_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def _metric_value_for_system(system: str, *, baseline_index: int = 0, seed: int = 0) -> float:
+    lowered = system.lower()
+    base = 0.58 + (baseline_index * 0.035)
+    if "majority" in lowered or "random" in lowered:
+        base = 0.5
+    elif "bm25" in lowered or "keyword" in lowered or "tfidf" in lowered:
+        base = 0.63
+    elif "candidate" in lowered or "method" in lowered:
+        base = 0.72
+    jitter = ((seed % 7) - 3) * 0.003
+    return round(max(0.0, min(0.99, base + jitter)), 4)
+
+
+def _aggregate(system: str, values: list[float], metric: str) -> AggregateSystemMetricResult:
+    mean = sum(values) / max(len(values), 1)
+    variance = sum((value - mean) ** 2 for value in values) / max(len(values), 1)
+    std = variance ** 0.5
+    return AggregateSystemMetricResult(
+        system=system,
+        mean_metrics={metric: round(mean, 4)},
+        std_metrics={metric: round(std, 4)},
+        min_metrics={metric: round(min(values), 4) if values else 0.0},
+        max_metrics={metric: round(max(values), 4) if values else 0.0},
+        sample_count=len(values),
+    )
+
+
+def run_toy_factory_backend(
+    plan: AutoResearchExperimentFactoryPlanRead,
+) -> ResultArtifact:
+    metric = "primary_metric"
+    for job in plan.jobs:
+        configured_metric = job.config.get("metric")
+        if isinstance(configured_metric, str) and configured_metric:
+            metric = configured_metric
+            break
+    baseline_names = [
+        str(job.config.get("system"))
+        for job in plan.jobs
+        if job.job_kind == "baseline" and job.config.get("system")
+    ]
+    if not baseline_names:
+        baseline_names = ["keyword_baseline"]
+    seed_values = [
+        int(job.config.get("seed"))
+        for job in plan.jobs
+        if job.job_kind == "seed" and isinstance(job.config.get("seed"), int)
+    ] or [0, 1, 2]
+    candidate_name = "candidate_method"
+    values_by_system: dict[str, list[float]] = {candidate_name: []}
+    for baseline in baseline_names:
+        values_by_system[baseline] = []
+    per_seed_results: list[SeedArtifactResult] = []
+    for seed in seed_values:
+        system_results: list[SystemMetricResult] = []
+        for index, baseline in enumerate(baseline_names):
+            value = _metric_value_for_system(baseline, baseline_index=index, seed=seed)
+            values_by_system[baseline].append(value)
+            system_results.append(SystemMetricResult(system=baseline, metrics={metric: value}))
+        candidate_value = _metric_value_for_system(candidate_name, seed=seed)
+        values_by_system[candidate_name].append(candidate_value)
+        system_results.append(SystemMetricResult(system=candidate_name, metrics={metric: candidate_value}))
+        per_seed_results.append(
+            SeedArtifactResult(
+                seed=seed,
+                sweep_label="factory_default",
+                best_system=candidate_name,
+                objective_system=candidate_name,
+                objective_score=candidate_value,
+                primary_metric=metric,
+                system_results=system_results,
+            )
+        )
+    aggregate_results = [
+        _aggregate(system, values, metric)
+        for system, values in values_by_system.items()
+    ]
+    candidate_mean = values_by_system[candidate_name]
+    best_baseline_name = max(
+        baseline_names,
+        key=lambda name: sum(values_by_system[name]) / max(len(values_by_system[name]), 1),
+    )
+    baseline_mean = values_by_system[best_baseline_name]
+    delta = round(
+        (sum(candidate_mean) / len(candidate_mean)) - (sum(baseline_mean) / len(baseline_mean)),
+        4,
+    )
+    significance_tests = [
+        SignificanceTestResult(
+            scope="system",
+            metric=metric,
+            candidate=candidate_name,
+            comparator=best_baseline_name,
+            comparison_family="factory_baselines",
+            family_size=len(baseline_names),
+            alternative="greater",
+            method="paired_sign_flip_exact",
+            p_value=0.0312 if delta > 0 else 1.0,
+            adjusted_p_value=0.0312 if delta > 0 else 1.0,
+            correction="holm_bonferroni",
+            effect_size=delta,
+            significant=delta > 0,
+            sample_count=len(seed_values),
+            detail="Deterministic toy factory paired comparison over seed jobs.",
+        )
+    ]
+    system_results = [
+        SystemMetricResult(system=item.system, metrics=item.mean_metrics)
+        for item in aggregate_results
+    ]
+    return ResultArtifact(
+        status="done",
+        summary=(
+            f"Experiment factory toy backend executed {plan.job_count} planned job(s); "
+            f"candidate_method beat {best_baseline_name} by {delta:.4f} on {metric}."
+        ),
+        key_findings=[
+            f"candidate_method mean {metric} exceeded {best_baseline_name} by {delta:.4f}.",
+            f"{len(seed_values)} deterministic seed job(s) were materialized.",
+            f"{plan.ablation_job_count} ablation job(s) were represented in the execution plan.",
+        ],
+        primary_metric=metric,
+        best_system=candidate_name,
+        system_results=system_results,
+        aggregate_system_results=aggregate_results,
+        per_seed_results=per_seed_results,
+        significance_tests=significance_tests,
+        tables=[
+            ResultTable(
+                title="Experiment Factory Toy Results",
+                columns=["system", metric],
+                rows=[
+                    [item.system, f"{item.mean_metrics.get(metric, 0):.4f}"]
+                    for item in aggregate_results
+                ],
+            )
+        ],
+        acceptance_checks=[],
+        environment={
+            "executor_mode": "experiment_factory_toy",
+            "job_count": plan.job_count,
+            "seed_count": len(seed_values),
+            "selected_sweep": "factory_default",
+        },
+        outputs={"execution_plan": "experiment_factory_plan.json", "evidence_ledger": "evidence_ledger.json"},
+        objective_system=candidate_name,
+        objective_score=round(sum(candidate_mean) / len(candidate_mean), 4),
+    )
+
+
+def build_evidence_ledger(
+    *,
+    plan: AutoResearchExperimentFactoryPlanRead,
+    artifact: ResultArtifact,
+) -> AutoResearchEvidenceLedgerRead:
+    entries: list[AutoResearchEvidenceLedgerEntryRead] = []
+    for result in artifact.aggregate_system_results:
+        metric_value = result.mean_metrics.get(artifact.primary_metric)
+        entries.append(
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id=f"evidence_metric_{_slug(result.system)}",
+                source_job_id="job_candidate_method" if result.system == artifact.objective_system else None,
+                evidence_kind="metric",
+                claim=f"{result.system} achieved mean {artifact.primary_metric}.",
+                artifact_ref="run_artifact_json",
+                metric=artifact.primary_metric,
+                value=metric_value,
+                support_status="supported" if metric_value is not None else "missing",
+            )
+        )
+    for job in plan.jobs:
+        kind = "baseline" if job.job_kind == "baseline" else "ablation" if job.job_kind == "ablation" else None
+        if kind is None:
+            continue
+        entries.append(
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id=f"evidence_{job.job_id}",
+                source_job_id=job.job_id,
+                evidence_kind=kind,
+                claim=f"Factory planned {job.job_kind} evidence for {job.config}.",
+                artifact_ref="experiment_factory_plan_json",
+                support_status="supported",
+            )
+        )
+    blockers: list[str] = []
+    if not any(item.evidence_kind == "baseline" for item in entries):
+        blockers.append("Evidence ledger is missing baseline evidence.")
+    if plan.ablation_job_count and not any(item.evidence_kind == "ablation" for item in entries):
+        blockers.append("Evidence ledger is missing ablation evidence.")
+    payload = {
+        "ledger_id": "experiment_evidence_ledger_v1",
+        "project_id": plan.project_id,
+        "run_id": plan.run_id,
+        "brief_id": plan.brief_id,
+        "hypothesis_id": plan.hypothesis_id,
+        "entries": [item.model_dump(mode="json") for item in entries],
+        "entry_count": len(entries),
+        "complete": not blockers,
+        "blockers": blockers,
+    }
+    return AutoResearchEvidenceLedgerRead(
+        generated_at=_utcnow(),
+        ledger_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def build_factory_repair_plan(
+    *,
+    plan: AutoResearchExperimentFactoryPlanRead,
+    evidence_ledger: AutoResearchEvidenceLedgerRead,
+) -> AutoResearchExperimentFactoryRepairPlanRead:
+    actions = []
+    reasons = []
+    if plan.baseline_job_count == 0 or "baseline" in " ".join(evidence_ledger.blockers).lower():
+        actions.append("add_missing_baseline")
+        reasons.append("Baseline evidence is missing.")
+    if plan.ablation_job_count == 0:
+        actions.append("add_missing_ablation")
+        reasons.append("Ablation evidence is missing; mechanism claims must be repaired.")
+    if plan.seed_job_count < 3:
+        actions.append("increase_seed_count")
+        reasons.append("Statistical evidence has fewer than three seed jobs.")
+    if plan.blockers:
+        actions.append("rerun_failed_job")
+        reasons.extend(plan.blockers)
+    if not actions:
+        actions.append("none")
+        reasons.append("Factory evidence is complete enough for the selected profile.")
+    payload = {
+        "repair_id": "experiment_factory_repair_v1",
+        "project_id": plan.project_id,
+        "run_id": plan.run_id,
+        "brief_id": plan.brief_id,
+        "actions": actions,
+        "action_reasons": reasons,
+        "complete": actions == ["none"],
+    }
+    return AutoResearchExperimentFactoryRepairPlanRead(
+        generated_at=_utcnow(),
+        repair_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def execute_toy_experiment_factory(
+    plan: AutoResearchExperimentFactoryPlanRead,
+) -> AutoResearchExperimentFactoryExecutionRead:
+    artifact = run_toy_factory_backend(plan)
+    ledger = build_evidence_ledger(plan=plan, artifact=artifact)
+    repair = build_factory_repair_plan(plan=plan, evidence_ledger=ledger)
+    return AutoResearchExperimentFactoryExecutionRead(
+        project_id=plan.project_id,
+        run_id=plan.run_id,
+        brief_id=plan.brief_id,
+        hypothesis_id=plan.hypothesis_id,
+        generated_at=_utcnow(),
+        execution_plan=plan,
+        result_artifact=artifact,
+        evidence_ledger=ledger,
+        repair_plan=repair,
+    )

@@ -30,6 +30,12 @@ This document focuses on the current auto-research API surface.
 - persists `literature_scout` and `gap_miner` back into the brief snapshot
 - returns search queries, similar-paper risk signals, known baseline/SOTA notes, experimentally testable gap candidates, and whether the idea needs a changed research question or experiment design
 
+### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/experiment-factory`
+
+- builds a deterministic experiment-factory plan from the selected hypothesis, or from an explicit `hypothesis_id` query param
+- returns baseline, candidate-method, ablation, seed, and sweep jobs with commands/configs, inputs, outputs, dependencies, retry policy, resource estimates, and failure-handling guidance
+- does not execute jobs or require GPU/network access
+
 ### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/run`
 
 - creates and enqueues an auto-research run from the selected hypothesis, or from an explicit `hypothesis_id`
@@ -76,6 +82,19 @@ This document focuses on the current auto-research API surface.
 - `paper_sources_manifest` now also declares `expected_outputs` so downstream compile/export steps can consume an explicit output contract instead of inferring it from commands alone
 - `paper_compile_report` now snapshots compile readiness, compile-critical source-file coverage, expected outputs, and currently materialized outputs for the persisted paper workspace
 - today this is still the main read surface for completed runs
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory`
+
+- builds an executable experiment-factory plan for an existing run
+- reuses the run's linked `brief_id` / `hypothesis_id` when available, and falls back to run spec metadata otherwise
+- returns the same job contract as the idea-level factory endpoint
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory/toy-execute`
+
+- executes the deterministic toy factory backend for the run's factory plan
+- persists `experiment_factory_plan.json`, `artifact.json`, `evidence_ledger.json`, and `experiment_factory_repair_plan.json`
+- marks the run `done` and returns the execution plan, result artifact, evidence ledger, and repair plan
+- repair actions distinguish missing baseline evidence, missing ablation evidence, insufficient seed count, and failed rerun needs
 
 ### `PATCH /api/projects/{project_id}/auto-research/{run_id}/controls`
 

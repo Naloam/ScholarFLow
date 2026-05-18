@@ -17,6 +17,8 @@ from schemas.autoresearch import (
     AutoResearchCrossRunMetaAnalysisRead,
     AutoResearchExecutionCommandResponse,
     AutoResearchExperimentBridgeRead,
+    AutoResearchExperimentFactoryExecutionRead,
+    AutoResearchExperimentFactoryPlanRead,
     AutoResearchIdeaRequest,
     AutoResearchIdeaRunCreateRequest,
     AutoResearchHypothesisBankRead,
@@ -58,9 +60,14 @@ from services.autoresearch.bridge import (
 )
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.experiment_factory import (
+    build_experiment_factory_plan,
+    execute_toy_experiment_factory,
+)
 from services.autoresearch.idea_brief import (
     build_research_brief,
     hypothesis_bank_from_brief,
+    selected_hypothesis_from_brief,
     run_request_from_selected_hypothesis,
 )
 from services.autoresearch.literature_scout import scout_and_mine_gaps
@@ -85,6 +92,7 @@ from services.autoresearch.repository import (
     load_run,
     load_run_registry,
     load_run_registry_views,
+    save_run,
     save_research_brief,
 )
 from services.security.audit import write_task_audit_log
@@ -297,6 +305,28 @@ def create_auto_research_run_from_idea_brief(
     return IdResponse(id=run.id)
 
 
+@router.post("/ideas/{brief_id}/experiment-factory", response_model=AutoResearchExperimentFactoryPlanRead)
+def build_auto_research_idea_experiment_factory(
+    project_id: str,
+    brief_id: str,
+    hypothesis_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryPlanRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    try:
+        hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=hypothesis_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+    )
+
+
 @router.get("/ideas/{brief_id}", response_model=AutoResearchResearchBriefRead)
 def get_auto_research_idea_brief(
     project_id: str,
@@ -377,6 +407,83 @@ def get_auto_research_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return run
+
+
+@router.post("/{run_id}/experiment-factory", response_model=AutoResearchExperimentFactoryPlanRead)
+def build_auto_research_run_experiment_factory(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryPlanRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    brief = load_research_brief(project_id, run.brief_id) if run.brief_id else None
+    hypothesis = None
+    if brief is not None:
+        try:
+            hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=run.hypothesis_id)
+        except ValueError:
+            hypothesis = None
+    return build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+        run=run,
+        experiment_design=getattr(run, "experiment_design", None),
+    )
+
+
+@router.post("/{run_id}/experiment-factory/toy-execute", response_model=AutoResearchExperimentFactoryExecutionRead)
+def execute_auto_research_run_experiment_factory_toy(
+    project_id: str,
+    run_id: str,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryExecutionRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    brief = load_research_brief(project_id, run.brief_id) if run.brief_id else None
+    hypothesis = None
+    if brief is not None:
+        try:
+            hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=run.hypothesis_id)
+        except ValueError:
+            hypothesis = None
+    plan = build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+        run=run,
+        experiment_design=getattr(run, "experiment_design", None),
+    )
+    execution = execute_toy_experiment_factory(plan)
+    save_run(
+        run.model_copy(
+            update={
+                "status": "done",
+                "error": None,
+                "experiment_factory_plan": execution.execution_plan,
+                "artifact": execution.result_artifact,
+                "evidence_ledger": execution.evidence_ledger,
+                "experiment_factory_repair_plan": execution.repair_plan,
+            }
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.experiment_factory",
+        project_id=project_id,
+        action="toy_executed",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=f"run_id={run.id} jobs={plan.job_count} ledger_entries={execution.evidence_ledger.entry_count}",
+    )
+    return execution
 
 
 @router.patch("/{run_id}/controls", response_model=AutoResearchRunControlUpdateRead)

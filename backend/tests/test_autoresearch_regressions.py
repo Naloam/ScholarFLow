@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
 import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
+import services.autoresearch.experiment_factory as autoresearch_experiment_factory
 import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
@@ -4719,6 +4720,124 @@ def test_research_brief_repository_persists_and_console_summarizes(
     assert console.latest_brief_recommended_gap == brief.gap_miner.recommended_narrower_gap
     assert console.actions.create_idea_brief is True
     assert console.actions.create_run_from_brief is True
+
+
+def test_experiment_factory_builds_executable_plan_from_selected_hypothesis() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-plan",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    hypothesis = autoresearch_idea_brief.selected_hypothesis_from_brief(brief)
+
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+    )
+
+    assert plan.brief_id == brief.brief_id
+    assert plan.hypothesis_id == hypothesis.hypothesis_id
+    assert plan.baseline_job_count >= 1
+    assert plan.candidate_job_count == 1
+    assert plan.ablation_job_count >= 1
+    assert plan.seed_job_count >= 3
+    assert plan.sweep_job_count >= 1
+    assert plan.bridge_ready is True
+    assert plan.toy_backend_supported is True
+    assert "result_artifact.json" in plan.expected_artifacts
+    assert all(job.command.startswith("scholarflow toy-run") for job in plan.jobs)
+    candidate = next(job for job in plan.jobs if job.job_kind == "candidate_method")
+    assert candidate.dependencies
+    assert all(dep.startswith("job_baseline_") for dep in candidate.dependencies)
+    assert all(job.retry_policy.max_retries >= 1 for job in plan.jobs)
+
+
+def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-execute",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+    )
+
+    execution = autoresearch_experiment_factory.execute_toy_experiment_factory(plan)
+
+    assert execution.result_artifact.status == "done"
+    assert execution.result_artifact.objective_system == "candidate_method"
+    assert execution.result_artifact.significance_tests
+    assert execution.evidence_ledger.complete is True
+    assert execution.evidence_ledger.entry_count >= plan.baseline_job_count + plan.ablation_job_count
+    assert any(item.evidence_kind == "baseline" for item in execution.evidence_ledger.entries)
+    assert any(item.evidence_kind == "ablation" for item in execution.evidence_ledger.entries)
+    assert execution.repair_plan is not None
+    assert execution.repair_plan.actions == ["none"]
+
+
+def test_experiment_factory_artifacts_persist_on_run(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-factory-persist"
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+        )
+    )
+    run_request, hypothesis = autoresearch_idea_brief.run_request_from_selected_hypothesis(brief)
+    run = autoresearch_repository.create_run(
+        project_id,
+        run_request.topic,
+        request=AutoResearchRunConfig.from_request(run_request),
+        brief_id=brief.brief_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        direction_selection_reason=brief.selection_reason,
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+        run=run,
+    )
+    execution = autoresearch_experiment_factory.execute_toy_experiment_factory(plan)
+    saved = autoresearch_repository.save_run(
+        run.model_copy(
+            update={
+                "status": "done",
+                "experiment_factory_plan": execution.execution_plan,
+                "artifact": execution.result_artifact,
+                "evidence_ledger": execution.evidence_ledger,
+                "experiment_factory_repair_plan": execution.repair_plan,
+            }
+        )
+    )
+    loaded = autoresearch_repository.load_run(project_id, run.id)
+    registry = autoresearch_repository.load_run_registry(project_id, run.id)
+    bundles = autoresearch_repository.load_run_bundle_index(project_id, run.id)
+
+    assert loaded is not None
+    assert loaded.experiment_factory_plan is not None
+    assert loaded.evidence_ledger is not None
+    assert loaded.experiment_factory_repair_plan is not None
+    assert loaded.experiment_factory_plan_path is not None
+    assert loaded.evidence_ledger_path is not None
+    assert loaded.experiment_factory_repair_plan_path is not None
+    assert Path(loaded.experiment_factory_plan_path).is_file()
+    assert Path(loaded.evidence_ledger_path).is_file()
+    assert Path(loaded.experiment_factory_repair_plan_path).is_file()
+    assert saved.artifact is not None
+    assert registry is not None
+    assert registry.files.experiment_factory_plan_json is not None
+    assert registry.files.evidence_ledger_json is not None
+    assert registry.files.experiment_factory_repair_plan_json is not None
+    assert bundles is not None
+    roles = {asset.role for bundle in bundles.bundles for asset in bundle.assets}
+    assert "run_experiment_factory_plan_json" in roles
+    assert "run_evidence_ledger_json" in roles
+    assert "run_experiment_factory_repair_plan_json" in roles
 
 
 def test_narrative_artifact_summary_uses_objective_system_when_best_missing() -> None:

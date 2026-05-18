@@ -16,6 +16,9 @@ from schemas.autoresearch import (
     AutoResearchCandidateRegistryEntry,
     AutoResearchCandidateRegistryFiles,
     AutoResearchCandidateRegistryRead,
+    AutoResearchEvidenceLedgerRead,
+    AutoResearchExperimentFactoryPlanRead,
+    AutoResearchExperimentFactoryRepairPlanRead,
     AutoResearchResearchBriefRead,
     AutoResearchLineageEdgeRead,
     AutoResearchPaperRevisionActionIndexRead,
@@ -73,6 +76,9 @@ PUBLICATION_REPAIR_EXECUTION_FILENAME = "publication_repair_execution.json"
 REVIEWER_SIMULATION_FILENAME = "reviewer_simulation.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
+EXPERIMENT_FACTORY_PLAN_FILENAME = "experiment_factory_plan.json"
+EVIDENCE_LEDGER_FILENAME = "evidence_ledger.json"
+EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME = "experiment_factory_repair_plan.json"
 PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
 PAPER_REVISION_DIFF_FILENAME = "paper_revision_diff.json"
 PAPER_REVISION_ACTION_INDEX_FILENAME = "paper_revision_action_index.json"
@@ -592,6 +598,9 @@ def _candidate_lineage_edges(
             ("publication_repair_plan_json", "publication_repair_plan"),
             ("publication_repair_execution_json", "publication_repair_execution"),
             ("reviewer_simulation_json", "reviewer_simulation"),
+            ("experiment_factory_plan_json", "experiment_factory_plan"),
+            ("evidence_ledger_json", "evidence_ledger"),
+            ("experiment_factory_repair_plan_json", "experiment_factory_repair_plan"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
             ("paper_revision_history_markdown", "paper_revision_history"),
@@ -738,6 +747,9 @@ def _run_derivation_lineage_edges(
             ("publication_repair_plan_json", "publication_repair_plan"),
             ("publication_repair_execution_json", "publication_repair_execution"),
             ("reviewer_simulation_json", "reviewer_simulation"),
+            ("experiment_factory_plan_json", "experiment_factory_plan"),
+            ("evidence_ledger_json", "evidence_ledger"),
+            ("experiment_factory_repair_plan_json", "experiment_factory_repair_plan"),
             ("narrative_report_markdown", "narrative_report"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
@@ -1031,6 +1043,26 @@ def _run_derivation_lineage_edges(
             target_attr="publication_repair_plan_json",
             target_kind="publication_repair_plan",
         )
+    if run_assets.experiment_factory_plan_json is not None:
+        add_derivation(
+            source_kind="experiment_factory_plan",
+            source_id=f"{run.id}:experiment_factory_plan",
+            target_attr="evidence_ledger_json",
+            target_kind="evidence_ledger",
+        )
+        add_derivation(
+            source_kind="experiment_factory_plan",
+            source_id=f"{run.id}:experiment_factory_plan",
+            target_attr="artifact_json",
+            target_kind="artifact",
+        )
+    if run_assets.evidence_ledger_json is not None:
+        add_derivation(
+            source_kind="evidence_ledger",
+            source_id=f"{run.id}:evidence_ledger",
+            target_attr="experiment_factory_repair_plan_json",
+            target_kind="experiment_factory_repair_plan",
+        )
     if run_assets.failure_analysis_json is not None:
         add_derivation(
             source_kind="failure_analysis",
@@ -1186,6 +1218,9 @@ def _run_lineage_edges(
         ("publication_repair_plan_json", "publication_repair_plan"),
         ("publication_repair_execution_json", "publication_repair_execution"),
         ("reviewer_simulation_json", "reviewer_simulation"),
+        ("experiment_factory_plan_json", "experiment_factory_plan"),
+        ("evidence_ledger_json", "evidence_ledger"),
+        ("experiment_factory_repair_plan_json", "experiment_factory_repair_plan"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
         ("paper_revision_history_markdown", "paper_revision_history"),
@@ -1508,6 +1543,42 @@ def _run_bundle_assets(
             )
             if files.reviewer_simulation_json is not None
             and files.reviewer_simulation_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_factory_plan_json",
+                label="Selected run experiment factory plan",
+                role="run_experiment_factory_plan_json",
+                ref=files.experiment_factory_plan_json,
+                required=False,
+            )
+            if files.experiment_factory_plan_json is not None
+            and files.experiment_factory_plan_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_evidence_ledger_json",
+                label="Selected run evidence ledger",
+                role="run_evidence_ledger_json",
+                ref=files.evidence_ledger_json,
+                required=False,
+            )
+            if files.evidence_ledger_json is not None
+            and files.evidence_ledger_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_factory_repair_plan_json",
+                label="Selected run experiment factory repair plan",
+                role="run_experiment_factory_repair_plan_json",
+                ref=files.experiment_factory_repair_plan_json,
+                required=False,
+            )
+            if files.experiment_factory_repair_plan_json is not None
+            and files.experiment_factory_repair_plan_json.exists
             else None
         ),
         _bundle_asset(
@@ -1900,6 +1971,43 @@ def _load_reviewer_simulation(payload: AutoResearchRunRead, *, base: Path) -> Au
     )
 
 
+def _load_experiment_factory_artifacts(payload: AutoResearchRunRead, *, base: Path) -> AutoResearchRunRead:
+    updates: dict[str, object] = {}
+    if payload.experiment_factory_plan is None:
+        path = base / EXPERIMENT_FACTORY_PLAN_FILENAME
+        if path.is_file():
+            try:
+                updates["experiment_factory_plan"] = AutoResearchExperimentFactoryPlanRead.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                updates["experiment_factory_plan_path"] = str(path)
+            except Exception:
+                pass
+    if payload.evidence_ledger is None:
+        path = base / EVIDENCE_LEDGER_FILENAME
+        if path.is_file():
+            try:
+                updates["evidence_ledger"] = AutoResearchEvidenceLedgerRead.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                updates["evidence_ledger_path"] = str(path)
+            except Exception:
+                pass
+    if payload.experiment_factory_repair_plan is None:
+        path = base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME
+        if path.is_file():
+            try:
+                updates["experiment_factory_repair_plan"] = (
+                    AutoResearchExperimentFactoryRepairPlanRead.model_validate_json(
+                        path.read_text(encoding="utf-8")
+                    )
+                )
+                updates["experiment_factory_repair_plan_path"] = str(path)
+            except Exception:
+                pass
+    return payload.model_copy(update=updates) if updates else payload
+
+
 def _hydrate_run(payload: AutoResearchRunRead) -> AutoResearchRunRead:
     base = run_dir(payload.project_id, payload.id)
     hydrated = _refresh_paper_section_rewrite_index(payload)
@@ -1907,6 +2015,7 @@ def _hydrate_run(payload: AutoResearchRunRead) -> AutoResearchRunRead:
     hydrated = _refresh_paper_revision_action_index(hydrated, base=base)
     hydrated = _refresh_paper_compile_report(hydrated, base=base)
     hydrated = _load_reviewer_simulation(hydrated, base=base)
+    hydrated = _load_experiment_factory_artifacts(hydrated, base=base)
     return hydrated
 
 
@@ -2035,6 +2144,18 @@ def save_run(
         _write_json(base / PAPER_PLAN_FILENAME, payload.paper_plan.model_dump(mode="json"))
     if payload.figure_plan is not None:
         _write_json(base / FIGURE_PLAN_FILENAME, payload.figure_plan.model_dump(mode="json"))
+    if payload.experiment_factory_plan is not None:
+        _write_json(
+            base / EXPERIMENT_FACTORY_PLAN_FILENAME,
+            payload.experiment_factory_plan.model_dump(mode="json"),
+        )
+    if payload.evidence_ledger is not None:
+        _write_json(base / EVIDENCE_LEDGER_FILENAME, payload.evidence_ledger.model_dump(mode="json"))
+    if payload.experiment_factory_repair_plan is not None:
+        _write_json(
+            base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME,
+            payload.experiment_factory_repair_plan.model_dump(mode="json"),
+        )
     if payload.paper_revision_state is not None:
         _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
     if payload.paper_compile_report is not None and materialize_paper_workspace:
@@ -2056,6 +2177,18 @@ def save_run(
             base / PAPER_SECTION_REWRITE_INDEX_FILENAME,
             payload.paper_section_rewrite_index.model_dump(mode="json"),
         )
+    path_updates: dict[str, str] = {}
+    if payload.experiment_factory_plan is not None:
+        path_updates["experiment_factory_plan_path"] = str(base / EXPERIMENT_FACTORY_PLAN_FILENAME)
+    if payload.evidence_ledger is not None:
+        path_updates["evidence_ledger_path"] = str(base / EVIDENCE_LEDGER_FILENAME)
+    if payload.experiment_factory_repair_plan is not None:
+        path_updates["experiment_factory_repair_plan_path"] = str(
+            base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME
+        )
+    if path_updates:
+        payload = payload.model_copy(update=path_updates)
+        _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
     if (
         (payload.paper_markdown is not None and materialize_paper_workspace)
         or (payload.paper_compile_report is not None and materialize_paper_workspace)
@@ -2458,6 +2591,16 @@ def load_candidate_registry(
             reviewer_simulation_json=_asset_ref(
                 current_run.reviewer_simulation_path or (run_base / REVIEWER_SIMULATION_FILENAME)
             ),
+            experiment_factory_plan_json=_asset_ref(
+                current_run.experiment_factory_plan_path or (run_base / EXPERIMENT_FACTORY_PLAN_FILENAME)
+            ),
+            evidence_ledger_json=_asset_ref(
+                current_run.evidence_ledger_path or (run_base / EVIDENCE_LEDGER_FILENAME)
+            ),
+            experiment_factory_repair_plan_json=_asset_ref(
+                current_run.experiment_factory_repair_plan_path
+                or (run_base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME)
+            ),
             paper_plan_json=_asset_ref(
                 current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
             ),
@@ -2625,6 +2768,15 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         publication_repair_execution_json=_asset_ref(base / PUBLICATION_REPAIR_EXECUTION_FILENAME),
         reviewer_simulation_json=_asset_ref(
             run.reviewer_simulation_path or (base / REVIEWER_SIMULATION_FILENAME)
+        ),
+        experiment_factory_plan_json=_asset_ref(
+            run.experiment_factory_plan_path or (base / EXPERIMENT_FACTORY_PLAN_FILENAME)
+        ),
+        evidence_ledger_json=_asset_ref(
+            run.evidence_ledger_path or (base / EVIDENCE_LEDGER_FILENAME)
+        ),
+        experiment_factory_repair_plan_json=_asset_ref(
+            run.experiment_factory_repair_plan_path or (base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME)
         ),
         paper_plan_json=_asset_ref(
             run.paper_plan_path or (base / PAPER_PLAN_FILENAME)

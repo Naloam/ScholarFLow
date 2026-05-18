@@ -645,6 +645,12 @@ export type AutoResearchRun = {
   paper_revision_diff_path?: string | null;
   paper_section_rewrite_index?: AutoResearchPaperSectionRewriteIndex | null;
   paper_section_rewrite_index_path?: string | null;
+  experiment_factory_plan?: AutoResearchExperimentFactoryPlan | null;
+  experiment_factory_plan_path?: string | null;
+  evidence_ledger?: AutoResearchEvidenceLedger | null;
+  evidence_ledger_path?: string | null;
+  experiment_factory_repair_plan?: AutoResearchExperimentFactoryRepairPlan | null;
+  experiment_factory_repair_plan_path?: string | null;
   paper_sources_dir?: string | null;
   paper_section_rewrite_packets_dir?: string | null;
   paper_latex_source?: string | null;
@@ -785,6 +791,10 @@ export type AutoResearchLineageEdge = {
     | "artifact_integrity_audit"
     | "publication_repair_plan"
     | "publication_repair_execution"
+    | "reviewer_simulation"
+    | "experiment_factory_plan"
+    | "evidence_ledger"
+    | "experiment_factory_repair_plan"
     | "paper_plan"
     | "figure_plan"
     | "paper_revision_history"
@@ -892,6 +902,10 @@ export type AutoResearchRunRegistryFiles = {
   artifact_integrity_audit_json?: AutoResearchRegistryAssetRef | null;
   publication_repair_plan_json?: AutoResearchRegistryAssetRef | null;
   publication_repair_execution_json?: AutoResearchRegistryAssetRef | null;
+  reviewer_simulation_json?: AutoResearchRegistryAssetRef | null;
+  experiment_factory_plan_json?: AutoResearchRegistryAssetRef | null;
+  evidence_ledger_json?: AutoResearchRegistryAssetRef | null;
+  experiment_factory_repair_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
   figure_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_revision_history_markdown?: AutoResearchRegistryAssetRef | null;
@@ -1046,6 +1060,10 @@ export type AutoResearchBundleAssetRead = {
     | "run_artifact_integrity_audit_json"
     | "run_publication_repair_plan_json"
     | "run_publication_repair_execution_json"
+    | "run_reviewer_simulation_json"
+    | "run_experiment_factory_plan_json"
+    | "run_evidence_ledger_json"
+    | "run_experiment_factory_repair_plan_json"
     | "run_paper_plan_json"
     | "run_figure_plan_json"
     | "run_paper_revision_history_markdown"
@@ -2708,6 +2726,147 @@ export type AutoResearchIdeaRunCreateRequest = {
   candidate_execution_limit?: number | null;
   queue_priority?: "low" | "normal" | "high" | null;
   execution_profile?: AutoResearchExecutionProfile | null;
+};
+
+export type AutoResearchExperimentFactoryJobKind =
+  | "baseline"
+  | "candidate_method"
+  | "ablation"
+  | "seed"
+  | "sweep";
+
+export type AutoResearchExperimentFactoryJobStatus =
+  | "planned"
+  | "done"
+  | "failed";
+
+export type AutoResearchExperimentFactoryRepairAction =
+  | "none"
+  | "add_missing_baseline"
+  | "add_missing_ablation"
+  | "increase_seed_count"
+  | "rerun_failed_job";
+
+export type AutoResearchExperimentFactoryRetryPolicy = {
+  max_retries: number;
+  retry_on: string[];
+};
+
+export type AutoResearchExperimentFactoryResourceEstimate = {
+  backend: "auto" | "local" | "docker" | "docker_gpu" | "command";
+  cpu_seconds: number;
+  memory_mb: number;
+  gpu_required: boolean;
+};
+
+export type AutoResearchExperimentFactoryJob = {
+  job_id: string;
+  job_kind: AutoResearchExperimentFactoryJobKind;
+  command: string;
+  config: Record<string, unknown>;
+  inputs: string[];
+  expected_outputs: string[];
+  dependencies: string[];
+  retry_policy: AutoResearchExperimentFactoryRetryPolicy;
+  resource_estimate: AutoResearchExperimentFactoryResourceEstimate;
+  failure_handling: string;
+  status: AutoResearchExperimentFactoryJobStatus;
+};
+
+export type AutoResearchExperimentFactoryPlan = {
+  plan_id: string;
+  project_id: string;
+  brief_id?: string | null;
+  hypothesis_id?: string | null;
+  run_id?: string | null;
+  generated_at: string;
+  execution_backend: Record<string, unknown>;
+  selected_direction_id?: string | null;
+  selected_hypothesis?: string | null;
+  jobs: AutoResearchExperimentFactoryJob[];
+  job_count: number;
+  baseline_job_count: number;
+  candidate_job_count: number;
+  ablation_job_count: number;
+  seed_job_count: number;
+  sweep_job_count: number;
+  expected_artifacts: string[];
+  bridge_ready: boolean;
+  toy_backend_supported: boolean;
+  blockers: string[];
+  warnings: string[];
+  factory_fingerprint: string;
+};
+
+export type AutoResearchEvidenceLedgerEntry = {
+  evidence_id: string;
+  source_job_id?: string | null;
+  evidence_kind: "metric" | "baseline" | "ablation" | "seed" | "sweep" | "artifact";
+  claim: string;
+  artifact_ref: string;
+  metric?: string | null;
+  value?: number | null;
+  support_status: "supported" | "partial" | "missing";
+};
+
+export type AutoResearchEvidenceLedger = {
+  ledger_id: string;
+  project_id: string;
+  run_id?: string | null;
+  brief_id?: string | null;
+  hypothesis_id?: string | null;
+  generated_at: string;
+  entries: AutoResearchEvidenceLedgerEntry[];
+  entry_count: number;
+  complete: boolean;
+  blockers: string[];
+  ledger_fingerprint: string;
+};
+
+export type AutoResearchExperimentFactoryRepairPlan = {
+  repair_id: string;
+  project_id: string;
+  run_id?: string | null;
+  brief_id?: string | null;
+  generated_at: string;
+  actions: AutoResearchExperimentFactoryRepairAction[];
+  action_reasons: string[];
+  rerun_plan?: AutoResearchExperimentFactoryPlan | null;
+  complete: boolean;
+  repair_fingerprint: string;
+};
+
+export type AutoResearchResultArtifact = {
+  status: "queued" | "running" | "done" | "failed";
+  summary: string;
+  key_findings: string[];
+  primary_metric: string;
+  best_system?: string | null;
+  system_results: Array<Record<string, unknown>>;
+  aggregate_system_results: Array<Record<string, unknown>>;
+  per_seed_results: Array<Record<string, unknown>>;
+  sweep_results: Array<Record<string, unknown>>;
+  significance_tests: Array<Record<string, unknown>>;
+  acceptance_checks: Array<Record<string, unknown>>;
+  tables: Array<Record<string, unknown>>;
+  logs?: string | null;
+  environment: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  objective_system?: string | null;
+  objective_score?: number | null;
+  [key: string]: unknown;
+};
+
+export type AutoResearchExperimentFactoryExecution = {
+  project_id: string;
+  run_id?: string | null;
+  brief_id?: string | null;
+  hypothesis_id?: string | null;
+  generated_at: string;
+  execution_plan: AutoResearchExperimentFactoryPlan;
+  result_artifact: AutoResearchResultArtifact;
+  evidence_ledger: AutoResearchEvidenceLedger;
+  repair_plan?: AutoResearchExperimentFactoryRepairPlan | null;
 };
 
 export type AutoResearchOperatorConsoleFilters = {

@@ -2582,6 +2582,62 @@ export type AutoResearchDirectionSelection = {
   rejected_directions: AutoResearchRejectedDirection[];
 };
 
+export type AutoResearchLiteratureScoutPaper = {
+  paper_id: string;
+  title: string;
+  source: string;
+  year?: number | null;
+  method?: string | null;
+  datasets: string[];
+  metrics: string[];
+  known_sota?: string | null;
+  overlap_score: number;
+  shared_terms: string[];
+  evidence: string;
+};
+
+export type AutoResearchGapCandidate = {
+  gap_id: string;
+  description: string;
+  literature_evidence: string[];
+  experimentally_testable: boolean;
+  validation_target?: string | null;
+  recommended_direction_id?: string | null;
+  recommended_hypothesis_id?: string | null;
+  recommendation: "proceed" | "change_research_question" | "change_experiment_design";
+  rationale: string;
+};
+
+export type AutoResearchLiteratureScout = {
+  scout_id: string;
+  project_id: string;
+  brief_id: string;
+  generated_at: string;
+  search_queries: string[];
+  similar_papers: AutoResearchLiteratureScoutPaper[];
+  methods: string[];
+  datasets: string[];
+  metrics: string[];
+  known_sota: string[];
+  scout_fingerprint: string;
+};
+
+export type AutoResearchGapMiner = {
+  miner_id: string;
+  project_id: string;
+  brief_id: string;
+  generated_at: string;
+  idea_duplicate_risk: "low" | "medium" | "high";
+  idea_is_existing_method_restatement: boolean;
+  change_research_question: boolean;
+  change_experiment_design: boolean;
+  recommended_narrower_gap?: string | null;
+  gap_candidates: AutoResearchGapCandidate[];
+  warnings: string[];
+  blockers: string[];
+  miner_fingerprint: string;
+};
+
 export type AutoResearchResearchBrief = {
   brief_id: string;
   project_id: string;
@@ -2610,6 +2666,8 @@ export type AutoResearchResearchBrief = {
   direction_count: number;
   hypothesis_bank: AutoResearchHypothesisBankEntry[];
   hypothesis_count: number;
+  literature_scout?: AutoResearchLiteratureScout | null;
+  gap_miner?: AutoResearchGapMiner | null;
   selected_direction_id?: string | null;
   selected_hypothesis_id?: string | null;
   selection_reason?: string | null;
@@ -2634,6 +2692,14 @@ export type AutoResearchHypothesisBank = {
   hypotheses: AutoResearchHypothesisBankEntry[];
   selected_hypothesis_id?: string | null;
   direction_selection?: AutoResearchDirectionSelection | null;
+};
+
+export type AutoResearchLiteratureScoutResult = {
+  brief_id: string;
+  project_id: string;
+  literature_scout: AutoResearchLiteratureScout;
+  gap_miner: AutoResearchGapMiner;
+  updated_brief: AutoResearchResearchBrief;
 };
 
 export type AutoResearchIdeaRunCreateRequest = {
@@ -2832,6 +2898,9 @@ export type AutoResearchOperatorConsole = {
   latest_brief_selected_direction_id?: string | null;
   latest_brief_selected_hypothesis_id?: string | null;
   latest_brief_next_action?: string | null;
+  latest_brief_literature_scout_ready: boolean;
+  latest_brief_gap_count: number;
+  latest_brief_recommended_gap?: string | null;
   filtered_run_count: number;
   latest_run_id?: string | null;
   selected_run_id?: string | null;

@@ -607,6 +607,62 @@ class AutoResearchDirectionSelectionRead(BaseModel):
     rejected_directions: list[AutoResearchRejectedDirectionRead] = Field(default_factory=list)
 
 
+class AutoResearchLiteratureScoutPaperRead(BaseModel):
+    paper_id: str
+    title: str
+    source: str = "offline_project_context"
+    year: int | None = None
+    method: str | None = None
+    datasets: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
+    known_sota: str | None = None
+    overlap_score: int = 0
+    shared_terms: list[str] = Field(default_factory=list)
+    evidence: str
+
+
+class AutoResearchGapCandidateRead(BaseModel):
+    gap_id: str
+    description: str
+    literature_evidence: list[str] = Field(default_factory=list)
+    experimentally_testable: bool = False
+    validation_target: str | None = None
+    recommended_direction_id: str | None = None
+    recommended_hypothesis_id: str | None = None
+    recommendation: Literal["proceed", "change_research_question", "change_experiment_design"] = "proceed"
+    rationale: str
+
+
+class AutoResearchLiteratureScoutRead(BaseModel):
+    scout_id: str = "literature_scout_v1"
+    project_id: str
+    brief_id: str
+    generated_at: datetime
+    search_queries: list[str] = Field(default_factory=list)
+    similar_papers: list[AutoResearchLiteratureScoutPaperRead] = Field(default_factory=list)
+    methods: list[str] = Field(default_factory=list)
+    datasets: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
+    known_sota: list[str] = Field(default_factory=list)
+    scout_fingerprint: str
+
+
+class AutoResearchGapMinerRead(BaseModel):
+    miner_id: str = "gap_miner_v1"
+    project_id: str
+    brief_id: str
+    generated_at: datetime
+    idea_duplicate_risk: AutoResearchNoveltyRiskLevel = "medium"
+    idea_is_existing_method_restatement: bool = False
+    change_research_question: bool = False
+    change_experiment_design: bool = False
+    recommended_narrower_gap: str | None = None
+    gap_candidates: list[AutoResearchGapCandidateRead] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    miner_fingerprint: str
+
+
 class AutoResearchResearchBriefRead(BaseModel):
     brief_id: str
     project_id: str
@@ -635,6 +691,8 @@ class AutoResearchResearchBriefRead(BaseModel):
     direction_count: int = 0
     hypothesis_bank: list[AutoResearchHypothesisBankEntryRead] = Field(default_factory=list)
     hypothesis_count: int = 0
+    literature_scout: AutoResearchLiteratureScoutRead | None = None
+    gap_miner: AutoResearchGapMinerRead | None = None
     selected_direction_id: str | None = None
     selected_hypothesis_id: str | None = None
     selection_reason: str | None = None
@@ -659,6 +717,14 @@ class AutoResearchHypothesisBankRead(BaseModel):
     hypotheses: list[AutoResearchHypothesisBankEntryRead] = Field(default_factory=list)
     selected_hypothesis_id: str | None = None
     direction_selection: AutoResearchDirectionSelectionRead | None = None
+
+
+class AutoResearchLiteratureScoutResultRead(BaseModel):
+    brief_id: str
+    project_id: str
+    literature_scout: AutoResearchLiteratureScoutRead
+    gap_miner: AutoResearchGapMinerRead
+    updated_brief: AutoResearchResearchBriefRead
 
 
 class AutoResearchIdeaRunCreateRequest(BaseModel):
@@ -3183,6 +3249,9 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     latest_brief_selected_direction_id: str | None = None
     latest_brief_selected_hypothesis_id: str | None = None
     latest_brief_next_action: str | None = None
+    latest_brief_literature_scout_ready: bool = False
+    latest_brief_gap_count: int = 0
+    latest_brief_recommended_gap: str | None = None
     filtered_run_count: int = 0
     latest_run_id: str | None = None
     selected_run_id: str | None = None

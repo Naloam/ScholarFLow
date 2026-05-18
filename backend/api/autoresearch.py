@@ -20,6 +20,7 @@ from schemas.autoresearch import (
     AutoResearchIdeaRequest,
     AutoResearchIdeaRunCreateRequest,
     AutoResearchHypothesisBankRead,
+    AutoResearchLiteratureScoutResultRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
     AutoResearchPublicationTier,
@@ -62,6 +63,7 @@ from services.autoresearch.idea_brief import (
     hypothesis_bank_from_brief,
     run_request_from_selected_hypothesis,
 )
+from services.autoresearch.literature_scout import scout_and_mine_gaps
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
 from services.autoresearch.review_publish import (
@@ -181,6 +183,42 @@ def get_auto_research_idea_hypothesis_bank(
         hypotheses=bank,
         selected_hypothesis_id=selection.selected_hypothesis_id,
         direction_selection=selection,
+    )
+
+
+@router.post("/ideas/{brief_id}/literature-scout", response_model=AutoResearchLiteratureScoutResultRead)
+def run_auto_research_idea_literature_scout(
+    project_id: str,
+    brief_id: str,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchLiteratureScoutResultRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    updated = save_research_brief(scout_and_mine_gaps(brief))
+    if updated.literature_scout is None or updated.gap_miner is None:
+        raise HTTPException(status_code=500, detail="Literature scout did not produce results")
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=updated.brief_id,
+        task_name="autoresearch.literature_scout",
+        project_id=project_id,
+        action="scouted",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"brief_id={updated.brief_id} queries={len(updated.literature_scout.search_queries)} "
+            f"gaps={len(updated.gap_miner.gap_candidates)}"
+        ),
+    )
+    return AutoResearchLiteratureScoutResultRead(
+        brief_id=updated.brief_id,
+        project_id=updated.project_id,
+        literature_scout=updated.literature_scout,
+        gap_miner=updated.gap_miner,
+        updated_brief=updated,
     )
 
 

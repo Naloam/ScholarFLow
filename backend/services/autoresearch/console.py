@@ -637,6 +637,19 @@ def build_operator_console(
             latest_brief.selected_hypothesis_id if latest_brief is not None else None
         ),
         latest_brief_next_action=latest_brief.next_action if latest_brief is not None else None,
+        latest_brief_literature_scout_ready=bool(
+            latest_brief is not None and latest_brief.literature_scout is not None
+        ),
+        latest_brief_gap_count=(
+            len(latest_brief.gap_miner.gap_candidates)
+            if latest_brief is not None and latest_brief.gap_miner is not None
+            else 0
+        ),
+        latest_brief_recommended_gap=(
+            latest_brief.gap_miner.recommended_narrower_gap
+            if latest_brief is not None and latest_brief.gap_miner is not None
+            else None
+        ),
         filtered_run_count=len(filtered_runs),
         latest_run_id=runs[0].id if runs else None,
         selected_run_id=current_run.run.id if current_run is not None else None,

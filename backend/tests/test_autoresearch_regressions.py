@@ -14,6 +14,7 @@ import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
 import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
 import services.autoresearch.idea_brief as autoresearch_idea_brief
+import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
@@ -4657,6 +4658,26 @@ def test_research_brief_selected_hypothesis_creates_metadata_run(
     assert loaded.request.candidate_execution_limit == payload.resource_budget.candidate_execution_limit
 
 
+def test_literature_scout_mines_testable_gap_for_brief() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-scout",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+
+    scouted = autoresearch_literature_scout.scout_and_mine_gaps(brief)
+
+    assert scouted.literature_scout is not None
+    assert scouted.gap_miner is not None
+    assert scouted.literature_scout.search_queries
+    assert scouted.literature_scout.similar_papers
+    assert scouted.literature_scout.datasets
+    assert scouted.literature_scout.metrics
+    assert scouted.gap_miner.gap_candidates
+    assert scouted.gap_miner.recommended_narrower_gap is not None
+    assert any(item.experimentally_testable for item in scouted.gap_miner.gap_candidates)
+    assert all(item.literature_evidence for item in scouted.gap_miner.gap_candidates)
+
+
 def test_research_brief_repository_persists_and_console_summarizes(
     monkeypatch,
     tmp_path: Path,
@@ -4668,6 +4689,9 @@ def test_research_brief_repository_persists_and_console_summarizes(
             project_id=project_id,
             payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
         )
+    )
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_literature_scout.scout_and_mine_gaps(brief)
     )
 
     assert brief.brief_path is not None
@@ -4690,6 +4714,9 @@ def test_research_brief_repository_persists_and_console_summarizes(
     assert console.latest_brief_selected_direction_id == brief.selected_direction_id
     assert console.latest_brief_selected_hypothesis_id == brief.selected_hypothesis_id
     assert console.latest_brief_next_action == "create_run"
+    assert console.latest_brief_literature_scout_ready is True
+    assert console.latest_brief_gap_count > 0
+    assert console.latest_brief_recommended_gap == brief.gap_miner.recommended_narrower_gap
     assert console.actions.create_idea_brief is True
     assert console.actions.create_run_from_brief is True
 

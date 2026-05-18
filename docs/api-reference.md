@@ -24,6 +24,12 @@ This document focuses on the current auto-research API surface.
 - returns the persisted hypothesis bank and selector output for the idea brief
 - exposes selector weights across novelty, feasibility, evidence availability, resource cost, and publish potential
 
+### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/literature-scout`
+
+- runs deterministic/offline literature scouting and gap mining for the idea brief
+- persists `literature_scout` and `gap_miner` back into the brief snapshot
+- returns search queries, similar-paper risk signals, known baseline/SOTA notes, experimentally testable gap candidates, and whether the idea needs a changed research question or experiment design
+
 ### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/run`
 
 - creates and enqueues an auto-research run from the selected hypothesis, or from an explicit `hypothesis_id`
@@ -285,6 +291,7 @@ These are still available, but they are downstream of auto-research output rathe
 - `run.json` remains the top-level compatibility snapshot
 - idea briefs now persist separately under `autorresearch/briefs/<brief_id>/brief.json`
 - idea briefs now carry hypothesis-bank and direction-selector state before any run is created
+- idea briefs may also carry offline literature-scout and gap-miner state before run creation
 - runs created from idea briefs preserve `brief_id`, `hypothesis_id`, and `direction_selection_reason`
 - candidate-level manifests and artifacts are already persisted on disk
 - successful publish export now also persists `publication_manifest.json` and `code_package.zip`

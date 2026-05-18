@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from datetime import UTC, datetime
+
+from schemas.autoresearch import (
+    AutoResearchGapCandidateRead,
+    AutoResearchGapMinerRead,
+    AutoResearchLiteratureScoutPaperRead,
+    AutoResearchLiteratureScoutRead,
+    AutoResearchResearchBriefRead,
+)
+
+
+_STOPWORDS = {
+    "about",
+    "against",
+    "and",
+    "autonomous",
+    "based",
+    "better",
+    "candidate",
+    "data",
+    "dataset",
+    "datasets",
+    "evidence",
+    "experiment",
+    "for",
+    "from",
+    "idea",
+    "improve",
+    "method",
+    "methods",
+    "metric",
+    "paper",
+    "research",
+    "study",
+    "system",
+    "systems",
+    "task",
+    "the",
+    "this",
+    "using",
+    "with",
+}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _fingerprint(payload: object) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _slug(value: str, *, fallback: str = "item") -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_")
+    return slug[:80] or fallback
+
+
+def _norm(value: str | None) -> str:
+    return " ".join((value or "").split()).strip()
+
+
+def _terms(*texts: str | None) -> list[str]:
+    seen: set[str] = set()
+    terms: list[str] = []
+    for text in texts:
+        for raw in re.findall(r"[a-z][a-z0-9_]+", (text or "").lower()):
+            if len(raw) < 4 or raw in _STOPWORDS or raw in seen:
+                continue
+            seen.add(raw)
+            terms.append(raw)
+    return terms
+
+
+def _direction_text(brief: AutoResearchResearchBriefRead) -> str:
+    return " ".join(
+        [
+            brief.original_idea,
+            brief.polished_idea,
+            " ".join(brief.research_questions),
+            " ".join(brief.candidate_hypotheses),
+            " ".join(brief.candidate_datasets),
+            " ".join(brief.candidate_metrics),
+            " ".join(brief.candidate_baselines),
+        ]
+    )
+
+
+def _search_queries(brief: AutoResearchResearchBriefRead) -> list[str]:
+    queries = [
+        f'"{brief.original_idea}"',
+        f"{brief.original_idea} literature survey",
+    ]
+    for direction in brief.research_directions[:4]:
+        queries.extend(
+            [
+                f"{direction.title} {direction.candidate_dataset} {direction.primary_metric}",
+                f"{direction.hypothesis} baseline ablation",
+            ]
+        )
+    if brief.selected_hypothesis_id:
+        selected = next(
+            (item for item in brief.hypothesis_bank if item.hypothesis_id == brief.selected_hypothesis_id),
+            None,
+        )
+        if selected is not None:
+            queries.append(f"{selected.research_question} {selected.required_metrics[0] if selected.required_metrics else ''}")
+    return _dedupe(queries)[: max(3, min(8, len(queries)))]
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        cleaned = _norm(item)
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _offline_papers(brief: AutoResearchResearchBriefRead) -> list[AutoResearchLiteratureScoutPaperRead]:
+    idea_terms = set(_terms(_direction_text(brief)))
+    papers: list[AutoResearchLiteratureScoutPaperRead] = []
+    for index, direction in enumerate(brief.research_directions, start=1):
+        text = " ".join(
+            [
+                direction.title,
+                direction.research_question,
+                direction.method_sketch,
+                direction.candidate_dataset,
+                " ".join(direction.candidate_metrics),
+                " ".join(direction.required_baselines),
+            ]
+        )
+        shared = sorted(idea_terms & set(_terms(text)))
+        papers.append(
+            AutoResearchLiteratureScoutPaperRead(
+                paper_id=f"offline_related_{index}_{_slug(direction.direction_id)}",
+                title=f"Prior {direction.task_family.replace('_', ' ')} work near {direction.candidate_dataset}",
+                source="offline_project_context",
+                year=2025,
+                method=direction.method_sketch,
+                datasets=[direction.candidate_dataset],
+                metrics=direction.candidate_metrics,
+                known_sota=(
+                    f"Known baselines include {', '.join(direction.required_baselines[:2])} "
+                    f"on {direction.primary_metric}."
+                ),
+                overlap_score=len(shared),
+                shared_terms=shared[:10],
+                evidence=(
+                    "Offline scout synthesized this risk from the brief's benchmark, baseline, "
+                    "metric, and method obligations; live literature is still required before publish claims."
+                ),
+            )
+        )
+    papers.sort(key=lambda item: (-item.overlap_score, item.title.lower()))
+    return papers
+
+
+def build_literature_scout(brief: AutoResearchResearchBriefRead) -> AutoResearchLiteratureScoutRead:
+    papers = _offline_papers(brief)
+    payload = {
+        "scout_id": "literature_scout_v1",
+        "project_id": brief.project_id,
+        "brief_id": brief.brief_id,
+        "search_queries": _search_queries(brief),
+        "similar_papers": [item.model_dump(mode="json") for item in papers],
+        "methods": _dedupe([item.method or "" for item in papers]),
+        "datasets": _dedupe([dataset for item in papers for dataset in item.datasets]),
+        "metrics": _dedupe([metric for item in papers for metric in item.metrics]),
+        "known_sota": _dedupe([item.known_sota or "" for item in papers]),
+    }
+    return AutoResearchLiteratureScoutRead(
+        generated_at=_utcnow(),
+        scout_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def _gap_for_hypothesis(
+    brief: AutoResearchResearchBriefRead,
+    scout: AutoResearchLiteratureScoutRead,
+    *,
+    hypothesis_id: str | None,
+    index: int,
+) -> AutoResearchGapCandidateRead:
+    hypothesis = next((item for item in brief.hypothesis_bank if item.hypothesis_id == hypothesis_id), None)
+    if hypothesis is None:
+        hypothesis = brief.hypothesis_bank[index - 1] if index - 1 < len(brief.hypothesis_bank) else None
+    direction = (
+        next((item for item in brief.research_directions if hypothesis is not None and item.direction_id == hypothesis.direction_id), None)
+        if hypothesis is not None
+        else None
+    )
+    direction_id = direction.direction_id if direction is not None else None
+    target = direction.candidate_dataset if direction is not None else (brief.candidate_datasets[0] if brief.candidate_datasets else "selected dataset")
+    metric = direction.primary_metric if direction is not None else (brief.candidate_metrics[0] if brief.candidate_metrics else "primary metric")
+    evidence = [
+        paper.paper_id
+        for paper in scout.similar_papers
+        if direction is None or target in paper.datasets or metric in paper.metrics
+    ][:3]
+    recommendation = (
+        "change_research_question"
+        if brief.idea_too_generic
+        else "change_experiment_design"
+        if direction is not None and direction.novelty_risk == "high"
+        else "proceed"
+    )
+    return AutoResearchGapCandidateRead(
+        gap_id=f"gap_{index}_{_slug(direction_id or hypothesis_id or brief.brief_id)}",
+        description=(
+            f"Test whether the idea has contribution only after narrowing to `{target}` with `{metric}` "
+            "and explicit baseline/ablation evidence."
+        ),
+        literature_evidence=evidence,
+        experimentally_testable=bool(direction is not None and direction.required_baselines and direction.candidate_metrics),
+        validation_target=f"{target} / {metric}",
+        recommended_direction_id=direction_id,
+        recommended_hypothesis_id=hypothesis.hypothesis_id if hypothesis is not None else None,
+        recommendation=recommendation,
+        rationale=(
+            "The broader idea overlaps with existing method/task framing; the narrower gap is testable "
+            "because the brief already binds dataset, metric, baselines, and ablations."
+        ),
+    )
+
+
+def build_gap_miner(
+    brief: AutoResearchResearchBriefRead,
+    *,
+    literature_scout: AutoResearchLiteratureScoutRead,
+) -> AutoResearchGapMinerRead:
+    gap_candidates = [
+        _gap_for_hypothesis(
+            brief,
+            literature_scout,
+            hypothesis_id=item.hypothesis_id,
+            index=index,
+        )
+        for index, item in enumerate(brief.hypothesis_bank[:5], start=1)
+    ]
+    max_overlap = max((item.overlap_score for item in literature_scout.similar_papers), default=0)
+    idea_duplicate_risk = "high" if brief.idea_too_generic or max_overlap >= 8 else "medium" if max_overlap >= 4 else "low"
+    restatement = any(
+        baseline.lower() in brief.original_idea.lower()
+        for baseline in brief.candidate_baselines
+    )
+    recommended = next((item for item in gap_candidates if item.experimentally_testable), None)
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if not literature_scout.similar_papers:
+        blockers.append("No offline or cached literature signals are available for this brief.")
+    if idea_duplicate_risk == "high":
+        warnings.append("The idea appears too broad or highly overlapping before gap narrowing.")
+    if restatement:
+        warnings.append("The idea may restate an existing baseline; require a changed research question.")
+    if recommended is None:
+        blockers.append("No gap candidate is currently tied to executable dataset/metric/baseline evidence.")
+    payload = {
+        "miner_id": "gap_miner_v1",
+        "project_id": brief.project_id,
+        "brief_id": brief.brief_id,
+        "idea_duplicate_risk": idea_duplicate_risk,
+        "idea_is_existing_method_restatement": restatement,
+        "change_research_question": bool(brief.idea_too_generic or restatement or idea_duplicate_risk == "high"),
+        "change_experiment_design": any(item.recommendation == "change_experiment_design" for item in gap_candidates),
+        "recommended_narrower_gap": recommended.description if recommended is not None else None,
+        "gap_candidates": [item.model_dump(mode="json") for item in gap_candidates],
+        "warnings": sorted(set(warnings)),
+        "blockers": blockers,
+    }
+    return AutoResearchGapMinerRead(
+        generated_at=_utcnow(),
+        miner_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def scout_and_mine_gaps(
+    brief: AutoResearchResearchBriefRead,
+) -> AutoResearchResearchBriefRead:
+    scout = build_literature_scout(brief)
+    miner = build_gap_miner(brief, literature_scout=scout)
+    return brief.model_copy(
+        update={
+            "literature_scout": scout,
+            "gap_miner": miner,
+            "novelty_search_plan": _dedupe([*brief.novelty_search_plan, *scout.search_queries]),
+            "updated_at": _utcnow(),
+            "next_action": "create_run" if brief.allow_experiments and not miner.blockers else "select_direction",
+        }
+    )

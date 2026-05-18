@@ -4580,7 +4580,9 @@ def test_research_brief_builder_produces_multiple_executable_directions() -> Non
     assert 2 <= brief.direction_count <= 5
     assert len(brief.research_directions) == brief.direction_count
     assert brief.selected_direction_id is not None
+    assert brief.selected_hypothesis_id is not None
     assert brief.selection_reason is not None
+    assert brief.direction_selection is not None
     assert brief.idea_too_generic is False
     narrowing = brief.scope_narrowing_recommendation.lower()
     assert "task" in narrowing
@@ -4588,6 +4590,15 @@ def test_research_brief_builder_produces_multiple_executable_directions() -> Non
     assert "metric" in narrowing
     assert len(brief.research_questions) == brief.direction_count
     assert len(brief.candidate_hypotheses) == brief.direction_count
+    assert brief.hypothesis_count == brief.direction_count
+    assert len(brief.hypothesis_bank) == brief.direction_count
+    assert brief.hypothesis_bank[0].hypothesis_id == brief.selected_hypothesis_id
+    assert brief.direction_selection.rejected_directions
+    assert all(item.reasons for item in brief.direction_selection.rejected_directions)
+    assert [item.selection_score for item in brief.hypothesis_bank] == sorted(
+        [item.selection_score for item in brief.hypothesis_bank],
+        reverse=True,
+    )
     assert any(
         direction.candidate_dataset in query
         for direction in brief.research_directions
@@ -4610,6 +4621,40 @@ def test_research_brief_builder_produces_multiple_executable_directions() -> Non
     assert run_request.task_family_hint == selected.task_family
     assert run_request.max_rounds == payload.resource_budget.max_rounds
     assert run_request.candidate_execution_limit == payload.resource_budget.candidate_execution_limit
+
+
+def test_research_brief_selected_hypothesis_creates_metadata_run(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-hypothesis-run"
+    payload = AutoResearchIdeaRequest.model_validate(_idea_request_payload())
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=payload,
+        )
+    )
+    run_request, hypothesis = autoresearch_idea_brief.run_request_from_selected_hypothesis(brief)
+
+    run = autoresearch_repository.create_run(
+        project_id,
+        run_request.topic,
+        request=AutoResearchRunConfig.from_request(run_request),
+        brief_id=brief.brief_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        direction_selection_reason=brief.selection_reason,
+    )
+    loaded = autoresearch_repository.load_run(project_id, run.id)
+
+    assert loaded is not None
+    assert loaded.brief_id == brief.brief_id
+    assert loaded.hypothesis_id == hypothesis.hypothesis_id
+    assert loaded.direction_selection_reason == brief.selection_reason
+    assert loaded.request is not None
+    assert loaded.request.max_rounds == payload.resource_budget.max_rounds
+    assert loaded.request.candidate_execution_limit == payload.resource_budget.candidate_execution_limit
 
 
 def test_research_brief_repository_persists_and_console_summarizes(
@@ -4643,8 +4688,10 @@ def test_research_brief_repository_persists_and_console_summarizes(
     assert console.latest_brief_original_idea == brief.original_idea
     assert console.latest_brief_hypothesis_count == brief.direction_count
     assert console.latest_brief_selected_direction_id == brief.selected_direction_id
-    assert console.latest_brief_next_action == "build_hypothesis_bank"
+    assert console.latest_brief_selected_hypothesis_id == brief.selected_hypothesis_id
+    assert console.latest_brief_next_action == "create_run"
     assert console.actions.create_idea_brief is True
+    assert console.actions.create_run_from_brief is True
 
 
 def test_narrative_artifact_summary_uses_objective_system_when_best_missing() -> None:

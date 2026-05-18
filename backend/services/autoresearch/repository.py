@@ -1737,6 +1737,9 @@ def create_run(
     docker_image: str | None = None,
     benchmark: BenchmarkSource | None = None,
     execution_backend: ExecutionBackendSpec | None = None,
+    brief_id: str | None = None,
+    hypothesis_id: str | None = None,
+    direction_selection_reason: str | None = None,
 ) -> AutoResearchRunRead:
     now = _utcnow()
     effective_request = request or AutoResearchRunConfig(
@@ -1749,6 +1752,9 @@ def create_run(
         project_id=project_id,
         topic=topic,
         status="queued",
+        brief_id=brief_id,
+        hypothesis_id=hypothesis_id,
+        direction_selection_reason=direction_selection_reason,
         request=effective_request,
         benchmark=effective_request.benchmark,
         execution_backend=effective_request.execution_backend,

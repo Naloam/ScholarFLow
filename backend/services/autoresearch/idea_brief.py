@@ -6,8 +6,11 @@ import re
 from datetime import UTC, datetime
 
 from schemas.autoresearch import (
+    AutoResearchDirectionSelectionRead,
+    AutoResearchHypothesisBankEntryRead,
     AutoResearchIdeaFeasibilityAssessmentRead,
     AutoResearchIdeaRequest,
+    AutoResearchRejectedDirectionRead,
     AutoResearchResearchBriefRead,
     AutoResearchResearchDirectionRead,
     AutoResearchRunRequest,
@@ -70,6 +73,13 @@ _PAPER_TIER_ORDER: dict[AutoResearchPaperTier, int] = {
     "workshop_candidate": 1,
     "conference_candidate": 2,
     "strong_conference_candidate": 3,
+}
+_DIRECTION_SELECTOR_WEIGHTS: dict[str, float] = {
+    "novelty": 0.2,
+    "feasibility": 0.3,
+    "evidence_availability": 0.2,
+    "resource_cost": 0.1,
+    "publish_potential": 0.2,
 }
 
 
@@ -410,6 +420,175 @@ def _selection_key(direction: AutoResearchResearchDirectionRead) -> tuple[float,
     )
 
 
+def _novelty_score(risk: str) -> float:
+    return {"low": 1.0, "medium": 0.62, "high": 0.22}.get(risk, 0.5)
+
+
+def _cost_score(estimated_cost: str) -> float:
+    lowered = estimated_cost.lower()
+    if "toy" in lowered:
+        return 1.0
+    if "standard" in lowered or "local" in lowered:
+        return 0.78
+    if "publication" in lowered:
+        return 0.55
+    return 0.65
+
+
+def _evidence_availability_score(direction: AutoResearchResearchDirectionRead) -> float:
+    evidence_units = (
+        len(direction.expected_evidence)
+        + len(direction.required_baselines)
+        + len(direction.required_ablations)
+        + len(direction.candidate_metrics)
+    )
+    return round(min(1.0, evidence_units / 8), 2)
+
+
+def _publish_score(tier: AutoResearchPaperTier) -> float:
+    return round(_PAPER_TIER_ORDER[tier] / max(_PAPER_TIER_ORDER.values()), 2)
+
+
+def _selector_score(
+    direction: AutoResearchResearchDirectionRead,
+) -> tuple[float, dict[str, float]]:
+    factors = {
+        "novelty": _novelty_score(direction.novelty_risk),
+        "feasibility": direction.feasibility_score,
+        "evidence_availability": _evidence_availability_score(direction),
+        "resource_cost": _cost_score(direction.estimated_cost),
+        "publish_potential": _publish_score(direction.publish_potential),
+    }
+    score = sum(
+        factors[key] * weight
+        for key, weight in _DIRECTION_SELECTOR_WEIGHTS.items()
+    )
+    return round(score, 3), factors
+
+
+def _hypothesis_from_direction(
+    direction: AutoResearchResearchDirectionRead,
+    *,
+    rank: int,
+) -> AutoResearchHypothesisBankEntryRead:
+    score, factors = _selector_score(direction)
+    evidence_requirements = _dedupe(
+        [
+            *direction.expected_evidence,
+            *[f"Baseline: {item}" for item in direction.required_baselines],
+            *[f"Ablation: {item}" for item in direction.required_ablations],
+            *[f"Metric: {item}" for item in direction.candidate_metrics],
+            f"Dataset: {direction.candidate_dataset}",
+        ]
+    )
+    return AutoResearchHypothesisBankEntryRead(
+        hypothesis_id=f"hyp_{rank}_{_slug(direction.direction_id, fallback='direction')}",
+        direction_id=direction.direction_id,
+        rank=rank,
+        research_question=direction.research_question,
+        hypothesis=direction.hypothesis,
+        method_sketch=direction.method_sketch,
+        expected_evidence=direction.expected_evidence,
+        required_baselines=direction.required_baselines,
+        required_ablations=direction.required_ablations,
+        required_datasets=[direction.candidate_dataset],
+        required_metrics=direction.candidate_metrics,
+        novelty_risk=direction.novelty_risk,
+        feasibility_score=direction.feasibility_score,
+        evidence_requirements=evidence_requirements,
+        estimated_cost=direction.estimated_cost,
+        publish_potential=direction.publish_potential,
+        kill_criteria=direction.kill_criteria,
+        selection_score=score,
+        selector_factors=factors,
+        run_topic=direction.run_topic,
+    )
+
+
+def _rejection_reasons(
+    candidate: AutoResearchHypothesisBankEntryRead,
+    selected: AutoResearchHypothesisBankEntryRead,
+) -> list[str]:
+    reasons: list[str] = []
+    if candidate.novelty_risk != "low":
+        reasons.append(f"Novelty risk is `{candidate.novelty_risk}` and needs more scouting.")
+    if candidate.feasibility_score < selected.feasibility_score:
+        reasons.append(
+            f"Feasibility score {candidate.feasibility_score:.2f} is below the selected "
+            f"{selected.feasibility_score:.2f}."
+        )
+    if candidate.selector_factors.get("evidence_availability", 0) < selected.selector_factors.get("evidence_availability", 0):
+        reasons.append("Evidence requirements are less immediately executable.")
+    if _PAPER_TIER_ORDER[candidate.publish_potential] < _PAPER_TIER_ORDER[selected.publish_potential]:
+        reasons.append(f"Publish potential is capped at `{candidate.publish_potential}`.")
+    if candidate.selection_score < selected.selection_score:
+        reasons.append(
+            f"Overall selector score {candidate.selection_score:.3f} trails the selected "
+            f"{selected.selection_score:.3f}."
+        )
+    return _dedupe(reasons)[:3] or ["Lower combined novelty, feasibility, evidence, cost, and publish score."]
+
+
+def _build_hypothesis_bank_and_selection(
+    directions: list[AutoResearchResearchDirectionRead],
+) -> tuple[list[AutoResearchHypothesisBankEntryRead], AutoResearchDirectionSelectionRead]:
+    raw_bank = [
+        _hypothesis_from_direction(direction, rank=index)
+        for index, direction in enumerate(directions, start=1)
+    ]
+    ranked_bank = sorted(
+        raw_bank,
+        key=lambda item: (
+            item.selection_score,
+            item.feasibility_score,
+            _PAPER_TIER_ORDER[item.publish_potential],
+            _novelty_score(item.novelty_risk),
+        ),
+        reverse=True,
+    )
+    bank = [
+        item.model_copy(
+            update={
+                "rank": index,
+                "selection_reason": (
+                    f"Rank {index}: selector score {item.selection_score:.3f} from novelty "
+                    f"{item.selector_factors.get('novelty', 0):.2f}, feasibility "
+                    f"{item.selector_factors.get('feasibility', 0):.2f}, evidence "
+                    f"{item.selector_factors.get('evidence_availability', 0):.2f}, cost "
+                    f"{item.selector_factors.get('resource_cost', 0):.2f}, and publish "
+                    f"{item.selector_factors.get('publish_potential', 0):.2f}."
+                ),
+            }
+        )
+        for index, item in enumerate(ranked_bank, start=1)
+    ]
+    selected = bank[0] if bank else None
+    selection = AutoResearchDirectionSelectionRead(
+        selected_hypothesis_id=selected.hypothesis_id if selected is not None else None,
+        selected_direction_id=selected.direction_id if selected is not None else None,
+        selection_score=selected.selection_score if selected is not None else 0.0,
+        selection_reason=(
+            f"Selected `{selected.hypothesis_id}` because it maximizes the weighted selector "
+            "over novelty, feasibility, evidence availability, resource cost, and publish potential."
+            if selected is not None
+            else None
+        ),
+        criteria_weights=_DIRECTION_SELECTOR_WEIGHTS,
+        rejected_directions=[
+            AutoResearchRejectedDirectionRead(
+                hypothesis_id=item.hypothesis_id,
+                direction_id=item.direction_id,
+                rank=item.rank,
+                selection_score=item.selection_score,
+                reasons=_rejection_reasons(item, selected),
+            )
+            for item in bank[1:]
+            if selected is not None
+        ],
+    )
+    return bank, selection
+
+
 def build_research_brief(
     *,
     project_id: str,
@@ -467,7 +646,20 @@ def build_research_brief(
             if len(directions) >= 2:
                 break
 
-    selected = max(directions, key=_selection_key) if directions else None
+    hypothesis_bank, direction_selection = _build_hypothesis_bank_and_selection(directions)
+    selected_hypothesis = hypothesis_bank[0] if hypothesis_bank else None
+    selected = (
+        next(
+            (
+                direction
+                for direction in directions
+                if selected_hypothesis is not None and direction.direction_id == selected_hypothesis.direction_id
+            ),
+            None,
+        )
+        if selected_hypothesis is not None
+        else max(directions, key=_selection_key) if directions else None
+    )
     polished_idea = (
         f"{_title_case(original_idea)} scoped to benchmarkable tasks with explicit datasets, metrics, baselines, and kill criteria."
         if idea_too_generic
@@ -501,13 +693,7 @@ def build_research_brief(
         if selected is not None
         else "technical_report"
     )
-    selection_reason = (
-        f"Selected `{selected.direction_id}` because it has the best balance of feasibility "
-        f"({selected.feasibility_score:.2f}), novelty risk `{selected.novelty_risk}`, executable evidence, "
-        f"and publish potential `{selected.publish_potential}`."
-        if selected is not None
-        else None
-    )
+    selection_reason = direction_selection.selection_reason
     now = _utcnow()
     payload_for_fingerprint = {
         "project_id": project_id,
@@ -518,6 +704,8 @@ def build_research_brief(
         "target_tier": payload.target_tier,
         "resource_budget": payload.resource_budget.model_dump(mode="json"),
         "directions": [item.model_dump(mode="json") for item in directions],
+        "hypothesis_bank": [item.model_dump(mode="json") for item in hypothesis_bank],
+        "direction_selection": direction_selection.model_dump(mode="json"),
     }
     brief_id = f"brief_{_slug(original_idea, fallback='idea')}_{_fingerprint(payload_for_fingerprint)[:10]}"
     brief = AutoResearchResearchBriefRead(
@@ -557,9 +745,13 @@ def build_research_brief(
         publish_potential=publish_potential,
         research_directions=directions,
         direction_count=len(directions),
+        hypothesis_bank=hypothesis_bank,
+        hypothesis_count=len(hypothesis_bank),
         selected_direction_id=selected.direction_id if selected is not None else None,
+        selected_hypothesis_id=selected_hypothesis.hypothesis_id if selected_hypothesis is not None else None,
         selection_reason=selection_reason,
-        next_action="build_hypothesis_bank",
+        direction_selection=direction_selection,
+        next_action="create_run" if payload.allow_experiments else "select_direction",
         allow_web=payload.allow_web,
         allow_experiments=payload.allow_experiments,
         target_tier=payload.target_tier,
@@ -567,6 +759,27 @@ def build_research_brief(
         brief_fingerprint=_fingerprint(payload_for_fingerprint),
     )
     return brief
+
+
+def hypothesis_bank_from_brief(
+    brief: AutoResearchResearchBriefRead,
+) -> tuple[list[AutoResearchHypothesisBankEntryRead], AutoResearchDirectionSelectionRead]:
+    if brief.hypothesis_bank and brief.direction_selection is not None:
+        return brief.hypothesis_bank, brief.direction_selection
+    return _build_hypothesis_bank_and_selection(brief.research_directions)
+
+
+def selected_hypothesis_from_brief(
+    brief: AutoResearchResearchBriefRead,
+    *,
+    hypothesis_id: str | None = None,
+) -> AutoResearchHypothesisBankEntryRead:
+    bank, selection = hypothesis_bank_from_brief(brief)
+    selected_id = hypothesis_id or brief.selected_hypothesis_id or selection.selected_hypothesis_id
+    hypothesis = next((item for item in bank if item.hypothesis_id == selected_id), None)
+    if hypothesis is None:
+        raise ValueError(f"Hypothesis not found: {selected_id}")
+    return hypothesis
 
 
 def run_request_from_selected_direction(
@@ -593,3 +806,18 @@ def run_request_from_selected_direction(
         auto_fetch_literature=False,
         execution_profile=payload.execution_profile if payload is not None else "exploratory",
     )
+
+
+def run_request_from_selected_hypothesis(
+    brief: AutoResearchResearchBriefRead,
+    *,
+    hypothesis_id: str | None = None,
+    payload: AutoResearchIdeaRequest | None = None,
+) -> tuple[AutoResearchRunRequest, AutoResearchHypothesisBankEntryRead]:
+    hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=hypothesis_id)
+    run_request = run_request_from_selected_direction(
+        brief,
+        direction_id=hypothesis.direction_id,
+        payload=payload,
+    )
+    return run_request, hypothesis

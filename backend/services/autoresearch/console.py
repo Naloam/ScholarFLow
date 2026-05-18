@@ -628,10 +628,13 @@ def build_operator_console(
         latest_brief_status=latest_brief.status if latest_brief is not None else None,
         latest_brief_original_idea=latest_brief.original_idea if latest_brief is not None else None,
         latest_brief_hypothesis_count=(
-            len(latest_brief.candidate_hypotheses) if latest_brief is not None else 0
+            latest_brief.hypothesis_count if latest_brief is not None else 0
         ),
         latest_brief_selected_direction_id=(
             latest_brief.selected_direction_id if latest_brief is not None else None
+        ),
+        latest_brief_selected_hypothesis_id=(
+            latest_brief.selected_hypothesis_id if latest_brief is not None else None
         ),
         latest_brief_next_action=latest_brief.next_action if latest_brief is not None else None,
         filtered_run_count=len(filtered_runs),
@@ -641,6 +644,7 @@ def build_operator_console(
         actions=AutoResearchOperatorProjectActionsRead(
             start_run=True,
             create_idea_brief=True,
+            create_run_from_brief=True,
             build_meta_analysis=True,
             build_system_evaluation=True,
         ),

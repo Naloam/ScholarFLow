@@ -18,6 +18,8 @@ from schemas.autoresearch import (
     AutoResearchExecutionCommandResponse,
     AutoResearchExperimentBridgeRead,
     AutoResearchIdeaRequest,
+    AutoResearchIdeaRunCreateRequest,
+    AutoResearchHypothesisBankRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
     AutoResearchPublicationTier,
@@ -55,7 +57,11 @@ from services.autoresearch.bridge import (
 )
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
-from services.autoresearch.idea_brief import build_research_brief
+from services.autoresearch.idea_brief import (
+    build_research_brief,
+    hypothesis_bank_from_brief,
+    run_request_from_selected_hypothesis,
+)
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
 from services.autoresearch.review_publish import (
@@ -155,6 +161,102 @@ def list_auto_research_idea_briefs(
 ) -> AutoResearchResearchBriefList:
     del db
     return AutoResearchResearchBriefList(items=list_research_briefs(project_id))
+
+
+@router.get("/ideas/{brief_id}/hypotheses", response_model=AutoResearchHypothesisBankRead)
+def get_auto_research_idea_hypothesis_bank(
+    project_id: str,
+    brief_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchHypothesisBankRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    bank, selection = hypothesis_bank_from_brief(brief)
+    return AutoResearchHypothesisBankRead(
+        brief_id=brief.brief_id,
+        project_id=brief.project_id,
+        hypothesis_count=len(bank),
+        hypotheses=bank,
+        selected_hypothesis_id=selection.selected_hypothesis_id,
+        direction_selection=selection,
+    )
+
+
+@router.post("/ideas/{brief_id}/run", response_model=IdResponse)
+def create_auto_research_run_from_idea_brief(
+    project_id: str,
+    brief_id: str,
+    background_tasks: BackgroundTasks,
+    payload: AutoResearchIdeaRunCreateRequest | None = Body(default=None),
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> IdResponse:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    if not brief.allow_experiments:
+        raise HTTPException(
+            status_code=409,
+            detail="This idea brief does not allow experiment execution",
+        )
+    payload = payload or AutoResearchIdeaRunCreateRequest()
+    try:
+        run_request, hypothesis = run_request_from_selected_hypothesis(
+            brief,
+            hypothesis_id=payload.hypothesis_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    updates: dict[str, object] = {}
+    if payload.max_rounds is not None:
+        updates["max_rounds"] = payload.max_rounds
+    if payload.candidate_execution_limit is not None:
+        updates["candidate_execution_limit"] = payload.candidate_execution_limit
+    if payload.queue_priority is not None:
+        updates["queue_priority"] = payload.queue_priority
+    if payload.execution_profile is not None:
+        updates["execution_profile"] = payload.execution_profile
+    if updates:
+        run_request = run_request.model_copy(update=updates)
+
+    execution_plane = AutoResearchExecutionPlane()
+    request_snapshot = AutoResearchRunConfig.from_request(run_request)
+    selection_reason = (
+        brief.direction_selection.selection_reason
+        if brief.direction_selection is not None
+        else brief.selection_reason
+    )
+    run = create_run(
+        project_id,
+        run_request.topic,
+        request=request_snapshot,
+        brief_id=brief.brief_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        direction_selection_reason=selection_reason,
+    )
+    job, _created = execution_plane.enqueue(project_id=project_id, run_id=run.id, action="run")
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.idea_run",
+        project_id=project_id,
+        action="queued",
+        status_code=202,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"job_id={job.id} brief_id={brief.brief_id} "
+            f"hypothesis_id={hypothesis.hypothesis_id}"
+        ),
+    )
+    if request_snapshot.experiment_bridge is not None and request_snapshot.experiment_bridge.enabled:
+        execution_plane.drain()
+    else:
+        background_tasks.add_task(execution_plane.drain)
+    return IdResponse(id=run.id)
 
 
 @router.get("/ideas/{brief_id}", response_model=AutoResearchResearchBriefRead)

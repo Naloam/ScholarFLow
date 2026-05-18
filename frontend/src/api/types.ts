@@ -623,6 +623,9 @@ export type AutoResearchRun = {
   project_id: string;
   topic: string;
   status: AutoResearchRunStatus;
+  brief_id?: string | null;
+  hypothesis_id?: string | null;
+  direction_selection_reason?: string | null;
   error?: string | null;
   narrative_report_markdown?: string | null;
   narrative_report_path?: string | null;
@@ -2477,6 +2480,7 @@ export type AutoResearchPublishExport = {
 export type AutoResearchOperatorProjectActions = {
   start_run: boolean;
   create_idea_brief: boolean;
+  create_run_from_brief: boolean;
   build_meta_analysis: boolean;
   build_system_evaluation: boolean;
 };
@@ -2527,12 +2531,7 @@ export type AutoResearchResearchDirection = {
   required_ablations: string[];
   method_sketch: string;
   expected_evidence: string[];
-  expected_contribution_type:
-    | "new_method"
-    | "new_system"
-    | "experimental_finding"
-    | "new_benchmark"
-    | "analysis_framework";
+  expected_contribution_type: AutoResearchContributionType;
   novelty_risk: "low" | "medium" | "high";
   feasibility_score: number;
   estimated_cost: string;
@@ -2540,6 +2539,47 @@ export type AutoResearchResearchDirection = {
   kill_criteria: string[];
   rationale: string;
   run_topic: string;
+};
+
+export type AutoResearchHypothesisBankEntry = {
+  hypothesis_id: string;
+  direction_id: string;
+  rank: number;
+  research_question: string;
+  hypothesis: string;
+  method_sketch: string;
+  expected_evidence: string[];
+  required_baselines: string[];
+  required_ablations: string[];
+  required_datasets: string[];
+  required_metrics: string[];
+  novelty_risk: "low" | "medium" | "high";
+  feasibility_score: number;
+  evidence_requirements: string[];
+  estimated_cost: string;
+  publish_potential: AutoResearchPaperTier;
+  kill_criteria: string[];
+  selection_score: number;
+  selector_factors: Record<string, number>;
+  selection_reason?: string | null;
+  run_topic: string;
+};
+
+export type AutoResearchRejectedDirection = {
+  hypothesis_id: string;
+  direction_id: string;
+  rank: number;
+  selection_score: number;
+  reasons: string[];
+};
+
+export type AutoResearchDirectionSelection = {
+  selected_hypothesis_id?: string | null;
+  selected_direction_id?: string | null;
+  selection_score: number;
+  selection_reason?: string | null;
+  criteria_weights: Record<string, number>;
+  rejected_directions: AutoResearchRejectedDirection[];
 };
 
 export type AutoResearchResearchBrief = {
@@ -2556,13 +2596,7 @@ export type AutoResearchResearchBrief = {
   scope_narrowing_recommendation: string;
   research_questions: string[];
   candidate_hypotheses: string[];
-  expected_contribution_types: Array<
-    | "new_method"
-    | "new_system"
-    | "experimental_finding"
-    | "new_benchmark"
-    | "analysis_framework"
-  >;
+  expected_contribution_types: AutoResearchContributionType[];
   target_tasks: string[];
   candidate_datasets: string[];
   candidate_metrics: string[];
@@ -2574,8 +2608,12 @@ export type AutoResearchResearchBrief = {
   publish_potential: AutoResearchPaperTier;
   research_directions: AutoResearchResearchDirection[];
   direction_count: number;
+  hypothesis_bank: AutoResearchHypothesisBankEntry[];
+  hypothesis_count: number;
   selected_direction_id?: string | null;
+  selected_hypothesis_id?: string | null;
   selection_reason?: string | null;
+  direction_selection?: AutoResearchDirectionSelection | null;
   next_action: "build_hypothesis_bank" | "select_direction" | "create_run";
   allow_web: boolean;
   allow_experiments: boolean;
@@ -2587,6 +2625,23 @@ export type AutoResearchResearchBrief = {
 
 export type AutoResearchResearchBriefList = {
   items: AutoResearchResearchBrief[];
+};
+
+export type AutoResearchHypothesisBank = {
+  brief_id: string;
+  project_id: string;
+  hypothesis_count: number;
+  hypotheses: AutoResearchHypothesisBankEntry[];
+  selected_hypothesis_id?: string | null;
+  direction_selection?: AutoResearchDirectionSelection | null;
+};
+
+export type AutoResearchIdeaRunCreateRequest = {
+  hypothesis_id?: string | null;
+  max_rounds?: number | null;
+  candidate_execution_limit?: number | null;
+  queue_priority?: "low" | "normal" | "high" | null;
+  execution_profile?: AutoResearchExecutionProfile | null;
 };
 
 export type AutoResearchOperatorConsoleFilters = {
@@ -2775,6 +2830,7 @@ export type AutoResearchOperatorConsole = {
   latest_brief_original_idea?: string | null;
   latest_brief_hypothesis_count: number;
   latest_brief_selected_direction_id?: string | null;
+  latest_brief_selected_hypothesis_id?: string | null;
   latest_brief_next_action?: string | null;
   filtered_run_count: number;
   latest_run_id?: string | null;

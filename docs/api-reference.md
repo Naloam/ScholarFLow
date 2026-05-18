@@ -17,6 +17,19 @@ This document focuses on the current auto-research API surface.
 ### `GET /api/projects/{project_id}/auto-research/ideas/{brief_id}`
 
 - returns a single persisted idea brief
+- includes the generated hypothesis bank, selected hypothesis, direction-selection rationale, and rejected directions
+
+### `GET /api/projects/{project_id}/auto-research/ideas/{brief_id}/hypotheses`
+
+- returns the persisted hypothesis bank and selector output for the idea brief
+- exposes selector weights across novelty, feasibility, evidence availability, resource cost, and publish potential
+
+### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/run`
+
+- creates and enqueues an auto-research run from the selected hypothesis, or from an explicit `hypothesis_id`
+- preserves `brief_id`, `hypothesis_id`, and `direction_selection_reason` on the run snapshot
+- accepts optional run budget overrides for `max_rounds`, `candidate_execution_limit`, `queue_priority`, and `execution_profile`
+- returns `{ "id": "<run_id>" }`
 
 ### `POST /api/projects/{project_id}/auto-research/run`
 
@@ -271,6 +284,8 @@ These are still available, but they are downstream of auto-research output rathe
 
 - `run.json` remains the top-level compatibility snapshot
 - idea briefs now persist separately under `autorresearch/briefs/<brief_id>/brief.json`
+- idea briefs now carry hypothesis-bank and direction-selector state before any run is created
+- runs created from idea briefs preserve `brief_id`, `hypothesis_id`, and `direction_selection_reason`
 - candidate-level manifests and artifacts are already persisted on disk
 - successful publish export now also persists `publication_manifest.json` and `code_package.zip`
 - publication manifests now also surface any materialized paper compile outputs so downstream deployment or browser sessions can consume compiled PDFs without unpacking the publish archive first

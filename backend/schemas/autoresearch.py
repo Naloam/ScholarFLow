@@ -566,6 +566,47 @@ class AutoResearchResearchDirectionRead(BaseModel):
     run_topic: str
 
 
+class AutoResearchHypothesisBankEntryRead(BaseModel):
+    hypothesis_id: str
+    direction_id: str
+    rank: int
+    research_question: str
+    hypothesis: str
+    method_sketch: str
+    expected_evidence: list[str] = Field(default_factory=list)
+    required_baselines: list[str] = Field(default_factory=list)
+    required_ablations: list[str] = Field(default_factory=list)
+    required_datasets: list[str] = Field(default_factory=list)
+    required_metrics: list[str] = Field(default_factory=list)
+    novelty_risk: AutoResearchNoveltyRiskLevel = "medium"
+    feasibility_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    evidence_requirements: list[str] = Field(default_factory=list)
+    estimated_cost: str
+    publish_potential: AutoResearchPaperTier = "technical_report"
+    kill_criteria: list[str] = Field(default_factory=list)
+    selection_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    selector_factors: dict[str, float] = Field(default_factory=dict)
+    selection_reason: str | None = None
+    run_topic: str
+
+
+class AutoResearchRejectedDirectionRead(BaseModel):
+    hypothesis_id: str
+    direction_id: str
+    rank: int
+    selection_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    reasons: list[str] = Field(default_factory=list)
+
+
+class AutoResearchDirectionSelectionRead(BaseModel):
+    selected_hypothesis_id: str | None = None
+    selected_direction_id: str | None = None
+    selection_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    selection_reason: str | None = None
+    criteria_weights: dict[str, float] = Field(default_factory=dict)
+    rejected_directions: list[AutoResearchRejectedDirectionRead] = Field(default_factory=list)
+
+
 class AutoResearchResearchBriefRead(BaseModel):
     brief_id: str
     project_id: str
@@ -592,8 +633,12 @@ class AutoResearchResearchBriefRead(BaseModel):
     publish_potential: AutoResearchPaperTier = "technical_report"
     research_directions: list[AutoResearchResearchDirectionRead] = Field(default_factory=list)
     direction_count: int = 0
+    hypothesis_bank: list[AutoResearchHypothesisBankEntryRead] = Field(default_factory=list)
+    hypothesis_count: int = 0
     selected_direction_id: str | None = None
+    selected_hypothesis_id: str | None = None
     selection_reason: str | None = None
+    direction_selection: AutoResearchDirectionSelectionRead | None = None
     next_action: Literal["build_hypothesis_bank", "select_direction", "create_run"] = "build_hypothesis_bank"
     allow_web: bool = False
     allow_experiments: bool = True
@@ -605,6 +650,37 @@ class AutoResearchResearchBriefRead(BaseModel):
 
 class AutoResearchResearchBriefList(BaseModel):
     items: list[AutoResearchResearchBriefRead] = Field(default_factory=list)
+
+
+class AutoResearchHypothesisBankRead(BaseModel):
+    brief_id: str
+    project_id: str
+    hypothesis_count: int = 0
+    hypotheses: list[AutoResearchHypothesisBankEntryRead] = Field(default_factory=list)
+    selected_hypothesis_id: str | None = None
+    direction_selection: AutoResearchDirectionSelectionRead | None = None
+
+
+class AutoResearchIdeaRunCreateRequest(BaseModel):
+    hypothesis_id: str | None = None
+    max_rounds: int | None = None
+    candidate_execution_limit: int | None = None
+    queue_priority: AutoResearchQueuePriority | None = None
+    execution_profile: AutoResearchExecutionProfile | None = None
+
+    @field_validator("max_rounds")
+    @classmethod
+    def validate_max_rounds(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("max_rounds must be at least 1")
+        return value
+
+    @field_validator("candidate_execution_limit")
+    @classmethod
+    def validate_candidate_execution_limit(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("candidate_execution_limit must be at least 1")
+        return value
 
 
 class AutoResearchRunControlPatch(BaseModel):
@@ -1401,6 +1477,9 @@ class AutoResearchRunRead(BaseModel):
     project_id: str
     topic: str
     status: AutoResearchRunStatus
+    brief_id: str | None = None
+    hypothesis_id: str | None = None
+    direction_selection_reason: str | None = None
     request: AutoResearchRunConfig | None = None
     task_family: TaskFamily | None = None
     benchmark: BenchmarkSource | None = None
@@ -2946,6 +3025,7 @@ class AutoResearchExperimentBridgeRead(BaseModel):
 class AutoResearchOperatorProjectActionsRead(BaseModel):
     start_run: bool = True
     create_idea_brief: bool = True
+    create_run_from_brief: bool = True
     build_meta_analysis: bool = True
     build_system_evaluation: bool = True
 
@@ -3101,6 +3181,7 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     latest_brief_original_idea: str | None = None
     latest_brief_hypothesis_count: int = 0
     latest_brief_selected_direction_id: str | None = None
+    latest_brief_selected_hypothesis_id: str | None = None
     latest_brief_next_action: str | None = None
     filtered_run_count: int = 0
     latest_run_id: str | None = None

@@ -11,7 +11,9 @@ import type {
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
   AutoResearchExperimentBridge,
+  AutoResearchHypothesisBank,
   AutoResearchIdeaRequest,
+  AutoResearchIdeaRunCreateRequest,
   AutoResearchResearchBrief,
   AutoResearchResearchBriefList,
   AutoResearchOperatorConsole,
@@ -374,6 +376,29 @@ export const api = {
   ): Promise<AutoResearchResearchBrief> {
     return request(
       `/api/projects/${projectId}/auto-research/ideas/${briefId}`,
+    );
+  },
+
+  getAutoResearchIdeaHypothesisBank(
+    projectId: string,
+    briefId: string,
+  ): Promise<AutoResearchHypothesisBank> {
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}/hypotheses`,
+    );
+  },
+
+  createAutoResearchRunFromIdeaBrief(
+    projectId: string,
+    briefId: string,
+    payload?: AutoResearchIdeaRunCreateRequest,
+  ): Promise<IdResponse> {
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}/run`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
     );
   },
 

@@ -11,6 +11,9 @@ import type {
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
   AutoResearchExperimentBridge,
+  AutoResearchIdeaRequest,
+  AutoResearchResearchBrief,
+  AutoResearchResearchBriefList,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExport,
@@ -347,6 +350,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  createAutoResearchIdeaBrief(
+    projectId: string,
+    payload: AutoResearchIdeaRequest,
+  ): Promise<AutoResearchResearchBrief> {
+    return request(`/api/projects/${projectId}/auto-research/ideas`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listAutoResearchIdeaBriefs(
+    projectId: string,
+  ): Promise<AutoResearchResearchBriefList> {
+    return request(`/api/projects/${projectId}/auto-research/ideas`);
+  },
+
+  getAutoResearchIdeaBrief(
+    projectId: string,
+    briefId: string,
+  ): Promise<AutoResearchResearchBrief> {
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}`,
+    );
   },
 
   getAutoResearchRun(

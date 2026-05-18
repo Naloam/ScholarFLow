@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
 import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
+import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
@@ -35,6 +36,7 @@ from schemas.autoresearch import (
     AutoResearchPaperPlanSectionRead,
     AutoResearchArtifactIntegrityAuditRead,
     AutoResearchArtifactIntegrityIssueRead,
+    AutoResearchIdeaRequest,
     AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublicationRepairExecutionActionRead,
     AutoResearchPublicationRepairExecutionRead,
@@ -106,6 +108,24 @@ def _seed_project(db, project_id: str, *, title: str = "Regression Project") -> 
         )
     )
     db.commit()
+
+
+def _idea_request_payload() -> dict[str, object]:
+    return {
+        "idea": "Improve evidence-aware reranking for autonomous literature review",
+        "domain": "scientific document retrieval",
+        "resource_budget": {
+            "budget_label": "standard",
+            "max_rounds": 2,
+            "candidate_execution_limit": 2,
+            "max_literature_queries": 3,
+        },
+        "target_tier": "workshop_candidate",
+        "allow_web": False,
+        "allow_experiments": True,
+        "task_family_hint": "ir_reranking",
+        "execution_profile": "exploratory",
+    }
 
 
 def _result_artifact() -> ResultArtifact:
@@ -4547,6 +4567,84 @@ def test_autoresearch_execute_persists_literature_synthesis(
     assert reloaded is not None
     assert reloaded.literature_synthesis is not None
     assert reloaded.literature_synthesis.positioning == synthesis.positioning
+
+
+def test_research_brief_builder_produces_multiple_executable_directions() -> None:
+    payload = AutoResearchIdeaRequest.model_validate(_idea_request_payload())
+
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-brief",
+        payload=payload,
+    )
+
+    assert 2 <= brief.direction_count <= 5
+    assert len(brief.research_directions) == brief.direction_count
+    assert brief.selected_direction_id is not None
+    assert brief.selection_reason is not None
+    assert brief.idea_too_generic is False
+    narrowing = brief.scope_narrowing_recommendation.lower()
+    assert "task" in narrowing
+    assert "dataset" in narrowing
+    assert "metric" in narrowing
+    assert len(brief.research_questions) == brief.direction_count
+    assert len(brief.candidate_hypotheses) == brief.direction_count
+    assert any(
+        direction.candidate_dataset in query
+        for direction in brief.research_directions
+        for query in brief.novelty_search_plan
+    )
+    assert any("Abandon" in item for item in brief.kill_criteria)
+
+    selected = next(
+        item for item in brief.research_directions if item.direction_id == brief.selected_direction_id
+    )
+    assert selected.required_baselines
+    assert selected.candidate_metrics
+    assert selected.expected_evidence
+
+    run_request = autoresearch_idea_brief.run_request_from_selected_direction(
+        brief,
+        payload=payload,
+    )
+    assert run_request.topic == selected.run_topic
+    assert run_request.task_family_hint == selected.task_family
+    assert run_request.max_rounds == payload.resource_budget.max_rounds
+    assert run_request.candidate_execution_limit == payload.resource_budget.candidate_execution_limit
+
+
+def test_research_brief_repository_persists_and_console_summarizes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-idea-console"
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+        )
+    )
+
+    assert brief.brief_path is not None
+    assert Path(brief.brief_path).is_file()
+
+    loaded = autoresearch_repository.load_research_brief(project_id, brief.brief_id)
+    listed = autoresearch_repository.list_research_briefs(project_id)
+
+    assert loaded is not None
+    assert loaded.brief_id == brief.brief_id
+    assert listed
+    assert listed[0].brief_id == brief.brief_id
+
+    console = autoresearch_console.build_operator_console(project_id)
+
+    assert console.brief_count == 1
+    assert console.latest_brief_id == brief.brief_id
+    assert console.latest_brief_original_idea == brief.original_idea
+    assert console.latest_brief_hypothesis_count == brief.direction_count
+    assert console.latest_brief_selected_direction_id == brief.selected_direction_id
+    assert console.latest_brief_next_action == "build_hypothesis_bank"
+    assert console.actions.create_idea_brief is True
 
 
 def test_narrative_artifact_summary_uses_objective_system_when_best_missing() -> None:

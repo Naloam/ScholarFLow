@@ -1786,6 +1786,7 @@ export type AutoResearchResearchActionRecommendation =
   | "meta_analyze"
   | "system_evaluate"
   | "wait_for_execution";
+export type AutoResearchIdeaBudgetLabel = "toy" | "standard" | "publication";
 export type AutoResearchConclusionStability =
   | "stable"
   | "conditional"
@@ -2475,8 +2476,117 @@ export type AutoResearchPublishExport = {
 
 export type AutoResearchOperatorProjectActions = {
   start_run: boolean;
+  create_idea_brief: boolean;
   build_meta_analysis: boolean;
   build_system_evaluation: boolean;
+};
+
+export type AutoResearchIdeaResourceBudget = {
+  budget_label: AutoResearchIdeaBudgetLabel;
+  max_rounds: number;
+  candidate_execution_limit?: number | null;
+  max_literature_queries: number;
+  max_experiment_minutes?: number | null;
+  allow_gpu: boolean;
+};
+
+export type AutoResearchIdeaRequest = {
+  idea: string;
+  domain?: string | null;
+  resource_budget?: AutoResearchIdeaResourceBudget | AutoResearchIdeaBudgetLabel;
+  target_tier?: AutoResearchPaperTier;
+  allow_web?: boolean;
+  allow_experiments?: boolean;
+  task_family_hint?: AutoResearchTaskFamily | null;
+  benchmark?: Record<string, unknown> | null;
+  execution_backend?: Record<string, unknown> | null;
+  experiment_bridge?: AutoResearchExperimentBridgeConfig | null;
+  queue_priority?: "low" | "normal" | "high";
+  execution_profile?: AutoResearchExecutionProfile;
+};
+
+export type AutoResearchIdeaFeasibilityAssessment = {
+  score: number;
+  level: "low" | "medium" | "high";
+  summary: string;
+  blockers: string[];
+  warnings: string[];
+};
+
+export type AutoResearchResearchDirection = {
+  direction_id: string;
+  title: string;
+  research_question: string;
+  hypothesis: string;
+  task_family: AutoResearchTaskFamily;
+  target_task: string;
+  candidate_dataset: string;
+  primary_metric: string;
+  candidate_metrics: string[];
+  required_baselines: string[];
+  required_ablations: string[];
+  method_sketch: string;
+  expected_evidence: string[];
+  expected_contribution_type:
+    | "new_method"
+    | "new_system"
+    | "experimental_finding"
+    | "new_benchmark"
+    | "analysis_framework";
+  novelty_risk: "low" | "medium" | "high";
+  feasibility_score: number;
+  estimated_cost: string;
+  publish_potential: AutoResearchPaperTier;
+  kill_criteria: string[];
+  rationale: string;
+  run_topic: string;
+};
+
+export type AutoResearchResearchBrief = {
+  brief_id: string;
+  project_id: string;
+  generated_at: string;
+  updated_at: string;
+  status: "drafted" | "ready_for_selection";
+  original_idea: string;
+  polished_idea: string;
+  domain?: string | null;
+  idea_too_generic: boolean;
+  specificity_assessment: "too_generic" | "broad_but_actionable" | "scoped";
+  scope_narrowing_recommendation: string;
+  research_questions: string[];
+  candidate_hypotheses: string[];
+  expected_contribution_types: Array<
+    | "new_method"
+    | "new_system"
+    | "experimental_finding"
+    | "new_benchmark"
+    | "analysis_framework"
+  >;
+  target_tasks: string[];
+  candidate_datasets: string[];
+  candidate_metrics: string[];
+  candidate_baselines: string[];
+  novelty_search_plan: string[];
+  feasibility_assessment: AutoResearchIdeaFeasibilityAssessment;
+  resource_assumptions: string[];
+  kill_criteria: string[];
+  publish_potential: AutoResearchPaperTier;
+  research_directions: AutoResearchResearchDirection[];
+  direction_count: number;
+  selected_direction_id?: string | null;
+  selection_reason?: string | null;
+  next_action: "build_hypothesis_bank" | "select_direction" | "create_run";
+  allow_web: boolean;
+  allow_experiments: boolean;
+  target_tier: AutoResearchPaperTier;
+  resource_budget: AutoResearchIdeaResourceBudget;
+  brief_fingerprint?: string | null;
+  brief_path?: string | null;
+};
+
+export type AutoResearchResearchBriefList = {
+  items: AutoResearchResearchBrief[];
 };
 
 export type AutoResearchOperatorConsoleFilters = {
@@ -2659,6 +2769,13 @@ export type AutoResearchRunControlUpdate = {
 export type AutoResearchOperatorConsole = {
   project_id: string;
   run_count: number;
+  brief_count: number;
+  latest_brief_id?: string | null;
+  latest_brief_status?: string | null;
+  latest_brief_original_idea?: string | null;
+  latest_brief_hypothesis_count: number;
+  latest_brief_selected_direction_id?: string | null;
+  latest_brief_next_action?: string | null;
   filtered_run_count: number;
   latest_run_id?: string | null;
   selected_run_id?: string | null;

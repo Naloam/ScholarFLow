@@ -17,6 +17,7 @@ from schemas.autoresearch import (
     AutoResearchCrossRunMetaAnalysisRead,
     AutoResearchExecutionCommandResponse,
     AutoResearchExperimentBridgeRead,
+    AutoResearchIdeaRequest,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
     AutoResearchPublicationTier,
@@ -31,6 +32,8 @@ from schemas.autoresearch import (
     AutoResearchRunControlUpdateRead,
     AutoResearchRunList,
     AutoResearchRunRead,
+    AutoResearchResearchBriefList,
+    AutoResearchResearchBriefRead,
     AutoResearchRunStatus,
     AutoResearchRunReviewRead,
     AutoResearchReviewLoopRead,
@@ -52,6 +55,7 @@ from services.autoresearch.bridge import (
 )
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.idea_brief import build_research_brief
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
 from services.autoresearch.review_publish import (
@@ -65,12 +69,15 @@ from services.autoresearch.review_publish import (
 from services.autoresearch.system_evaluation import build_system_evaluation
 from services.autoresearch.repository import (
     create_run,
+    list_research_briefs,
     list_runs,
     load_candidate_registry,
+    load_research_brief,
     load_run_bundle_index,
     load_run,
     load_run_registry,
     load_run_registry_views,
+    save_research_brief,
 )
 from services.security.audit import write_task_audit_log
 from services.security.auth import AuthIdentity
@@ -112,6 +119,55 @@ def run_auto_research(
     else:
         background_tasks.add_task(execution_plane.drain)
     return IdResponse(id=run.id)
+
+
+@router.post("/ideas", response_model=AutoResearchResearchBriefRead)
+def create_auto_research_idea_brief(
+    project_id: str,
+    payload: AutoResearchIdeaRequest,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchBriefRead:
+    del db
+    brief = save_research_brief(
+        build_research_brief(
+            project_id=project_id,
+            payload=payload,
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=brief.brief_id,
+        task_name="autoresearch.idea",
+        project_id=project_id,
+        action="brief_created",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=f"brief_id={brief.brief_id} directions={brief.direction_count}",
+    )
+    return brief
+
+
+@router.get("/ideas", response_model=AutoResearchResearchBriefList)
+def list_auto_research_idea_briefs(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchBriefList:
+    del db
+    return AutoResearchResearchBriefList(items=list_research_briefs(project_id))
+
+
+@router.get("/ideas/{brief_id}", response_model=AutoResearchResearchBriefRead)
+def get_auto_research_idea_brief(
+    project_id: str,
+    brief_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchBriefRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    return brief
 
 
 @router.get("", response_model=AutoResearchRunList)

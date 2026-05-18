@@ -16,6 +16,7 @@ from schemas.autoresearch import (
     AutoResearchCandidateRegistryEntry,
     AutoResearchCandidateRegistryFiles,
     AutoResearchCandidateRegistryRead,
+    AutoResearchResearchBriefRead,
     AutoResearchLineageEdgeRead,
     AutoResearchPaperRevisionActionIndexRead,
     AutoResearchPaperRevisionDiffRead,
@@ -44,6 +45,7 @@ from services.workspace import autoresearch_dir
 
 
 RUN_FILENAME = "run.json"
+BRIEF_FILENAME = "brief.json"
 PROGRAM_FILENAME = "program.json"
 PLAN_FILENAME = "plan.json"
 SPEC_FILENAME = "spec.json"
@@ -111,8 +113,18 @@ def _runs_dir(project_id: str) -> Path:
     return path
 
 
+def _briefs_dir(project_id: str) -> Path:
+    path = autoresearch_dir(project_id) / "briefs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _run_path(project_id: str, run_id: str) -> Path:
     return _runs_dir(project_id) / run_id
+
+
+def _brief_path(project_id: str, brief_id: str) -> Path:
+    return _briefs_dir(project_id) / brief_id
 
 
 def _candidate_path(project_id: str, run_id: str, candidate_id: str) -> Path:
@@ -121,6 +133,12 @@ def _candidate_path(project_id: str, run_id: str, candidate_id: str) -> Path:
 
 def run_dir(project_id: str, run_id: str) -> Path:
     path = _run_path(project_id, run_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def brief_dir(project_id: str, brief_id: str) -> Path:
+    path = _brief_path(project_id, brief_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -1740,6 +1758,43 @@ def create_run(
     )
     save_run(run)
     return run
+
+
+def save_research_brief(brief: AutoResearchResearchBriefRead) -> AutoResearchResearchBriefRead:
+    base = brief_dir(brief.project_id, brief.brief_id)
+    path = base / BRIEF_FILENAME
+    payload = brief.model_copy(
+        update={
+            "updated_at": _utcnow(),
+            "brief_path": str(path),
+        }
+    )
+    _write_json(path, payload.model_dump(mode="json"))
+    return payload
+
+
+def load_research_brief(project_id: str, brief_id: str) -> AutoResearchResearchBriefRead | None:
+    path = _brief_path(project_id, brief_id) / BRIEF_FILENAME
+    if not path.exists():
+        return None
+    try:
+        loaded = AutoResearchResearchBriefRead.model_validate_json(path.read_text(encoding="utf-8"))
+        return loaded.model_copy(update={"brief_path": str(path)})
+    except Exception:
+        return None
+
+
+def list_research_briefs(project_id: str) -> list[AutoResearchResearchBriefRead]:
+    items: list[AutoResearchResearchBriefRead] = []
+    root = _briefs_dir(project_id)
+    for path in sorted(root.glob(f"*/{BRIEF_FILENAME}"), reverse=True):
+        try:
+            loaded = AutoResearchResearchBriefRead.model_validate_json(path.read_text(encoding="utf-8"))
+            items.append(loaded.model_copy(update={"brief_path": str(path)}))
+        except Exception:
+            continue
+    items.sort(key=lambda item: item.updated_at, reverse=True)
+    return items
 
 
 def _refresh_paper_compile_report(

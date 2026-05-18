@@ -27,7 +27,13 @@ from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.publication_repair_plan import (
     repair_plan_allows_paper_pipeline_rebuild,
 )
-from services.autoresearch.repository import list_runs, load_run, load_run_registry, load_run_registry_views
+from services.autoresearch.repository import (
+    list_research_briefs,
+    list_runs,
+    load_run,
+    load_run_registry,
+    load_run_registry_views,
+)
 from services.autoresearch.review_publish import build_publish_package, build_review_loop, build_run_review
 from services.autoresearch.system_evaluation import build_system_evaluation
 
@@ -529,6 +535,8 @@ def build_operator_console(
     queue_priority: AutoResearchQueuePriority | None = None,
 ) -> AutoResearchOperatorConsoleRead:
     runs = list_runs(project_id)
+    briefs = list_research_briefs(project_id)
+    latest_brief = briefs[0] if briefs else None
     filters = AutoResearchOperatorConsoleFiltersRead(
         search=search.strip() if search and search.strip() else None,
         status=status,
@@ -615,12 +623,24 @@ def build_operator_console(
     return AutoResearchOperatorConsoleRead(
         project_id=project_id,
         run_count=len(runs),
+        brief_count=len(briefs),
+        latest_brief_id=latest_brief.brief_id if latest_brief is not None else None,
+        latest_brief_status=latest_brief.status if latest_brief is not None else None,
+        latest_brief_original_idea=latest_brief.original_idea if latest_brief is not None else None,
+        latest_brief_hypothesis_count=(
+            len(latest_brief.candidate_hypotheses) if latest_brief is not None else 0
+        ),
+        latest_brief_selected_direction_id=(
+            latest_brief.selected_direction_id if latest_brief is not None else None
+        ),
+        latest_brief_next_action=latest_brief.next_action if latest_brief is not None else None,
         filtered_run_count=len(filtered_runs),
         latest_run_id=runs[0].id if runs else None,
         selected_run_id=current_run.run.id if current_run is not None else None,
         filters=filters,
         actions=AutoResearchOperatorProjectActionsRead(
             start_run=True,
+            create_idea_brief=True,
             build_meta_analysis=True,
             build_system_evaluation=True,
         ),

@@ -473,6 +473,140 @@ class AutoResearchRunConfig(BaseModel):
         )
 
 
+class AutoResearchIdeaResourceBudget(BaseModel):
+    budget_label: Literal["toy", "standard", "publication"] = "standard"
+    max_rounds: int = 3
+    candidate_execution_limit: int | None = None
+    max_literature_queries: int = 5
+    max_experiment_minutes: int | None = None
+    allow_gpu: bool = False
+
+    @field_validator("max_rounds", "max_literature_queries")
+    @classmethod
+    def validate_positive_budget(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("budget value must be at least 1")
+        return value
+
+    @field_validator("candidate_execution_limit", "max_experiment_minutes")
+    @classmethod
+    def validate_optional_positive_budget(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("budget value must be at least 1")
+        return value
+
+
+class AutoResearchIdeaRequest(BaseModel):
+    idea: str
+    domain: str | None = None
+    resource_budget: AutoResearchIdeaResourceBudget = Field(default_factory=AutoResearchIdeaResourceBudget)
+    target_tier: AutoResearchPaperTier = "workshop_candidate"
+    allow_web: bool = False
+    allow_experiments: bool = True
+    task_family_hint: TaskFamily | None = None
+    benchmark: BenchmarkSource | None = None
+    execution_backend: ExecutionBackendSpec | None = None
+    experiment_bridge: AutoResearchExperimentBridgeConfig | None = None
+    queue_priority: AutoResearchQueuePriority = "normal"
+    execution_profile: AutoResearchExecutionProfile = "exploratory"
+
+    @field_validator("resource_budget", mode="before")
+    @classmethod
+    def normalize_resource_budget(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return {"budget_label": value}
+        return value
+
+    @field_validator("idea")
+    @classmethod
+    def validate_idea(cls, value: str) -> str:
+        cleaned = " ".join(value.split()).strip()
+        if not cleaned:
+            raise ValueError("idea must not be empty")
+        return cleaned
+
+    @field_validator("domain")
+    @classmethod
+    def normalize_domain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split()).strip()
+        return cleaned or None
+
+
+class AutoResearchIdeaFeasibilityAssessmentRead(BaseModel):
+    score: float = Field(ge=0.0, le=1.0)
+    level: Literal["low", "medium", "high"] = "medium"
+    summary: str
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AutoResearchResearchDirectionRead(BaseModel):
+    direction_id: str
+    title: str
+    research_question: str
+    hypothesis: str
+    task_family: TaskFamily
+    target_task: str
+    candidate_dataset: str
+    primary_metric: str
+    candidate_metrics: list[str] = Field(default_factory=list)
+    required_baselines: list[str] = Field(default_factory=list)
+    required_ablations: list[str] = Field(default_factory=list)
+    method_sketch: str
+    expected_evidence: list[str] = Field(default_factory=list)
+    expected_contribution_type: AutoResearchContributionType = "experimental_finding"
+    novelty_risk: AutoResearchNoveltyRiskLevel = "medium"
+    feasibility_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    estimated_cost: str
+    publish_potential: AutoResearchPaperTier = "technical_report"
+    kill_criteria: list[str] = Field(default_factory=list)
+    rationale: str
+    run_topic: str
+
+
+class AutoResearchResearchBriefRead(BaseModel):
+    brief_id: str
+    project_id: str
+    generated_at: datetime
+    updated_at: datetime
+    status: Literal["drafted", "ready_for_selection"] = "ready_for_selection"
+    original_idea: str
+    polished_idea: str
+    domain: str | None = None
+    idea_too_generic: bool = False
+    specificity_assessment: Literal["too_generic", "broad_but_actionable", "scoped"] = "scoped"
+    scope_narrowing_recommendation: str
+    research_questions: list[str] = Field(default_factory=list)
+    candidate_hypotheses: list[str] = Field(default_factory=list)
+    expected_contribution_types: list[AutoResearchContributionType] = Field(default_factory=list)
+    target_tasks: list[str] = Field(default_factory=list)
+    candidate_datasets: list[str] = Field(default_factory=list)
+    candidate_metrics: list[str] = Field(default_factory=list)
+    candidate_baselines: list[str] = Field(default_factory=list)
+    novelty_search_plan: list[str] = Field(default_factory=list)
+    feasibility_assessment: AutoResearchIdeaFeasibilityAssessmentRead
+    resource_assumptions: list[str] = Field(default_factory=list)
+    kill_criteria: list[str] = Field(default_factory=list)
+    publish_potential: AutoResearchPaperTier = "technical_report"
+    research_directions: list[AutoResearchResearchDirectionRead] = Field(default_factory=list)
+    direction_count: int = 0
+    selected_direction_id: str | None = None
+    selection_reason: str | None = None
+    next_action: Literal["build_hypothesis_bank", "select_direction", "create_run"] = "build_hypothesis_bank"
+    allow_web: bool = False
+    allow_experiments: bool = True
+    target_tier: AutoResearchPaperTier = "workshop_candidate"
+    resource_budget: AutoResearchIdeaResourceBudget = Field(default_factory=AutoResearchIdeaResourceBudget)
+    brief_fingerprint: str | None = None
+    brief_path: str | None = None
+
+
+class AutoResearchResearchBriefList(BaseModel):
+    items: list[AutoResearchResearchBriefRead] = Field(default_factory=list)
+
+
 class AutoResearchRunControlPatch(BaseModel):
     max_rounds: int | None = None
     candidate_execution_limit: int | None = None
@@ -2811,6 +2945,7 @@ class AutoResearchExperimentBridgeRead(BaseModel):
 
 class AutoResearchOperatorProjectActionsRead(BaseModel):
     start_run: bool = True
+    create_idea_brief: bool = True
     build_meta_analysis: bool = True
     build_system_evaluation: bool = True
 
@@ -2960,6 +3095,13 @@ class AutoResearchOperatorRunDetailRead(BaseModel):
 class AutoResearchOperatorConsoleRead(BaseModel):
     project_id: str
     run_count: int = 0
+    brief_count: int = 0
+    latest_brief_id: str | None = None
+    latest_brief_status: str | None = None
+    latest_brief_original_idea: str | None = None
+    latest_brief_hypothesis_count: int = 0
+    latest_brief_selected_direction_id: str | None = None
+    latest_brief_next_action: str | None = None
     filtered_run_count: int = 0
     latest_run_id: str | None = None
     selected_run_id: str | None = None

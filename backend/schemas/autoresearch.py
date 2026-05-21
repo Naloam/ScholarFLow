@@ -645,14 +645,36 @@ class AutoResearchLiteratureScoutPaperRead(BaseModel):
     paper_id: str
     title: str
     source: str = "offline_project_context"
+    authors: list[str] = Field(default_factory=list)
     year: int | None = None
+    venue: str | None = None
+    abstract: str | None = None
+    url: str | None = None
+    doi: str | None = None
+    arxiv_id: str | None = None
     method: str | None = None
+    methods: list[str] = Field(default_factory=list)
     datasets: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
+    reported_results: list[str] = Field(default_factory=list)
     known_sota: str | None = None
+    relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    novelty_risk_signal: AutoResearchNoveltyRiskLevel = "medium"
     overlap_score: int = 0
     shared_terms: list[str] = Field(default_factory=list)
+    source_query: str | None = None
+    cache_status: Literal["offline", "fixture", "cache_hit", "network"] = "offline"
     evidence: str
+
+
+class AutoResearchLiteratureScoutSourceStatusRead(BaseModel):
+    source: str
+    query_count: int = 0
+    cache_hit_count: int = 0
+    network_request_count: int = 0
+    paper_count: int = 0
+    error_count: int = 0
+    errors: list[str] = Field(default_factory=list)
 
 
 class AutoResearchGapCandidateRead(BaseModel):
@@ -674,6 +696,11 @@ class AutoResearchLiteratureScoutRead(BaseModel):
     generated_at: datetime
     search_queries: list[str] = Field(default_factory=list)
     similar_papers: list[AutoResearchLiteratureScoutPaperRead] = Field(default_factory=list)
+    source_statuses: list[AutoResearchLiteratureScoutSourceStatusRead] = Field(default_factory=list)
+    source_counts: dict[str, int] = Field(default_factory=dict)
+    cache_hit_count: int = 0
+    network_enabled: bool = False
+    connector_errors: list[str] = Field(default_factory=list)
     methods: list[str] = Field(default_factory=list)
     datasets: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)

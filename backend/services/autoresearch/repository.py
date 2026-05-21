@@ -101,6 +101,7 @@ PAPER_BIB_FILENAME = "references.bib"
 PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
 PAPER_COMPILED_PDF_FILENAME = "main.pdf"
 PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME = "main.bbl"
+LITERATURE_SCOUT_CACHE_DIRNAME = "literature_scout_cache"
 BENCHMARK_FILENAME = "benchmark.json"
 BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
@@ -131,6 +132,21 @@ def _run_path(project_id: str, run_id: str) -> Path:
 
 def _brief_path(project_id: str, brief_id: str) -> Path:
     return _briefs_dir(project_id) / brief_id
+
+
+def _literature_scout_cache_dir(project_id: str) -> Path:
+    path = autoresearch_dir(project_id) / LITERATURE_SCOUT_CACHE_DIRNAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
+    payload = json.dumps(
+        {"source": source, "query": query, "limit": limit},
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _candidate_path(project_id: str, run_id: str, candidate_id: str) -> Path:
@@ -167,6 +183,57 @@ def _read_json(path: Path) -> object | None:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def literature_scout_cache_file_path(
+    project_id: str,
+    *,
+    source: str,
+    query: str,
+    limit: int,
+) -> str:
+    key = _literature_scout_cache_key(source=source, query=query, limit=limit)
+    safe_source = "".join(
+        character if character.isalnum() or character == "_" else "_"
+        for character in source
+    )
+    return str(_literature_scout_cache_dir(project_id) / f"{safe_source}_{key[:20]}.json")
+
+
+def load_literature_scout_cache(
+    project_id: str,
+    *,
+    source: str,
+    query: str,
+    limit: int,
+) -> dict[str, object] | None:
+    payload = _read_json(
+        Path(literature_scout_cache_file_path(project_id, source=source, query=query, limit=limit))
+    )
+    return payload if isinstance(payload, dict) else None
+
+
+def save_literature_scout_cache(
+    project_id: str,
+    *,
+    source: str,
+    query: str,
+    limit: int,
+    payload: dict[str, object],
+) -> str:
+    path = Path(
+        literature_scout_cache_file_path(project_id, source=source, query=query, limit=limit)
+    )
+    _write_json(
+        path,
+        {
+            "source": source,
+            "query": query,
+            "limit": limit,
+            **payload,
+        },
+    )
+    return str(path)
 
 
 def _sha256_file(path: Path) -> str | None:

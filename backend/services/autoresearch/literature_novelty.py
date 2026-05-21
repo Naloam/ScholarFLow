@@ -25,8 +25,10 @@ _SYNTHETIC_LITERATURE_SOURCES = {
     "ai_generated_context",
     "benchmark_context",
     "fallback",
+    "fixture_offline",
     "generated",
     "mock",
+    "offline_project_context",
     "synthetic",
 }
 _STOPWORDS = {

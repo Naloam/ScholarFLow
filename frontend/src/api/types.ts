@@ -2604,14 +2604,36 @@ export type AutoResearchLiteratureScoutPaper = {
   paper_id: string;
   title: string;
   source: string;
+  authors: string[];
   year?: number | null;
+  venue?: string | null;
+  abstract?: string | null;
+  url?: string | null;
+  doi?: string | null;
+  arxiv_id?: string | null;
   method?: string | null;
+  methods: string[];
   datasets: string[];
   metrics: string[];
+  reported_results: string[];
   known_sota?: string | null;
+  relevance_score: number;
+  novelty_risk_signal: "low" | "medium" | "high";
   overlap_score: number;
   shared_terms: string[];
+  source_query?: string | null;
+  cache_status: "offline" | "fixture" | "cache_hit" | "network";
   evidence: string;
+};
+
+export type AutoResearchLiteratureScoutSourceStatus = {
+  source: string;
+  query_count: number;
+  cache_hit_count: number;
+  network_request_count: number;
+  paper_count: number;
+  error_count: number;
+  errors: string[];
 };
 
 export type AutoResearchGapCandidate = {
@@ -2633,6 +2655,11 @@ export type AutoResearchLiteratureScout = {
   generated_at: string;
   search_queries: string[];
   similar_papers: AutoResearchLiteratureScoutPaper[];
+  source_statuses: AutoResearchLiteratureScoutSourceStatus[];
+  source_counts: Record<string, number>;
+  cache_hit_count: number;
+  network_enabled: boolean;
+  connector_errors: string[];
   methods: string[];
   datasets: string[];
   metrics: string[];

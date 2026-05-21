@@ -29,6 +29,7 @@ from schemas.autoresearch import (
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec
 from services.autoresearch.bridge import AutoResearchExperimentBridgeService, build_bridge_state
 from services.autoresearch.ingestion import resolve_benchmark
+from services.autoresearch.literature_scout import literature_insights_from_scout
 from services.autoresearch.literature_pipeline import build_fallback_literature_context, gather_literature_context
 from services.autoresearch.narrative_analyst import analyze as analyze_narrative
 from services.autoresearch.planner import ResearchPlanner
@@ -44,6 +45,7 @@ from services.autoresearch.repository import (
     candidate_paper_file_path,
     claim_evidence_matrix_file_path,
     figure_plan_file_path,
+    load_research_brief,
     load_run,
     load_benchmark_snapshot,
     narrative_report_file_path,
@@ -1672,6 +1674,10 @@ class AutoResearchOrchestrator:
                     auto_fetch=auto_fetch_literature,
                     task_family=benchmark.task_family,
                 )
+                if not literature and run.brief_id:
+                    brief = load_research_brief(project_id, run.brief_id)
+                    if brief is not None and brief.literature_scout is not None:
+                        literature = literature_insights_from_scout(brief.literature_scout)
                 if auto_search_literature and not literature:
                     literature = build_fallback_literature_context(
                         topic=topic,

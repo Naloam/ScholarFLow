@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from datetime import UTC, datetime
 
 from schemas.autoresearch import (
@@ -11,6 +12,11 @@ from schemas.autoresearch import (
     AutoResearchLiteratureScoutPaperRead,
     AutoResearchLiteratureScoutRead,
     AutoResearchResearchBriefRead,
+    LiteratureInsight,
+)
+from services.autoresearch.literature_connectors import (
+    deduplicate_literature_papers,
+    search_literature_connectors,
 )
 
 
@@ -144,18 +150,37 @@ def _offline_papers(brief: AutoResearchResearchBriefRead) -> list[AutoResearchLi
         papers.append(
             AutoResearchLiteratureScoutPaperRead(
                 paper_id=f"offline_related_{index}_{_slug(direction.direction_id)}",
-                title=f"Prior {direction.task_family.replace('_', ' ')} work near {direction.candidate_dataset}",
+                title=(
+                    f"Prior {direction.task_family.replace('_', ' ')} work near "
+                    f"{direction.candidate_dataset}"
+                ),
                 source="offline_project_context",
+                authors=["ScholarFlow offline scout"],
                 year=2025,
+                venue="Project context",
+                abstract=(
+                    f"Offline project-context signal for {direction.target_task} on "
+                    f"{direction.candidate_dataset}, comparing "
+                    f"{', '.join(direction.required_baselines[:2])} "
+                    f"with {direction.method_sketch} under {direction.primary_metric}."
+                ),
                 method=direction.method_sketch,
+                methods=[direction.method_sketch],
                 datasets=[direction.candidate_dataset],
                 metrics=direction.candidate_metrics,
+                reported_results=[
+                    f"Offline context requires reporting {direction.primary_metric} against "
+                    f"{', '.join(direction.required_baselines[:2])}."
+                ],
                 known_sota=(
                     f"Known baselines include {', '.join(direction.required_baselines[:2])} "
                     f"on {direction.primary_metric}."
                 ),
+                relevance_score=min(1.0, 0.30 + len(shared) * 0.05),
+                novelty_risk_signal=direction.novelty_risk,
                 overlap_score=len(shared),
                 shared_terms=shared[:10],
+                cache_status="offline",
                 evidence=(
                     "Offline scout synthesized this risk from the brief's benchmark, baseline, "
                     "metric, and method obligations; live literature is still required before publish claims."
@@ -167,14 +192,39 @@ def _offline_papers(brief: AutoResearchResearchBriefRead) -> list[AutoResearchLi
 
 
 def build_literature_scout(brief: AutoResearchResearchBriefRead) -> AutoResearchLiteratureScoutRead:
-    papers = _offline_papers(brief)
+    search_queries = _search_queries(brief)
+    connector_papers, source_statuses = search_literature_connectors(
+        brief,
+        search_queries=search_queries,
+        network_enabled=brief.allow_web,
+        cache_enabled=True,
+    )
+    papers = deduplicate_literature_papers([*connector_papers, *_offline_papers(brief)])
+    source_counts = dict(Counter(item.source for item in papers))
+    connector_errors = [
+        error
+        for status in source_statuses
+        for error in status.errors
+    ]
+    cache_hit_count = sum(status.cache_hit_count for status in source_statuses)
     payload = {
         "scout_id": "literature_scout_v1",
         "project_id": brief.project_id,
         "brief_id": brief.brief_id,
-        "search_queries": _search_queries(brief),
+        "search_queries": search_queries,
         "similar_papers": [item.model_dump(mode="json") for item in papers],
-        "methods": _dedupe([item.method or "" for item in papers]),
+        "source_statuses": [item.model_dump(mode="json") for item in source_statuses],
+        "source_counts": source_counts,
+        "cache_hit_count": cache_hit_count,
+        "network_enabled": brief.allow_web,
+        "connector_errors": connector_errors,
+        "methods": _dedupe(
+            [
+                method
+                for item in papers
+                for method in (item.methods or ([item.method] if item.method else []))
+            ]
+        ),
         "datasets": _dedupe([dataset for item in papers for dataset in item.datasets]),
         "metrics": _dedupe([metric for item in papers for metric in item.metrics]),
         "known_sota": _dedupe([item.known_sota or "" for item in papers]),
@@ -184,6 +234,60 @@ def build_literature_scout(brief: AutoResearchResearchBriefRead) -> AutoResearch
         scout_fingerprint=_fingerprint(payload),
         **payload,
     )
+
+
+def literature_insights_from_scout(
+    scout: AutoResearchLiteratureScoutRead,
+    *,
+    include_offline: bool = False,
+) -> list[LiteratureInsight]:
+    synthetic_sources = {"offline_project_context", "fixture_offline"}
+    insights: list[LiteratureInsight] = []
+    for paper in scout.similar_papers:
+        if not include_offline and paper.source in synthetic_sources:
+            continue
+        methods = paper.methods or ([paper.method] if paper.method else [])
+        metric_label = ", ".join(paper.metrics[:3]) or "the target metric"
+        dataset_label = ", ".join(paper.datasets[:3]) or "the target dataset"
+        result_text = " ".join(paper.reported_results[:2])
+        insight_parts = [
+            paper.abstract,
+            result_text,
+            paper.known_sota,
+        ]
+        insight = _norm(" ".join(part for part in insight_parts if part))
+        if not insight:
+            insight = paper.evidence
+        gap_hint = (
+            f"Test whether {dataset_label} still has an unresolved, experimentally testable gap "
+            f"around {metric_label}."
+        )
+        insights.append(
+            LiteratureInsight(
+                paper_id=paper.paper_id,
+                title=paper.title,
+                year=paper.year,
+                source=paper.source,
+                insight=insight,
+                method_hint=", ".join(methods[:2]) or None,
+                gap_hint=gap_hint,
+                methodological_detail=", ".join(methods[:4]) or None,
+                limitation=(
+                    "Literature scout metadata is abstract-level only; "
+                    "claims need full-paper verification."
+                    if paper.abstract
+                    else (
+                        "Literature scout metadata lacks an abstract; "
+                        "verify before publish positioning."
+                    )
+                ),
+                relevance=(
+                    f"relevance_score={paper.relevance_score}; datasets={dataset_label}; "
+                    f"metrics={metric_label}; novelty_risk_signal={paper.novelty_risk_signal}."
+                ),
+            )
+        )
+    return insights
 
 
 def _gap_for_hypothesis(

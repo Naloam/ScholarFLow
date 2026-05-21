@@ -16,6 +16,7 @@ import services.autoresearch.artifact_integrity_audit as artifact_integrity_audi
 import services.autoresearch.evaluation_cases as autoresearch_evaluation_cases
 import services.autoresearch.experiment_factory as autoresearch_experiment_factory
 import services.autoresearch.idea_brief as autoresearch_idea_brief
+import services.autoresearch.literature_connectors as autoresearch_literature_connectors
 import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.planner as autoresearch_planner
@@ -4728,6 +4729,121 @@ def test_research_brief_selected_hypothesis_creates_metadata_run(
     assert loaded.request.candidate_execution_limit == payload.resource_budget.candidate_execution_limit
 
 
+def _cached_literature_query(brief) -> str:
+    return f'"{brief.original_idea}"'
+
+
+def _arxiv_cache_fixture() -> str:
+    return """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.01234v1</id>
+    <title>Evidence-Aware Reranking on Publication Regression Benchmark</title>
+    <summary>
+      We propose an evidence-aware reranking pipeline for the Publication Regression Benchmark.
+      The method compares lexical baselines and reports macro F1 improvements, but leaves
+      ablation evidence unresolved. Results approach state-of-the-art macro F1.
+    </summary>
+    <published>2024-01-03T00:00:00Z</published>
+    <author><name>Ada Reviewer</name></author>
+    <author><name>Ben Auditor</name></author>
+    <arxiv:doi>10.0000/arxiv-fixture</arxiv:doi>
+  </entry>
+</feed>
+"""
+
+
+def _semantic_scholar_cache_fixture() -> dict[str, object]:
+    return {
+        "data": [
+            {
+                "paperId": "S2-P15",
+                "title": "Cached Evidence Ledgers for Reranking Experiments",
+                "authors": [{"name": "Casey Scholar"}],
+                "year": 2025,
+                "venue": "ACL Findings",
+                "publicationVenue": {"name": "ACL Findings"},
+                "abstract": (
+                    "The framework uses claim evidence ledgers for reranking experiments on "
+                    "Publication Regression Benchmark and reports macro F1 and nDCG."
+                ),
+                "doi": "10.0000/semantic-fixture",
+                "url": "https://example.test/semantic-fixture",
+                "externalIds": {"DOI": "10.0000/semantic-fixture", "ArXiv": "2501.09999"},
+            }
+        ]
+    }
+
+
+def _crossref_cache_fixture() -> dict[str, object]:
+    return {
+        "message": {
+            "items": [
+                {
+                    "title": ["Crossref Metadata for Evidence-Constrained Reranking"],
+                    "author": [{"given": "Dana", "family": "Indexer"}],
+                    "published-print": {"date-parts": [[2023, 7, 1]]},
+                    "container-title": ["SIGIR Workshop"],
+                    "abstract": (
+                        "<jats:p>Reports a reranking model on retrieval benchmarks with "
+                        "macro F1, nDCG, and baseline comparisons.</jats:p>"
+                    ),
+                    "DOI": "10.0000/crossref-fixture",
+                    "URL": "https://example.test/crossref-fixture",
+                }
+            ]
+        }
+    }
+
+
+def test_literature_connectors_parse_cached_sources_without_network(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-cached-connectors",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    query = _cached_literature_query(brief)
+    for source, raw in [
+        ("arxiv", _arxiv_cache_fixture()),
+        ("semantic_scholar", _semantic_scholar_cache_fixture()),
+        ("crossref", _crossref_cache_fixture()),
+    ]:
+        autoresearch_repository.save_literature_scout_cache(
+            brief.project_id,
+            source=source,
+            query=query,
+            limit=2,
+            payload={"raw": raw},
+        )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("network fetch should not run for cached connector tests")
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fail_fetch)
+
+    papers, statuses = autoresearch_literature_connectors.search_literature_connectors(
+        brief,
+        search_queries=[query],
+        sources=["arxiv", "semantic_scholar", "crossref"],
+        limit_per_source=2,
+        network_enabled=False,
+    )
+
+    assert {item.source for item in papers} == {"arxiv", "semantic_scholar", "crossref"}
+    assert all(status.network_request_count == 0 for status in statuses)
+    assert all(status.cache_hit_count == 1 for status in statuses)
+    assert all(item.cache_status == "cache_hit" for item in papers)
+    assert any(item.arxiv_id == "2401.01234v1" for item in papers)
+    assert any(item.doi == "10.0000/semantic-fixture" for item in papers)
+    assert any(item.venue == "SIGIR Workshop" for item in papers)
+    assert any("macro_f1" in item.metrics for item in papers)
+    assert all(item.methods for item in papers)
+    assert all(item.relevance_score > 0 for item in papers)
+
+
 def test_literature_scout_mines_testable_gap_for_brief() -> None:
     brief = autoresearch_idea_brief.build_research_brief(
         project_id="project-scout",
@@ -4746,6 +4862,56 @@ def test_literature_scout_mines_testable_gap_for_brief() -> None:
     assert scouted.gap_miner.recommended_narrower_gap is not None
     assert any(item.experimentally_testable for item in scouted.gap_miner.gap_candidates)
     assert all(item.literature_evidence for item in scouted.gap_miner.gap_candidates)
+
+
+def test_literature_scout_uses_cached_real_sources_for_novelty_graph(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-scout-graph",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    autoresearch_repository.save_literature_scout_cache(
+        brief.project_id,
+        source="arxiv",
+        query=_cached_literature_query(brief),
+        limit=3,
+        payload={"raw": _arxiv_cache_fixture()},
+    )
+
+    scouted = autoresearch_literature_scout.scout_and_mine_gaps(brief)
+
+    assert scouted.literature_scout is not None
+    assert scouted.literature_scout.network_enabled is False
+    assert scouted.literature_scout.cache_hit_count == 1
+    assert scouted.literature_scout.source_counts["arxiv"] == 1
+    real_insights = autoresearch_literature_scout.literature_insights_from_scout(
+        scouted.literature_scout
+    )
+    assert real_insights
+    assert all(item.source != "fixture_offline" for item in real_insights)
+
+    spec, benchmark = _external_publication_spec()
+    run = _readiness_run(
+        spec=spec,
+        benchmark=benchmark,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+    ).model_copy(
+        update={
+            "literature": real_insights,
+            "literature_synthesis": None,
+        }
+    )
+
+    graph = build_literature_graph(run)
+    validation = build_novelty_validation(run, literature_graph=graph)
+
+    assert graph.real_paper_count == len(real_insights)
+    assert graph.known_sota
+    assert validation.gap_validity == "valid"
+    assert validation.complete is True
 
 
 def test_research_brief_repository_persists_and_console_summarizes(

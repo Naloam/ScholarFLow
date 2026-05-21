@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
 import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
+import services.autoresearch.evaluation_cases as autoresearch_evaluation_cases
 import services.autoresearch.experiment_factory as autoresearch_experiment_factory
 import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.literature_scout as autoresearch_literature_scout
@@ -4948,6 +4949,76 @@ def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
     assert orchestration.core_claim_count >= 1
     assert orchestration.unsupported_core_claim_count == 0
     assert all(trace.evidence_refs for trace in orchestration.claim_traces)
+
+
+def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
+    suite = autoresearch_evaluation_cases.build_evaluation_case_suite("project-evaluation-cases")
+
+    expected_kinds = {
+        "toy_task",
+        "medium_benchmark_task",
+        "literature_heavy_task",
+        "ablation_heavy_task",
+        "failed_hypothesis_task",
+    }
+    expected_metrics = {
+        "idea_to_brief_completeness",
+        "hypothesis_selection_quality",
+        "novelty_risk_detection",
+        "experiment_plan_executability",
+        "evidence_consistency",
+        "reviewer_score_improvement",
+        "final_publish_correctness",
+    }
+
+    assert suite.case_count == 5
+    assert {case.task_kind for case in suite.cases} == expected_kinds
+    assert {metric.metric_id for metric in suite.metrics} == expected_metrics
+    assert suite.toy_end_to_end_ready is True
+    assert suite.completed_case_count == 1
+    assert not suite.blockers
+    assert all(case.idea for case in suite.cases)
+    assert all(case.expected_brief_quality for case in suite.cases)
+    assert all(case.expected_novelty_risks for case in suite.cases)
+    assert all(case.expected_experiment_design_requirements for case in suite.cases)
+    assert all(case.expected_failure_replan_behavior for case in suite.cases)
+    assert any("Architecture" in item for item in suite.scholarflow_paper_materials)
+    assert any("failure" in item.lower() for item in suite.scholarflow_paper_materials)
+
+
+def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:
+    suite = autoresearch_evaluation_cases.build_evaluation_case_suite("project-evaluation-toy")
+    toy = next(case for case in suite.cases if case.task_kind == "toy_task")
+
+    assert toy.trace is not None
+    trace = toy.trace
+    assert trace.idea == toy.idea
+    assert trace.brief_id is not None
+    assert trace.selected_hypothesis_id is not None
+    assert trace.experiment_plan_id == "experiment_factory_v1"
+    assert trace.evidence_ledger_id == "experiment_evidence_ledger_v1"
+    assert trace.paper_decision == "technical_report"
+    assert {
+        "idea",
+        "research_brief",
+        "literature_scout",
+        "gap_mining",
+        "hypothesis_selection",
+        "experiment_plan",
+        "toy_execution",
+        "evidence_ledger",
+        "paper_draft",
+        "review_package",
+    }.issubset(set(trace.steps_completed))
+    assert 2 <= trace.direction_count <= 5
+    assert trace.hypothesis_count == trace.direction_count
+    assert trace.experiment_job_count > 0
+    assert trace.evidence_entry_count > 0
+    assert trace.evidence_complete is True
+    assert trace.paper_review_package_ready is True
+    assert trace.blockers == []
+    assert toy.score == 100
+    assert toy.expected_paper_tier == "technical_report"
 
 
 def test_narrative_artifact_summary_uses_objective_system_when_best_missing() -> None:

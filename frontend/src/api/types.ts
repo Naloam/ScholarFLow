@@ -3235,6 +3235,54 @@ export type AutoResearchSystemEvaluationMetric = {
   rationale: string;
 };
 
+export type AutoResearchEvaluationCaseTrace = {
+  idea: string;
+  brief_id?: string | null;
+  selected_hypothesis_id?: string | null;
+  experiment_plan_id?: string | null;
+  evidence_ledger_id?: string | null;
+  paper_decision: AutoResearchProjectPaperDecision;
+  steps_completed: string[];
+  direction_count: number;
+  hypothesis_count: number;
+  experiment_job_count: number;
+  evidence_entry_count: number;
+  evidence_complete: boolean;
+  paper_review_package_ready: boolean;
+  blockers: string[];
+};
+
+export type AutoResearchEvaluationCase = {
+  case_id: string;
+  task_kind: AutoResearchEvaluationTaskKind;
+  idea: string;
+  expected_brief_quality: string;
+  expected_novelty_risks: string[];
+  expected_experiment_design_requirements: string[];
+  expected_failure_replan_behavior: string;
+  expected_paper_tier: AutoResearchPaperTier;
+  mapped_run_ids: string[];
+  trace?: AutoResearchEvaluationCaseTrace | null;
+  score: number;
+  blockers: string[];
+  warnings: string[];
+};
+
+export type AutoResearchEvaluationCaseSuite = {
+  generated_at: string;
+  suite_id: string;
+  project_id: string;
+  case_count: number;
+  completed_case_count: number;
+  cases: AutoResearchEvaluationCase[];
+  metrics: AutoResearchSystemEvaluationMetric[];
+  scholarflow_paper_materials: string[];
+  toy_end_to_end_ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  suite_fingerprint: string;
+};
+
 export type AutoResearchSystemEvaluation = {
   generated_at: string;
   evaluation_id: string;

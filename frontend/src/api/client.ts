@@ -10,6 +10,7 @@ import type {
   AnalysisSummary,
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
+  AutoResearchEvaluationCaseSuite,
   AutoResearchExperimentBridge,
   AutoResearchExperimentFactoryExecution,
   AutoResearchExperimentFactoryPlan,
@@ -567,6 +568,12 @@ export const api = {
     projectId: string,
   ): Promise<AutoResearchSystemEvaluation> {
     return request(`/api/projects/${projectId}/auto-research/system-evaluation`);
+  },
+
+  getAutoResearchEvaluationCases(
+    projectId: string,
+  ): Promise<AutoResearchEvaluationCaseSuite> {
+    return request(`/api/projects/${projectId}/auto-research/evaluation-cases`);
   },
 
   getAutoResearchRegistry(

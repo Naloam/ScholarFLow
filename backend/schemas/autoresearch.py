@@ -2518,6 +2518,54 @@ class AutoResearchSystemEvaluationMetricRead(BaseModel):
     rationale: str
 
 
+class AutoResearchEvaluationCaseTraceRead(BaseModel):
+    idea: str
+    brief_id: str | None = None
+    selected_hypothesis_id: str | None = None
+    experiment_plan_id: str | None = None
+    evidence_ledger_id: str | None = None
+    paper_decision: AutoResearchProjectPaperDecision = "do_not_write"
+    steps_completed: list[str] = Field(default_factory=list)
+    direction_count: int = 0
+    hypothesis_count: int = 0
+    experiment_job_count: int = 0
+    evidence_entry_count: int = 0
+    evidence_complete: bool = False
+    paper_review_package_ready: bool = False
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchEvaluationCaseRead(BaseModel):
+    case_id: str
+    task_kind: AutoResearchEvaluationTaskKind
+    idea: str
+    expected_brief_quality: str
+    expected_novelty_risks: list[str] = Field(default_factory=list)
+    expected_experiment_design_requirements: list[str] = Field(default_factory=list)
+    expected_failure_replan_behavior: str
+    expected_paper_tier: AutoResearchPaperTier = "technical_report"
+    mapped_run_ids: list[str] = Field(default_factory=list)
+    trace: AutoResearchEvaluationCaseTraceRead | None = None
+    score: int = 0
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AutoResearchEvaluationCaseSuiteRead(BaseModel):
+    generated_at: datetime
+    suite_id: str = "autoresearch_evaluation_case_suite_v1"
+    project_id: str
+    case_count: int = 0
+    completed_case_count: int = 0
+    cases: list[AutoResearchEvaluationCaseRead] = Field(default_factory=list)
+    metrics: list[AutoResearchSystemEvaluationMetricRead] = Field(default_factory=list)
+    scholarflow_paper_materials: list[str] = Field(default_factory=list)
+    toy_end_to_end_ready: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    suite_fingerprint: str
+
+
 class AutoResearchSystemEvaluationRead(BaseModel):
     generated_at: datetime
     evaluation_id: str = "system_level_evaluation_v1"

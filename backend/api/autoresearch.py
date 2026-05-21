@@ -16,6 +16,7 @@ from schemas.autoresearch import (
     AutoResearchCandidateRegistryRead,
     AutoResearchCrossRunMetaAnalysisRead,
     AutoResearchExecutionCommandResponse,
+    AutoResearchEvaluationCaseSuiteRead,
     AutoResearchExperimentBridgeRead,
     AutoResearchExperimentFactoryExecutionRead,
     AutoResearchExperimentFactoryPlanRead,
@@ -61,6 +62,7 @@ from services.autoresearch.bridge import (
 )
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.evaluation_cases import build_evaluation_case_suite
 from services.autoresearch.experiment_factory import (
     build_experiment_factory_plan,
     execute_toy_experiment_factory,
@@ -405,6 +407,15 @@ def get_auto_research_system_evaluation(
 ) -> AutoResearchSystemEvaluationRead:
     del db
     return build_system_evaluation(project_id)
+
+
+@router.get("/evaluation-cases", response_model=AutoResearchEvaluationCaseSuiteRead)
+def get_auto_research_evaluation_cases(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchEvaluationCaseSuiteRead:
+    del db
+    return build_evaluation_case_suite(project_id)
 
 
 @router.get("/{run_id}", response_model=AutoResearchRunRead)

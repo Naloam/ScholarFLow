@@ -1043,6 +1043,9 @@ class PaperWriter:
                 refined = content
             elif content:
                 logger.warning("paper_writer: LLM candidate failed validation, keeping seed markdown (content_len=%d)", len(content))
+        except FileNotFoundError as exc:
+            logger.warning("paper_writer: prompt missing, keeping seed markdown: %s", exc)
+            refined = seed_markdown.strip()
         except Exception as exc:
             logger.error("paper_writer: LLM refinement failed with exception: %s", exc)
 

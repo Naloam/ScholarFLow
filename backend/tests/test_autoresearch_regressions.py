@@ -18,6 +18,7 @@ import services.autoresearch.experiment_factory as autoresearch_experiment_facto
 import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
+import services.autoresearch.planner as autoresearch_planner
 import services.autoresearch.project_paper_orchestrator as autoresearch_project_paper_orchestrator
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
@@ -3931,6 +3932,71 @@ def test_writer_review_loop_can_be_disabled(monkeypatch) -> None:
     )
 
     assert result == seed_markdown.strip()
+
+
+def test_writer_and_planner_tolerate_missing_prompt_files(monkeypatch) -> None:
+    plan, spec = _writer_plan_and_spec()
+    artifact = _result_artifact()
+    writer = PaperWriter()
+    claim_matrix = writer.build_claim_evidence_matrix(
+        plan,
+        spec,
+        artifact,
+        literature=[],
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+    paper_plan = AutoResearchPaperPlanRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        title=plan.title,
+        narrative_summary="Prompt-missing fallback regression.",
+        sections=[
+            AutoResearchPaperPlanSectionRead(
+                section_id="abstract",
+                title="Abstract",
+                objective="Summarize the fallback result.",
+            )
+        ],
+    )
+    revision_state = writer.build_paper_revision_state(
+        claim_matrix,
+        paper_plan=paper_plan,
+        figure_plan=None,
+    )
+    seed_markdown = "# Prompt Missing Topic\n\n## Abstract\nFallback abstract.\n"
+
+    def missing_prompt(path: str) -> str:
+        raise FileNotFoundError(f"Prompt not found: {path}")
+
+    monkeypatch.setenv("AUTORESEARCH_PAPER_WRITER_REVIEW_ROUNDS", "0")
+    monkeypatch.setattr(autoresearch_writer, "load_prompt", missing_prompt)
+    monkeypatch.setattr(autoresearch_planner, "load_prompt", missing_prompt)
+
+    result = writer._maybe_refine_with_llm(
+        seed_markdown=seed_markdown,
+        language="en",
+        plan=plan,
+        spec=spec,
+        artifact=artifact,
+        literature=[],
+        attempts=[],
+        project_context=None,
+        narrative_report_markdown="Narrative report.",
+        claim_evidence_matrix=claim_matrix,
+        paper_plan=paper_plan,
+        paper_revision_state=revision_state,
+    )
+    framework = autoresearch_planner.ResearchPlanner()._build_conceptual_framework(
+        topic=plan.topic,
+        task_family=plan.task_family,
+        proposed_method=plan.proposed_method,
+        hypotheses=plan.hypotheses,
+        literature_synthesis=None,
+    )
+
+    assert result == seed_markdown.strip()
+    assert framework is None
 
 
 def test_writer_marks_unexecuted_ablation_hypothesis_as_untested() -> None:

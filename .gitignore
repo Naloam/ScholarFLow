@@ -11,9 +11,8 @@ backend/*.egg-info/
 frontend/test-results/
 frontend/playwright-report/
 
-# Test files, prompts, migrations
+# Test files and migrations
 backend/tests/
-backend/prompts/
 backend/migrations/
 
 # Docs — internal project documents

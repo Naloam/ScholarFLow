@@ -296,6 +296,7 @@ export function OperatorConsolePanel({
             type="button"
             className={`tab ${activeTab === tab.key ? "active" : ""}`}
             onClick={() => setActiveTab(tab.key)}
+            data-testid={`operator-tab-${tab.key}`}
           >
             {tab.label}
           </button>

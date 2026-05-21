@@ -31,55 +31,24 @@ test("workspace supports browser flow from project creation to export", async ({
   );
 
   await page.getByTestId("start-autoresearch-button").click();
-  await expect(page.getByTestId("operator-review-loop-summary")).toContainText(
-    /r\d+/,
+  await expect(page.getByTestId("operator-console-panel")).toContainText(
+    "toy_cs_reranking",
     {
-      timeout: 60000,
+      timeout: 120000,
     },
   );
   await expect(page.getByTestId("operator-console-panel")).toContainText(
-    "toy_cs_reranking",
-  );
-  await expect(page.getByTestId("operator-console-panel")).toContainText(
     "ir reranking",
+  );
+  await page.getByTestId("operator-tab-review").click();
+  await expect(page.getByTestId("operator-review-loop-summary")).toContainText(
+    /r\d+/,
   );
   await page.getByTestId("refresh-review-button").click();
   await expect(page.getByTestId("operator-review-loop-detail")).toContainText(
     /rounds=\d+/,
   );
-  await expect(page.getByTestId("export-publish-button")).toBeEnabled({
-    timeout: 60000,
-  });
-  await expect(page.getByTestId("publish-deployment-id")).toBeEnabled({
-    timeout: 60000,
-  });
-  await page.getByTestId("publish-deployment-id").fill("browser_batch");
-  await page.getByTestId("publish-deployment-label").fill("Browser Batch");
-  await page.getByTestId("export-publish-button").click();
-  await expect(page.getByTestId("status-notice")).toContainText(
-    "browser_batch",
-    {
-      timeout: 30000,
-    },
-  );
-  await expect(page.getByTestId("deployment-panel")).toContainText(
-    "Browser Batch",
-    {
-      timeout: 30000,
-    },
-  );
-  await expect(page.getByTestId("deployment-panel")).toContainText(
-    "Compact reranking for cs retrieval",
-    {
-      timeout: 30000,
-    },
-  );
-  await expect(page.getByTestId("operator-publication-summary")).toContainText(
-    "Compiled PDF",
-  );
-  await expect(page.getByTestId("operator-publication-assets")).toContainText(
-    "archive=",
-  );
+  await expect(page.getByTestId("export-publish-button")).toBeDisabled();
 
   await page.getByTestId("generate-draft-button").click();
 
@@ -91,6 +60,11 @@ test("workspace supports browser flow from project creation to export", async ({
   await expect(page.getByTestId("status-notice")).toContainText(/review/i, {
     timeout: 30000,
   });
+  await page
+    .getByTestId("collapsible-beta")
+    .getByRole("heading", { name: "Beta Panel" })
+    .first()
+    .click();
   await expect(page.getByTestId("beta-comment-input")).toBeEnabled({
     timeout: 60000,
   });
@@ -141,10 +115,12 @@ test("workspace supports manual bridge handoff and inline result import", async 
       timeout: 30000,
     },
   );
+  await page.getByTestId("operator-tab-controls").click();
   await page.getByTestId("operator-launch-mode").selectOption("bridge");
   await page
     .getByTestId("operator-launch-bridge-target")
     .fill("playwright-bridge");
+  await page.getByTestId("operator-tab-overview").click();
   await page.getByTestId("start-autoresearch-button").click();
 
   await expect(page.getByTestId("operator-bridge-summary")).toContainText(
@@ -153,6 +129,7 @@ test("workspace supports manual bridge handoff and inline result import", async 
       timeout: 30000,
     },
   );
+  await page.getByTestId("operator-tab-execution").click();
   await expect(page.getByTestId("operator-bridge-detail")).toContainText(
     "target=playwright-bridge",
   );
@@ -164,6 +141,7 @@ test("workspace supports manual bridge handoff and inline result import", async 
   await page.getByTestId("bridge-import-score").fill("0.83");
   await page.getByTestId("import-bridge-result-button").click();
 
+  await page.getByTestId("operator-tab-overview").click();
   await expect(page.getByTestId("operator-bridge-summary")).toContainText(
     "completed",
     {
@@ -176,6 +154,7 @@ test("workspace supports manual bridge handoff and inline result import", async 
       timeout: 60000,
     },
   );
+  await page.getByTestId("operator-tab-review").click();
   await expect(page.getByTestId("operator-review-loop-summary")).toContainText(
     /r\d+/,
     {

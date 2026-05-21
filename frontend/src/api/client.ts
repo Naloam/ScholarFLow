@@ -3,19 +3,31 @@ import type {
   AutoResearchBridgeUpdate,
   AutoResearchBundleIndex,
   AutoResearchCandidateRegistry,
+  AutoResearchCrossRunMetaAnalysis,
   AutoResearchDeployment,
   AutoResearchDeploymentFilters,
   AutoResearchDeploymentList,
   AnalysisSummary,
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
+  AutoResearchEvaluationCaseSuite,
   AutoResearchExperimentBridge,
+  AutoResearchExperimentFactoryExecution,
+  AutoResearchExperimentFactoryPlan,
+  AutoResearchHypothesisBank,
+  AutoResearchIdeaRequest,
+  AutoResearchIdeaRunCreateRequest,
+  AutoResearchLiteratureScoutResult,
+  AutoResearchResearchBrief,
+  AutoResearchResearchBriefList,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
+  AutoResearchProjectPaperOrchestration,
   AutoResearchPublishExport,
   AutoResearchPublishExportRequest,
   AutoResearchPublishPackage,
   AutoResearchPublicationManifest,
+  AutoResearchResearchReplanApply,
   AutoResearchReviewLoopApply,
   AutoResearchReviewLoopApplyRequest,
   AutoResearchReviewLoop,
@@ -26,6 +38,7 @@ import type {
   AutoResearchRunRegistry,
   AutoResearchRunRegistryViews,
   AutoResearchRunRequest,
+  AutoResearchSystemEvaluation,
   AuthConfig,
   AuthSessionPayload,
   AuthSessionResponse,
@@ -346,6 +359,100 @@ export const api = {
     });
   },
 
+  createAutoResearchIdeaBrief(
+    projectId: string,
+    payload: AutoResearchIdeaRequest,
+  ): Promise<AutoResearchResearchBrief> {
+    return request(`/api/projects/${projectId}/auto-research/ideas`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listAutoResearchIdeaBriefs(
+    projectId: string,
+  ): Promise<AutoResearchResearchBriefList> {
+    return request(`/api/projects/${projectId}/auto-research/ideas`);
+  },
+
+  getAutoResearchIdeaBrief(
+    projectId: string,
+    briefId: string,
+  ): Promise<AutoResearchResearchBrief> {
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}`,
+    );
+  },
+
+  getAutoResearchIdeaHypothesisBank(
+    projectId: string,
+    briefId: string,
+  ): Promise<AutoResearchHypothesisBank> {
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}/hypotheses`,
+    );
+  },
+
+  runAutoResearchIdeaLiteratureScout(
+    projectId: string,
+    briefId: string,
+  ): Promise<AutoResearchLiteratureScoutResult> {
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}/literature-scout`,
+      { method: "POST" },
+    );
+  },
+
+  buildAutoResearchIdeaExperimentFactory(
+    projectId: string,
+    briefId: string,
+    hypothesisId?: string | null,
+  ): Promise<AutoResearchExperimentFactoryPlan> {
+    const params = new URLSearchParams();
+    if (hypothesisId) {
+      params.set("hypothesis_id", hypothesisId);
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}/experiment-factory${query}`,
+      { method: "POST" },
+    );
+  },
+
+  createAutoResearchRunFromIdeaBrief(
+    projectId: string,
+    briefId: string,
+    payload?: AutoResearchIdeaRunCreateRequest,
+  ): Promise<IdResponse> {
+    return request(
+      `/api/projects/${projectId}/auto-research/ideas/${briefId}/run`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+    );
+  },
+
+  buildAutoResearchRunExperimentFactory(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExperimentFactoryPlan> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory`,
+      { method: "POST" },
+    );
+  },
+
+  executeAutoResearchRunExperimentFactoryToy(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchExperimentFactoryExecution> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/toy-execute`,
+      { method: "POST" },
+    );
+  },
+
   getAutoResearchRun(
     projectId: string,
     runId: string,
@@ -426,6 +533,9 @@ export const api = {
     if (options?.publish_status) {
       params.set("publish_status", options.publish_status);
     }
+    if (options?.publication_tier) {
+      params.set("publication_tier", options.publication_tier);
+    }
     if (options?.review_risk) {
       params.set("review_risk", options.review_risk);
     }
@@ -440,6 +550,30 @@ export const api = {
     }
     const query = params.size > 0 ? `?${params.toString()}` : "";
     return request(`/api/projects/${projectId}/auto-research/console${query}`);
+  },
+
+  getAutoResearchMetaAnalysis(
+    projectId: string,
+  ): Promise<AutoResearchCrossRunMetaAnalysis> {
+    return request(`/api/projects/${projectId}/auto-research/meta-analysis`);
+  },
+
+  getAutoResearchProjectPaperOrchestration(
+    projectId: string,
+  ): Promise<AutoResearchProjectPaperOrchestration> {
+    return request(`/api/projects/${projectId}/auto-research/project-paper`);
+  },
+
+  getAutoResearchSystemEvaluation(
+    projectId: string,
+  ): Promise<AutoResearchSystemEvaluation> {
+    return request(`/api/projects/${projectId}/auto-research/system-evaluation`);
+  },
+
+  getAutoResearchEvaluationCases(
+    projectId: string,
+  ): Promise<AutoResearchEvaluationCaseSuite> {
+    return request(`/api/projects/${projectId}/auto-research/evaluation-cases`);
   },
 
   getAutoResearchRegistry(
@@ -517,6 +651,20 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  applyAutoResearchResearchReplan(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchReviewLoopApplyRequest,
+  ): Promise<AutoResearchResearchReplanApply> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/research-replan/apply`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
       },
     );
   },

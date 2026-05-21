@@ -16,11 +16,16 @@ from schemas.autoresearch import (
     AutoResearchCandidateRegistryEntry,
     AutoResearchCandidateRegistryFiles,
     AutoResearchCandidateRegistryRead,
+    AutoResearchEvidenceLedgerRead,
+    AutoResearchExperimentFactoryPlanRead,
+    AutoResearchExperimentFactoryRepairPlanRead,
+    AutoResearchResearchBriefRead,
     AutoResearchLineageEdgeRead,
     AutoResearchPaperRevisionActionIndexRead,
     AutoResearchPaperRevisionDiffRead,
     AutoResearchPaperSectionRewriteIndexRead,
     AutoResearchRegistryAssetRef,
+    AutoResearchReviewerSimulationRead,
     AutoResearchReviewLoopRead,
     AutoResearchRegistryViewCounts,
     AutoResearchRegistryViewRead,
@@ -38,10 +43,12 @@ from schemas.autoresearch import (
     ResearchPlan,
 )
 from services.autoresearch.writer import PaperWriter, _compile_required_source_files
+from services.autoresearch.paper_evidence_compiler import compile_paper_evidence
 from services.workspace import autoresearch_dir
 
 
 RUN_FILENAME = "run.json"
+BRIEF_FILENAME = "brief.json"
 PROGRAM_FILENAME = "program.json"
 PLAN_FILENAME = "plan.json"
 SPEC_FILENAME = "spec.json"
@@ -52,8 +59,26 @@ PAPER_FILENAME = "paper.md"
 PROJECT_CONTEXT_FILENAME = "project_context.json"
 NARRATIVE_REPORT_FILENAME = "narrative_report.md"
 CLAIM_EVIDENCE_MATRIX_FILENAME = "claim_evidence_matrix.json"
+EXPERIMENT_DESIGN_FILENAME = "experiment_design.json"
+FAILURE_ANALYSIS_FILENAME = "failure_analysis.json"
+RESEARCH_REPLAN_FILENAME = "research_replan.json"
+RESEARCH_PROTOCOL_FILENAME = "research_protocol.json"
+METHODOLOGY_AUDIT_FILENAME = "methodology_audit.json"
+PUBLICATION_READINESS_FILENAME = "publication_readiness.json"
+CONTRIBUTION_ASSESSMENT_FILENAME = "contribution_assessment.json"
+LITERATURE_GRAPH_FILENAME = "literature_graph.json"
+NOVELTY_VALIDATION_FILENAME = "novelty_validation.json"
+REVISION_DOSSIER_FILENAME = "revision_dossier.json"
+PUBLICATION_EVIDENCE_INDEX_FILENAME = "publication_evidence_index.json"
+ARTIFACT_INTEGRITY_AUDIT_FILENAME = "artifact_integrity_audit.json"
+PUBLICATION_REPAIR_PLAN_FILENAME = "publication_repair_plan.json"
+PUBLICATION_REPAIR_EXECUTION_FILENAME = "publication_repair_execution.json"
+REVIEWER_SIMULATION_FILENAME = "reviewer_simulation.json"
 PAPER_PLAN_FILENAME = "paper_plan.json"
 FIGURE_PLAN_FILENAME = "figure_plan.json"
+EXPERIMENT_FACTORY_PLAN_FILENAME = "experiment_factory_plan.json"
+EVIDENCE_LEDGER_FILENAME = "evidence_ledger.json"
+EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME = "experiment_factory_repair_plan.json"
 PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
 PAPER_REVISION_DIFF_FILENAME = "paper_revision_diff.json"
 PAPER_REVISION_ACTION_INDEX_FILENAME = "paper_revision_action_index.json"
@@ -77,6 +102,7 @@ PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
 PAPER_COMPILED_PDF_FILENAME = "main.pdf"
 PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME = "main.bbl"
 BENCHMARK_FILENAME = "benchmark.json"
+BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
 CANDIDATE_FILENAME = "candidate.json"
 ATTEMPTS_FILENAME = "attempts.json"
@@ -93,8 +119,18 @@ def _runs_dir(project_id: str) -> Path:
     return path
 
 
+def _briefs_dir(project_id: str) -> Path:
+    path = autoresearch_dir(project_id) / "briefs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _run_path(project_id: str, run_id: str) -> Path:
     return _runs_dir(project_id) / run_id
+
+
+def _brief_path(project_id: str, brief_id: str) -> Path:
+    return _briefs_dir(project_id) / brief_id
 
 
 def _candidate_path(project_id: str, run_id: str, candidate_id: str) -> Path:
@@ -103,6 +139,12 @@ def _candidate_path(project_id: str, run_id: str, candidate_id: str) -> Path:
 
 def run_dir(project_id: str, run_id: str) -> Path:
     path = _run_path(project_id, run_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def brief_dir(project_id: str, brief_id: str) -> Path:
+    path = _brief_path(project_id, brief_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -540,6 +582,25 @@ def _candidate_lineage_edges(
             ("paper_markdown", "paper"),
             ("narrative_report_markdown", "narrative_report"),
             ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("experiment_design_json", "experiment_design"),
+            ("failure_analysis_json", "failure_analysis"),
+            ("research_replan_json", "research_replan"),
+            ("benchmark_card_json", "benchmark_card"),
+            ("research_protocol_json", "research_protocol"),
+            ("methodology_audit_json", "methodology_audit"),
+            ("publication_readiness_json", "publication_readiness"),
+            ("contribution_assessment_json", "contribution_assessment"),
+            ("literature_graph_json", "literature_graph"),
+            ("novelty_validation_json", "novelty_validation"),
+            ("revision_dossier_json", "revision_dossier"),
+            ("publication_evidence_index_json", "publication_evidence_index"),
+            ("artifact_integrity_audit_json", "artifact_integrity_audit"),
+            ("publication_repair_plan_json", "publication_repair_plan"),
+            ("publication_repair_execution_json", "publication_repair_execution"),
+            ("reviewer_simulation_json", "reviewer_simulation"),
+            ("experiment_factory_plan_json", "experiment_factory_plan"),
+            ("evidence_ledger_json", "evidence_ledger"),
+            ("experiment_factory_repair_plan_json", "experiment_factory_repair_plan"),
             ("paper_plan_json", "paper_plan"),
             ("figure_plan_json", "figure_plan"),
             ("paper_revision_history_markdown", "paper_revision_history"),
@@ -575,6 +636,530 @@ def _candidate_lineage_edges(
                     exists=ref.exists,
                 )
             )
+    return edges
+
+
+def _run_derivation_lineage_edges(
+    *,
+    run: AutoResearchRunRead,
+    run_assets: AutoResearchRunRegistryFiles,
+) -> list[AutoResearchLineageEdgeRead]:
+    edges: list[AutoResearchLineageEdgeRead] = []
+
+    def add_derivation(
+        *,
+        source_kind: str,
+        source_id: str,
+        target_attr: str,
+        target_kind: str,
+    ) -> None:
+        ref = getattr(run_assets, target_attr)
+        if ref is None:
+            return
+        edges.append(
+            AutoResearchLineageEdgeRead(
+                source_kind=source_kind,
+                source_id=source_id,
+                relation="derived_from",
+                target_kind=target_kind,
+                target_id=f"{run.id}:{target_kind}",
+                target_path=ref.path,
+                exists=ref.exists,
+            )
+        )
+
+    if run_assets.artifact_json is not None:
+        artifact_source_id = f"{run.id}:artifact"
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="spec_json",
+            target_kind="spec",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="generated_code",
+            target_kind="generated_code",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="benchmark_json",
+            target_kind="benchmark",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="benchmark_card_json",
+            target_kind="benchmark_card",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="publication_readiness_json",
+            target_kind="publication_readiness",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="contribution_assessment_json",
+            target_kind="contribution_assessment",
+        )
+        add_derivation(
+            source_kind="artifact",
+            source_id=artifact_source_id,
+            target_attr="novelty_validation_json",
+            target_kind="novelty_validation",
+        )
+
+    if run_assets.paper_markdown is not None:
+        paper_source_id = f"{run.id}:paper"
+        for target_attr, target_kind in (
+            ("plan_json", "plan"),
+            ("spec_json", "spec"),
+            ("artifact_json", "artifact"),
+            ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+            ("experiment_design_json", "experiment_design"),
+            ("failure_analysis_json", "failure_analysis"),
+            ("research_replan_json", "research_replan"),
+            ("benchmark_card_json", "benchmark_card"),
+            ("research_protocol_json", "research_protocol"),
+            ("methodology_audit_json", "methodology_audit"),
+            ("publication_readiness_json", "publication_readiness"),
+            ("contribution_assessment_json", "contribution_assessment"),
+            ("literature_graph_json", "literature_graph"),
+            ("novelty_validation_json", "novelty_validation"),
+            ("revision_dossier_json", "revision_dossier"),
+            ("publication_evidence_index_json", "publication_evidence_index"),
+            ("publication_repair_plan_json", "publication_repair_plan"),
+            ("publication_repair_execution_json", "publication_repair_execution"),
+            ("reviewer_simulation_json", "reviewer_simulation"),
+            ("experiment_factory_plan_json", "experiment_factory_plan"),
+            ("evidence_ledger_json", "evidence_ledger"),
+            ("experiment_factory_repair_plan_json", "experiment_factory_repair_plan"),
+            ("narrative_report_markdown", "narrative_report"),
+            ("paper_plan_json", "paper_plan"),
+            ("figure_plan_json", "figure_plan"),
+            ("generated_code", "generated_code"),
+            ("benchmark_json", "benchmark"),
+        ):
+            add_derivation(
+                source_kind="paper",
+                source_id=paper_source_id,
+                target_attr=target_attr,
+                target_kind=target_kind,
+            )
+
+    if run_assets.claim_evidence_matrix_json is not None:
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="publication_readiness_json",
+            target_kind="publication_readiness",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="contribution_assessment_json",
+            target_kind="contribution_assessment",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="literature_graph_json",
+            target_kind="literature_graph",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="novelty_validation_json",
+            target_kind="novelty_validation",
+        )
+    if run_assets.spec_json is not None:
+        add_derivation(
+            source_kind="spec",
+            source_id=f"{run.id}:spec",
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="spec",
+            source_id=f"{run.id}:spec",
+            target_attr="research_protocol_json",
+            target_kind="research_protocol",
+        )
+        add_derivation(
+            source_kind="spec",
+            source_id=f"{run.id}:spec",
+            target_attr="benchmark_card_json",
+            target_kind="benchmark_card",
+        )
+    if run_assets.benchmark_json is not None:
+        add_derivation(
+            source_kind="benchmark",
+            source_id=f"{run.id}:benchmark",
+            target_attr="benchmark_card_json",
+            target_kind="benchmark_card",
+        )
+    if run_assets.plan_json is not None:
+        add_derivation(
+            source_kind="plan",
+            source_id=f"{run.id}:plan",
+            target_attr="experiment_design_json",
+            target_kind="experiment_design",
+        )
+        add_derivation(
+            source_kind="plan",
+            source_id=f"{run.id}:plan",
+            target_attr="research_protocol_json",
+            target_kind="research_protocol",
+        )
+    if run_assets.experiment_design_json is not None:
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="research_protocol_json",
+            target_kind="research_protocol",
+        )
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+        add_derivation(
+            source_kind="experiment_design",
+            source_id=f"{run.id}:experiment_design",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+    if run_assets.research_protocol_json is not None:
+        add_derivation(
+            source_kind="research_protocol",
+            source_id=f"{run.id}:research_protocol",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.artifact_json is not None:
+        add_derivation(
+            source_kind="artifact",
+            source_id=f"{run.id}:artifact",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.claim_evidence_matrix_json is not None:
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.paper_compile_report_json is not None:
+        add_derivation(
+            source_kind="paper_compile_report",
+            source_id=f"{run.id}:paper_compile_report",
+            target_attr="methodology_audit_json",
+            target_kind="methodology_audit",
+        )
+    if run_assets.methodology_audit_json is not None:
+        add_derivation(
+            source_kind="methodology_audit",
+            source_id=f"{run.id}:methodology_audit",
+            target_attr="publication_readiness_json",
+            target_kind="publication_readiness",
+        )
+        add_derivation(
+            source_kind="methodology_audit",
+            source_id=f"{run.id}:methodology_audit",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
+    if run_assets.publication_readiness_json is not None:
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
+            target_attr="contribution_assessment_json",
+            target_kind="contribution_assessment",
+        )
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
+    if run_assets.contribution_assessment_json is not None:
+        add_derivation(
+            source_kind="contribution_assessment",
+            source_id=f"{run.id}:contribution_assessment",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
+        add_derivation(
+            source_kind="contribution_assessment",
+            source_id=f"{run.id}:contribution_assessment",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+        add_derivation(
+            source_kind="contribution_assessment",
+            source_id=f"{run.id}:contribution_assessment",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.literature_graph_json is not None:
+        add_derivation(
+            source_kind="literature_graph",
+            source_id=f"{run.id}:literature_graph",
+            target_attr="novelty_validation_json",
+            target_kind="novelty_validation",
+        )
+        add_derivation(
+            source_kind="literature_graph",
+            source_id=f"{run.id}:literature_graph",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.novelty_validation_json is not None:
+        add_derivation(
+            source_kind="novelty_validation",
+            source_id=f"{run.id}:novelty_validation",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
+        add_derivation(
+            source_kind="novelty_validation",
+            source_id=f"{run.id}:novelty_validation",
+            target_attr="failure_analysis_json",
+            target_kind="failure_analysis",
+        )
+        add_derivation(
+            source_kind="novelty_validation",
+            source_id=f"{run.id}:novelty_validation",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.claim_evidence_matrix_json is not None:
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="revision_dossier_json",
+            target_kind="revision_dossier",
+        )
+        add_derivation(
+            source_kind="claim_evidence_matrix",
+            source_id=f"{run.id}:claim_evidence_matrix",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.benchmark_card_json is not None:
+        add_derivation(
+            source_kind="benchmark_card",
+            source_id=f"{run.id}:benchmark_card",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.research_protocol_json is not None:
+        add_derivation(
+            source_kind="research_protocol",
+            source_id=f"{run.id}:research_protocol",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.methodology_audit_json is not None:
+        add_derivation(
+            source_kind="methodology_audit",
+            source_id=f"{run.id}:methodology_audit",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.publication_readiness_json is not None:
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+    if run_assets.revision_dossier_json is not None:
+        add_derivation(
+            source_kind="revision_dossier",
+            source_id=f"{run.id}:revision_dossier",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+        add_derivation(
+            source_kind="revision_dossier",
+            source_id=f"{run.id}:revision_dossier",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.publication_evidence_index_json is not None:
+        add_derivation(
+            source_kind="publication_evidence_index",
+            source_id=f"{run.id}:publication_evidence_index",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.reviewer_simulation_json is not None:
+        add_derivation(
+            source_kind="reviewer_simulation",
+            source_id=f"{run.id}:reviewer_simulation",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.experiment_factory_plan_json is not None:
+        add_derivation(
+            source_kind="experiment_factory_plan",
+            source_id=f"{run.id}:experiment_factory_plan",
+            target_attr="evidence_ledger_json",
+            target_kind="evidence_ledger",
+        )
+        add_derivation(
+            source_kind="experiment_factory_plan",
+            source_id=f"{run.id}:experiment_factory_plan",
+            target_attr="artifact_json",
+            target_kind="artifact",
+        )
+    if run_assets.evidence_ledger_json is not None:
+        add_derivation(
+            source_kind="evidence_ledger",
+            source_id=f"{run.id}:evidence_ledger",
+            target_attr="experiment_factory_repair_plan_json",
+            target_kind="experiment_factory_repair_plan",
+        )
+    if run_assets.failure_analysis_json is not None:
+        add_derivation(
+            source_kind="failure_analysis",
+            source_id=f"{run.id}:failure_analysis",
+            target_attr="research_replan_json",
+            target_kind="research_replan",
+        )
+        add_derivation(
+            source_kind="failure_analysis",
+            source_id=f"{run.id}:failure_analysis",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+        add_derivation(
+            source_kind="failure_analysis",
+            source_id=f"{run.id}:failure_analysis",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.research_replan_json is not None:
+        add_derivation(
+            source_kind="research_replan",
+            source_id=f"{run.id}:research_replan",
+            target_attr="publication_evidence_index_json",
+            target_kind="publication_evidence_index",
+        )
+        add_derivation(
+            source_kind="research_replan",
+            source_id=f"{run.id}:research_replan",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.artifact_integrity_audit_json is not None:
+        add_derivation(
+            source_kind="run",
+            source_id=run.id,
+            target_attr="artifact_integrity_audit_json",
+            target_kind="artifact_integrity_audit",
+        )
+    if run_assets.publication_readiness_json is not None:
+        add_derivation(
+            source_kind="publication_readiness",
+            source_id=f"{run.id}:publication_readiness",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.contribution_assessment_json is not None:
+        add_derivation(
+            source_kind="contribution_assessment",
+            source_id=f"{run.id}:contribution_assessment",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.novelty_validation_json is not None:
+        add_derivation(
+            source_kind="novelty_validation",
+            source_id=f"{run.id}:novelty_validation",
+            target_attr="publication_repair_plan_json",
+            target_kind="publication_repair_plan",
+        )
+    if run_assets.publication_repair_plan_json is not None:
+        add_derivation(
+            source_kind="publication_repair_plan",
+            source_id=f"{run.id}:publication_repair_plan",
+            target_attr="publication_repair_execution_json",
+            target_kind="publication_repair_execution",
+        )
+    if run_assets.paper_revision_action_index_json is not None:
+        add_derivation(
+            source_kind="paper_revision_action_index",
+            source_id=f"{run.id}:paper_revision_action_index",
+            target_attr="publication_repair_execution_json",
+            target_kind="publication_repair_execution",
+        )
+    if run_assets.paper_compile_report_json is not None:
+        add_derivation(
+            source_kind="paper_compile_report",
+            source_id=f"{run.id}:paper_compile_report",
+            target_attr="publication_readiness_json",
+            target_kind="publication_readiness",
+        )
+    if run_assets.benchmark_json is not None:
+        add_derivation(
+            source_kind="benchmark",
+            source_id=f"{run.id}:benchmark",
+            target_attr="publication_readiness_json",
+            target_kind="publication_readiness",
+        )
+
+    if run_assets.paper_latex_source is not None and run_assets.paper_markdown is not None:
+        add_derivation(
+            source_kind="paper_latex",
+            source_id=f"{run.id}:paper_latex",
+            target_attr="paper_markdown",
+            target_kind="paper",
+        )
+
     return edges
 
 
@@ -617,6 +1202,25 @@ def _run_lineage_edges(
         ("paper_markdown", "paper"),
         ("narrative_report_markdown", "narrative_report"),
         ("claim_evidence_matrix_json", "claim_evidence_matrix"),
+        ("experiment_design_json", "experiment_design"),
+        ("failure_analysis_json", "failure_analysis"),
+        ("research_replan_json", "research_replan"),
+        ("benchmark_card_json", "benchmark_card"),
+        ("research_protocol_json", "research_protocol"),
+        ("methodology_audit_json", "methodology_audit"),
+        ("publication_readiness_json", "publication_readiness"),
+        ("contribution_assessment_json", "contribution_assessment"),
+        ("literature_graph_json", "literature_graph"),
+        ("novelty_validation_json", "novelty_validation"),
+        ("revision_dossier_json", "revision_dossier"),
+        ("publication_evidence_index_json", "publication_evidence_index"),
+        ("artifact_integrity_audit_json", "artifact_integrity_audit"),
+        ("publication_repair_plan_json", "publication_repair_plan"),
+        ("publication_repair_execution_json", "publication_repair_execution"),
+        ("reviewer_simulation_json", "reviewer_simulation"),
+        ("experiment_factory_plan_json", "experiment_factory_plan"),
+        ("evidence_ledger_json", "evidence_ledger"),
+        ("experiment_factory_repair_plan_json", "experiment_factory_repair_plan"),
         ("paper_plan_json", "paper_plan"),
         ("figure_plan_json", "figure_plan"),
         ("paper_revision_history_markdown", "paper_revision_history"),
@@ -653,6 +1257,7 @@ def _run_lineage_edges(
                 exists=ref.exists,
             )
         )
+    edges.extend(_run_derivation_lineage_edges(run=run, run_assets=run_assets))
     for candidate in run.candidates:
         edges.append(
             AutoResearchLineageEdgeRead(
@@ -740,6 +1345,17 @@ def _run_bundle_assets(
         _bundle_asset(asset_id=f"{run_registry.run_id}:program_json", label="Program snapshot", role="program_json", ref=files.program_json),
         _bundle_asset(asset_id=f"{run_registry.run_id}:portfolio_json", label="Portfolio snapshot", role="portfolio_json", ref=files.portfolio_json),
         _bundle_asset(asset_id=f"{run_registry.run_id}:benchmark_json", label="Benchmark snapshot", role="benchmark_json", ref=files.benchmark_json, required=False),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_benchmark_card_json",
+                label="Selected run benchmark card",
+                role="run_benchmark_card_json",
+                ref=files.benchmark_card_json,
+                required=False,
+            )
+            if files.benchmark_card_json is not None and files.benchmark_card_json.exists
+            else None
+        ),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_plan_json", label="Selected run plan", role="run_plan_json", ref=files.plan_json, required=False),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_spec_json", label="Selected run spec", role="run_spec_json", ref=files.spec_json, required=False),
         _bundle_asset(asset_id=f"{run_registry.run_id}:run_artifact_json", label="Selected run artifact", role="run_artifact_json", ref=files.artifact_json, required=False),
@@ -758,6 +1374,212 @@ def _run_bundle_assets(
             role="run_claim_evidence_matrix_json",
             ref=files.claim_evidence_matrix_json,
             required=False,
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_research_protocol_json",
+                label="Selected run research protocol",
+                role="run_research_protocol_json",
+                ref=files.research_protocol_json,
+                required=False,
+            )
+            if files.research_protocol_json is not None and files.research_protocol_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_design_json",
+                label="Selected run experiment design",
+                role="run_experiment_design_json",
+                ref=files.experiment_design_json,
+                required=False,
+            )
+            if files.experiment_design_json is not None and files.experiment_design_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_failure_analysis_json",
+                label="Selected run failure analysis",
+                role="run_failure_analysis_json",
+                ref=files.failure_analysis_json,
+                required=False,
+            )
+            if files.failure_analysis_json is not None and files.failure_analysis_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_research_replan_json",
+                label="Selected run research replan",
+                role="run_research_replan_json",
+                ref=files.research_replan_json,
+                required=False,
+            )
+            if files.research_replan_json is not None and files.research_replan_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_methodology_audit_json",
+                label="Selected run methodology audit",
+                role="run_methodology_audit_json",
+                ref=files.methodology_audit_json,
+                required=False,
+            )
+            if files.methodology_audit_json is not None and files.methodology_audit_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_publication_readiness_json",
+                label="Selected run publication readiness report",
+                role="run_publication_readiness_json",
+                ref=files.publication_readiness_json,
+                required=False,
+            )
+            if files.publication_readiness_json is not None and files.publication_readiness_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_contribution_assessment_json",
+                label="Selected run contribution assessment",
+                role="run_contribution_assessment_json",
+                ref=files.contribution_assessment_json,
+                required=False,
+            )
+            if files.contribution_assessment_json is not None and files.contribution_assessment_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_literature_graph_json",
+                label="Selected run literature graph",
+                role="run_literature_graph_json",
+                ref=files.literature_graph_json,
+                required=False,
+            )
+            if files.literature_graph_json is not None and files.literature_graph_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_novelty_validation_json",
+                label="Selected run novelty validation",
+                role="run_novelty_validation_json",
+                ref=files.novelty_validation_json,
+                required=False,
+            )
+            if files.novelty_validation_json is not None and files.novelty_validation_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_revision_dossier_json",
+                label="Selected run revision dossier",
+                role="run_revision_dossier_json",
+                ref=files.revision_dossier_json,
+                required=False,
+            )
+            if files.revision_dossier_json is not None and files.revision_dossier_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_publication_evidence_index_json",
+                label="Selected run publication evidence index",
+                role="run_publication_evidence_index_json",
+                ref=files.publication_evidence_index_json,
+                required=False,
+            )
+            if files.publication_evidence_index_json is not None
+            and files.publication_evidence_index_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_artifact_integrity_audit_json",
+                label="Selected run artifact integrity audit",
+                role="run_artifact_integrity_audit_json",
+                ref=files.artifact_integrity_audit_json,
+                required=False,
+            )
+            if files.artifact_integrity_audit_json is not None
+            and files.artifact_integrity_audit_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_publication_repair_plan_json",
+                label="Selected run publication repair plan",
+                role="run_publication_repair_plan_json",
+                ref=files.publication_repair_plan_json,
+                required=False,
+            )
+            if files.publication_repair_plan_json is not None
+            and files.publication_repair_plan_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_publication_repair_execution_json",
+                label="Selected run publication repair execution",
+                role="run_publication_repair_execution_json",
+                ref=files.publication_repair_execution_json,
+                required=False,
+            )
+            if files.publication_repair_execution_json is not None
+            and files.publication_repair_execution_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_reviewer_simulation_json",
+                label="Selected run reviewer simulation",
+                role="run_reviewer_simulation_json",
+                ref=files.reviewer_simulation_json,
+                required=False,
+            )
+            if files.reviewer_simulation_json is not None
+            and files.reviewer_simulation_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_factory_plan_json",
+                label="Selected run experiment factory plan",
+                role="run_experiment_factory_plan_json",
+                ref=files.experiment_factory_plan_json,
+                required=False,
+            )
+            if files.experiment_factory_plan_json is not None
+            and files.experiment_factory_plan_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_evidence_ledger_json",
+                label="Selected run evidence ledger",
+                role="run_evidence_ledger_json",
+                ref=files.evidence_ledger_json,
+                required=False,
+            )
+            if files.evidence_ledger_json is not None
+            and files.evidence_ledger_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_factory_repair_plan_json",
+                label="Selected run experiment factory repair plan",
+                role="run_experiment_factory_repair_plan_json",
+                ref=files.experiment_factory_repair_plan_json,
+                required=False,
+            )
+            if files.experiment_factory_repair_plan_json is not None
+            and files.experiment_factory_repair_plan_json.exists
+            else None
         ),
         _bundle_asset(
             asset_id=f"{run_registry.run_id}:run_paper_plan_json",
@@ -986,6 +1808,9 @@ def create_run(
     docker_image: str | None = None,
     benchmark: BenchmarkSource | None = None,
     execution_backend: ExecutionBackendSpec | None = None,
+    brief_id: str | None = None,
+    hypothesis_id: str | None = None,
+    direction_selection_reason: str | None = None,
 ) -> AutoResearchRunRead:
     now = _utcnow()
     effective_request = request or AutoResearchRunConfig(
@@ -998,6 +1823,9 @@ def create_run(
         project_id=project_id,
         topic=topic,
         status="queued",
+        brief_id=brief_id,
+        hypothesis_id=hypothesis_id,
+        direction_selection_reason=direction_selection_reason,
         request=effective_request,
         benchmark=effective_request.benchmark,
         execution_backend=effective_request.execution_backend,
@@ -1007,6 +1835,43 @@ def create_run(
     )
     save_run(run)
     return run
+
+
+def save_research_brief(brief: AutoResearchResearchBriefRead) -> AutoResearchResearchBriefRead:
+    base = brief_dir(brief.project_id, brief.brief_id)
+    path = base / BRIEF_FILENAME
+    payload = brief.model_copy(
+        update={
+            "updated_at": _utcnow(),
+            "brief_path": str(path),
+        }
+    )
+    _write_json(path, payload.model_dump(mode="json"))
+    return payload
+
+
+def load_research_brief(project_id: str, brief_id: str) -> AutoResearchResearchBriefRead | None:
+    path = _brief_path(project_id, brief_id) / BRIEF_FILENAME
+    if not path.exists():
+        return None
+    try:
+        loaded = AutoResearchResearchBriefRead.model_validate_json(path.read_text(encoding="utf-8"))
+        return loaded.model_copy(update={"brief_path": str(path)})
+    except Exception:
+        return None
+
+
+def list_research_briefs(project_id: str) -> list[AutoResearchResearchBriefRead]:
+    items: list[AutoResearchResearchBriefRead] = []
+    root = _briefs_dir(project_id)
+    for path in sorted(root.glob(f"*/{BRIEF_FILENAME}"), reverse=True):
+        try:
+            loaded = AutoResearchResearchBriefRead.model_validate_json(path.read_text(encoding="utf-8"))
+            items.append(loaded.model_copy(update={"brief_path": str(path)}))
+        except Exception:
+            continue
+    items.sort(key=lambda item: item.updated_at, reverse=True)
+    return items
 
 
 def _refresh_paper_compile_report(
@@ -1053,8 +1918,30 @@ def _refresh_paper_compile_report(
         or len(materialized_outputs) == len(report.expected_outputs)
     )
     ready_for_compile = not missing_required_inputs and source_package_complete
+    compile_report = report.model_copy(
+        update={
+            "generated_at": _utcnow(),
+            "missing_required_inputs": missing_required_inputs,
+            "required_source_files": required_source_files,
+            "missing_required_source_files": missing_required_source_files,
+            "materialized_outputs": materialized_outputs,
+            "source_package_complete": source_package_complete,
+            "all_expected_outputs_materialized": all_expected_outputs_materialized,
+            "ready_for_compile": ready_for_compile,
+        }
+    )
+    compile_report = compile_paper_evidence(
+        compile_report,
+        run=payload,
+        paper_markdown=payload.paper_markdown,
+        paper_plan=payload.paper_plan,
+        claim_evidence_matrix=payload.claim_evidence_matrix,
+        artifact=payload.artifact,
+        literature_count=len(payload.literature),
+    )
     if (
-        report.missing_required_inputs == missing_required_inputs
+        compile_report.model_dump(mode="json") == report.model_dump(mode="json")
+        and report.missing_required_inputs == missing_required_inputs
         and report.required_source_files == required_source_files
         and report.missing_required_source_files == missing_required_source_files
         and report.materialized_outputs == materialized_outputs
@@ -1063,22 +1950,62 @@ def _refresh_paper_compile_report(
         and report.ready_for_compile == ready_for_compile
     ):
         return payload
+    return payload.model_copy(update={"paper_compile_report": compile_report})
+
+
+def _load_reviewer_simulation(payload: AutoResearchRunRead, *, base: Path) -> AutoResearchRunRead:
+    if payload.reviewer_simulation is not None:
+        return payload
+    path = base / REVIEWER_SIMULATION_FILENAME
+    if not path.is_file():
+        return payload
+    try:
+        simulation = AutoResearchReviewerSimulationRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return payload
     return payload.model_copy(
         update={
-            "paper_compile_report": report.model_copy(
-                update={
-                    "generated_at": _utcnow(),
-                    "missing_required_inputs": missing_required_inputs,
-                    "required_source_files": required_source_files,
-                    "missing_required_source_files": missing_required_source_files,
-                    "materialized_outputs": materialized_outputs,
-                    "source_package_complete": source_package_complete,
-                    "all_expected_outputs_materialized": all_expected_outputs_materialized,
-                    "ready_for_compile": ready_for_compile,
-                }
-            )
+            "reviewer_simulation": simulation,
+            "reviewer_simulation_path": str(path),
         }
     )
+
+
+def _load_experiment_factory_artifacts(payload: AutoResearchRunRead, *, base: Path) -> AutoResearchRunRead:
+    updates: dict[str, object] = {}
+    if payload.experiment_factory_plan is None:
+        path = base / EXPERIMENT_FACTORY_PLAN_FILENAME
+        if path.is_file():
+            try:
+                updates["experiment_factory_plan"] = AutoResearchExperimentFactoryPlanRead.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                updates["experiment_factory_plan_path"] = str(path)
+            except Exception:
+                pass
+    if payload.evidence_ledger is None:
+        path = base / EVIDENCE_LEDGER_FILENAME
+        if path.is_file():
+            try:
+                updates["evidence_ledger"] = AutoResearchEvidenceLedgerRead.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                updates["evidence_ledger_path"] = str(path)
+            except Exception:
+                pass
+    if payload.experiment_factory_repair_plan is None:
+        path = base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME
+        if path.is_file():
+            try:
+                updates["experiment_factory_repair_plan"] = (
+                    AutoResearchExperimentFactoryRepairPlanRead.model_validate_json(
+                        path.read_text(encoding="utf-8")
+                    )
+                )
+                updates["experiment_factory_repair_plan_path"] = str(path)
+            except Exception:
+                pass
+    return payload.model_copy(update=updates) if updates else payload
 
 
 def _hydrate_run(payload: AutoResearchRunRead) -> AutoResearchRunRead:
@@ -1087,6 +2014,8 @@ def _hydrate_run(payload: AutoResearchRunRead) -> AutoResearchRunRead:
     hydrated = _refresh_paper_revision_diff(hydrated, base=base)
     hydrated = _refresh_paper_revision_action_index(hydrated, base=base)
     hydrated = _refresh_paper_compile_report(hydrated, base=base)
+    hydrated = _load_reviewer_simulation(hydrated, base=base)
+    hydrated = _load_experiment_factory_artifacts(hydrated, base=base)
     return hydrated
 
 
@@ -1215,6 +2144,18 @@ def save_run(
         _write_json(base / PAPER_PLAN_FILENAME, payload.paper_plan.model_dump(mode="json"))
     if payload.figure_plan is not None:
         _write_json(base / FIGURE_PLAN_FILENAME, payload.figure_plan.model_dump(mode="json"))
+    if payload.experiment_factory_plan is not None:
+        _write_json(
+            base / EXPERIMENT_FACTORY_PLAN_FILENAME,
+            payload.experiment_factory_plan.model_dump(mode="json"),
+        )
+    if payload.evidence_ledger is not None:
+        _write_json(base / EVIDENCE_LEDGER_FILENAME, payload.evidence_ledger.model_dump(mode="json"))
+    if payload.experiment_factory_repair_plan is not None:
+        _write_json(
+            base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME,
+            payload.experiment_factory_repair_plan.model_dump(mode="json"),
+        )
     if payload.paper_revision_state is not None:
         _write_json(base / PAPER_REVISION_STATE_FILENAME, payload.paper_revision_state.model_dump(mode="json"))
     if payload.paper_compile_report is not None and materialize_paper_workspace:
@@ -1226,11 +2167,28 @@ def save_run(
             base / PAPER_REVISION_ACTION_INDEX_FILENAME,
             payload.paper_revision_action_index.model_dump(mode="json"),
         )
+    if payload.reviewer_simulation is not None:
+        _write_json(
+            base / REVIEWER_SIMULATION_FILENAME,
+            payload.reviewer_simulation.model_dump(mode="json"),
+        )
     if payload.paper_section_rewrite_index is not None:
         _write_json(
             base / PAPER_SECTION_REWRITE_INDEX_FILENAME,
             payload.paper_section_rewrite_index.model_dump(mode="json"),
         )
+    path_updates: dict[str, str] = {}
+    if payload.experiment_factory_plan is not None:
+        path_updates["experiment_factory_plan_path"] = str(base / EXPERIMENT_FACTORY_PLAN_FILENAME)
+    if payload.evidence_ledger is not None:
+        path_updates["evidence_ledger_path"] = str(base / EVIDENCE_LEDGER_FILENAME)
+    if payload.experiment_factory_repair_plan is not None:
+        path_updates["experiment_factory_repair_plan_path"] = str(
+            base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME
+        )
+    if path_updates:
+        payload = payload.model_copy(update=path_updates)
+        _write_json(base / RUN_FILENAME, payload.model_dump(mode="json"))
     if (
         (payload.paper_markdown is not None and materialize_paper_workspace)
         or (payload.paper_compile_report is not None and materialize_paper_workspace)
@@ -1400,6 +2358,66 @@ def claim_evidence_matrix_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / CLAIM_EVIDENCE_MATRIX_FILENAME)
 
 
+def research_protocol_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / RESEARCH_PROTOCOL_FILENAME)
+
+
+def methodology_audit_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / METHODOLOGY_AUDIT_FILENAME)
+
+
+def publication_readiness_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PUBLICATION_READINESS_FILENAME)
+
+
+def contribution_assessment_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / CONTRIBUTION_ASSESSMENT_FILENAME)
+
+
+def experiment_design_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / EXPERIMENT_DESIGN_FILENAME)
+
+
+def failure_analysis_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / FAILURE_ANALYSIS_FILENAME)
+
+
+def research_replan_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / RESEARCH_REPLAN_FILENAME)
+
+
+def literature_graph_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / LITERATURE_GRAPH_FILENAME)
+
+
+def novelty_validation_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / NOVELTY_VALIDATION_FILENAME)
+
+
+def revision_dossier_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / REVISION_DOSSIER_FILENAME)
+
+
+def publication_evidence_index_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PUBLICATION_EVIDENCE_INDEX_FILENAME)
+
+
+def artifact_integrity_audit_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / ARTIFACT_INTEGRITY_AUDIT_FILENAME)
+
+
+def publication_repair_plan_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PUBLICATION_REPAIR_PLAN_FILENAME)
+
+
+def publication_repair_execution_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PUBLICATION_REPAIR_EXECUTION_FILENAME)
+
+
+def reviewer_simulation_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / REVIEWER_SIMULATION_FILENAME)
+
+
 def paper_plan_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_PLAN_FILENAME)
 
@@ -1446,6 +2464,10 @@ def paper_bibliography_file_path(project_id: str, run_id: str) -> str:
 
 def paper_sources_manifest_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PAPER_SOURCES_DIRNAME / PAPER_SOURCES_MANIFEST_FILENAME)
+
+
+def benchmark_card_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / BENCHMARK_CARD_FILENAME)
 
 
 def candidate_paper_file_path(project_id: str, run_id: str, candidate_id: str) -> str:
@@ -1543,6 +2565,7 @@ def load_candidate_registry(
             portfolio_json=_asset_ref(run_base / PORTFOLIO_FILENAME),
             artifact_json=_asset_ref(run_base / ARTIFACT_FILENAME),
             benchmark_json=_asset_ref(run_base / BENCHMARK_FILENAME),
+            benchmark_card_json=_asset_ref(run_base / BENCHMARK_CARD_FILENAME),
             generated_code=_asset_ref(current_run.generated_code_path),
             paper_markdown=_asset_ref(run_paper_path),
             narrative_report_markdown=_asset_ref(
@@ -1550,6 +2573,33 @@ def load_candidate_registry(
             ),
             claim_evidence_matrix_json=_asset_ref(
                 current_run.claim_evidence_matrix_path or (run_base / CLAIM_EVIDENCE_MATRIX_FILENAME)
+            ),
+            experiment_design_json=_asset_ref(run_base / EXPERIMENT_DESIGN_FILENAME),
+            failure_analysis_json=_asset_ref(run_base / FAILURE_ANALYSIS_FILENAME),
+            research_replan_json=_asset_ref(run_base / RESEARCH_REPLAN_FILENAME),
+            research_protocol_json=_asset_ref(run_base / RESEARCH_PROTOCOL_FILENAME),
+            methodology_audit_json=_asset_ref(run_base / METHODOLOGY_AUDIT_FILENAME),
+            publication_readiness_json=_asset_ref(run_base / PUBLICATION_READINESS_FILENAME),
+            contribution_assessment_json=_asset_ref(run_base / CONTRIBUTION_ASSESSMENT_FILENAME),
+            literature_graph_json=_asset_ref(run_base / LITERATURE_GRAPH_FILENAME),
+            novelty_validation_json=_asset_ref(run_base / NOVELTY_VALIDATION_FILENAME),
+            revision_dossier_json=_asset_ref(run_base / REVISION_DOSSIER_FILENAME),
+            publication_evidence_index_json=_asset_ref(run_base / PUBLICATION_EVIDENCE_INDEX_FILENAME),
+            artifact_integrity_audit_json=_asset_ref(run_base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
+            publication_repair_plan_json=_asset_ref(run_base / PUBLICATION_REPAIR_PLAN_FILENAME),
+            publication_repair_execution_json=_asset_ref(run_base / PUBLICATION_REPAIR_EXECUTION_FILENAME),
+            reviewer_simulation_json=_asset_ref(
+                current_run.reviewer_simulation_path or (run_base / REVIEWER_SIMULATION_FILENAME)
+            ),
+            experiment_factory_plan_json=_asset_ref(
+                current_run.experiment_factory_plan_path or (run_base / EXPERIMENT_FACTORY_PLAN_FILENAME)
+            ),
+            evidence_ledger_json=_asset_ref(
+                current_run.evidence_ledger_path or (run_base / EVIDENCE_LEDGER_FILENAME)
+            ),
+            experiment_factory_repair_plan_json=_asset_ref(
+                current_run.experiment_factory_repair_plan_path
+                or (run_base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME)
             ),
             paper_plan_json=_asset_ref(
                 current_run.paper_plan_path or (run_base / PAPER_PLAN_FILENAME)
@@ -1693,6 +2743,7 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         portfolio_json=_asset_ref(base / PORTFOLIO_FILENAME),
         artifact_json=_asset_ref(base / ARTIFACT_FILENAME),
         benchmark_json=_asset_ref(base / BENCHMARK_FILENAME),
+        benchmark_card_json=_asset_ref(base / BENCHMARK_CARD_FILENAME),
         generated_code=_asset_ref(run.generated_code_path),
         paper_markdown=_asset_ref(paper_path),
         narrative_report_markdown=_asset_ref(
@@ -1700,6 +2751,32 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         ),
         claim_evidence_matrix_json=_asset_ref(
             run.claim_evidence_matrix_path or (base / CLAIM_EVIDENCE_MATRIX_FILENAME)
+        ),
+        experiment_design_json=_asset_ref(base / EXPERIMENT_DESIGN_FILENAME),
+        failure_analysis_json=_asset_ref(base / FAILURE_ANALYSIS_FILENAME),
+        research_replan_json=_asset_ref(base / RESEARCH_REPLAN_FILENAME),
+        research_protocol_json=_asset_ref(base / RESEARCH_PROTOCOL_FILENAME),
+        methodology_audit_json=_asset_ref(base / METHODOLOGY_AUDIT_FILENAME),
+        publication_readiness_json=_asset_ref(base / PUBLICATION_READINESS_FILENAME),
+        contribution_assessment_json=_asset_ref(base / CONTRIBUTION_ASSESSMENT_FILENAME),
+        literature_graph_json=_asset_ref(base / LITERATURE_GRAPH_FILENAME),
+        novelty_validation_json=_asset_ref(base / NOVELTY_VALIDATION_FILENAME),
+        revision_dossier_json=_asset_ref(base / REVISION_DOSSIER_FILENAME),
+        publication_evidence_index_json=_asset_ref(base / PUBLICATION_EVIDENCE_INDEX_FILENAME),
+        artifact_integrity_audit_json=_asset_ref(base / ARTIFACT_INTEGRITY_AUDIT_FILENAME),
+        publication_repair_plan_json=_asset_ref(base / PUBLICATION_REPAIR_PLAN_FILENAME),
+        publication_repair_execution_json=_asset_ref(base / PUBLICATION_REPAIR_EXECUTION_FILENAME),
+        reviewer_simulation_json=_asset_ref(
+            run.reviewer_simulation_path or (base / REVIEWER_SIMULATION_FILENAME)
+        ),
+        experiment_factory_plan_json=_asset_ref(
+            run.experiment_factory_plan_path or (base / EXPERIMENT_FACTORY_PLAN_FILENAME)
+        ),
+        evidence_ledger_json=_asset_ref(
+            run.evidence_ledger_path or (base / EVIDENCE_LEDGER_FILENAME)
+        ),
+        experiment_factory_repair_plan_json=_asset_ref(
+            run.experiment_factory_repair_plan_path or (base / EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME)
         ),
         paper_plan_json=_asset_ref(
             run.paper_plan_path or (base / PAPER_PLAN_FILENAME)

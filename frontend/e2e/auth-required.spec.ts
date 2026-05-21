@@ -43,6 +43,11 @@ test("@auth-required workspace supports session sign-in when auth is required", 
   await expect(page.getByTestId("beta-total-tokens")).not.toHaveText("0");
 
   await page
+    .getByTestId("collapsible-beta")
+    .getByRole("heading", { name: "Beta Panel" })
+    .first()
+    .click();
+  await page
     .getByTestId("beta-comment-input")
     .fill("Authenticated beta feedback survives the protected workspace flow.");
   await page.getByTestId("beta-submit-button").click();

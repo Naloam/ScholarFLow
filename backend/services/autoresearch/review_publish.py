@@ -6,21 +6,36 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from config import db as db_module
 from schemas.autoresearch import (
+    AutoResearchArtifactIntegrityAuditRead,
     AutoResearchBundleAssetRead,
     AutoResearchBundleIndexRead,
     AutoResearchBundleRead,
+    AutoResearchBenchmarkCardRead,
     AutoResearchCitationCoverageRead,
     AutoResearchDeploymentRefRead,
+    AutoResearchContributionAssessmentRead,
+    AutoResearchExperimentDesignRead,
+    AutoResearchFailureAnalysisRead,
+    AutoResearchLiteratureGraphRead,
+    AutoResearchMethodologyAuditRead,
     AutoResearchNoveltyAssessmentRead,
+    AutoResearchNoveltyValidationRead,
+    AutoResearchPaperCompileReportRead,
+    AutoResearchPaperRevisionStateRead,
+    AutoResearchPublicationEvidenceIndexRead,
+    AutoResearchPublicationReadinessRead,
+    AutoResearchPublicationRepairExecutionRead,
+    AutoResearchResearchProtocolRead,
     AutoResearchPublishExportRead,
     AutoResearchPublishExportRequest,
     AutoResearchPublishPackageRead,
     AutoResearchPublicationManifestRead,
     AutoResearchRelatedWorkMatchRead,
+    AutoResearchResearchReplanRead,
     AutoResearchReviewEvidenceRead,
     AutoResearchReviewFindingRead,
     AutoResearchReviewLoopActionRead,
@@ -28,20 +43,61 @@ from schemas.autoresearch import (
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopRoundRead,
     AutoResearchReviewScoresRead,
+    AutoResearchReviewerSimulationRead,
+    AutoResearchRevisionDossierItemRead,
+    AutoResearchRevisionDossierRead,
     AutoResearchRevisionActionRead,
     AutoResearchRunRead,
     AutoResearchRunReviewRead,
     HypothesisCandidate,
 )
 from services.autoresearch.repository import (
+    METHODOLOGY_AUDIT_FILENAME,
+    BENCHMARK_CARD_FILENAME,
     PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME,
     PAPER_COMPILED_PDF_FILENAME,
+    RESEARCH_PROTOCOL_FILENAME,
+    EXPERIMENT_DESIGN_FILENAME,
+    PUBLICATION_READINESS_FILENAME,
+    PUBLICATION_EVIDENCE_INDEX_FILENAME,
+    ARTIFACT_INTEGRITY_AUDIT_FILENAME,
+    PUBLICATION_REPAIR_PLAN_FILENAME,
+    PUBLICATION_REPAIR_EXECUTION_FILENAME,
+    REVISION_DOSSIER_FILENAME,
     load_run,
     load_run_bundle_index,
     load_run_registry,
+    benchmark_card_file_path,
+    methodology_audit_file_path,
+    publication_readiness_file_path,
+    contribution_assessment_file_path,
+    experiment_design_file_path,
+    failure_analysis_file_path,
+    research_replan_file_path,
+    literature_graph_file_path,
+    novelty_validation_file_path,
+    publication_evidence_index_file_path,
+    artifact_integrity_audit_file_path,
+    publication_repair_plan_file_path,
+    publication_repair_execution_file_path,
+    reviewer_simulation_file_path,
+    research_protocol_file_path,
+    revision_dossier_file_path,
     run_dir,
     save_run,
 )
+from services.autoresearch.benchmark_card import build_benchmark_card
+from services.autoresearch.artifact_integrity_audit import build_artifact_integrity_audit
+from services.autoresearch.contribution_assessment import build_contribution_assessment
+from services.autoresearch.experiment_design import build_experiment_design
+from services.autoresearch.failure_replanning import build_failure_analysis, build_research_replan
+from services.autoresearch.literature_novelty import build_literature_graph, build_novelty_validation
+from services.autoresearch.methodology_audit import build_methodology_audit
+from services.autoresearch.publication_evidence_index import build_publication_evidence_index
+from services.autoresearch.publication_repair_plan import build_publication_repair_plan
+from services.autoresearch.research_protocol import build_research_protocol
+from services.autoresearch.research_readiness import build_publication_readiness
+from services.autoresearch.reviewer_simulator import build_reviewer_simulation
 from services.projects.repository import get_project
 from services.autoresearch.writer import PaperWriter
 
@@ -60,6 +116,7 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "program_json",
     "portfolio_json",
     "benchmark_json",
+    "run_benchmark_card_json",
     "run_plan_json",
     "run_spec_json",
     "run_artifact_json",
@@ -72,7 +129,21 @@ _FINAL_PUBLISH_REQUIRED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_experiment_design_json",
+    "run_failure_analysis_json",
+    "run_research_replan_json",
+    "run_research_protocol_json",
+    "run_methodology_audit_json",
+    "run_publication_readiness_json",
+    "run_contribution_assessment_json",
+    "run_literature_graph_json",
+    "run_novelty_validation_json",
+    "run_revision_dossier_json",
+    "run_publication_evidence_index_json",
+    "run_artifact_integrity_audit_json",
+    "run_publication_repair_plan_json",
     "run_paper_compile_report_json",
+    "run_reviewer_simulation_json",
     "run_paper_build_script",
     "run_paper_latex_source",
     "run_paper_bibliography_bib",
@@ -84,6 +155,7 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "program_json",
     "portfolio_json",
     "benchmark_json",
+    "run_benchmark_card_json",
     "run_plan_json",
     "run_spec_json",
     "run_artifact_json",
@@ -95,7 +167,43 @@ _CODE_PACKAGE_INCLUDED_ROLES = {
     "attempts_json",
     "artifact_json",
     "manifest_json",
+    "run_experiment_design_json",
+    "run_failure_analysis_json",
+    "run_research_replan_json",
+    "run_research_protocol_json",
+    "run_methodology_audit_json",
+    "run_publication_readiness_json",
+    "run_contribution_assessment_json",
+    "run_literature_graph_json",
+    "run_novelty_validation_json",
+    "run_revision_dossier_json",
+    "run_publication_evidence_index_json",
+    "run_artifact_integrity_audit_json",
+    "run_publication_repair_plan_json",
+    "run_publication_repair_execution_json",
+    "run_reviewer_simulation_json",
     "generated_code",
+}
+_VOLATILE_GENERATED_DIGEST_ROLES = {
+    "run_json",
+    "run_experiment_design_json",
+    "run_failure_analysis_json",
+    "run_research_replan_json",
+    "run_benchmark_card_json",
+    "run_research_protocol_json",
+    "run_methodology_audit_json",
+    "run_publication_readiness_json",
+    "run_contribution_assessment_json",
+    "run_literature_graph_json",
+    "run_novelty_validation_json",
+    "run_revision_dossier_json",
+    "run_publication_evidence_index_json",
+    "run_artifact_integrity_audit_json",
+    "run_reviewer_simulation_json",
+    "run_publication_repair_plan_json",
+    "run_publication_repair_execution_json",
+    "run_paper_compile_report_json",
+    "run_paper_sources_manifest_json",
 }
 _CITATION_PATTERN = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
 _REFERENCE_SECTION_MARKERS = ("references", "bibliography")
@@ -168,6 +276,10 @@ _INFRASTRUCTURE_CLAIM_CUES = (
     "execution trace",
     "execution plane",
 )
+_SYNTHETIC_LITERATURE_SOURCES = {
+    "ai_generated_context",
+    "benchmark_context",
+}
 
 
 def _normalize_text(text: str | None) -> str:
@@ -386,6 +498,21 @@ def _research_claims(run: AutoResearchRunRead, selected_candidate_id: str | None
     return claims
 
 
+def _is_synthetic_literature(item) -> bool:
+    source = (getattr(item, "source", None) or "").strip().lower()
+    paper_id = (getattr(item, "paper_id", None) or "").strip().lower()
+    title = (getattr(item, "title", None) or "").strip().lower()
+    return (
+        source in _SYNTHETIC_LITERATURE_SOURCES
+        or paper_id.startswith("context_ref_")
+        or title.startswith("[context summary]")
+    )
+
+
+def _real_literature_items(run: AutoResearchRunRead) -> list:
+    return [item for item in run.literature if not _is_synthetic_literature(item)]
+
+
 def _selected_candidate(
     run: AutoResearchRunRead,
     selected_candidate_id: str | None,
@@ -441,6 +568,7 @@ def _topic_proxy_alignment_finding(
 
 def _hypothesis_resolution_finding(
     run: AutoResearchRunRead,
+    paper_markdown: str,
 ) -> tuple[str, str, str] | None:
     artifact = run.artifact
     spec = run.spec
@@ -462,6 +590,40 @@ def _hypothesis_resolution_finding(
     if not mentioned_systems:
         return None
     if best_system_name in mentioned_systems:
+        return None
+    publication_profile = run.request is not None and run.request.execution_profile == "publication"
+    if publication_profile:
+        objective_system_name = artifact.objective_system
+        objective_score = artifact.objective_score
+        best_score = None
+        for item in [*artifact.system_results, *artifact.aggregate_system_results]:
+            metric_value = item.metrics.get(artifact.primary_metric) if hasattr(item, "metrics") else None
+            if metric_value is None and hasattr(item, "mean_metrics"):
+                metric_value = item.mean_metrics.get(artifact.primary_metric)
+            if item.system == best_system_name and metric_value is not None:
+                best_score = float(metric_value)
+            if item.system == objective_system_name and metric_value is not None:
+                objective_score = float(metric_value)
+        if (
+            objective_system_name in mentioned_systems
+            and objective_score is not None
+            and best_score is not None
+            and abs(float(objective_score) - float(best_score)) <= 1e-12
+        ):
+            return None
+    lowered_paper = paper_markdown.lower()
+    if (
+        publication_profile
+        and best_system_name
+        and best_system_name.lower() in lowered_paper
+        and (
+            "original hypothesis is not supported" in lowered_paper
+            or "hypothesis is not supported" in lowered_paper
+            or "contradicts the planned hypothesis" in lowered_paper
+            or "initial hypothesis was contradicted" in lowered_paper
+            or "original hypothesis was contradicted" in lowered_paper
+        )
+    ):
         return None
     mentioned_attempts = sorted(
         {
@@ -500,23 +662,206 @@ def _hypothesis_resolution_finding(
     )
 
 
+def _system_names_from_artifact(artifact) -> set[str]:
+    if artifact is None:
+        return set()
+    names: set[str] = set()
+    if artifact.best_system:
+        names.add(artifact.best_system)
+    if artifact.objective_system:
+        names.add(artifact.objective_system)
+    for collection_name in ("system_results", "aggregate_system_results"):
+        for item in getattr(artifact, collection_name, []) or []:
+            system = getattr(item, "system", None)
+            if system:
+                names.add(system)
+    for sweep in getattr(artifact, "sweep_results", []) or []:
+        if sweep.best_system:
+            names.add(sweep.best_system)
+        if sweep.objective_system:
+            names.add(sweep.objective_system)
+        for item in sweep.aggregate_system_results:
+            if item.system:
+                names.add(item.system)
+    return names
+
+
+def _planned_ablation_gaps(run: AutoResearchRunRead) -> list[str]:
+    spec = run.spec
+    artifact = run.artifact
+    if spec is None:
+        return []
+    observed_systems = _system_names_from_artifact(artifact)
+    gaps = []
+    for ablation in spec.ablations:
+        if ablation.name not in observed_systems:
+            gaps.append(ablation.name)
+    return gaps
+
+
+def _unsupported_claim_gap_finding(
+    run: AutoResearchRunRead,
+) -> tuple[str, str, str] | None:
+    matrix = run.claim_evidence_matrix
+    if matrix is None:
+        return None
+    unsupported = [item for item in matrix.entries if item.support_status == "unsupported"]
+    if not unsupported:
+        return None
+    example_claims = "; ".join(item.claim for item in unsupported[:3])
+    return (
+        "warning",
+        "Claim-evidence matrix contains unsupported publish-facing claims.",
+        (
+            f"{len(unsupported)}/{matrix.claim_count} claim commitments are unsupported by "
+            "the selected artifact and literature state. Demote unsupported claims to limitations or run the "
+            f"missing experiments before final publish. Examples: {example_claims}"
+        ),
+    )
+
+
 def _semantic_final_publish_blockers(review: AutoResearchRunReviewRead) -> list[str]:
     blockers: list[str] = []
+    if review.publication_readiness is not None:
+        for item in review.publication_readiness.blockers:
+            blockers.append(f"Final publish readiness gate: {item}")
+    if review.experiment_design is None:
+        blockers.append("Final publish experiment design gate: experiment design is required before publication.")
+    else:
+        for item in review.experiment_design.blockers:
+            blockers.append(f"Final publish experiment design gate: {item}")
+    if review.failure_analysis is None:
+        blockers.append("Final publish failure gate: failure analysis is required before publication.")
+    else:
+        for item in review.failure_analysis.blockers:
+            blockers.append(f"Final publish failure gate: {item}")
+    if review.research_replan is None:
+        blockers.append("Final publish research replan gate: research replan is required before publication.")
+    else:
+        for item in review.research_replan.blockers:
+            blockers.append(f"Final publish research replan gate: {item}")
+    if review.contribution_assessment is None:
+        blockers.append(
+            "Final publish contribution gate: contribution assessment is required before publication."
+        )
+    else:
+        for item in review.contribution_assessment.blockers:
+            blockers.append(f"Final publish contribution gate: {item}")
+    if review.novelty_validation is None:
+        blockers.append("Final publish novelty gate: novelty validation is required before publication.")
+    else:
+        for item in review.novelty_validation.blockers:
+            blockers.append(f"Final publish novelty gate: {item}")
+    if review.artifact_integrity_audit is not None:
+        for item in review.artifact_integrity_audit.blockers:
+            blockers.append(f"Final publish artifact integrity gate: {item}")
+    else:
+        blockers.append("Final publish requires an artifact registry and lineage integrity audit.")
+    if review.reviewer_simulation is None:
+        blockers.append("Final publish reviewer gate: reviewer simulation is required before publication.")
+    else:
+        if review.reviewer_simulation.blockers:
+            for item in review.reviewer_simulation.blockers:
+                blockers.append(f"Final publish reviewer gate: {item}")
+        if review.reviewer_simulation.weak_reject_or_worse_count > 0:
+            blockers.append(
+                "Final publish reviewer gate: weak reject or reject reviewer decisions must be resolved."
+            )
+        if review.reviewer_simulation.minimum_decision in {"weak_reject", "reject"}:
+            blockers.append(
+                f"Final publish reviewer gate: weakest reviewer decision is {review.reviewer_simulation.minimum_decision}."
+            )
     for finding in review.findings:
         lowered_summary = finding.summary.lower()
         if finding.category == "citation":
             blockers.append(f"Final publish requires citation-grounded paper text: {finding.summary}")
             continue
-        if finding.category != "context":
+        if finding.category == "benchmark":
+            blockers.append(f"Final publish requires a publication-grade benchmark: {finding.summary}")
             continue
-        if (
-            "no literature insights were persisted" in lowered_summary
-            or "novelty framing is weakly grounded" in lowered_summary
-            or "lacks an explicit related-work section" in lowered_summary
-            or "requested topic" in lowered_summary
-            or "original hypothesis" in lowered_summary
+        if finding.category == "provenance" and "research protocol" in lowered_summary:
+            blockers.append(f"Final publish requires a complete research protocol: {finding.summary}")
+            continue
+        if "methodology audit" in lowered_summary:
+            blockers.append(f"Final publish requires protocol-compliant methodology: {finding.summary}")
+            continue
+        if finding.category == "context":
+            if (
+                "no literature insights were persisted" in lowered_summary
+                or "no real literature sources" in lowered_summary
+                or "novelty framing is weakly grounded" in lowered_summary
+                or "lacks an explicit related-work section" in lowered_summary
+                or "requested topic" in lowered_summary
+                or "original hypothesis" in lowered_summary
+            ):
+                blockers.append(f"Final publish requires tighter research framing: {finding.summary}")
+            if "claim-evidence matrix contains unsupported" in lowered_summary:
+                blockers.append(f"Final publish requires supported claim-evidence commitments: {finding.summary}")
+            continue
+        if finding.category == "statistics" and (
+            "does not preserve significance" in lowered_summary
+            or "seed coverage is insufficient" in lowered_summary
+            or "seed coverage is below final-publish grade" in lowered_summary
+            or "publication-profile seed coverage is incomplete" in lowered_summary
+            or "planned ablations were not executed" in lowered_summary
         ):
-            blockers.append(f"Final publish requires tighter research framing: {finding.summary}")
+            blockers.append(f"Final publish requires stronger experimental evidence: {finding.summary}")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in blockers:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
+def _repair_state_final_blockers(review: AutoResearchRunReviewRead) -> list[str]:
+    blockers: list[str] = []
+    repair_plan = review.publication_repair_plan
+    repair_execution = review.publication_repair_execution
+    if repair_plan is not None:
+        if repair_plan.pending_action_count:
+            blockers.append(
+                "Final publish requires applying or explicitly resolving "
+                f"{repair_plan.pending_action_count} pending publication repair action(s)."
+            )
+        if repair_plan.blocked_action_count:
+            blockers.append(
+                "Final publish requires manual closure for "
+                f"{repair_plan.blocked_action_count} blocked publication repair action(s)."
+            )
+        for item in repair_plan.blockers[:5]:
+            blockers.append(f"Final publish repair plan blocker: {item}")
+        if (
+            not repair_plan.complete
+            and not repair_plan.pending_action_count
+            and not repair_plan.blocked_action_count
+            and not repair_plan.blockers
+        ):
+            blockers.append("Final publish requires closing the publication repair plan.")
+    if repair_execution is not None:
+        if (
+            repair_plan is not None
+            and repair_execution.repair_plan_fingerprint
+            and repair_plan.repair_plan_fingerprint
+            and repair_execution.repair_plan_fingerprint != repair_plan.repair_plan_fingerprint
+            and not repair_plan.complete
+        ):
+            blockers.append("Final publish repair execution is stale relative to the current repair plan.")
+        if repair_execution.partial_action_count or repair_execution.blocked_action_count:
+            blockers.append(
+                "Final publish repair execution has incomplete action results: "
+                f"{repair_execution.partial_action_count} partial, "
+                f"{repair_execution.blocked_action_count} blocked."
+            )
+        if repair_execution.missing_output_asset_ids:
+            missing = ", ".join(repair_execution.missing_output_asset_ids[:6])
+            if len(repair_execution.missing_output_asset_ids) > 6:
+                missing = f"{missing}, ..."
+            blockers.append(f"Final publish repair execution is missing expected outputs: {missing}.")
+        if repair_execution.attempted_action_count and not repair_execution.success:
+            blockers.append("Final publish repair execution did not complete successfully.")
     deduped: list[str] = []
     seen: set[str] = set()
     for item in blockers:
@@ -543,6 +888,16 @@ def _build_novelty_assessment(
             status="missing_context",
             summary="No persisted literature was available, so novelty and related-work analysis remains weakly grounded.",
         )
+    real_literature = _real_literature_items(run)
+    if not real_literature:
+        return AutoResearchNoveltyAssessmentRead(
+            status="missing_context",
+            summary=(
+                f"The run retained {len(run.literature)} fallback context item(s), but no real literature records. "
+                "Novelty cannot be publication-grounded until retrieved papers are persisted."
+            ),
+            compared_paper_count=0,
+        )
 
     candidate_method_terms = _terms(candidate.title, candidate.hypothesis, candidate.proposed_method)
     candidate_claim_terms = _terms(*candidate.planned_contributions)
@@ -550,7 +905,7 @@ def _build_novelty_assessment(
     strong_match_count = 0
     gap_aligned_paper_count = 0
 
-    for item in run.literature:
+    for item in real_literature:
         literature_terms = _terms(item.title, item.insight, item.method_hint)
         gap_terms = _terms(item.gap_hint)
         shared_terms = sorted(candidate_method_terms & literature_terms)
@@ -595,7 +950,7 @@ def _build_novelty_assessment(
     uncovered_claims: list[str] = []
     literature_claim_terms = [
         _terms(item.title, item.insight, item.method_hint, item.gap_hint)
-        for item in run.literature
+        for item in real_literature
     ]
     for claim in research_claims:
         claim_terms = _terms(claim)
@@ -607,7 +962,7 @@ def _build_novelty_assessment(
     if strong_match_count == 0:
         status = "weak"
         summary = (
-            f"The selected candidate does not show a strong lexical or gap-aligned match against {len(run.literature)} "
+            f"The selected candidate does not show a strong lexical or gap-aligned match against {len(real_literature)} "
             "persisted literature items."
         )
     elif research_claims and covered_claims == 0:
@@ -633,7 +988,7 @@ def _build_novelty_assessment(
     return AutoResearchNoveltyAssessmentRead(
         status=status,
         summary=summary,
-        compared_paper_count=len(run.literature),
+        compared_paper_count=len(real_literature),
         strong_match_count=strong_match_count,
         gap_aligned_paper_count=gap_aligned_paper_count,
         covered_claim_count=covered_claims,
@@ -650,6 +1005,10 @@ def _review_findings(
     selected_manifest_source: str | None,
     paper_markdown: str,
     novelty_assessment: AutoResearchNoveltyAssessmentRead,
+    benchmark_card: AutoResearchBenchmarkCardRead,
+    research_protocol: AutoResearchResearchProtocolRead,
+    methodology_audit: AutoResearchMethodologyAuditRead,
+    publication_readiness: AutoResearchPublicationReadinessRead,
 ) -> tuple[
     list[AutoResearchReviewFindingRead],
     AutoResearchReviewEvidenceRead,
@@ -685,6 +1044,8 @@ def _review_findings(
         item for item in unique_citation_indices if item < 1 or item > len(run.literature)
     ]
     cited_literature_count = sum(1 for item in unique_citation_indices if 1 <= item <= len(run.literature))
+    real_literature_count = len(_real_literature_items(run))
+    synthetic_literature_count = len(run.literature) - real_literature_count
     required_assets = [item for item in bundle.assets if item.required] if bundle is not None else []
     optional_assets = [item for item in bundle.assets if not item.required] if bundle is not None else []
     missing_required_assets = [item for item in required_assets if not item.ref.exists]
@@ -705,6 +1066,9 @@ def _review_findings(
         acceptance_total=acceptance_total,
         citation_marker_count=citation_marker_count,
         missing_required_asset_count=len(missing_required_assets),
+        real_literature_count=real_literature_count,
+        synthetic_literature_count=synthetic_literature_count,
+        publication_grade_benchmark=publication_readiness.publication_grade_benchmark,
     )
     citation_coverage = AutoResearchCitationCoverageRead(
         literature_item_count=len(run.literature),
@@ -763,7 +1127,7 @@ def _review_findings(
             detail=detail,
             supporting_asset_ids=["run_plan_json", "run_spec_json", "run_paper_markdown"],
         )
-    hypothesis_resolution = _hypothesis_resolution_finding(run)
+    hypothesis_resolution = _hypothesis_resolution_finding(run, paper_markdown)
     if hypothesis_resolution is not None:
         severity, summary, detail = hypothesis_resolution
         add_finding(
@@ -772,6 +1136,44 @@ def _review_findings(
             summary=summary,
             detail=detail,
             supporting_asset_ids=["run_spec_json", "run_artifact_json", "run_paper_markdown"],
+        )
+    unsupported_claim_gap = _unsupported_claim_gap_finding(run)
+    if unsupported_claim_gap is not None:
+        severity, summary, detail = unsupported_claim_gap
+        add_finding(
+            severity=severity,
+            category="context",
+            summary=summary,
+            detail=detail,
+            supporting_asset_ids=["run_claim_evidence_matrix_json", "run_paper_markdown"],
+        )
+    if benchmark_card.blockers:
+        add_finding(
+            severity="error",
+            category="benchmark",
+            summary="Benchmark card is incomplete for publication review.",
+            detail="; ".join(benchmark_card.blockers),
+            supporting_asset_ids=["run_benchmark_card_json", "benchmark_json", "run_spec_json"],
+        )
+    if research_protocol.blockers:
+        add_finding(
+            severity="error" if research_protocol.execution_profile == "publication" else "warning",
+            category="provenance",
+            summary="Research protocol is incomplete.",
+            detail="; ".join(research_protocol.blockers),
+            supporting_asset_ids=["run_research_protocol_json", "run_spec_json"],
+        )
+    if methodology_audit.blockers:
+        add_finding(
+            severity="error" if methodology_audit.execution_profile == "publication" else "warning",
+            category="statistics",
+            summary="Methodology audit found protocol adherence gaps.",
+            detail="; ".join(methodology_audit.blockers),
+            supporting_asset_ids=[
+                "run_methodology_audit_json",
+                "run_research_protocol_json",
+                "run_artifact_json",
+            ],
         )
 
     if missing_required_assets:
@@ -845,6 +1247,18 @@ def _review_findings(
             summary="No literature insights were persisted with the run.",
             detail="Related-work and novelty review will be weaker until the run retains literature context.",
         )
+    elif real_literature_count == 0:
+        add_finding(
+            severity="warning",
+            category="context",
+            summary="No real literature sources were persisted with the run.",
+            detail=(
+                f"The run retained {synthetic_literature_count} fallback context item(s), but all persisted "
+                "literature is synthetic benchmark or AI-generated context. Final publish needs at least one "
+                "retrieved paper record from a real literature source."
+            ),
+            supporting_asset_ids=["run_json", "run_paper_markdown"],
+        )
     elif not has_related_work and citation_marker_count > 0:
         add_finding(
             severity="warning",
@@ -874,6 +1288,83 @@ def _review_findings(
         )
 
     if artifact is not None and artifact.status == "done":
+        if not publication_readiness.publication_grade_benchmark:
+            add_finding(
+                severity="warning",
+                category="benchmark",
+                summary="Selected benchmark is not publication-grade.",
+                detail=next(
+                    (
+                        item.detail
+                        for item in publication_readiness.checks
+                        if item.check_id == "publication_grade_benchmark"
+                    ),
+                    "Final publish requires an external benchmark with persisted provenance.",
+                ),
+                supporting_asset_ids=["run_benchmark_json", "run_spec_json"],
+            )
+        if evidence.completed_seed_count < 2:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Seed coverage is insufficient for publication-level claims.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count} completed seed result(s) "
+                    f"for {evidence.seed_count} requested seed(s). Final publish should run at least two completed "
+                    "seeds, and preferably the requested seed set, before making stability or robustness claims."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        elif evidence.completed_seed_count < publication_readiness.requested_seed_count and (
+            run.request is not None and run.request.execution_profile == "publication"
+        ):
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Publication-profile seed coverage is incomplete.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count}/"
+                    f"{publication_readiness.requested_seed_count} publication-profile seed results. "
+                    "Complete the requested publication seed set or rerun in exploratory profile."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        elif evidence.completed_seed_count < 3:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Seed coverage is below final-publish grade.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count} completed seed result(s). "
+                    "Final publish requires at least three completed seeds; use publication profile for paper-candidate runs."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        elif evidence.seed_count and evidence.completed_seed_count < evidence.seed_count:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Seed coverage is incomplete relative to the experiment specification.",
+                detail=(
+                    f"The selected artifact preserves {evidence.completed_seed_count}/{evidence.seed_count} requested seed "
+                    "results. Complete the planned seed set or narrow claims to the executed subset."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
+        missing_ablations = _planned_ablation_gaps(run)
+        if missing_ablations:
+            add_finding(
+                severity="warning",
+                category="statistics",
+                summary="Planned ablations were not executed in the selected artifact.",
+                detail=(
+                    "The experiment specification lists ablations that do not appear in the final result tables or "
+                    "aggregate system results: "
+                    + ", ".join(f"`{item}`" for item in missing_ablations)
+                    + ". Run these ablations or demote the related hypotheses to limitations."
+                ),
+                supporting_asset_ids=["run_spec_json", "run_artifact_json"],
+            )
         if not artifact.significance_tests:
             add_finding(
                 severity="warning",
@@ -1021,14 +1512,53 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
                 detail="Introduce explicit citations in background, related-work, and conclusion-facing discussion sections.",
                 finding_id=finding.id,
             )
-        elif finding.category == "statistics":
+        elif finding.category == "benchmark":
             add_action(
-                key="statistics",
-                priority="high" if finding.severity == "error" else "medium",
-                title="Tighten statistical reporting in the paper summary",
-                detail="Expose acceptance checks, seeds, sweep choice, and significance support directly in the publish-facing paper.",
+                key="publication_grade_benchmark",
+                priority="high",
+                title="Rerun on a publication-grade external benchmark",
+                detail="Replace built-in toy benchmarks with a persisted external benchmark source, dataset card, and reproducible split before final publish.",
                 finding_id=finding.id,
             )
+        elif finding.category == "statistics":
+            lowered_summary = finding.summary.lower()
+            if (
+                "seed coverage is insufficient" in lowered_summary
+                or "seed coverage is incomplete" in lowered_summary
+                or "seed coverage is below final-publish grade" in lowered_summary
+                or "publication-profile seed coverage is incomplete" in lowered_summary
+            ):
+                add_action(
+                    key="seed_coverage",
+                    priority="high",
+                    title="Run additional seeds before final publication",
+                    detail="Complete the planned seed set, preserve per-seed artifacts, and regenerate aggregate metrics before making stability claims.",
+                    finding_id=finding.id,
+                )
+            elif "planned ablations were not executed" in lowered_summary:
+                add_action(
+                    key="planned_ablations",
+                    priority="high",
+                    title="Run planned ablations or demote ablation claims",
+                    detail="Execute every ablation named in the experiment specification, or revise the paper to state that those hypotheses remain untested.",
+                    finding_id=finding.id,
+                )
+            elif "significance comparisons" in lowered_summary:
+                add_action(
+                    key="significance",
+                    priority="high",
+                    title="Run paired significance comparisons",
+                    detail="Preserve paired significance tests for the primary metric so score gaps can be interpreted as more than one-off wins.",
+                    finding_id=finding.id,
+                )
+            else:
+                add_action(
+                    key="statistics",
+                    priority="high" if finding.severity == "error" else "medium",
+                    title="Tighten statistical reporting in the paper summary",
+                    detail="Expose acceptance checks, seeds, sweep choice, and significance support directly in the publish-facing paper.",
+                    finding_id=finding.id,
+                )
         elif finding.category == "context":
             lowered_summary = finding.summary.lower()
             if "proxy benchmark" in lowered_summary or "requested topic" in lowered_summary:
@@ -1045,6 +1575,14 @@ def _revision_plan(findings: list[AutoResearchReviewFindingRead]) -> list[AutoRe
                     priority="medium",
                     title="State clearly whether the original hypothesis was supported",
                     detail="Make the publish-facing paper say whether the planned hypothesis held under the selected artifact and what system actually won.",
+                    finding_id=finding.id,
+                )
+            elif "claim-evidence matrix contains unsupported" in lowered_summary:
+                add_action(
+                    key="claim_evidence",
+                    priority="high",
+                    title="Rerun experiments or demote unsupported claims",
+                    detail="Every publish-facing claim should map to persisted evidence; unsupported claims must become limitations or trigger additional experiments.",
                     finding_id=finding.id,
                 )
             else:
@@ -1129,6 +1667,29 @@ def _load_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRea
         return None
 
 
+def _load_publication_repair_execution(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchPublicationRepairExecutionRead | None:
+    path = Path(publication_repair_execution_file_path(project_id, run_id))
+    if not path.is_file():
+        return None
+    try:
+        return AutoResearchPublicationRepairExecutionRead.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+    except Exception:
+        return None
+
+
+def _paper_revision_state_semantic_payload(
+    state: AutoResearchPaperRevisionStateRead,
+) -> dict[str, object]:
+    payload = state.model_dump(mode="json")
+    payload.pop("generated_at", None)
+    return payload
+
+
 def _sync_paper_revision_state(
     *,
     run: AutoResearchRunRead,
@@ -1152,7 +1713,9 @@ def _sync_paper_revision_state(
         paper_plan=run.paper_plan,
         figure_plan=run.figure_plan,
     )
-    if existing_state.model_dump(mode="json") == synced_state.model_dump(mode="json"):
+    existing_payload = _paper_revision_state_semantic_payload(existing_state)
+    synced_payload = _paper_revision_state_semantic_payload(synced_state)
+    if existing_payload == synced_payload:
         return
     save_run(
         run.model_copy(update={"paper_revision_state": synced_state}),
@@ -1364,6 +1927,236 @@ def _build_review_loop(
     return loop
 
 
+def _revision_dossier_response(
+    *,
+    finding: AutoResearchReviewFindingRead,
+    action_titles: list[str],
+    resolved: bool,
+) -> str:
+    if resolved:
+        return "Resolved in the current review loop; preserve the repaired evidence and manuscript state."
+    if action_titles:
+        return "Required revision: " + "; ".join(action_titles) + "."
+    return f"Address this {finding.category} finding before treating the run as publication-ready."
+
+
+def _build_revision_dossier(
+    *,
+    review: AutoResearchRunReviewRead,
+    review_loop: AutoResearchReviewLoopRead,
+) -> AutoResearchRevisionDossierRead:
+    issues_by_finding_id: dict[str, AutoResearchReviewLoopIssueRead] = {}
+    for issue in review_loop.issues:
+        for finding_id in issue.finding_ids:
+            issues_by_finding_id[finding_id] = issue
+    actions_by_finding_id: dict[str, list[AutoResearchReviewLoopActionRead]] = {}
+    for action in review_loop.actions:
+        for finding_id in action.finding_ids:
+            actions_by_finding_id.setdefault(finding_id, []).append(action)
+
+    items: list[AutoResearchRevisionDossierItemRead] = []
+    for finding in review.findings:
+        if finding.severity == "info":
+            continue
+        issue = issues_by_finding_id.get(finding.id)
+        actions = actions_by_finding_id.get(finding.id, [])
+        action_titles = [item.title for item in actions]
+        resolved = issue is not None and issue.status == "resolved"
+        required_for_final_publish = finding.severity == "error" or any(
+            item.priority == "high" for item in actions
+        )
+        status = (
+            "resolved"
+            if resolved
+            else "blocked"
+            if required_for_final_publish
+            else "action_required"
+        )
+        items.append(
+            AutoResearchRevisionDossierItemRead(
+                item_id=f"revision_item_{len(items) + 1}",
+                finding_id=finding.id,
+                issue_id=issue.issue_id if issue is not None else None,
+                severity=finding.severity,
+                category=finding.category,
+                summary=finding.summary,
+                response=_revision_dossier_response(
+                    finding=finding,
+                    action_titles=action_titles,
+                    resolved=resolved,
+                ),
+                status=status,
+                required_for_final_publish=required_for_final_publish,
+                action_ids=[item.action_id for item in actions],
+                action_titles=action_titles,
+                supporting_asset_ids=list(finding.supporting_asset_ids),
+            )
+        )
+
+    publication_readiness = review.publication_readiness
+    methodology_audit = review.methodology_audit
+    required_open_items = [
+        item for item in items if item.required_for_final_publish and item.status != "resolved"
+    ]
+    payload = {
+        "dossier_id": "revision_dossier_v1",
+        "review_round": review_loop.current_round,
+        "review_fingerprint": review_loop.latest_review_fingerprint,
+        "review_path": review.persisted_path,
+        "overall_status": review.overall_status,
+        "publication_tier": publication_readiness.tier if publication_readiness is not None else "exploratory",
+        "publication_readiness_score": publication_readiness.score if publication_readiness is not None else 0,
+        "methodology_audit_score": methodology_audit.score if methodology_audit is not None else 0,
+        "methodology_audit_compliant": methodology_audit.compliant if methodology_audit is not None else False,
+        "open_issue_count": review_loop.open_issue_count,
+        "resolved_issue_count": review_loop.resolved_issue_count,
+        "pending_action_count": review_loop.pending_action_count,
+        "completed_action_count": review_loop.completed_action_count,
+        "blocker_count": sum(1 for item in review.findings if item.severity == "error"),
+        "final_blocker_count": len(required_open_items),
+        "required_action_titles": list(review_loop.pending_revision_actions),
+        "items": [item.model_dump(mode="json") for item in items],
+        "complete": not required_open_items,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return AutoResearchRevisionDossierRead(
+        generated_at=_utcnow(),
+        dossier_fingerprint=hashlib.sha256(encoded).hexdigest(),
+        **payload,
+    )
+
+
+def _build_and_persist_artifact_integrity_audit(
+    project_id: str,
+    run_id: str,
+) -> tuple[AutoResearchArtifactIntegrityAuditRead, str] | None:
+    registry = load_run_registry(project_id, run_id)
+    bundle_index = load_run_bundle_index(project_id, run_id)
+    if registry is None or bundle_index is None:
+        return None
+    audit = build_artifact_integrity_audit(
+        registry=registry,
+        bundle_index=bundle_index,
+    )
+    audit_path = Path(artifact_integrity_audit_file_path(project_id, run_id))
+    _write_json(audit_path, audit.model_dump(mode="json"))
+    return audit, str(audit_path)
+
+
+def _build_and_persist_contribution_assessment(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+    publication_readiness: AutoResearchPublicationReadinessRead,
+    novelty_assessment: AutoResearchNoveltyAssessmentRead,
+) -> tuple[AutoResearchContributionAssessmentRead, str]:
+    assessment = build_contribution_assessment(
+        run,
+        publication_readiness=publication_readiness,
+        novelty_assessment=novelty_assessment,
+    )
+    assessment_path = Path(contribution_assessment_file_path(project_id, run_id))
+    _write_json(assessment_path, assessment.model_dump(mode="json"))
+    return assessment, str(assessment_path)
+
+
+def _build_and_persist_experiment_design(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+) -> tuple[AutoResearchExperimentDesignRead, str]:
+    design = build_experiment_design(run)
+    design_path = Path(experiment_design_file_path(project_id, run_id))
+    _write_json(design_path, design.model_dump(mode="json"))
+    return design, str(design_path)
+
+
+def _build_and_persist_failure_replanning(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+    experiment_design: AutoResearchExperimentDesignRead,
+    contribution_assessment: AutoResearchContributionAssessmentRead,
+    novelty_validation: AutoResearchNoveltyValidationRead,
+    publication_readiness: AutoResearchPublicationReadinessRead,
+) -> tuple[AutoResearchFailureAnalysisRead, str, AutoResearchResearchReplanRead, str]:
+    failure_analysis = build_failure_analysis(
+        run,
+        experiment_design=experiment_design,
+        contribution_assessment=contribution_assessment,
+        novelty_validation=novelty_validation,
+        publication_readiness=publication_readiness,
+    )
+    failure_analysis_path = Path(failure_analysis_file_path(project_id, run_id))
+    _write_json(failure_analysis_path, failure_analysis.model_dump(mode="json"))
+    research_replan = build_research_replan(
+        run,
+        failure_analysis=failure_analysis,
+        experiment_design=experiment_design,
+        contribution_assessment=contribution_assessment,
+        novelty_validation=novelty_validation,
+    )
+    research_replan_path = Path(research_replan_file_path(project_id, run_id))
+    _write_json(research_replan_path, research_replan.model_dump(mode="json"))
+    return failure_analysis, str(failure_analysis_path), research_replan, str(research_replan_path)
+
+
+def _build_and_persist_reviewer_simulation(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+    experiment_design: AutoResearchExperimentDesignRead,
+    research_protocol: AutoResearchResearchProtocolRead,
+    methodology_audit: AutoResearchMethodologyAuditRead,
+    publication_readiness: AutoResearchPublicationReadinessRead,
+    contribution_assessment: AutoResearchContributionAssessmentRead,
+    novelty_validation: AutoResearchNoveltyValidationRead,
+    literature_graph: AutoResearchLiteratureGraphRead,
+    failure_analysis: AutoResearchFailureAnalysisRead,
+    research_replan: AutoResearchResearchReplanRead,
+    publication_evidence_index: AutoResearchPublicationEvidenceIndexRead | None,
+    artifact_integrity_audit: AutoResearchArtifactIntegrityAuditRead,
+    paper_compile_report: AutoResearchPaperCompileReportRead | None,
+) -> tuple[AutoResearchReviewerSimulationRead, str]:
+    simulation = build_reviewer_simulation(
+        run,
+        experiment_design=experiment_design,
+        research_protocol=research_protocol,
+        methodology_audit=methodology_audit,
+        publication_readiness=publication_readiness,
+        contribution_assessment=contribution_assessment,
+        novelty_validation=novelty_validation,
+        literature_graph=literature_graph,
+        failure_analysis=failure_analysis,
+        research_replan=research_replan,
+        publication_evidence_index=publication_evidence_index,
+        artifact_integrity_audit=artifact_integrity_audit,
+        paper_compile_report=paper_compile_report,
+    )
+    simulation_path = Path(reviewer_simulation_file_path(project_id, run_id))
+    _write_json(simulation_path, simulation.model_dump(mode="json"))
+    return simulation, str(simulation_path)
+
+
+def _build_and_persist_literature_novelty(
+    *,
+    run: AutoResearchRunRead,
+    project_id: str,
+    run_id: str,
+) -> tuple[AutoResearchLiteratureGraphRead, str, AutoResearchNoveltyValidationRead, str]:
+    graph = build_literature_graph(run)
+    graph_path = Path(literature_graph_file_path(project_id, run_id))
+    _write_json(graph_path, graph.model_dump(mode="json"))
+    validation = build_novelty_validation(run, literature_graph=graph)
+    validation_path = Path(novelty_validation_file_path(project_id, run_id))
+    _write_json(validation_path, validation.model_dump(mode="json"))
+    return graph, str(graph_path), validation, str(validation_path)
+
+
 def build_run_review(
     project_id: str,
     run_id: str,
@@ -1371,25 +2164,162 @@ def build_run_review(
     advance_review_loop_round: bool = False,
 ) -> AutoResearchRunReviewRead | None:
     run = load_run(project_id, run_id)
+    if run is None:
+        return None
+
+    paper_markdown = _paper_markdown(run)
+    benchmark_card = build_benchmark_card(run)
+    benchmark_card_path = Path(benchmark_card_file_path(project_id, run_id))
+    _write_json(benchmark_card_path, benchmark_card.model_dump(mode="json"))
+    experiment_design, experiment_design_path = _build_and_persist_experiment_design(
+        run=run,
+        project_id=project_id,
+        run_id=run_id,
+    )
+    research_protocol = build_research_protocol(run)
+    research_protocol_path = Path(research_protocol_file_path(project_id, run_id))
+    _write_json(research_protocol_path, research_protocol.model_dump(mode="json"))
+    methodology_audit = build_methodology_audit(run, protocol=research_protocol)
+    methodology_audit_path = Path(methodology_audit_file_path(project_id, run_id))
+    _write_json(methodology_audit_path, methodology_audit.model_dump(mode="json"))
+    publication_readiness = build_publication_readiness(
+        run,
+        paper_markdown=paper_markdown,
+    )
+    publication_readiness_path = Path(publication_readiness_file_path(project_id, run_id))
+    _write_json(publication_readiness_path, publication_readiness.model_dump(mode="json"))
+    artifact_integrity_result = _build_and_persist_artifact_integrity_audit(
+        project_id,
+        run_id,
+    )
+    if artifact_integrity_result is None:
+        return None
+    artifact_integrity_audit, artifact_integrity_audit_path = artifact_integrity_result
     registry = load_run_registry(project_id, run_id)
     bundle_index = load_run_bundle_index(project_id, run_id)
-    if run is None or registry is None or bundle_index is None:
+    if registry is None or bundle_index is None:
         return None
 
     bundle = _selected_bundle(bundle_index)
     selected_entry = next((item for item in registry.candidates if item.selected), None)
-    paper_markdown = _paper_markdown(run)
     novelty_assessment = _build_novelty_assessment(
         run=run,
         selected_candidate_id=registry.selected_candidate_id,
     )
+    literature_graph, literature_graph_path, novelty_validation, novelty_validation_path = (
+        _build_and_persist_literature_novelty(
+            run=run,
+            project_id=project_id,
+            run_id=run_id,
+        )
+    )
+    contribution_assessment, contribution_assessment_path = _build_and_persist_contribution_assessment(
+        run=run,
+        project_id=project_id,
+        run_id=run_id,
+        publication_readiness=publication_readiness,
+        novelty_assessment=novelty_assessment,
+    )
+    failure_analysis, failure_analysis_path, research_replan, research_replan_path = (
+        _build_and_persist_failure_replanning(
+            run=run,
+            project_id=project_id,
+            run_id=run_id,
+            experiment_design=experiment_design,
+            contribution_assessment=contribution_assessment,
+            novelty_validation=novelty_validation,
+            publication_readiness=publication_readiness,
+        )
+    )
+    registry = load_run_registry(project_id, run_id)
+    bundle_index = load_run_bundle_index(project_id, run_id)
+    if registry is None or bundle_index is None:
+        return None
+    bundle = _selected_bundle(bundle_index)
+    selected_entry = next((item for item in registry.candidates if item.selected), None)
     findings, evidence, citation_coverage = _review_findings(
         run=run,
         bundle=bundle,
         selected_manifest_source=selected_entry.manifest_source if selected_entry is not None else None,
         paper_markdown=paper_markdown,
         novelty_assessment=novelty_assessment,
+        benchmark_card=benchmark_card,
+        research_protocol=research_protocol,
+        methodology_audit=methodology_audit,
+        publication_readiness=publication_readiness,
     )
+    if contribution_assessment.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="error",
+                category="publish",
+                summary="Contribution assessment blocks final publish.",
+                detail="; ".join(contribution_assessment.blockers),
+                supporting_asset_ids=[
+                    "run_contribution_assessment_json",
+                    "run_claim_evidence_matrix_json",
+                ],
+            )
+        )
+    if experiment_design.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="warning",
+                category="statistics",
+                summary="Experiment design blocks final publish.",
+                detail="; ".join(experiment_design.blockers),
+                supporting_asset_ids=[
+                    "run_experiment_design_json",
+                    "run_spec_json",
+                    "run_artifact_json",
+                ],
+            )
+        )
+    if novelty_validation.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="warning",
+                category="context",
+                summary="Novelty validation blocks final publish.",
+                detail="; ".join(novelty_validation.blockers),
+                supporting_asset_ids=[
+                    "run_literature_graph_json",
+                    "run_novelty_validation_json",
+                ],
+            )
+        )
+    if failure_analysis.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="warning",
+                category="publish",
+                summary="Failure analysis blocks final publish.",
+                detail="; ".join(failure_analysis.blockers),
+                supporting_asset_ids=[
+                    "run_failure_analysis_json",
+                    "run_artifact_json",
+                    "run_experiment_design_json",
+                ],
+            )
+        )
+    if research_replan.blockers:
+        findings.append(
+            AutoResearchReviewFindingRead(
+                id=f"finding_{len(findings) + 1}",
+                severity="warning",
+                category="publish",
+                summary="Research replan blocks final publish.",
+                detail="; ".join(research_replan.blockers),
+                supporting_asset_ids=[
+                    "run_research_replan_json",
+                    "run_failure_analysis_json",
+                ],
+            )
+        )
     scores = _review_scores(
         run=run,
         bundle=bundle,
@@ -1417,7 +2347,15 @@ def build_run_review(
         f"Review built from persisted run, artifact, paper, and registry bundle state. "
         f"Candidates={evidence.candidate_count}, seeds={evidence.seed_count}, sweeps={evidence.sweep_count}, "
         f"significance_tests={evidence.significance_test_count}, citations={citation_coverage.citation_marker_count}, "
-        f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}."
+        f"resolved_literature={citation_coverage.cited_literature_count}, novelty={novelty_assessment.status}, "
+        f"novelty_validation={novelty_validation.recommendation}, "
+        f"experiment_design={experiment_design.completeness}, "
+        f"failure_findings={failure_analysis.finding_count}, "
+        f"research_replan_actions={research_replan.action_count}, "
+        f"publication_tier={publication_readiness.tier}, readiness_score={publication_readiness.score}, "
+        f"contribution_score={contribution_assessment.publishability_score}, "
+        f"strong_core_claims={contribution_assessment.strong_core_claim_count}, "
+        f"paper_tier={run.paper_compile_report.paper_tier if run.paper_compile_report is not None else 'technical_report'}."
     )
     review = AutoResearchRunReviewRead(
         project_id=project_id,
@@ -1432,9 +2370,31 @@ def build_run_review(
         evidence=evidence,
         citation_coverage=citation_coverage,
         novelty_assessment=novelty_assessment,
+        literature_graph=literature_graph,
+        literature_graph_path=literature_graph_path,
+        novelty_validation=novelty_validation,
+        novelty_validation_path=novelty_validation_path,
+        experiment_design=experiment_design,
+        experiment_design_path=experiment_design_path,
+        failure_analysis=failure_analysis,
+        failure_analysis_path=failure_analysis_path,
+        research_replan=research_replan,
+        research_replan_path=research_replan_path,
+        benchmark_card=benchmark_card,
+        benchmark_card_path=str(benchmark_card_path),
+        research_protocol=research_protocol,
+        research_protocol_path=str(research_protocol_path),
+        methodology_audit=methodology_audit,
+        methodology_audit_path=str(methodology_audit_path),
+        publication_readiness=publication_readiness,
+        publication_readiness_path=str(publication_readiness_path),
+        contribution_assessment=contribution_assessment,
+        contribution_assessment_path=contribution_assessment_path,
         scores=scores,
         findings=findings,
         revision_plan=revision_plan,
+        artifact_integrity_audit=artifact_integrity_audit,
+        artifact_integrity_audit_path=artifact_integrity_audit_path,
     )
     _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     review_loop = _build_review_loop(
@@ -1445,6 +2405,153 @@ def build_run_review(
         paper_markdown=paper_markdown,
         advance_round=advance_review_loop_round,
     )
+    revision_dossier = _build_revision_dossier(
+        review=review,
+        review_loop=review_loop,
+    )
+    revision_dossier_path = Path(revision_dossier_file_path(project_id, run_id))
+    _write_json(revision_dossier_path, revision_dossier.model_dump(mode="json"))
+    review = review.model_copy(
+        update={
+            "revision_dossier": revision_dossier,
+            "revision_dossier_path": str(revision_dossier_path),
+        }
+    )
+    publication_evidence_index = build_publication_evidence_index(
+        run,
+        review=review,
+        review_loop=review_loop,
+        review_path=_review_path(project_id, run_id),
+        review_loop_path=_review_loop_path(project_id, run_id),
+    )
+    publication_evidence_index_path = Path(
+        publication_evidence_index_file_path(project_id, run_id)
+    )
+    _write_json(
+        publication_evidence_index_path,
+        publication_evidence_index.model_dump(mode="json"),
+    )
+    review = review.model_copy(
+        update={
+            "publication_evidence_index": publication_evidence_index,
+            "publication_evidence_index_path": str(publication_evidence_index_path),
+            "reviewer_simulation_path": str(Path(reviewer_simulation_file_path(project_id, run_id))),
+        }
+    )
+    reviewer_simulation, reviewer_simulation_path = _build_and_persist_reviewer_simulation(
+        run=run,
+        project_id=project_id,
+        run_id=run_id,
+        experiment_design=experiment_design,
+        research_protocol=research_protocol,
+        methodology_audit=methodology_audit,
+        publication_readiness=publication_readiness,
+        contribution_assessment=contribution_assessment,
+        novelty_validation=novelty_validation,
+        literature_graph=literature_graph,
+        failure_analysis=failure_analysis,
+        research_replan=research_replan,
+        publication_evidence_index=publication_evidence_index,
+        artifact_integrity_audit=artifact_integrity_audit,
+        paper_compile_report=run.paper_compile_report,
+    )
+    review = review.model_copy(
+        update={
+            "reviewer_simulation": reviewer_simulation,
+            "reviewer_simulation_path": reviewer_simulation_path,
+        }
+    )
+    _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
+    publication_evidence_index = build_publication_evidence_index(
+        run,
+        review=review,
+        review_loop=review_loop,
+        review_path=_review_path(project_id, run_id),
+        review_loop_path=_review_loop_path(project_id, run_id),
+    )
+    publication_evidence_index_path = Path(
+        publication_evidence_index_file_path(project_id, run_id)
+    )
+    _write_json(
+        publication_evidence_index_path,
+        publication_evidence_index.model_dump(mode="json"),
+    )
+    review = review.model_copy(
+        update={
+            "publication_evidence_index": publication_evidence_index,
+            "publication_evidence_index_path": str(publication_evidence_index_path),
+        }
+    )
+    publication_repair_plan = build_publication_repair_plan(
+        review=review,
+        review_loop=review_loop,
+    )
+    publication_repair_plan_path = Path(publication_repair_plan_file_path(project_id, run_id))
+    _write_json(
+        publication_repair_plan_path,
+        publication_repair_plan.model_dump(mode="json"),
+    )
+    review = review.model_copy(
+        update={
+            "publication_repair_plan": publication_repair_plan,
+            "publication_repair_plan_path": str(publication_repair_plan_path),
+        }
+    )
+    publication_repair_execution = _load_publication_repair_execution(project_id, run_id)
+    if publication_repair_execution is not None:
+        review = review.model_copy(
+            update={
+                "publication_repair_execution": publication_repair_execution,
+                "publication_repair_execution_path": publication_repair_execution_file_path(
+                    project_id,
+                    run_id,
+                ),
+            }
+        )
+    final_artifact_integrity_result = _build_and_persist_artifact_integrity_audit(
+        project_id,
+        run_id,
+    )
+    if final_artifact_integrity_result is not None:
+        artifact_integrity_audit, artifact_integrity_audit_path = final_artifact_integrity_result
+        review = review.model_copy(
+            update={
+                "artifact_integrity_audit": artifact_integrity_audit,
+                "artifact_integrity_audit_path": artifact_integrity_audit_path,
+            }
+        )
+        publication_evidence_index = build_publication_evidence_index(
+            run,
+            review=review,
+            review_loop=review_loop,
+            review_path=_review_path(project_id, run_id),
+            review_loop_path=_review_loop_path(project_id, run_id),
+        )
+        _write_json(
+            publication_evidence_index_path,
+            publication_evidence_index.model_dump(mode="json"),
+        )
+        review = review.model_copy(
+            update={
+                "publication_evidence_index": publication_evidence_index,
+                "publication_evidence_index_path": str(publication_evidence_index_path),
+            }
+        )
+        publication_repair_plan = build_publication_repair_plan(
+            review=review,
+            review_loop=review_loop,
+        )
+        _write_json(
+            publication_repair_plan_path,
+            publication_repair_plan.model_dump(mode="json"),
+        )
+        review = review.model_copy(
+            update={
+                "publication_repair_plan": publication_repair_plan,
+                "publication_repair_plan_path": str(publication_repair_plan_path),
+            }
+        )
+    _write_json(_review_path(project_id, run_id), review.model_dump(mode="json"))
     _sync_paper_revision_state(
         run=run,
         review=review,
@@ -1491,6 +2598,19 @@ def _compile_ready_final_blockers(run: AutoResearchRunRead | None) -> list[str]:
     if report is None:
         return ["Paper compile report is missing, so compile-ready publication coverage cannot be verified."]
     messages: list[str] = []
+    if report.evidence_blockers:
+        messages.extend(
+            f"Paper evidence compiler gate: {item}"
+            for item in report.evidence_blockers
+        )
+    if report.unregistered_claim_count > 0:
+        messages.append(
+            "Paper evidence compiler gate: the manuscript contains unregistered claims and must be reconciled with the claim ledger."
+        )
+    if report.contradiction_count > 0:
+        messages.append(
+            "Paper evidence compiler gate: the manuscript contains claim-strength contradictions against the evidence ledger."
+        )
     if report.missing_required_source_files:
         missing = ", ".join(report.missing_required_source_files[:6])
         if len(report.missing_required_source_files) > 6:
@@ -1510,22 +2630,31 @@ def _compile_ready_final_blockers(run: AutoResearchRunRead | None) -> list[str]:
         )
     if not report.ready_for_compile and not messages:
         messages.append("Paper source package is not currently marked ready for compile.")
+    if report.paper_tier == "technical_report":
+        messages.append(
+            "Paper evidence compiler gate: the manuscript is still tiered as a technical report and cannot enter final publish."
+        )
     return messages
 
 
 def _publish_asset_fingerprint_payload(
     assets: list[AutoResearchBundleAssetRead],
 ) -> list[dict[str, object]]:
-    return [
-        {
+    payloads: list[dict[str, object]] = []
+    for asset in assets:
+        payload: dict[str, object] = {
             "asset_id": asset.asset_id,
             "role": asset.role,
             "required": asset.required,
             "path": asset.ref.path,
+            "kind": asset.ref.kind,
             "exists": asset.ref.exists,
         }
-        for asset in assets
-    ]
+        if asset.role not in _VOLATILE_GENERATED_DIGEST_ROLES:
+            payload["size_bytes"] = asset.ref.size_bytes
+            payload["sha256"] = asset.ref.sha256
+        payloads.append(payload)
+    return payloads
 
 
 def _publish_package_fingerprint(
@@ -1548,6 +2677,22 @@ def _publish_package_fingerprint(
         "selected_candidate_id": review.selected_candidate_id,
         "review_status": review.overall_status,
         "review_path": review.persisted_path,
+        "benchmark_card_path": review.benchmark_card_path,
+        "experiment_design_path": review.experiment_design_path,
+        "failure_analysis_path": review.failure_analysis_path,
+        "research_replan_path": review.research_replan_path,
+        "research_protocol_path": review.research_protocol_path,
+        "methodology_audit_path": review.methodology_audit_path,
+        "publication_readiness_path": review.publication_readiness_path,
+        "contribution_assessment_path": review.contribution_assessment_path,
+        "literature_graph_path": review.literature_graph_path,
+        "novelty_validation_path": review.novelty_validation_path,
+        "revision_dossier_path": review.revision_dossier_path,
+        "publication_evidence_index_path": review.publication_evidence_index_path,
+        "artifact_integrity_audit_path": review.artifact_integrity_audit_path,
+        "reviewer_simulation_path": review.reviewer_simulation_path,
+        "publication_repair_plan_path": review.publication_repair_plan_path,
+        "publication_repair_execution_path": review.publication_repair_execution_path,
         "review_round": review_loop.current_round if review_loop is not None else 0,
         "review_fingerprint": (
             review_loop.latest_review_fingerprint
@@ -1558,6 +2703,16 @@ def _publish_package_fingerprint(
         "status": status,
         "review_bundle_ready": review_bundle_ready,
         "final_publish_ready": final_publish_ready,
+        "publication_tier": (
+            review.publication_readiness.tier
+            if review.publication_readiness is not None
+            else "exploratory"
+        ),
+        "publication_readiness_score": (
+            review.publication_readiness.score
+            if review.publication_readiness is not None
+            else 0
+        ),
         "completeness_status": completeness_status,
         "blockers": blockers,
         "final_blockers": final_blockers,
@@ -1613,6 +2768,93 @@ def _file_sha256(path: Path | None) -> str | None:
         for chunk in iter(lambda: handle.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _zip_entry_sha256(handle: ZipFile, name: str) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with handle.open(name, "r") as entry:
+            for chunk in iter(lambda: entry.read(65536), b""):
+                digest.update(chunk)
+    except KeyError:
+        return None
+    return digest.hexdigest()
+
+
+def _archive_generated_refs(
+    archive_manifest: dict[str, object] | None,
+) -> list[dict[str, object]] | None:
+    if archive_manifest is None:
+        return None
+    refs = archive_manifest.get("generated_file_refs")
+    if not isinstance(refs, list):
+        return None
+    normalized: list[dict[str, object]] = []
+    for item in refs:
+        if isinstance(item, dict) and isinstance(item.get("file_name"), str):
+            normalized.append(item)
+    return normalized
+
+
+def _archive_contents_match_publish_state(
+    *,
+    project_id: str,
+    run_id: str,
+    archive_path: Path,
+    archive_manifest: dict[str, object] | None,
+    assets: list[AutoResearchBundleAssetRead],
+) -> bool:
+    generated_refs = _archive_generated_refs(archive_manifest)
+    if not archive_path.is_file() or not generated_refs:
+        return False
+    run_root = run_dir(project_id, run_id)
+    try:
+        with ZipFile(archive_path, "r") as handle:
+            names = set(handle.namelist())
+            generated_names: set[str] = set()
+            for ref in generated_refs:
+                file_name = ref["file_name"]
+                if not isinstance(file_name, str):
+                    return False
+                if not ref.get("exists"):
+                    continue
+                generated_names.add(file_name)
+                if file_name not in names:
+                    return False
+                if ref.get("digest_tracked") is False:
+                    continue
+                expected_size = ref.get("size_bytes")
+                if (
+                    isinstance(expected_size, int)
+                    and handle.getinfo(file_name).file_size != expected_size
+                ):
+                    return False
+                expected_sha256 = ref.get("sha256")
+                if (
+                    isinstance(expected_sha256, str)
+                    and _zip_entry_sha256(handle, file_name) != expected_sha256
+                ):
+                    return False
+            for asset in assets:
+                if not asset.ref.exists or asset.ref.kind != "file":
+                    continue
+                arcname = _arcname_for_path(run_root, Path(asset.ref.path))
+                if arcname in generated_names:
+                    continue
+                if arcname not in names:
+                    return False
+                if asset.role in _VOLATILE_GENERATED_DIGEST_ROLES:
+                    continue
+                if (
+                    isinstance(asset.ref.size_bytes, int)
+                    and handle.getinfo(arcname).file_size != asset.ref.size_bytes
+                ):
+                    return False
+                if asset.ref.sha256 and _zip_entry_sha256(handle, arcname) != asset.ref.sha256:
+                    return False
+    except (BadZipFile, OSError, KeyError):
+        return False
+    return True
 
 
 def _paper_title(run: AutoResearchRunRead) -> str:
@@ -1676,6 +2918,33 @@ def _export_code_package(
     return archive_path
 
 
+def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
+    return [
+        _review_path(project_id, run_id),
+        _review_loop_path(project_id, run_id),
+        Path(benchmark_card_file_path(project_id, run_id)),
+        Path(experiment_design_file_path(project_id, run_id)),
+        Path(failure_analysis_file_path(project_id, run_id)),
+        Path(research_replan_file_path(project_id, run_id)),
+        Path(research_protocol_file_path(project_id, run_id)),
+        Path(methodology_audit_file_path(project_id, run_id)),
+        Path(publication_readiness_file_path(project_id, run_id)),
+        Path(contribution_assessment_file_path(project_id, run_id)),
+        Path(literature_graph_file_path(project_id, run_id)),
+        Path(novelty_validation_file_path(project_id, run_id)),
+        Path(revision_dossier_file_path(project_id, run_id)),
+        Path(publication_evidence_index_file_path(project_id, run_id)),
+        Path(artifact_integrity_audit_file_path(project_id, run_id)),
+        Path(reviewer_simulation_file_path(project_id, run_id)),
+        Path(publication_repair_plan_file_path(project_id, run_id)),
+        Path(publication_repair_execution_file_path(project_id, run_id)),
+        _publish_manifest_path(project_id, run_id),
+        _publish_archive_manifest_path(project_id, run_id),
+        _publication_manifest_path(project_id, run_id),
+        _code_package_path(project_id, run_id),
+    ]
+
+
 def _updated_deployments(
     existing: list[AutoResearchDeploymentRefRead],
     new_ref: AutoResearchDeploymentRefRead,
@@ -1727,6 +2996,7 @@ def build_publication_manifest(
         or package is None
         or not package.final_publish_ready
         or not package.archive_ready
+        or not package.archive_current
     ):
         return None
     manifest_path = _publication_manifest_path(project_id, run_id)
@@ -1745,11 +3015,153 @@ def build_publication_manifest(
                 deployment_label=deployment_label,
             ),
         )
-    code_package_path = _code_package_path(project_id, run_id)
-    if not code_package_path.is_file():
-        code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
+    code_package_path = _export_code_package(
+        project_id=project_id,
+        run_id=run_id,
+        package=package,
+    )
     compiled_paper_path = _compiled_paper_path(run)
     paper_compile_output_paths = _paper_compile_output_paths(run)
+    benchmark_card_path = (
+        Path(package.benchmark_card_path)
+        if package.benchmark_card_path
+        else Path(benchmark_card_file_path(project_id, run_id))
+    )
+    benchmark_card_path_value = (
+        str(benchmark_card_path) if benchmark_card_path.is_file() else package.benchmark_card_path
+    )
+    protocol_path = (
+        Path(package.research_protocol_path)
+        if package.research_protocol_path
+        else Path(research_protocol_file_path(project_id, run_id))
+    )
+    protocol_path_value = str(protocol_path) if protocol_path.is_file() else package.research_protocol_path
+    experiment_design_path = (
+        Path(package.experiment_design_path)
+        if package.experiment_design_path
+        else Path(experiment_design_file_path(project_id, run_id))
+    )
+    experiment_design_path_value = (
+        str(experiment_design_path)
+        if experiment_design_path.is_file()
+        else package.experiment_design_path
+    )
+    failure_analysis_path = (
+        Path(package.failure_analysis_path)
+        if package.failure_analysis_path
+        else Path(failure_analysis_file_path(project_id, run_id))
+    )
+    failure_analysis_path_value = (
+        str(failure_analysis_path)
+        if failure_analysis_path.is_file()
+        else package.failure_analysis_path
+    )
+    research_replan_path = (
+        Path(package.research_replan_path)
+        if package.research_replan_path
+        else Path(research_replan_file_path(project_id, run_id))
+    )
+    research_replan_path_value = (
+        str(research_replan_path)
+        if research_replan_path.is_file()
+        else package.research_replan_path
+    )
+    audit_path = (
+        Path(package.methodology_audit_path)
+        if package.methodology_audit_path
+        else Path(methodology_audit_file_path(project_id, run_id))
+    )
+    audit_path_value = str(audit_path) if audit_path.is_file() else package.methodology_audit_path
+    readiness_path = (
+        Path(package.publication_readiness_path)
+        if package.publication_readiness_path
+        else Path(publication_readiness_file_path(project_id, run_id))
+    )
+    readiness_path_value = str(readiness_path) if readiness_path.is_file() else package.publication_readiness_path
+    contribution_assessment_path = (
+        Path(package.contribution_assessment_path)
+        if package.contribution_assessment_path
+        else Path(contribution_assessment_file_path(project_id, run_id))
+    )
+    contribution_assessment_path_value = (
+        str(contribution_assessment_path)
+        if contribution_assessment_path.is_file()
+        else package.contribution_assessment_path
+    )
+    literature_graph_path = (
+        Path(package.literature_graph_path)
+        if package.literature_graph_path
+        else Path(literature_graph_file_path(project_id, run_id))
+    )
+    literature_graph_path_value = (
+        str(literature_graph_path)
+        if literature_graph_path.is_file()
+        else package.literature_graph_path
+    )
+    novelty_validation_path = (
+        Path(package.novelty_validation_path)
+        if package.novelty_validation_path
+        else Path(novelty_validation_file_path(project_id, run_id))
+    )
+    novelty_validation_path_value = (
+        str(novelty_validation_path)
+        if novelty_validation_path.is_file()
+        else package.novelty_validation_path
+    )
+    dossier_path = (
+        Path(package.revision_dossier_path)
+        if package.revision_dossier_path
+        else Path(revision_dossier_file_path(project_id, run_id))
+    )
+    dossier_path_value = str(dossier_path) if dossier_path.is_file() else package.revision_dossier_path
+    evidence_index_path = (
+        Path(package.publication_evidence_index_path)
+        if package.publication_evidence_index_path
+        else Path(publication_evidence_index_file_path(project_id, run_id))
+    )
+    evidence_index_path_value = (
+        str(evidence_index_path)
+        if evidence_index_path.is_file()
+        else package.publication_evidence_index_path
+    )
+    artifact_integrity_audit_path = (
+        Path(package.artifact_integrity_audit_path)
+        if package.artifact_integrity_audit_path
+        else Path(artifact_integrity_audit_file_path(project_id, run_id))
+    )
+    artifact_integrity_audit_path_value = (
+        str(artifact_integrity_audit_path)
+        if artifact_integrity_audit_path.is_file()
+        else package.artifact_integrity_audit_path
+    )
+    reviewer_simulation_path = (
+        Path(package.reviewer_simulation_path)
+        if package.reviewer_simulation_path
+        else Path(reviewer_simulation_file_path(project_id, run_id))
+    )
+    reviewer_simulation_path_value = (
+        str(reviewer_simulation_path)
+        if reviewer_simulation_path.is_file()
+        else package.reviewer_simulation_path
+    )
+    repair_plan_path = (
+        Path(package.publication_repair_plan_path)
+        if package.publication_repair_plan_path
+        else Path(publication_repair_plan_file_path(project_id, run_id))
+    )
+    repair_plan_path_value = (
+        str(repair_plan_path) if repair_plan_path.is_file() else package.publication_repair_plan_path
+    )
+    repair_execution_path = (
+        Path(package.publication_repair_execution_path)
+        if package.publication_repair_execution_path
+        else Path(publication_repair_execution_file_path(project_id, run_id))
+    )
+    repair_execution_path_value = (
+        str(repair_execution_path)
+        if repair_execution_path.is_file()
+        else package.publication_repair_execution_path
+    )
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -1769,6 +3181,40 @@ def build_publication_manifest(
         bundle_kind=_archive_bundle_kind(package),
         review_bundle_ready=package.review_bundle_ready,
         final_publish_ready=package.final_publish_ready,
+        publication_tier=package.publication_tier,
+        publication_readiness_score=package.publication_readiness_score,
+        benchmark_card_path=benchmark_card_path_value,
+        benchmark_card_sha256=_file_sha256(benchmark_card_path),
+        research_protocol_path=protocol_path_value,
+        research_protocol_sha256=_file_sha256(protocol_path),
+        experiment_design_path=experiment_design_path_value,
+        experiment_design_sha256=_file_sha256(experiment_design_path),
+        failure_analysis_path=failure_analysis_path_value,
+        failure_analysis_sha256=_file_sha256(failure_analysis_path),
+        research_replan_path=research_replan_path_value,
+        research_replan_sha256=_file_sha256(research_replan_path),
+        methodology_audit_path=audit_path_value,
+        methodology_audit_sha256=_file_sha256(audit_path),
+        publication_readiness_path=readiness_path_value,
+        publication_readiness_sha256=_file_sha256(readiness_path),
+        contribution_assessment_path=contribution_assessment_path_value,
+        contribution_assessment_sha256=_file_sha256(contribution_assessment_path),
+        literature_graph_path=literature_graph_path_value,
+        literature_graph_sha256=_file_sha256(literature_graph_path),
+        novelty_validation_path=novelty_validation_path_value,
+        novelty_validation_sha256=_file_sha256(novelty_validation_path),
+        revision_dossier_path=dossier_path_value,
+        revision_dossier_sha256=_file_sha256(dossier_path),
+        publication_evidence_index_path=evidence_index_path_value,
+        publication_evidence_index_sha256=_file_sha256(evidence_index_path),
+        artifact_integrity_audit_path=artifact_integrity_audit_path_value,
+        artifact_integrity_audit_sha256=_file_sha256(artifact_integrity_audit_path),
+        reviewer_simulation_path=reviewer_simulation_path_value,
+        reviewer_simulation_sha256=_file_sha256(reviewer_simulation_path),
+        publication_repair_plan_path=repair_plan_path_value,
+        publication_repair_plan_sha256=_file_sha256(repair_plan_path),
+        publication_repair_execution_path=repair_execution_path_value,
+        publication_repair_execution_sha256=_file_sha256(repair_execution_path),
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,
@@ -1825,8 +3271,37 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     missing_required_assets = [item for item in required_assets if not item.ref.exists]
     missing_final_assets = [item for item in final_required_assets if not item.ref.exists]
     blockers = [item.summary for item in review.findings if item.severity == "error"]
-    semantic_final_blockers = _semantic_final_publish_blockers(review)
+    repair_state_final_blockers = _repair_state_final_blockers(review)
+    semantic_final_blockers = [
+        *_semantic_final_publish_blockers(review),
+        *repair_state_final_blockers,
+    ]
     compile_final_blockers = _compile_ready_final_blockers(run)
+    evidence_index_final_blockers = (
+        review.publication_evidence_index.blockers
+        if review.publication_evidence_index is not None
+        else ["Final publish requires a publication evidence index."]
+    )
+    reviewer_simulation_final_blockers = (
+        [f"Final publish reviewer gate: {item}" for item in review.reviewer_simulation.blockers]
+        if review.reviewer_simulation is not None
+        else ["Final publish reviewer gate: reviewer simulation is required before publication."]
+    )
+    if review.reviewer_simulation is not None and review.reviewer_simulation.weak_reject_or_worse_count > 0:
+        reviewer_simulation_final_blockers.append(
+            "Final publish reviewer gate: weak reject or reject reviewer decisions must be resolved."
+        )
+    status_semantic_blockers = [
+        item
+        for item in semantic_final_blockers
+        if item.startswith("Final publish requires citation-grounded")
+        or item.startswith("Final publish requires tighter research framing")
+        or item.startswith("Final publish requires supported claim-evidence")
+        or item.startswith("Final publish failure gate")
+        or item.startswith("Final publish research replan gate")
+    ]
+    if semantic_final_blockers and not missing_final_assets and not compile_final_blockers:
+        status_semantic_blockers = semantic_final_blockers
     review_loop_requirements = (
         _review_loop_revision_requirements(review_loop)
         if review.overall_status != "ready"
@@ -1834,7 +3309,9 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     )
     final_blockers = [
         *semantic_final_blockers,
+        *reviewer_simulation_final_blockers,
         *compile_final_blockers,
+        *evidence_index_final_blockers,
         *review_loop_requirements,
         *(f"Missing final publish asset: {item.role}" for item in missing_final_assets),
     ]
@@ -1843,13 +3320,15 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         review.overall_status == "ready"
         and not missing_final_assets
         and not semantic_final_blockers
+        and not reviewer_simulation_final_blockers
         and not compile_final_blockers
+        and not evidence_index_final_blockers
         and not review_loop_requirements
     )
     completeness_status = "complete" if not missing_final_assets else "incomplete"
     status = (
         "blocked"
-        if blockers or semantic_final_blockers or not review_bundle_ready
+        if blockers or status_semantic_blockers or not review_bundle_ready
         else "publish_ready"
         if final_publish_ready
         else "revision_required"
@@ -1865,6 +3344,36 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
         publish_ready=final_publish_ready,
         review_bundle_ready=review_bundle_ready,
         final_publish_ready=final_publish_ready,
+        publication_tier=(
+            review.publication_readiness.tier
+            if review.publication_readiness is not None
+            else "exploratory"
+        ),
+        publication_readiness_score=(
+            review.publication_readiness.score
+            if review.publication_readiness is not None
+            else 0
+        ),
+        benchmark_card_path=review.benchmark_card_path,
+        experiment_design_path=review.experiment_design_path,
+        failure_analysis_path=review.failure_analysis_path,
+        research_replan_path=review.research_replan_path,
+        research_protocol_path=review.research_protocol_path,
+        methodology_audit_path=review.methodology_audit_path,
+        contribution_assessment_path=review.contribution_assessment_path,
+        literature_graph_path=review.literature_graph_path,
+        novelty_validation_path=review.novelty_validation_path,
+        revision_dossier_path=review.revision_dossier_path,
+        publication_evidence_index_path=review.publication_evidence_index_path,
+        artifact_integrity_audit_path=review.artifact_integrity_audit_path,
+        reviewer_simulation_path=review.reviewer_simulation_path,
+        publication_repair_plan_path=review.publication_repair_plan_path,
+        publication_repair_execution_path=(
+            str(Path(publication_repair_execution_file_path(project_id, run_id)))
+            if Path(publication_repair_execution_file_path(project_id, run_id)).is_file()
+            else review.publication_repair_execution_path
+        ),
+        publication_readiness_path=review.publication_readiness_path,
         completeness_status=completeness_status,
         review_path=review.persisted_path,
         manifest_path=str(_publish_manifest_path(project_id, run_id)),
@@ -1910,8 +3419,16 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
     archive_current = (
         archive_ready
         and archive_manifest.get("package_fingerprint") == package_fingerprint
+        and _archive_contents_match_publish_state(
+            project_id=project_id,
+            run_id=run_id,
+            archive_path=archive_path,
+            archive_manifest=archive_manifest,
+            assets=[*required_assets, *optional_assets],
+        )
     )
     archive_status = "current" if archive_current else "stale" if archive_ready else "missing"
+    current_publication_manifest = publication_manifest if archive_current else None
     package = package.model_copy(
         update={
             "archive_manifest_path": str(_publish_archive_manifest_path(project_id, run_id)),
@@ -1933,18 +3450,24 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
                 if archive_manifest is not None
                 else None
             ),
-            "publication_id": publication_manifest.publication_id if publication_manifest is not None else None,
+            "publication_id": (
+                current_publication_manifest.publication_id
+                if current_publication_manifest is not None
+                else None
+            ),
             "publication_manifest_path": (
-                publication_manifest.publication_manifest_path
-                if publication_manifest is not None
+                current_publication_manifest.publication_manifest_path
+                if current_publication_manifest is not None
                 else str(_publication_manifest_path(project_id, run_id))
             ),
             "code_package_path": (
-                publication_manifest.code_package_path if publication_manifest is not None else str(_code_package_path(project_id, run_id))
+                current_publication_manifest.code_package_path
+                if current_publication_manifest is not None
+                else str(_code_package_path(project_id, run_id))
             ),
             "deployment_ids": (
-                [item.deployment_id for item in publication_manifest.deployments]
-                if publication_manifest is not None
+                [item.deployment_id for item in current_publication_manifest.deployments]
+                if current_publication_manifest is not None
                 else []
             ),
             "revision_actions": revision_actions,
@@ -1983,8 +3506,56 @@ def _add_path_to_zip(handle: ZipFile, *, run_root: Path, path: Path, added: set[
     added.add(arcname)
 
 
+def _write_publish_archive(
+    *,
+    project_id: str,
+    run_id: str,
+    archive_path: Path,
+    bundle: AutoResearchBundleRead,
+) -> None:
+    run_root = run_dir(project_id, run_id)
+    added: set[str] = set()
+    with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
+        for generated_path in _publish_generated_paths(project_id, run_id):
+            if generated_path.is_file():
+                handle.write(generated_path, arcname=generated_path.name)
+                added.add(generated_path.name)
+        for asset in bundle.assets:
+            if not asset.ref.exists:
+                continue
+            _add_path_to_zip(handle, run_root=run_root, path=Path(asset.ref.path), added=added)
+
+
 def _archive_bundle_kind(package: AutoResearchPublishPackageRead) -> str:
     return "final_publish_bundle" if package.final_publish_ready else "review_bundle"
+
+
+_ARCHIVE_GENERATED_DIGEST_EXCLUDED_NAMES = {
+    PUBLISH_PACKAGE_FILENAME,
+    PUBLISH_ARCHIVE_MANIFEST_FILENAME,
+}
+
+
+def _archive_generated_file_ref(path: Path) -> dict[str, object]:
+    exists = path.is_file()
+    digest_tracked = path.name not in _ARCHIVE_GENERATED_DIGEST_EXCLUDED_NAMES
+    ref: dict[str, object] = {
+        "file_name": path.name,
+        "path": str(path),
+        "exists": exists,
+        "digest_tracked": digest_tracked,
+    }
+    if exists and digest_tracked:
+        ref["size_bytes"] = path.stat().st_size
+        ref["sha256"] = _file_sha256(path)
+    return ref
+
+
+def _archive_generated_file_refs(project_id: str, run_id: str) -> list[dict[str, object]]:
+    return [
+        _archive_generated_file_ref(path)
+        for path in _publish_generated_paths(project_id, run_id)
+    ]
 
 
 def _archive_manifest(
@@ -1992,6 +3563,7 @@ def _archive_manifest(
     project_id: str,
     run_id: str,
     package: AutoResearchPublishPackageRead,
+    generated_at: datetime | None = None,
 ) -> dict[str, object]:
     included_assets = [
         asset
@@ -2003,6 +3575,7 @@ def _archive_manifest(
         for asset in [*package.required_assets, *package.optional_assets]
         if not asset.ref.exists
     ]
+    generated_file_refs = _archive_generated_file_refs(project_id, run_id)
     omitted_required_assets = [asset.asset_id for asset in package.required_assets if not asset.ref.exists]
     omitted_final_assets = [asset.asset_id for asset in package.final_required_assets if not asset.ref.exists]
     omitted_optional_assets = [asset.asset_id for asset in package.optional_assets if not asset.ref.exists]
@@ -2010,23 +3583,34 @@ def _archive_manifest(
         "project_id": project_id,
         "run_id": run_id,
         "package_id": package.package_id,
-        "generated_at": _utcnow().isoformat(),
+        "generated_at": (generated_at or _utcnow()).isoformat(),
         "bundle_kind": _archive_bundle_kind(package),
         "package_fingerprint": package.package_fingerprint,
         "review_round": package.review_round,
         "review_fingerprint": package.review_fingerprint,
         "review_bundle_ready": package.review_bundle_ready,
         "final_publish_ready": package.final_publish_ready,
+        "publication_tier": package.publication_tier,
+        "publication_readiness_score": package.publication_readiness_score,
         "completeness_status": package.completeness_status,
         "selected_candidate_id": package.selected_candidate_id,
         "source_bundle_id": package.source_bundle_id,
         "archive_file_name": PUBLISH_ARCHIVE_FILENAME,
         "generated_files": [
-            REVIEW_FILENAME,
-            REVIEW_LOOP_FILENAME,
-            PUBLISH_PACKAGE_FILENAME,
-            PUBLISH_ARCHIVE_MANIFEST_FILENAME,
+            item["file_name"]
+            for item in generated_file_refs
+            if item["exists"]
         ],
+        "expected_generated_files": [
+            item["file_name"]
+            for item in generated_file_refs
+        ],
+        "missing_generated_files": [
+            item["file_name"]
+            for item in generated_file_refs
+            if not item["exists"]
+        ],
+        "generated_file_refs": generated_file_refs,
         "included_asset_count": len(included_assets),
         "omitted_asset_count": len(omitted_assets),
         "included_asset_ids": [asset.asset_id for asset in included_assets],
@@ -2059,7 +3643,6 @@ def export_publish_package(
     if bundle is None:
         return None
 
-    run_root = run_dir(project_id, run_id)
     archive_path = _publish_archive_path(project_id, run_id)
     archive_manifest_path = _publish_archive_manifest_path(project_id, run_id)
     archive_manifest = _archive_manifest(
@@ -2068,21 +3651,12 @@ def export_publish_package(
         package=package,
     )
     _write_json(archive_manifest_path, archive_manifest)
-    added: set[str] = set()
-    with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
-        for generated_path in (
-            _review_path(project_id, run_id),
-            _review_loop_path(project_id, run_id),
-            _publish_manifest_path(project_id, run_id),
-            archive_manifest_path,
-        ):
-            if generated_path.is_file():
-                handle.write(generated_path, arcname=generated_path.name)
-                added.add(generated_path.name)
-        for asset in bundle.assets:
-            if not asset.ref.exists:
-                continue
-            _add_path_to_zip(handle, run_root=run_root, path=Path(asset.ref.path), added=added)
+    _write_publish_archive(
+        project_id=project_id,
+        run_id=run_id,
+        archive_path=archive_path,
+        bundle=bundle,
+    )
 
     code_package_path = _export_code_package(project_id=project_id, run_id=run_id, package=package)
     publication_manifest = build_publication_manifest(
@@ -2091,6 +3665,7 @@ def export_publish_package(
         deployment_id=deployment_id,
         deployment_label=deployment_label,
     )
+    final_archive_generated_at = _utcnow()
     package = package.model_copy(update={"archive_path": str(archive_path)})
     package = package.model_copy(
         update={
@@ -2098,10 +3673,10 @@ def export_publish_package(
             "archive_status": "current",
             "archive_ready": archive_path.is_file() and archive_manifest_path.is_file(),
             "archive_current": archive_path.is_file() and archive_manifest_path.is_file(),
-            "archive_generated_at": _archive_manifest_generated_at(archive_manifest),
-            "archive_bundle_kind": archive_manifest["bundle_kind"],
-            "archive_review_round": archive_manifest["review_round"],
-            "archive_review_fingerprint": archive_manifest["review_fingerprint"],
+            "archive_generated_at": final_archive_generated_at,
+            "archive_bundle_kind": _archive_bundle_kind(package),
+            "archive_review_round": package.review_round,
+            "archive_review_fingerprint": package.review_fingerprint,
             "publication_id": (
                 publication_manifest.publication_id if publication_manifest is not None else None
             ),
@@ -2119,6 +3694,36 @@ def export_publish_package(
         }
     )
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
+    archive_manifest = _archive_manifest(
+        project_id=project_id,
+        run_id=run_id,
+        package=package,
+        generated_at=final_archive_generated_at,
+    )
+    _write_json(archive_manifest_path, archive_manifest)
+    _write_publish_archive(
+        project_id=project_id,
+        run_id=run_id,
+        archive_path=archive_path,
+        bundle=bundle,
+    )
+    if not _archive_contents_match_publish_state(
+        project_id=project_id,
+        run_id=run_id,
+        archive_path=archive_path,
+        archive_manifest=archive_manifest,
+        assets=[*package.required_assets, *package.optional_assets],
+    ):
+        package = package.model_copy(
+            update={
+                "archive_status": "stale",
+                "archive_current": False,
+            }
+        )
+        _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
+        raise ValueError(
+            "Publish archive integrity verification failed; export did not produce a complete archive"
+        )
     deployment = publication_manifest.deployments[0] if publication_manifest is not None and publication_manifest.deployments else None
     return AutoResearchPublishExportRead(
         project_id=project_id,

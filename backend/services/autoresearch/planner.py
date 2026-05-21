@@ -95,7 +95,11 @@ class ResearchPlanner:
         literature_synthesis: LiteratureSynthesis | None,
     ) -> ConceptualFramework | None:
         """Build a conceptual framework via LLM, grounding the method in theory."""
-        prompt_text = load_prompt(CONCEPTUAL_FRAMEWORK_PROMPT_PATH)
+        try:
+            prompt_text = load_prompt(CONCEPTUAL_FRAMEWORK_PROMPT_PATH)
+        except FileNotFoundError as exc:
+            logger.warning("conceptual framework prompt missing: %s", exc)
+            return None
         if not prompt_text:
             return None
 

@@ -50,6 +50,7 @@ from services.llm.prompting import load_prompt
 from services.llm.response_utils import get_message_content
 from config.settings import settings
 from services.autoresearch.figure_generator import FigureGenerator
+from services.autoresearch.paper_evidence_compiler import compile_paper_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -1042,6 +1043,9 @@ class PaperWriter:
                 refined = content
             elif content:
                 logger.warning("paper_writer: LLM candidate failed validation, keeping seed markdown (content_len=%d)", len(content))
+        except FileNotFoundError as exc:
+            logger.warning("paper_writer: prompt missing, keeping seed markdown: %s", exc)
+            refined = seed_markdown.strip()
         except Exception as exc:
             logger.error("paper_writer: LLM refinement failed with exception: %s", exc)
 
@@ -2372,22 +2376,132 @@ class PaperWriter:
         artifact: ResultArtifact,
         best_metric: float | None,
         baseline_metric: float | None,
+        attempts: list[ExperimentAttempt] | None = None,
     ) -> str:
         lines: list[str] = []
+        attempts = attempts or []
+        observed_systems = self._observed_system_names(artifact, attempts)
+        ablation_names = {item.name for item in spec.ablations}
+        observed_ablations = observed_systems & ablation_names
         for i, hypothesis in enumerate(plan.hypotheses, 1):
-            if best_metric is not None and baseline_metric is not None:
+            mentioned_systems = {
+                item.name
+                for item in [*spec.baselines, *spec.ablations]
+                if self._text_mentions_system(hypothesis, item.name)
+            }
+            lowered = hypothesis.lower()
+            ablation_like = any(
+                marker in lowered
+                for marker in ("ablation", "reducing", "remove", "removing", "without", "vocabulary", "coverage", "component")
+            )
+            missing_systems = sorted(mentioned_systems - observed_systems)
+            if missing_systems:
+                verdict = "UNTESTED"
+                reason = "missing system evidence for " + ", ".join(f"`{item}`" for item in missing_systems)
+            elif ablation_like and spec.ablations and not observed_ablations:
+                verdict = "UNTESTED"
+                reason = "no completed ablation result was preserved"
+            elif best_metric is not None and baseline_metric is not None:
                 if best_metric > baseline_metric:
                     verdict = "SUPPORTED"
+                    reason = f"best metric exceeds the baseline ({best_metric:.4f} vs {baseline_metric:.4f})"
                 elif best_metric < baseline_metric:
                     verdict = "CONTRADICTED"
+                    reason = f"best metric trails the baseline ({best_metric:.4f} vs {baseline_metric:.4f})"
                 else:
                     verdict = "INCONCLUSIVE"
+                    reason = "best and baseline metrics are tied"
             else:
-                verdict = "UNTESTABLE"
-            lines.append(f"- **H{i}**: {hypothesis} → **{verdict}**")
+                verdict = "UNTESTED"
+                reason = "the final artifact does not expose the comparison needed to resolve this hypothesis"
+            lines.append(f"- **H{i}**: {hypothesis} -> **{verdict}** ({reason}).")
         if not lines:
             lines.append("- No explicit hypotheses were recorded.")
         return "\n".join(lines)
+
+    def _observed_system_names(
+        self,
+        artifact: ResultArtifact,
+        attempts: list[ExperimentAttempt],
+    ) -> set[str]:
+        names: set[str] = set()
+
+        def add_from_artifact(item: ResultArtifact | None) -> None:
+            if item is None:
+                return
+            if item.best_system:
+                names.add(item.best_system)
+            if item.objective_system:
+                names.add(item.objective_system)
+            for collection_name in ("system_results", "aggregate_system_results"):
+                for result in getattr(item, collection_name, []) or []:
+                    if result.system:
+                        names.add(result.system)
+            for sweep in item.sweep_results:
+                if sweep.best_system:
+                    names.add(sweep.best_system)
+                if sweep.objective_system:
+                    names.add(sweep.objective_system)
+                for result in sweep.aggregate_system_results:
+                    if result.system:
+                        names.add(result.system)
+
+        add_from_artifact(artifact)
+        for attempt in attempts:
+            add_from_artifact(attempt.artifact)
+        return names
+
+    def _supported_contribution_block(
+        self,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead,
+    ) -> str:
+        supported = [
+            entry.claim
+            for entry in claim_evidence_matrix.entries
+            if entry.support_status == "supported"
+            and entry.category in {"method", "result", "context"}
+            and entry.claim_id not in {"claim_problem_scope", "claim_context_grounding"}
+        ]
+        if not supported:
+            return "- No publish-facing contribution claim is fully supported yet; the current output should be treated as an experimental report."
+        return "\n".join(f"- {item}" for item in _dedupe_preserving_order(supported)[:5])
+
+    def _seed_reporting_sentence(
+        self,
+        spec: ExperimentSpec,
+        artifact: ResultArtifact,
+    ) -> str:
+        requested_seed_count = len(spec.seeds)
+        completed_seed_count = len(artifact.per_seed_results)
+        if completed_seed_count >= 2:
+            return (
+                f"Each configuration preserves results for {completed_seed_count} completed random seeds, "
+                "supporting aggregate mean, standard deviation, and confidence-interval reporting."
+            )
+        if completed_seed_count == 1:
+            return (
+                "The artifact preserves one completed seed, so reported scores are point estimates rather than "
+                "stable multi-seed aggregates."
+            )
+        if requested_seed_count > 1:
+            return (
+                f"The specification requested {requested_seed_count} seeds, but no per-seed artifacts were preserved; "
+                "reported scores should therefore be treated as descriptive single-run evidence."
+            )
+        return (
+            "The experiment is effectively single-run because no per-seed artifacts were preserved; reported scores "
+            "should be treated as descriptive rather than stability evidence."
+        )
+
+    def _significance_reporting_sentence(self, artifact: ResultArtifact) -> str:
+        if artifact.significance_tests:
+            return (
+                "Statistical significance is assessed using paired sign-flip tests with Holm-Bonferroni correction."
+            )
+        return (
+            "No paired significance comparisons were preserved, so small observed score gaps are reported as "
+            "descriptive differences rather than inferential claims."
+        )
 
     def _key_findings_block(
         self,
@@ -2667,17 +2781,40 @@ class PaperWriter:
             )
         )
 
-        robustness_support = "supported" if len(artifact.per_seed_results) >= 2 else "partial"
-        robustness_gaps = [] if robustness_support == "supported" else ["Increase completed seed coverage for stronger aggregate claims."]
+        completed_seed_count = len(artifact.per_seed_results)
+        requested_seed_count = len(spec.seeds)
+        robustness_support = "supported" if completed_seed_count >= 2 else "partial"
+        robustness_gaps = (
+            []
+            if robustness_support == "supported"
+            else ["Increase completed seed coverage for stronger aggregate claims."]
+        )
+        if completed_seed_count >= 2:
+            statistical_claim = (
+                f"The run is grounded in multi-seed aggregate reporting across {completed_seed_count} completed seeds, "
+                f"with acceptance {passed_acceptance}/{total_acceptance}."
+            )
+        elif completed_seed_count == 1:
+            statistical_claim = (
+                f"The run preserves one completed seed artifact with acceptance {passed_acceptance}/{total_acceptance}; "
+                "multi-seed stability remains unresolved."
+            )
+        else:
+            requested_clause = (
+                f" despite {requested_seed_count} requested seeds"
+                if requested_seed_count
+                else ""
+            )
+            statistical_claim = (
+                f"The run does not preserve completed per-seed artifacts{requested_clause}; "
+                f"acceptance is {passed_acceptance}/{total_acceptance} and stability claims remain unverified."
+            )
         entries.append(
             AutoResearchClaimEvidenceEntryRead(
                 claim_id="claim_statistical_grounding",
                 category="result",
                 section_hint="Experimental Setup",
-                claim=(
-                    f"The run is grounded in multi-seed aggregate reporting across {len(artifact.per_seed_results) or len(spec.seeds) or 1} seeds, "
-                    f"with acceptance {passed_acceptance}/{total_acceptance}."
-                ),
+                claim=statistical_claim,
                 support_status=robustness_support,
                 evidence=[
                     AutoResearchClaimEvidenceRefRead(
@@ -2875,7 +3012,7 @@ class PaperWriter:
             else ""
         )
         result_interpretation = self._interpret_results(artifact, spec, best_metric, baseline_metric, baseline_system)
-        hypothesis_validation = self._hypothesis_validation_block(plan, spec, artifact, best_metric, baseline_metric)
+        hypothesis_validation = self._hypothesis_validation_block(plan, spec, artifact, best_metric, baseline_metric, attempts)
         findings_block = self._key_findings_block(artifact, plan)
         return f"""# Narrative Report: {plan.title}
 
@@ -4130,6 +4267,11 @@ Program objective:
         self,
         *,
         paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+        paper_markdown: str | None = None,
+        paper_plan: AutoResearchPaperPlanRead | None = None,
+        claim_evidence_matrix: AutoResearchClaimEvidenceMatrixRead | None = None,
+        artifact: ResultArtifact | None = None,
+        literature_count: int = 0,
     ) -> AutoResearchPaperCompileReportRead:
         workspace_files = {item.relative_path for item in paper_sources_manifest.files}
         required_inputs = [paper_sources_manifest.entrypoint]
@@ -4145,7 +4287,7 @@ Program objective:
         materialized_outputs = [item for item in expected_outputs if item in workspace_files]
         source_package_complete = True
         all_expected_outputs_materialized = not expected_outputs
-        return AutoResearchPaperCompileReportRead(
+        report = AutoResearchPaperCompileReportRead(
             generated_at=_utcnow(),
             entrypoint=paper_sources_manifest.entrypoint,
             bibliography=paper_sources_manifest.bibliography,
@@ -4160,6 +4302,14 @@ Program objective:
             source_package_complete=source_package_complete,
             all_expected_outputs_materialized=all_expected_outputs_materialized,
             ready_for_compile=not missing_required_inputs and source_package_complete,
+        )
+        return compile_paper_evidence(
+            report,
+            paper_markdown=paper_markdown,
+            paper_plan=paper_plan,
+            claim_evidence_matrix=claim_evidence_matrix,
+            artifact=artifact,
+            literature_count=literature_count,
         )
 
     def _build_research_brief(
@@ -4415,6 +4565,11 @@ Program objective:
         )
         paper_compile_report = self.build_paper_compile_report(
             paper_sources_manifest=paper_sources_manifest,
+            paper_markdown=paper_markdown,
+            paper_plan=paper_plan,
+            claim_evidence_matrix=claim_evidence_matrix,
+            artifact=artifact,
+            literature_count=len(literature),
         )
         return AutoResearchPaperPipelineArtifactsRead(
             narrative_report_markdown=narrative_report_markdown,
@@ -4500,6 +4655,8 @@ Program objective:
             best_metric = float(artifact.objective_score)
         best_std = self._aggregate_std(artifact, best_system_name, artifact.primary_metric)
         best_ci = self._aggregate_confidence_interval(artifact, best_system_name, artifact.primary_metric)
+        baseline_system = spec.baselines[0].name if spec.baselines else None
+        baseline_metric = self._aggregate_metric(artifact, baseline_system, artifact.primary_metric) if baseline_system else None
         learned_system = spec.baselines[-1].name if spec.baselines else best_system_name
         ablation_name = spec.ablations[0].name if spec.ablations else None
         learned_metric = self._aggregate_metric(artifact, learned_system, artifact.primary_metric)
@@ -4540,6 +4697,17 @@ Program objective:
         portfolio_decision_sentence = self._portfolio_decision_sentence(portfolio, candidates)
         key_findings_sentence = self._key_findings_sentence(artifact)
         project_flow_alignment_block = self._project_flow_alignment_block(project_context)
+        hypothesis_validation_block = self._hypothesis_validation_block(
+            plan,
+            spec,
+            artifact,
+            best_metric,
+            majority_metric if majority_metric is not None else baseline_metric,
+            attempts,
+        )
+        supported_contribution_block = self._supported_contribution_block(claim_evidence_matrix)
+        seed_reporting_sentence = self._seed_reporting_sentence(spec, artifact)
+        significance_reporting_sentence = self._significance_reporting_sentence(artifact)
         best_ci_text = self._format_confidence_interval(best_ci)
         method_summary = plan.proposed_method.strip()
         if method_summary and method_summary[-1] not in ".!?":
@@ -4556,6 +4724,8 @@ Program objective:
         if best_ci_text is not None:
             best_detail_parts.append(best_ci_text)
         best_detail = f" ({'; '.join(best_detail_parts)})" if best_detail_parts else ""
+        seed_phrase = f"{seed_count} experimental seed" + ("" if seed_count == 1 else "s")
+        has_positive_significance = any(item.significant for item in artifact.significance_tests)
 
         comparison_sentence = (
             f"The best-performing system was `{best_system_name}`, achieving a "
@@ -4574,7 +4744,7 @@ Program objective:
             f"{artifact.primary_metric}={ablation_metric:.4f}, "
             f"confirming the importance of that design choice."
             if ablation_name and ablation_metric is not None
-            else "An ablation study was included to test the contribution of individual components."
+            else "No completed ablation result was preserved, so ablation-specific hypotheses remain untested."
         )
         majority_sentence = (
             f"The majority-class baseline achieved a mean {artifact.primary_metric} of {majority_metric:.4f}, "
@@ -4615,13 +4785,13 @@ Program objective:
                 + (
                     f"Our results show that `{best_system_name or 'the best system'}` achieves the highest "
                     f"performance with a mean {artifact.primary_metric} of {best_metric:.4f}"
-                    f"{best_detail} across {seed_count} experimental seeds. "
+                    f"{best_detail} across {seed_phrase}. "
                     if best_metric is not None
-                    else f"We evaluate these approaches across {seed_count} experimental seeds. "
+                    else f"We evaluate these approaches across {seed_phrase}. "
                 )
                 + f"{hypothesis_outcome_summary_sentence} "
-                f"The findings demonstrate the effectiveness of different modeling strategies for this task "
-                f"and provide a reproducible baseline for future work."
+                f"{significance_reporting_sentence} The findings provide bounded experimental evidence for this benchmark "
+                f"rather than a broad claim of general effectiveness."
             ),
             "introduction": (
                 f"{plan.problem_statement}\n\n"
@@ -4653,10 +4823,10 @@ Program objective:
                         f"and the label space covers {{{', '.join(spec.dataset.label_space)}}}.\n\n"
                     )
                 )
-                + "This study tests the following hypotheses:\n\n"
-                + "\n".join(f"- **H{i}:** {item}" for i, item in enumerate(plan.hypotheses, 1))
-                + "\n\nThe main contributions of this work are:\n\n"
-                + "\n".join(f"- {item}" for item in plan.planned_contributions)
+                + "This study tracks the planned hypotheses against executed evidence:\n\n"
+                + f"{hypothesis_validation_block}"
+                + "\n\nThe evidence-supported contributions are:\n\n"
+                + supported_contribution_block
             ),
             "method": (
                 f"{method_summary}\n\n"
@@ -4679,10 +4849,8 @@ Program objective:
                     if runtime is not None
                     else "\n\n"
                 )
-                + f"Each configuration was evaluated over {seed_count} random seeds to assess stability. "
-                "We report mean performance, standard deviation, and 95% confidence intervals "
-                "(Student's t-distribution) across seeds. "
-                "Statistical significance is assessed using paired sign-flip tests with Holm-Bonferroni correction.\n\n"
+                + f"{seed_reporting_sentence} "
+                + f"{significance_reporting_sentence}\n\n"
                 + f"The primary evaluation metric is {metrics}."
             ),
             "results": (
@@ -4743,7 +4911,13 @@ Program objective:
                     f"Our experiments demonstrate that "
                     f"`{best_system_name or 'the best system'}` achieves a mean {artifact.primary_metric} "
                     f"of {best_metric:.4f}{best_detail}, "
-                    + ("significantly outperforming the baseline. " if majority_metric is not None and best_metric is not None and best_metric > majority_metric else "")
+                    + (
+                        "with statistically significant evidence over the baseline. "
+                        if has_positive_significance
+                        else "scoring above the baseline descriptively in this artifact. "
+                        if majority_metric is not None and best_metric is not None and best_metric > majority_metric
+                        else ""
+                    )
                     if best_metric is not None
                     else "Our experiments provide a systematic evaluation of multiple approaches, "
                 )

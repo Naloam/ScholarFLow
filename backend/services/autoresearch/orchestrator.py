@@ -8,8 +8,13 @@ from sqlalchemy.orm import Session
 
 from config.settings import settings
 from schemas.autoresearch import (
+    AblationSpec,
     AutoResearchJobAction,
+    AutoResearchPublicationRepairPlanRead,
+    AutoResearchPublicationRepairExecutionRead,
+    AutoResearchResearchReplanRead,
     AutoResearchRunRead,
+    BaselineSpec,
     BenchmarkSource,
     ExecutionBackendSpec,
     ExperimentAttempt,
@@ -29,6 +34,11 @@ from services.autoresearch.narrative_analyst import analyze as analyze_narrative
 from services.autoresearch.planner import ResearchPlanner
 from services.autoresearch.project_flow import gather_project_flow_context
 from services.autoresearch.repair import ExperimentRepairEngine
+from services.autoresearch.publication_repair_plan import (
+    PAPER_PIPELINE_REPAIR_KINDS,
+    selected_pending_auto_repair_actions,
+)
+from services.autoresearch.research_readiness import enforce_publication_protocol
 from services.autoresearch.repository import (
     paper_bibliography_file_path,
     candidate_paper_file_path,
@@ -49,6 +59,7 @@ from services.autoresearch.repository import (
     paper_sources_dir_path,
     paper_sources_manifest_file_path,
     paper_file_path,
+    publication_repair_execution_file_path,
     save_candidate_manifest,
     save_candidate_snapshot,
     save_benchmark_snapshot,
@@ -70,6 +81,33 @@ from services.telemetry.context import telemetry_context
 
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_repair_plan_allows_paper_rebuild(
+    repair_plan: AutoResearchPublicationRepairPlanRead | None,
+) -> None:
+    if repair_plan is None or repair_plan.action_count < 1:
+        return
+    pending_actions = selected_pending_auto_repair_actions(repair_plan)
+    if not pending_actions:
+        raise ValueError(
+            "Repair plan has no auto-applicable pending actions; manual repair is required before applying review actions"
+        )
+    if not any(action.kind in PAPER_PIPELINE_REPAIR_KINDS for action in pending_actions):
+        required = ", ".join(sorted({action.kind for action in pending_actions}))
+        raise ValueError(
+            "Repair plan requires non-paper repair actions before paper rebuild can apply revisions: "
+            f"{required}"
+        )
+
+
+def _slug_fragment(value: str) -> str:
+    slug = "".join(character.lower() if character.isalnum() else "_" for character in value).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug[:64] or "research_replan"
+
+
 AUTORESEARCH_DRAFT_SECTION = "autorresearch_v0"
 
 
@@ -245,11 +283,19 @@ class AutoResearchOrchestrator:
         ratio = (passed / total) if total else 1.0
         return total == 0 or passed == total, passed, total, ratio
 
-    def _attempt_preference_key(self, artifact: ResultArtifact | None) -> tuple[int, float, float]:
+    def _attempt_preference_key(self, artifact: ResultArtifact | None) -> tuple[int, float, float, int, int, int]:
         if artifact is None or artifact.status != "done":
-            return 0, 0.0, float("-inf")
+            return 0, 0.0, float("-inf"), 0, 0, 0
         all_passed, _, _, ratio = self._acceptance_summary(artifact)
-        return int(all_passed), ratio, self._artifact_score(artifact)
+        aggregate_system_count = len(artifact.aggregate_system_results) or len(artifact.system_results)
+        return (
+            int(all_passed),
+            ratio,
+            self._artifact_score(artifact),
+            len(artifact.significance_tests),
+            aggregate_system_count,
+            len(artifact.per_seed_results),
+        )
 
     def _artifact_power_ok(self, artifact: ResultArtifact | None) -> bool:
         if artifact is None or artifact.status != "done":
@@ -1096,7 +1142,7 @@ class AutoResearchOrchestrator:
         expected_round: int,
         expected_review_fingerprint: str,
     ) -> AutoResearchRunRead:
-        from services.autoresearch.review_publish import build_review_loop
+        from services.autoresearch.review_publish import build_review_loop, build_run_review
 
         review_loop = build_review_loop(project_id, run_id)
         if review_loop is None:
@@ -1109,11 +1155,256 @@ class AutoResearchOrchestrator:
             raise ValueError("Review loop fingerprint changed; refresh review state before applying revisions")
         if review_loop.pending_action_count < 1:
             raise ValueError("Review loop has no pending revision actions to apply")
-        return self._rebuild_paper_pipeline(
+        review = build_run_review(project_id, run_id)
+        repair_plan = review.publication_repair_plan if review is not None else None
+        _ensure_repair_plan_allows_paper_rebuild(repair_plan)
+        rebuilt_run = self._rebuild_paper_pipeline(
             db=db,
             project_id=project_id,
             run_id=run_id,
             refresh_review_after_rebuild=True,
+        )
+        if repair_plan is not None:
+            from services.autoresearch.publication_repair_execution import (
+                build_publication_repair_execution,
+            )
+            from services.autoresearch.repository import publication_repair_execution_file_path
+
+            review_loop_after = build_review_loop(project_id, run_id)
+            repair_execution = build_publication_repair_execution(
+                project_id=project_id,
+                run_id=run_id,
+                repair_plan=repair_plan,
+                review_loop_before=review_loop,
+                review_loop_after=review_loop_after,
+            )
+            repair_execution_path = Path(publication_repair_execution_file_path(project_id, run_id))
+            repair_execution_path.parent.mkdir(parents=True, exist_ok=True)
+            repair_execution_path.write_text(
+                repair_execution.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+        return rebuilt_run
+
+    def _apply_research_replan_to_run(
+        self,
+        run: AutoResearchRunRead,
+        replan: AutoResearchResearchReplanRead,
+    ) -> AutoResearchRunRead:
+        plan = run.plan
+        spec = run.spec
+        request = run.request
+        if plan is None or spec is None:
+            raise ValueError("Research replan requires persisted plan and spec state")
+
+        plan_updates: dict[str, object] = {}
+        if replan.hypothesis_update:
+            hypothesis = replan.hypothesis_update
+            plan_updates["hypotheses"] = [hypothesis, *[item for item in plan.hypotheses if item != hypothesis]]
+            plan_updates["problem_anchor"] = hypothesis
+        if replan.task_scope_update:
+            scope_limits = [*plan.scope_limits]
+            if replan.task_scope_update not in scope_limits:
+                scope_limits.append(replan.task_scope_update)
+            plan_updates["scope_limits"] = scope_limits
+        if replan.claim_downgrade_required:
+            contribution_note = "Claims downgraded by failure-driven research replan until stronger evidence is available."
+            contribution_statements = [*plan.contribution_statements]
+            if contribution_note not in contribution_statements:
+                contribution_statements.append(contribution_note)
+            plan_updates["contribution_statements"] = contribution_statements
+        if replan.actions:
+            outline = [*plan.experiment_outline]
+            for action in replan.actions:
+                note = f"Research replan: {action.title}"
+                if note not in outline:
+                    outline.append(note)
+            plan_updates["experiment_outline"] = outline
+        updated_plan = plan.model_copy(update=plan_updates) if plan_updates else plan
+
+        spec_updates: dict[str, object] = {}
+        if replan.hypothesis_update:
+            spec_updates["hypothesis"] = replan.hypothesis_update
+        if any(action.action_kind == "add_baseline" for action in replan.actions):
+            baselines = list(spec.baselines)
+            existing = {item.name for item in baselines}
+            for baseline in (
+                BaselineSpec(
+                    name="naive_majority_baseline",
+                    description="Failure-driven naive baseline required by research replan.",
+                ),
+                BaselineSpec(
+                    name="strong_conventional_baseline",
+                    description="Failure-driven strong conventional baseline required for fair comparison.",
+                ),
+            ):
+                if baseline.name not in existing:
+                    baselines.append(baseline)
+                    existing.add(baseline.name)
+            spec_updates["baselines"] = baselines
+        if any(action.action_kind == "add_ablation" for action in replan.actions):
+            ablations = list(spec.ablations)
+            existing = {item.name for item in ablations}
+            ablation = AblationSpec(
+                name="replan_component_ablation",
+                description="Failure-driven ablation required to test unsupported method components.",
+            )
+            if ablation.name not in existing:
+                ablations.append(ablation)
+            spec_updates["ablations"] = ablations
+        if replan.experiment_design_repair_required or replan.rerun_required:
+            notes = list(spec.implementation_notes)
+            note = "Apply failure-driven research replan before interpreting publication claims."
+            if note not in notes:
+                notes.append(note)
+            spec_updates["implementation_notes"] = notes
+        updated_spec = spec.model_copy(update=spec_updates) if spec_updates else spec
+
+        request_updates: dict[str, object] = {}
+        if request is not None:
+            request_updates["execution_profile"] = "publication"
+            if replan.rerun_required and request.max_rounds < 2:
+                request_updates["max_rounds"] = 2
+        updated_request = request.model_copy(update=request_updates) if request is not None and request_updates else request
+
+        updated_candidates = []
+        for candidate in run.candidates:
+            if candidate.selected_round_index is None:
+                updated_candidates.append(candidate)
+                continue
+            candidate_updates: dict[str, object] = {}
+            if replan.hypothesis_update:
+                candidate_updates["hypothesis"] = replan.hypothesis_update
+            if replan.claim_downgrade_required:
+                contributions = list(candidate.planned_contributions)
+                note = "Downgraded until failure-driven replan evidence is collected."
+                if note not in contributions:
+                    contributions.append(note)
+                candidate_updates["planned_contributions"] = contributions
+            updated_candidates.append(
+                candidate.model_copy(update=candidate_updates)
+                if candidate_updates
+                else candidate
+            )
+
+        return run.model_copy(
+            update={
+                "request": updated_request,
+                "plan": updated_plan,
+                "spec": updated_spec,
+                "candidates": updated_candidates,
+                "error": (
+                    "Research replan applied; rerun required for new evidence."
+                    if replan.rerun_required
+                    else "Research replan applied to persisted plan/spec state."
+                ),
+            }
+        )
+
+    def apply_research_replan(
+        self,
+        *,
+        db: Session,
+        project_id: str,
+        run_id: str,
+        expected_review_fingerprint: str | None = None,
+    ) -> tuple[
+        AutoResearchRunRead,
+        AutoResearchRunReviewRead,
+        AutoResearchReviewLoopRead,
+        AutoResearchPublicationRepairExecutionRead | None,
+        list[str],
+        bool,
+    ]:
+        from services.autoresearch.publication_repair_execution import (
+            build_publication_repair_execution,
+        )
+        from services.autoresearch.review_publish import build_review_loop, build_run_review
+
+        review = build_run_review(project_id, run_id)
+        review_loop = build_review_loop(project_id, run_id)
+        if review is None or review_loop is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if expected_review_fingerprint and review_loop.latest_review_fingerprint != expected_review_fingerprint:
+            raise ValueError("Review loop fingerprint changed; refresh review state before applying research replan")
+        if review.research_replan is None:
+            raise ValueError("Run has no research replan to apply")
+        replan = review.research_replan
+        if replan.action_count < 1:
+            raise ValueError("Research replan has no actions to apply")
+        if replan.abandon_recommended:
+            raise ValueError("Research replan recommends abandoning or reframing this direction before rerun")
+
+        repair_plan = review.publication_repair_plan
+        selected_actions = (
+            selected_pending_auto_repair_actions(repair_plan)
+            if repair_plan is not None
+            else []
+        )
+        selected_replan_actions = [
+            action
+            for action in selected_actions
+            if action.kind
+            in {
+                "research_replan",
+                "repair_experiment_design",
+                "rerun_experiments",
+                "repair_claim_evidence",
+            }
+        ]
+        if repair_plan is not None and selected_actions and not selected_replan_actions:
+            required = ", ".join(sorted({action.kind for action in selected_actions}))
+            raise ValueError(
+                "Selected repair actions do not include a research replan-compatible action: "
+                f"{required}"
+            )
+
+        run = load_run(project_id, run_id)
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if run.status != "done":
+            raise ValueError("Research replan apply requires a completed auto research run")
+
+        set_project_status(db, project_id, "write")
+        replanned_run = save_run(self._apply_research_replan_to_run(run, replan))
+        applied_action_ids = [
+            action.action_id
+            for action in (selected_replan_actions or [])
+        ] or [action.action_id for action in replan.actions]
+
+        review_after = build_run_review(project_id, run_id, advance_review_loop_round=True)
+        review_loop_after = build_review_loop(project_id, run_id)
+        if review_after is None or review_loop_after is None:
+            raise ValueError("Research replan apply could not refresh review state")
+
+        repair_execution = None
+        if repair_plan is not None:
+            repair_execution = build_publication_repair_execution(
+                project_id=project_id,
+                run_id=run_id,
+                repair_plan=repair_plan,
+                review_loop_before=review_loop,
+                review_loop_after=review_loop_after,
+            )
+            repair_execution_path = Path(publication_repair_execution_file_path(project_id, run_id))
+            repair_execution_path.parent.mkdir(parents=True, exist_ok=True)
+            repair_execution_path.write_text(
+                repair_execution.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            refreshed_review = build_run_review(project_id, run_id)
+            refreshed_loop = build_review_loop(project_id, run_id)
+            if refreshed_review is not None and refreshed_loop is not None:
+                review_after = refreshed_review
+                review_loop_after = refreshed_loop
+        set_project_status(db, project_id, "edit")
+        return (
+            load_run(project_id, run_id) or replanned_run,
+            review_after,
+            review_loop_after,
+            repair_execution,
+            applied_action_ids,
+            replan.rerun_required,
         )
 
     def rebuild_paper_pipeline(
@@ -1415,6 +1706,8 @@ class AutoResearchOrchestrator:
                     else "Instantiate the selected benchmark and freeze train/test partitions."
                 )
                 spec = build_experiment_spec(plan.task_family, benchmark)
+                if run.request is not None and run.request.execution_profile == "publication":
+                    spec = enforce_publication_protocol(spec)
                 # --- Problem Anchor (#9): freeze immutable problem statement ---
                 plan = self._freeze_problem_anchor(plan)
                 # --- 5-Block Experiment Design (#6): standardize experiment structure ---

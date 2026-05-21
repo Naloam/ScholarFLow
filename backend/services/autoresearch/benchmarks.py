@@ -14,6 +14,7 @@ from schemas.autoresearch import (
     SweepConfig,
     TaskFamily,
 )
+from services.autoresearch.research_readiness import dataset_source_fingerprint
 
 
 def _text_benchmark(
@@ -1518,6 +1519,18 @@ def build_experiment_spec(
             label_space=label_space,
             query_fields=query_fields,
             candidate_count=candidate_count,
+            source_kind=resolved.source.kind,
+            source_url=dataset_payload.get("source_url") or resolved.source.url,
+            source_dataset_id=resolved.source.dataset_id,
+            source_revision=resolved.source.revision,
+            source_license=resolved.source.license,
+            source_fingerprint=dataset_source_fingerprint(dataset_payload),
+            publication_grade=(
+                resolved.source.kind != "builtin"
+                and not resolved.benchmark_name.startswith("toy_")
+                and not str(dataset_payload.get("name") or "").lower().startswith("toy ")
+                and len(dataset_payload["train"]) + len(dataset_payload["test"]) >= 20
+            ),
         ),
         baselines=baselines,
         metrics=metrics,

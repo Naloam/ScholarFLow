@@ -121,6 +121,9 @@ export function WorkspacePage() {
   const applyAutoResearchReviewActions = useWorkspaceStore(
     (state) => state.applyAutoResearchReviewActions,
   );
+  const applyAutoResearchResearchReplan = useWorkspaceStore(
+    (state) => state.applyAutoResearchResearchReplan,
+  );
   const rebuildAutoResearchPaper = useWorkspaceStore(
     (state) => state.rebuildAutoResearchPaper,
   );
@@ -298,6 +301,7 @@ export function WorkspacePage() {
             onRefreshReview={refreshAutoResearchReviewLoop}
             onImportBridgeResult={importAutoResearchBridgeResult}
             onApplyReviewActions={applyAutoResearchReviewActions}
+            onApplyResearchReplan={applyAutoResearchResearchReplan}
             onRebuildPaper={rebuildAutoResearchPaper}
             onExportPublish={exportAutoResearchPublish}
             onDownloadPublish={downloadAutoResearchPublish}

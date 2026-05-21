@@ -14,10 +14,20 @@ from schemas.autoresearch import (
     AutoResearchBudgetStatus,
     AutoResearchBundleIndexRead,
     AutoResearchCandidateRegistryRead,
+    AutoResearchCrossRunMetaAnalysisRead,
     AutoResearchExecutionCommandResponse,
+    AutoResearchEvaluationCaseSuiteRead,
     AutoResearchExperimentBridgeRead,
+    AutoResearchExperimentFactoryExecutionRead,
+    AutoResearchExperimentFactoryPlanRead,
+    AutoResearchIdeaRequest,
+    AutoResearchIdeaRunCreateRequest,
+    AutoResearchHypothesisBankRead,
+    AutoResearchLiteratureScoutResultRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
+    AutoResearchProjectPaperOrchestrationRead,
+    AutoResearchPublicationTier,
     AutoResearchPublicationManifestRead,
     AutoResearchPublishExportRequest,
     AutoResearchPublishStatus,
@@ -29,15 +39,19 @@ from schemas.autoresearch import (
     AutoResearchRunControlUpdateRead,
     AutoResearchRunList,
     AutoResearchRunRead,
+    AutoResearchResearchBriefList,
+    AutoResearchResearchBriefRead,
     AutoResearchRunStatus,
     AutoResearchRunReviewRead,
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopApplyRead,
     AutoResearchReviewLoopApplyRequest,
+    AutoResearchResearchReplanApplyRead,
     AutoResearchRunRegistryRead,
     AutoResearchRunRegistryViewsRead,
     AutoResearchRunRequest,
     AutoResearchRunExecutionRead,
+    AutoResearchSystemEvaluationRead,
     AutoResearchUnsupportedClaimRisk,
 )
 from schemas.common import IdResponse
@@ -48,7 +62,21 @@ from services.autoresearch.bridge import (
 )
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.evaluation_cases import build_evaluation_case_suite
+from services.autoresearch.experiment_factory import (
+    build_experiment_factory_plan,
+    execute_toy_experiment_factory,
+)
+from services.autoresearch.idea_brief import (
+    build_research_brief,
+    hypothesis_bank_from_brief,
+    selected_hypothesis_from_brief,
+    run_request_from_selected_hypothesis,
+)
+from services.autoresearch.literature_scout import scout_and_mine_gaps
+from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
+from services.autoresearch.project_paper_orchestrator import build_project_paper_orchestration
 from services.autoresearch.review_publish import (
     build_publish_package,
     build_publication_manifest,
@@ -57,14 +85,19 @@ from services.autoresearch.review_publish import (
     export_publish_package,
     get_publish_archive_path,
 )
+from services.autoresearch.system_evaluation import build_system_evaluation
 from services.autoresearch.repository import (
     create_run,
+    list_research_briefs,
     list_runs,
     load_candidate_registry,
+    load_research_brief,
     load_run_bundle_index,
     load_run,
     load_run_registry,
     load_run_registry_views,
+    save_run,
+    save_research_brief,
 )
 from services.security.audit import write_task_audit_log
 from services.security.auth import AuthIdentity
@@ -108,6 +141,209 @@ def run_auto_research(
     return IdResponse(id=run.id)
 
 
+@router.post("/ideas", response_model=AutoResearchResearchBriefRead)
+def create_auto_research_idea_brief(
+    project_id: str,
+    payload: AutoResearchIdeaRequest,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchBriefRead:
+    del db
+    brief = save_research_brief(
+        build_research_brief(
+            project_id=project_id,
+            payload=payload,
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=brief.brief_id,
+        task_name="autoresearch.idea",
+        project_id=project_id,
+        action="brief_created",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=f"brief_id={brief.brief_id} directions={brief.direction_count}",
+    )
+    return brief
+
+
+@router.get("/ideas", response_model=AutoResearchResearchBriefList)
+def list_auto_research_idea_briefs(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchBriefList:
+    del db
+    return AutoResearchResearchBriefList(items=list_research_briefs(project_id))
+
+
+@router.get("/ideas/{brief_id}/hypotheses", response_model=AutoResearchHypothesisBankRead)
+def get_auto_research_idea_hypothesis_bank(
+    project_id: str,
+    brief_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchHypothesisBankRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    bank, selection = hypothesis_bank_from_brief(brief)
+    return AutoResearchHypothesisBankRead(
+        brief_id=brief.brief_id,
+        project_id=brief.project_id,
+        hypothesis_count=len(bank),
+        hypotheses=bank,
+        selected_hypothesis_id=selection.selected_hypothesis_id,
+        direction_selection=selection,
+    )
+
+
+@router.post("/ideas/{brief_id}/literature-scout", response_model=AutoResearchLiteratureScoutResultRead)
+def run_auto_research_idea_literature_scout(
+    project_id: str,
+    brief_id: str,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchLiteratureScoutResultRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    updated = save_research_brief(scout_and_mine_gaps(brief))
+    if updated.literature_scout is None or updated.gap_miner is None:
+        raise HTTPException(status_code=500, detail="Literature scout did not produce results")
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=updated.brief_id,
+        task_name="autoresearch.literature_scout",
+        project_id=project_id,
+        action="scouted",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"brief_id={updated.brief_id} queries={len(updated.literature_scout.search_queries)} "
+            f"gaps={len(updated.gap_miner.gap_candidates)}"
+        ),
+    )
+    return AutoResearchLiteratureScoutResultRead(
+        brief_id=updated.brief_id,
+        project_id=updated.project_id,
+        literature_scout=updated.literature_scout,
+        gap_miner=updated.gap_miner,
+        updated_brief=updated,
+    )
+
+
+@router.post("/ideas/{brief_id}/run", response_model=IdResponse)
+def create_auto_research_run_from_idea_brief(
+    project_id: str,
+    brief_id: str,
+    background_tasks: BackgroundTasks,
+    payload: AutoResearchIdeaRunCreateRequest | None = Body(default=None),
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> IdResponse:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    if not brief.allow_experiments:
+        raise HTTPException(
+            status_code=409,
+            detail="This idea brief does not allow experiment execution",
+        )
+    payload = payload or AutoResearchIdeaRunCreateRequest()
+    try:
+        run_request, hypothesis = run_request_from_selected_hypothesis(
+            brief,
+            hypothesis_id=payload.hypothesis_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    updates: dict[str, object] = {}
+    if payload.max_rounds is not None:
+        updates["max_rounds"] = payload.max_rounds
+    if payload.candidate_execution_limit is not None:
+        updates["candidate_execution_limit"] = payload.candidate_execution_limit
+    if payload.queue_priority is not None:
+        updates["queue_priority"] = payload.queue_priority
+    if payload.execution_profile is not None:
+        updates["execution_profile"] = payload.execution_profile
+    if updates:
+        run_request = run_request.model_copy(update=updates)
+
+    execution_plane = AutoResearchExecutionPlane()
+    request_snapshot = AutoResearchRunConfig.from_request(run_request)
+    selection_reason = (
+        brief.direction_selection.selection_reason
+        if brief.direction_selection is not None
+        else brief.selection_reason
+    )
+    run = create_run(
+        project_id,
+        run_request.topic,
+        request=request_snapshot,
+        brief_id=brief.brief_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        direction_selection_reason=selection_reason,
+    )
+    job, _created = execution_plane.enqueue(project_id=project_id, run_id=run.id, action="run")
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.idea_run",
+        project_id=project_id,
+        action="queued",
+        status_code=202,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"job_id={job.id} brief_id={brief.brief_id} "
+            f"hypothesis_id={hypothesis.hypothesis_id}"
+        ),
+    )
+    if request_snapshot.experiment_bridge is not None and request_snapshot.experiment_bridge.enabled:
+        execution_plane.drain()
+    else:
+        background_tasks.add_task(execution_plane.drain)
+    return IdResponse(id=run.id)
+
+
+@router.post("/ideas/{brief_id}/experiment-factory", response_model=AutoResearchExperimentFactoryPlanRead)
+def build_auto_research_idea_experiment_factory(
+    project_id: str,
+    brief_id: str,
+    hypothesis_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryPlanRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    try:
+        hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=hypothesis_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+    )
+
+
+@router.get("/ideas/{brief_id}", response_model=AutoResearchResearchBriefRead)
+def get_auto_research_idea_brief(
+    project_id: str,
+    brief_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchBriefRead:
+    del db
+    brief = load_research_brief(project_id, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    return brief
+
+
 @router.get("", response_model=AutoResearchRunList)
 def list_auto_research_runs(
     project_id: str,
@@ -124,6 +360,7 @@ def get_auto_research_operator_console(
     search: str | None = Query(default=None),
     status: AutoResearchRunStatus | None = Query(default=None),
     publish_status: AutoResearchPublishStatus | None = Query(default=None),
+    publication_tier: AutoResearchPublicationTier | None = Query(default=None),
     review_risk: AutoResearchUnsupportedClaimRisk | None = Query(default=None),
     novelty_status: AutoResearchNoveltyStatus | None = Query(default=None),
     budget_status: AutoResearchBudgetStatus | None = Query(default=None),
@@ -137,11 +374,48 @@ def get_auto_research_operator_console(
         search=search,
         status=status,
         publish_status=publish_status,
+        publication_tier=publication_tier,
         review_risk=review_risk,
         novelty_status=novelty_status,
         budget_status=budget_status,
         queue_priority=queue_priority,
     )
+
+
+@router.get("/meta-analysis", response_model=AutoResearchCrossRunMetaAnalysisRead)
+def get_auto_research_meta_analysis(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchCrossRunMetaAnalysisRead:
+    del db
+    return build_cross_run_meta_analysis(project_id)
+
+
+@router.get("/project-paper", response_model=AutoResearchProjectPaperOrchestrationRead)
+def get_auto_research_project_paper_orchestration(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchProjectPaperOrchestrationRead:
+    del db
+    return build_project_paper_orchestration(project_id)
+
+
+@router.get("/system-evaluation", response_model=AutoResearchSystemEvaluationRead)
+def get_auto_research_system_evaluation(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchSystemEvaluationRead:
+    del db
+    return build_system_evaluation(project_id)
+
+
+@router.get("/evaluation-cases", response_model=AutoResearchEvaluationCaseSuiteRead)
+def get_auto_research_evaluation_cases(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchEvaluationCaseSuiteRead:
+    del db
+    return build_evaluation_case_suite(project_id)
 
 
 @router.get("/{run_id}", response_model=AutoResearchRunRead)
@@ -155,6 +429,83 @@ def get_auto_research_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
     return run
+
+
+@router.post("/{run_id}/experiment-factory", response_model=AutoResearchExperimentFactoryPlanRead)
+def build_auto_research_run_experiment_factory(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryPlanRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    brief = load_research_brief(project_id, run.brief_id) if run.brief_id else None
+    hypothesis = None
+    if brief is not None:
+        try:
+            hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=run.hypothesis_id)
+        except ValueError:
+            hypothesis = None
+    return build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+        run=run,
+        experiment_design=getattr(run, "experiment_design", None),
+    )
+
+
+@router.post("/{run_id}/experiment-factory/toy-execute", response_model=AutoResearchExperimentFactoryExecutionRead)
+def execute_auto_research_run_experiment_factory_toy(
+    project_id: str,
+    run_id: str,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryExecutionRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    brief = load_research_brief(project_id, run.brief_id) if run.brief_id else None
+    hypothesis = None
+    if brief is not None:
+        try:
+            hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=run.hypothesis_id)
+        except ValueError:
+            hypothesis = None
+    plan = build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+        run=run,
+        experiment_design=getattr(run, "experiment_design", None),
+    )
+    execution = execute_toy_experiment_factory(plan)
+    save_run(
+        run.model_copy(
+            update={
+                "status": "done",
+                "error": None,
+                "experiment_factory_plan": execution.execution_plan,
+                "artifact": execution.result_artifact,
+                "evidence_ledger": execution.evidence_ledger,
+                "experiment_factory_repair_plan": execution.repair_plan,
+            }
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.experiment_factory",
+        project_id=project_id,
+        action="toy_executed",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=f"run_id={run.id} jobs={plan.job_count} ledger_entries={execution.evidence_ledger.entry_count}",
+    )
+    return execution
 
 
 @router.patch("/{run_id}/controls", response_model=AutoResearchRunControlUpdateRead)
@@ -439,6 +790,45 @@ def apply_auto_research_review_loop_actions(
     )
 
 
+@router.post("/{run_id}/research-replan/apply", response_model=AutoResearchResearchReplanApplyRead)
+def apply_auto_research_research_replan(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchReviewLoopApplyRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchResearchReplanApplyRead:
+    try:
+        (
+            run,
+            review,
+            review_loop,
+            repair_execution,
+            applied_action_ids,
+            queued_rerun_required,
+        ) = AutoResearchOrchestrator().apply_research_replan(
+            db=db,
+            project_id=project_id,
+            run_id=run_id,
+            expected_review_fingerprint=(
+                payload.expected_review_fingerprint
+                if payload is not None
+                else None
+            ),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return AutoResearchResearchReplanApplyRead(
+        run=run,
+        review=review,
+        review_loop=review_loop,
+        repair_execution=repair_execution,
+        applied_action_ids=applied_action_ids,
+        queued_rerun_required=queued_rerun_required,
+    )
+
+
 @router.post("/{run_id}/paper/rebuild", response_model=AutoResearchRunRead)
 def rebuild_auto_research_paper_pipeline(
     project_id: str,
@@ -518,19 +908,19 @@ def download_auto_research_publish_package(
     package = build_publish_package(project_id, run_id)
     if package is None:
         raise HTTPException(status_code=404, detail="Auto research run not found")
+    archive_path = get_publish_archive_path(project_id, run_id).resolve()
+    if package.archive_ready and archive_path.is_file() and not package.archive_current:
+        raise HTTPException(
+            status_code=409,
+            detail="Publish package export is stale; export again for the current review state",
+        )
     if not package.final_publish_ready:
         raise HTTPException(
             status_code=409,
             detail="Auto research run is not final publish ready; export is only available for publish-ready runs",
         )
-    archive_path = get_publish_archive_path(project_id, run_id).resolve()
     if not package.archive_ready or not archive_path.is_file():
         raise HTTPException(status_code=409, detail="Publish package has not been exported yet")
-    if not package.archive_current:
-        raise HTTPException(
-            status_code=409,
-            detail="Publish package export is stale; export again for the current review state",
-        )
     return FileResponse(
         path=archive_path,
         filename=archive_path.name,

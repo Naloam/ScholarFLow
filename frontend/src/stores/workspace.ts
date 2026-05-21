@@ -62,6 +62,7 @@ function normalizeConsoleFilters(
     search: search ? search : null,
     status: filters.status ?? null,
     publish_status: filters.publish_status ?? null,
+    publication_tier: filters.publication_tier ?? null,
     review_risk: filters.review_risk ?? null,
     novelty_status: filters.novelty_status ?? null,
     budget_status: filters.budget_status ?? null,
@@ -190,6 +191,7 @@ type WorkspaceState = {
   refreshAutoResearchReviewLoop: () => Promise<void>;
   refreshAutoResearchBridge: () => Promise<void>;
   applyAutoResearchReviewActions: () => Promise<void>;
+  applyAutoResearchResearchReplan: () => Promise<void>;
   setEditorContent: (content: string) => void;
   setFocusedText: (content: string) => void;
   setConnectionState: (state: ConnectionState) => void;
@@ -239,7 +241,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   ): boolean => {
     const publish = consoleState?.current_run?.publish;
     return Boolean(
-      publish && publish.final_publish_ready && publish.archive_ready,
+      publish &&
+        publish.final_publish_ready &&
+        publish.archive_ready &&
+        publish.archive_current,
     );
   };
   const loadPublicationManifest = async (
@@ -1310,6 +1315,54 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `Review actions applied for ${runId}` });
       } catch (error) {
         handleActionError(error, "Apply review actions failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async applyAutoResearchResearchReplan() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const currentRun = autoResearchConsole?.current_run;
+      const runId = currentRun?.run.id;
+      const reviewLoop = currentRun?.review_loop;
+      if (!currentProjectId || !runId) {
+        set({
+          notice:
+            "Select an auto-research run with a research replan before applying it",
+        });
+        return;
+      }
+      if (!currentRun?.actions.replan_research) {
+        set({ notice: "Current run has no applicable research replan action" });
+        return;
+      }
+
+      set({ working: true, notice: `Applying research replan for ${runId}...` });
+      try {
+        const payload =
+          reviewLoop?.latest_review_fingerprint &&
+          reviewLoop.current_round >= 1
+            ? {
+                expected_round: reviewLoop.current_round,
+                expected_review_fingerprint:
+                  reviewLoop.latest_review_fingerprint,
+              }
+            : undefined;
+        const result = await api.applyAutoResearchResearchReplan(
+          currentProjectId,
+          runId,
+          payload,
+        );
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({
+          notice: result.queued_rerun_required
+            ? `Research replan applied for ${runId}; rerun is required for new evidence`
+            : `Research replan applied for ${runId}`,
+        });
+      } catch (error) {
+        handleActionError(error, "Apply research replan failed");
       } finally {
         set({ working: false });
       }

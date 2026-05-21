@@ -28,6 +28,7 @@ type OperatorConsolePanelProps = {
   onRefreshReview: () => void;
   onImportBridgeResult: (payload: AutoResearchBridgeImportRequest) => void;
   onApplyReviewActions: () => void;
+  onApplyResearchReplan: () => void;
   onRebuildPaper: () => void;
   onExportPublish: (payload?: {
     deployment_id?: string | null;
@@ -49,6 +50,13 @@ function formatScore(value: unknown): string {
 }
 
 function formatTaskFamily(value: string | null | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  return value.replaceAll("_", " ");
+}
+
+function formatLabel(value: string | null | undefined): string {
   if (!value) {
     return "n/a";
   }
@@ -83,6 +91,7 @@ export function OperatorConsolePanel({
   onRefreshReview,
   onImportBridgeResult,
   onApplyReviewActions,
+  onApplyResearchReplan,
   onRebuildPaper,
   onExportPublish,
   onDownloadPublish,
@@ -125,9 +134,11 @@ export function OperatorConsolePanel({
     filters.search,
     filters.status,
     filters.publish_status,
+    filters.publication_tier,
     filters.review_risk,
     filters.novelty_status,
     filters.budget_status,
+    filters.queue_priority,
   ]);
 
   const current = consoleState?.current_run ?? null;
@@ -159,6 +170,7 @@ export function OperatorConsolePanel({
     filters.search ||
     filters.status ||
     filters.publish_status ||
+    filters.publication_tier ||
     filters.review_risk ||
     filters.novelty_status ||
     filters.budget_status ||
@@ -284,6 +296,7 @@ export function OperatorConsolePanel({
             type="button"
             className={`tab ${activeTab === tab.key ? "active" : ""}`}
             onClick={() => setActiveTab(tab.key)}
+            data-testid={`operator-tab-${tab.key}`}
           >
             {tab.label}
           </button>
@@ -388,6 +401,76 @@ export function OperatorConsolePanel({
                       {run.publish_status ?? "n/a"}
                     </small>
                     <small>
+                      final {run.final_publish_ready ? "ready" : "not ready"} /
+                      blockers {run.blocker_count}+{run.final_blocker_count} /
+                      revisions {run.revision_count}
+                    </small>
+                    <small>
+                      tier {run.publication_tier ?? "n/a"} / score{" "}
+                      {run.publication_readiness_score} / checks{" "}
+                      {run.readiness_checks_passed}/{run.readiness_checks_total}
+                    </small>
+                    <small>
+                      contribution {run.contribution_score}/100 / duplicate{" "}
+                      {run.novelty_duplicate_risk ?? "n/a"} / design{" "}
+                      {run.experiment_design_completeness ?? "n/a"}
+                    </small>
+                    <small>
+                      reviewer {run.reviewer_simulation_average_score.toFixed(1)}
+                      {" "}/ min {run.reviewer_simulation_minimum_score}{" "}
+                      {run.reviewer_simulation_minimum_decision ?? "n/a"} /
+                      weak {run.reviewer_simulation_weak_reject_or_worse_count}
+                    </small>
+                    <small>
+                      next {formatLabel(run.next_research_action)}:{" "}
+                      {run.next_research_action_detail ?? "n/a"}
+                    </small>
+                    <small>
+                      card{" "}
+                      {run.benchmark_card_publication_grade ? "grade" : "gaps"}{" "}
+                      / provenance{" "}
+                      {run.benchmark_card_provenance_complete ? "yes" : "no"}{" "}
+                      / examples {run.benchmark_card_total_examples}
+                    </small>
+                    <small>
+                      protocol {run.research_protocol_complete ? "complete" : "gaps"}{" "}
+                      / audit {run.methodology_audit_score}/100{" "}
+                      {run.methodology_audit_compliant ? "compliant" : "blocked"}
+                    </small>
+                    <small>
+                      dossier {run.revision_dossier_complete ? "complete" : "open"}{" "}
+                      / required {run.revision_dossier_blocker_count}
+                    </small>
+                    <small>
+                      evidence{" "}
+                      {run.publication_evidence_index_complete
+                        ? "complete"
+                        : "missing"}{" "}
+                      / missing {run.publication_evidence_index_missing_count}
+                    </small>
+                    <small>
+                      integrity{" "}
+                      {run.artifact_integrity_audit_complete
+                        ? "complete"
+                        : "gaps"}{" "}
+                      / blocked {run.artifact_integrity_audit_blocker_count}
+                    </small>
+                    <small>
+                      repair{" "}
+                      {run.publication_repair_plan_complete ? "complete" : "pending"}{" "}
+                      / auto {run.publication_repair_plan_auto_applicable_count}{" "}
+                      / blocked {run.publication_repair_plan_blocked_count}
+                    </small>
+                    <small>
+                      repair exec{" "}
+                      {run.publication_repair_execution_attempted_count
+                        ? run.publication_repair_execution_success
+                          ? "success"
+                          : "partial"
+                        : "none"}{" "}
+                      / attempted {run.publication_repair_execution_attempted_count}
+                    </small>
+                    <small>
                       benchmark {run.benchmark_name ?? "n/a"} / family{" "}
                       {formatTaskFamily(run.task_family)}
                     </small>
@@ -442,8 +525,241 @@ export function OperatorConsolePanel({
                 <span className="meta-label">{t("operator.publish")}</span>
                 <strong>{publish?.status ?? t("operator.notBuilt")}</strong>
               </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.publicationTier")}
+                </span>
+                <strong data-testid="operator-publication-tier">
+                  {currentSummary?.publication_tier ?? "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.readinessScore")}
+                </span>
+                <strong data-testid="operator-readiness-score">
+                  {currentSummary
+                    ? `${currentSummary.publication_readiness_score}/100`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.contributionScore")}
+                </span>
+                <strong data-testid="operator-contribution-score">
+                  {currentSummary
+                    ? `${currentSummary.contribution_score}/100`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.noveltyRisk")}
+                </span>
+                <strong data-testid="operator-novelty-risk">
+                  {currentSummary
+                    ? `${currentSummary.novelty_duplicate_risk ?? "n/a"} / ${currentSummary.novelty_incremental_risk ?? "n/a"}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.experimentDesign")}
+                </span>
+                <strong data-testid="operator-experiment-design">
+                  {currentSummary?.experiment_design_completeness ?? "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.reviewerScore")}
+                </span>
+                <strong data-testid="operator-reviewer-score">
+                  {currentSummary
+                    ? `${currentSummary.reviewer_simulation_average_score.toFixed(1)} / ${currentSummary.reviewer_simulation_minimum_score}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.weakestReviewer")}
+                </span>
+                <strong data-testid="operator-weakest-reviewer">
+                  {currentSummary
+                    ? `${formatLabel(currentSummary.weakest_reviewer_role)} / ${currentSummary.reviewer_simulation_minimum_decision ?? "n/a"}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.nextResearchAction")}
+                </span>
+                <strong data-testid="operator-next-research-action">
+                  {currentSummary
+                    ? formatLabel(currentSummary.next_research_action)
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.readinessChecks")}
+                </span>
+                <strong data-testid="operator-readiness-checks">
+                  {currentSummary
+                    ? `${currentSummary.readiness_checks_passed}/${currentSummary.readiness_checks_total}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.protocolStatus")}
+                </span>
+                <strong data-testid="operator-protocol-status">
+                  {currentSummary
+                    ? currentSummary.research_protocol_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.research_protocol_blocker_count} ${t("operator.gaps")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.methodologyAudit")}
+                </span>
+                <strong data-testid="operator-methodology-audit">
+                  {currentSummary
+                    ? `${currentSummary.methodology_audit_score}/100 ${currentSummary.methodology_audit_checks_passed}/${currentSummary.methodology_audit_checks_total}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.benchmarkCard")}
+                </span>
+                <strong data-testid="operator-benchmark-card-summary">
+                  {currentSummary
+                    ? `${currentSummary.benchmark_card_total_examples} ${t("operator.examples")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.evidenceIndex")}
+                </span>
+                <strong data-testid="operator-evidence-index-summary">
+                  {currentSummary
+                    ? currentSummary.publication_evidence_index_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_evidence_index_missing_count} ${t("operator.missing")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.artifactIntegrity")}
+                </span>
+                <strong data-testid="operator-artifact-integrity-summary">
+                  {currentSummary
+                    ? currentSummary.artifact_integrity_audit_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.artifact_integrity_audit_blocker_count} ${t("operator.blocked")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.repairPlan")}
+                </span>
+                <strong data-testid="operator-repair-plan-summary">
+                  {currentSummary
+                    ? currentSummary.publication_repair_plan_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_repair_plan_auto_applicable_count} ${t("operator.auto")} / ${currentSummary.publication_repair_plan_blocked_count} ${t("operator.blocked")}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.repairExecution")}
+                </span>
+                <strong data-testid="operator-repair-execution-summary">
+                  {currentSummary
+                    ? currentSummary.publication_repair_execution_attempted_count
+                      ? currentSummary.publication_repair_execution_success
+                        ? t("operator.success")
+                        : `${currentSummary.publication_repair_execution_partial_count} ${t("operator.partial")}`
+                      : t("operator.notBuilt")
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.executionProfile")}
+                </span>
+                <strong data-testid="operator-execution-profile">
+                  {currentSummary?.execution_profile ?? "exploratory"}
+                </strong>
+              </div>
             </div>
           )}
+
+          {currentSummary ? (
+            <div className="meta-block" data-testid="operator-next-action-detail">
+              <span className="meta-label">
+                {t("operator.nextResearchAction")}
+              </span>
+              <p>
+                {formatLabel(currentSummary.next_research_action)} ·{" "}
+                {currentSummary.next_research_action_detail ?? "n/a"}
+              </p>
+            </div>
+          ) : null}
+
+          {activeConsole?.meta_analysis || activeConsole?.system_evaluation ? (
+            <div className="summary-banner operator-summary-grid">
+              <div>
+                <span className="meta-label">
+                  {t("operator.metaAnalysis")}
+                </span>
+                <strong data-testid="operator-meta-analysis-summary">
+                  {activeConsole.meta_analysis
+                    ? `${activeConsole.meta_analysis.comparable_run_count}/${activeConsole.meta_analysis.run_count}`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.projectPaper")}
+                </span>
+                <strong>
+                  {activeConsole.meta_analysis?.project_level_paper_recommended
+                    ? t("operator.yes")
+                    : t("operator.no")}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.systemEvaluation")}
+                </span>
+                <strong data-testid="operator-system-evaluation-summary">
+                  {activeConsole.system_evaluation
+                    ? `${activeConsole.system_evaluation.overall_score}/100`
+                    : "n/a"}
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">
+                  {t("operator.evaluationTasks")}
+                </span>
+                <strong>
+                  {activeConsole.system_evaluation
+                    ? `${activeConsole.system_evaluation.completed_task_count}/${activeConsole.system_evaluation.task_count}`
+                    : "n/a"}
+                </strong>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
 
@@ -571,6 +887,35 @@ export function OperatorConsolePanel({
                   {t("operator.revisionRequired")}
                 </option>
                 <option value="blocked">{t("operator.blocked")}</option>
+              </select>
+              <select
+                id="operator-filter-publication-tier"
+                name="operator_filter_publication_tier"
+                value={draftFilters.publication_tier ?? ""}
+                onChange={(event) =>
+                  updateFilter(
+                    "publication_tier",
+                    (event.target.value
+                      ? event.target.value
+                      : null) as AutoResearchOperatorConsoleFilters["publication_tier"],
+                  )
+                }
+                disabled={disabled}
+                data-testid="operator-filter-publication-tier"
+              >
+                <option value="">{t("operator.allPublicationTiers")}</option>
+                <option value="exploratory">
+                  {t("operator.tierExploratory")}
+                </option>
+                <option value="review_ready">
+                  {t("operator.tierReviewReady")}
+                </option>
+                <option value="publish_candidate">
+                  {t("operator.tierPublishCandidate")}
+                </option>
+                <option value="publish_ready">
+                  {t("operator.tierPublishReady")}
+                </option>
               </select>
               <select
                 id="operator-filter-risk"
@@ -1168,6 +1513,15 @@ export function OperatorConsolePanel({
                 <button
                   type="button"
                   className="ghost-btn"
+                  onClick={onApplyResearchReplan}
+                  disabled={disabled || !current.actions.replan_research}
+                  data-testid="apply-research-replan-button"
+                >
+                  {t("operator.applyResearchReplan")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
                   onClick={onRebuildPaper}
                   disabled={disabled || !current.actions.rebuild_paper}
                   data-testid="rebuild-paper-button"
@@ -1222,6 +1576,54 @@ export function OperatorConsolePanel({
                   <strong>{novelty?.status ?? "n/a"}</strong>
                 </div>
                 <div>
+                  <span className="meta-label">
+                    {t("operator.contributionScore")}
+                  </span>
+                  <strong data-testid="operator-review-contribution-score">
+                    {currentSummary
+                      ? `${currentSummary.contribution_score}/100`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.noveltyRisk")}
+                  </span>
+                  <strong data-testid="operator-review-novelty-risk">
+                    {currentSummary
+                      ? `${currentSummary.novelty_duplicate_risk ?? "n/a"} / ${currentSummary.novelty_incremental_risk ?? "n/a"}`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.experimentDesign")}
+                  </span>
+                  <strong data-testid="operator-review-experiment-design">
+                    {currentSummary?.experiment_design_completeness ?? "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.reviewerScore")}
+                  </span>
+                  <strong data-testid="operator-review-reviewer-score">
+                    {currentSummary
+                      ? `${currentSummary.reviewer_simulation_average_score.toFixed(1)} / ${currentSummary.reviewer_simulation_minimum_score}`
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="meta-label">
+                    {t("operator.nextResearchAction")}
+                  </span>
+                  <strong data-testid="operator-review-next-action">
+                    {currentSummary
+                      ? formatLabel(currentSummary.next_research_action)
+                      : "n/a"}
+                  </strong>
+                </div>
+                <div>
                   <span className="meta-label">{t("operator.budget")}</span>
                   <strong>
                     {currentSummary
@@ -1248,6 +1650,233 @@ export function OperatorConsolePanel({
                   <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
                 </div>
               </div>
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-research-action">
+                  <span className="meta-label">
+                    {t("operator.nextResearchAction")}
+                  </span>
+                  <p>
+                    {formatLabel(currentSummary.next_research_action)} ·{" "}
+                    {currentSummary.next_research_action_detail ?? "n/a"}
+                  </p>
+                  <p>
+                    reviewer={currentSummary.reviewer_simulation_average_score.toFixed(1)}{" "}
+                    min={currentSummary.reviewer_simulation_minimum_score}{" "}
+                    {currentSummary.reviewer_simulation_minimum_decision ?? "n/a"}{" "}
+                    weakest={formatLabel(currentSummary.weakest_reviewer_role)}
+                  </p>
+                  {currentSummary.reviewer_simulation_blockers.length ? (
+                    <ul>
+                      {currentSummary.reviewer_simulation_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noReviewerBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-benchmark-card">
+                  <span className="meta-label">
+                    {t("operator.benchmarkCard")}
+                  </span>
+                  <p>
+                    grade=
+                    {currentSummary.benchmark_card_publication_grade
+                      ? t("operator.yes")
+                      : t("operator.no")}{" "}
+                    provenance=
+                    {currentSummary.benchmark_card_provenance_complete
+                      ? t("operator.yes")
+                      : t("operator.no")}{" "}
+                    examples={currentSummary.benchmark_card_total_examples}
+                  </p>
+                  {currentSummary.benchmark_card_blockers.length ? (
+                    <ul>
+                      {currentSummary.benchmark_card_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noBenchmarkCardBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-evidence-index">
+                  <span className="meta-label">
+                    {t("operator.evidenceIndex")}
+                  </span>
+                  <p>
+                    {currentSummary.publication_evidence_index_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_evidence_index_missing_count} ${t("operator.missing")}`}
+                  </p>
+                  {currentSummary.publication_evidence_index_blockers.length ? (
+                    <ul>
+                      {currentSummary.publication_evidence_index_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noEvidenceIndexBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-artifact-integrity">
+                  <span className="meta-label">
+                    {t("operator.artifactIntegrity")}
+                  </span>
+                  <p>
+                    {currentSummary.artifact_integrity_audit_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.artifact_integrity_audit_blocker_count} ${t("operator.blocked")} / ${currentSummary.artifact_integrity_audit_warning_count} ${t("operator.warnings")}`}
+                  </p>
+                  <p>
+                    lineage={currentSummary.artifact_integrity_audit_missing_lineage_target_count}{" "}
+                    untraced={currentSummary.artifact_integrity_audit_untraced_asset_count}
+                  </p>
+                  {currentSummary.artifact_integrity_audit_blockers.length ? (
+                    <ul>
+                      {currentSummary.artifact_integrity_audit_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noArtifactIntegrityBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-repair-plan">
+                  <span className="meta-label">
+                    {t("operator.repairPlan")}
+                  </span>
+                  <p>
+                    {currentSummary.publication_repair_plan_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.publication_repair_plan_pending_count} ${t("operator.pending")} / ${currentSummary.publication_repair_plan_blocked_count} ${t("operator.blocked")}`}
+                  </p>
+                  {currentSummary.publication_repair_plan_next_actions.length ? (
+                    <ul>
+                      {currentSummary.publication_repair_plan_next_actions.map((action) => (
+                        <li key={action}>{action}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noRepairPlanActions")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-repair-execution">
+                  <span className="meta-label">
+                    {t("operator.repairExecution")}
+                  </span>
+                  <p>
+                    {currentSummary.publication_repair_execution_attempted_count
+                      ? `${currentSummary.publication_repair_execution_executed_count} ${t("operator.executed")} / ${currentSummary.publication_repair_execution_partial_count} ${t("operator.partial")} / ${currentSummary.publication_repair_execution_blocked_count} ${t("operator.blocked")}`
+                      : t("operator.notBuilt")}
+                  </p>
+                  {currentSummary.publication_repair_execution_missing_outputs.length ? (
+                    <ul>
+                      {currentSummary.publication_repair_execution_missing_outputs.map((output) => (
+                        <li key={output}>{output}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noRepairExecutionGaps")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-readiness-blockers">
+                  <span className="meta-label">
+                    {t("operator.readinessBlockers")}
+                  </span>
+                  <p>
+                    tier={currentSummary.publication_tier ?? "n/a"} score=
+                    {currentSummary.publication_readiness_score}/100
+                    {" "}benchmark=
+                    {currentSummary.publication_grade_benchmark
+                      ? t("operator.yes")
+                      : t("operator.no")}
+                  </p>
+                  {currentSummary.publication_blockers.length ? (
+                    <ul>
+                      {currentSummary.publication_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noReadinessBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-methodology-blockers">
+                  <span className="meta-label">
+                    {t("operator.methodologyBlockers")}
+                  </span>
+                  <p>
+                    protocol=
+                    {currentSummary.research_protocol_complete
+                      ? t("operator.complete")
+                      : t("operator.gaps")}{" "}
+                    audit=
+                    {currentSummary.methodology_audit_compliant
+                      ? t("operator.compliant")
+                      : t("operator.blocked")}
+                  </p>
+                  {currentSummary.methodology_audit_blockers.length ? (
+                    <ul>
+                      {currentSummary.methodology_audit_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : currentSummary.research_protocol_blockers.length ? (
+                    <ul>
+                      {currentSummary.research_protocol_blockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noMethodologyBlockers")}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {currentSummary ? (
+                <div className="meta-block" data-testid="operator-revision-dossier">
+                  <span className="meta-label">
+                    {t("operator.revisionDossier")}
+                  </span>
+                  <p>
+                    {currentSummary.revision_dossier_complete
+                      ? t("operator.complete")
+                      : `${currentSummary.revision_dossier_blocker_count} ${t("operator.blocked")}`}
+                  </p>
+                  {currentSummary.revision_dossier_required_actions.length ? (
+                    <ul>
+                      {currentSummary.revision_dossier_required_actions.map((action) => (
+                        <li key={action}>{action}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{t("operator.noRevisionDossierActions")}</p>
+                  )}
+                </div>
+              ) : null}
 
               {currentPublication ? (
                 <>

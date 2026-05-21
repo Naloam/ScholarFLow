@@ -21,6 +21,7 @@ import type {
   AutoResearchResearchBriefList,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
+  AutoResearchProjectPaperOrchestration,
   AutoResearchPublishExport,
   AutoResearchPublishExportRequest,
   AutoResearchPublishPackage,
@@ -554,6 +555,12 @@ export const api = {
     projectId: string,
   ): Promise<AutoResearchCrossRunMetaAnalysis> {
     return request(`/api/projects/${projectId}/auto-research/meta-analysis`);
+  },
+
+  getAutoResearchProjectPaperOrchestration(
+    projectId: string,
+  ): Promise<AutoResearchProjectPaperOrchestration> {
+    return request(`/api/projects/${projectId}/auto-research/project-paper`);
   },
 
   getAutoResearchSystemEvaluation(

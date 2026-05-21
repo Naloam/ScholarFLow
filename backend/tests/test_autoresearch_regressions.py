@@ -17,6 +17,7 @@ import services.autoresearch.experiment_factory as autoresearch_experiment_facto
 import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
+import services.autoresearch.project_paper_orchestrator as autoresearch_project_paper_orchestrator
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
 import services.autoresearch.writer as autoresearch_writer
@@ -65,6 +66,7 @@ from schemas.autoresearch import (
     ResearchProgram,
     ResultArtifact,
     ResultTable,
+    SignificanceTestResult,
 )
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
@@ -4838,6 +4840,114 @@ def test_experiment_factory_artifacts_persist_on_run(
     assert "run_experiment_factory_plan_json" in roles
     assert "run_evidence_ledger_json" in roles
     assert "run_experiment_factory_repair_plan_json" in roles
+
+
+def _stable_project_artifact(score: float) -> ResultArtifact:
+    return _result_artifact().model_copy(
+        update={
+            "objective_score": score,
+            "significance_tests": [
+                SignificanceTestResult(
+                    scope="system",
+                    metric="macro_f1",
+                    candidate="candidate_system",
+                    comparator="keyword_baseline",
+                    comparison_family="project_factory",
+                    family_size=1,
+                    alternative="greater",
+                    method="paired_sign_flip_exact",
+                    p_value=0.0312,
+                    adjusted_p_value=0.0312,
+                    correction="holm_bonferroni",
+                    effect_size=0.11,
+                    significant=True,
+                    sample_count=3,
+                    detail="Stable deterministic comparison for project-level paper orchestration.",
+                )
+            ],
+        }
+    )
+
+
+def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-paper-single"
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+        )
+    )
+    run = autoresearch_repository.create_run(
+        project_id,
+        "Shared evidence-aware reranking benchmark",
+        request=AutoResearchRunConfig(task_family_hint="ir_reranking"),
+        brief_id=brief.brief_id,
+        hypothesis_id=brief.selected_hypothesis_id,
+        direction_selection_reason=brief.selection_reason,
+    )
+    autoresearch_repository.save_run(
+        run.model_copy(
+            update={
+                "status": "done",
+                "artifact": _stable_project_artifact(0.72),
+            }
+        )
+    )
+
+    orchestration = autoresearch_project_paper_orchestrator.build_project_paper_orchestration(project_id)
+
+    assert orchestration.latest_brief_id == brief.brief_id
+    assert orchestration.selected_run_count == 1
+    assert orchestration.should_write_paper is True
+    assert orchestration.project_level_paper_allowed is False
+    assert orchestration.paper_decision == "technical_report"
+    assert orchestration.source_strategy == "single_run_report"
+    assert orchestration.conclusion_ledger.conditional_conclusions
+    assert orchestration.supported_core_claim_count == orchestration.core_claim_count
+    assert any("Only one completed run" in item for item in orchestration.warnings)
+
+
+def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-paper-stable"
+    runs = []
+    for index, score in enumerate((0.72, 0.74), start=1):
+        run = autoresearch_repository.create_run(
+            project_id,
+            "Shared evidence-aware reranking benchmark",
+            request=AutoResearchRunConfig(task_family_hint="ir_reranking"),
+        )
+        runs.append(
+            autoresearch_repository.save_run(
+                run.model_copy(
+                    update={
+                        "status": "done",
+                        "artifact": _stable_project_artifact(score),
+                    }
+                )
+            )
+        )
+
+    orchestration = autoresearch_project_paper_orchestrator.build_project_paper_orchestration(project_id)
+
+    assert orchestration.candidate_run_count == 2
+    assert set(orchestration.selected_run_ids) == {run.id for run in runs}
+    assert orchestration.conclusion_ledger.stable_conclusions
+    assert orchestration.should_write_paper is True
+    assert orchestration.project_level_paper_allowed is True
+    assert orchestration.source_strategy == "project_level_paper"
+    assert orchestration.paper_decision == "workshop_candidate"
+    assert orchestration.project_publish_gate_passed is True
+    assert orchestration.core_claim_count >= 1
+    assert orchestration.unsupported_core_claim_count == 0
+    assert all(trace.evidence_refs for trace in orchestration.claim_traces)
 
 
 def test_narrative_artifact_summary_uses_objective_system_when_best_missing() -> None:

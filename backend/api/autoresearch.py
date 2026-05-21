@@ -25,6 +25,7 @@ from schemas.autoresearch import (
     AutoResearchLiteratureScoutResultRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
+    AutoResearchProjectPaperOrchestrationRead,
     AutoResearchPublicationTier,
     AutoResearchPublicationManifestRead,
     AutoResearchPublishExportRequest,
@@ -73,6 +74,7 @@ from services.autoresearch.idea_brief import (
 from services.autoresearch.literature_scout import scout_and_mine_gaps
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
+from services.autoresearch.project_paper_orchestrator import build_project_paper_orchestration
 from services.autoresearch.review_publish import (
     build_publish_package,
     build_publication_manifest,
@@ -385,6 +387,15 @@ def get_auto_research_meta_analysis(
 ) -> AutoResearchCrossRunMetaAnalysisRead:
     del db
     return build_cross_run_meta_analysis(project_id)
+
+
+@router.get("/project-paper", response_model=AutoResearchProjectPaperOrchestrationRead)
+def get_auto_research_project_paper_orchestration(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchProjectPaperOrchestrationRead:
+    del db
+    return build_project_paper_orchestration(project_id)
 
 
 @router.get("/system-evaluation", response_model=AutoResearchSystemEvaluationRead)

@@ -3128,6 +3128,92 @@ export type AutoResearchCrossRunMetaAnalysis = {
   analysis_fingerprint: string;
 };
 
+export type AutoResearchProjectPaperDecision =
+  | "do_not_write"
+  | "technical_report"
+  | "workshop_candidate"
+  | "conference_candidate";
+
+export type AutoResearchProjectPaperSourceStrategy =
+  | "no_paper"
+  | "single_run_report"
+  | "project_level_paper";
+
+export type AutoResearchProjectConclusionKind =
+  | "stable"
+  | "conditional"
+  | "negative"
+  | "failed_hypothesis"
+  | "limitation";
+
+export type AutoResearchProjectClaimTraceStatus =
+  | "supported"
+  | "partial"
+  | "unsupported";
+
+export type AutoResearchProjectConclusionEntry = {
+  conclusion_id: string;
+  kind: AutoResearchProjectConclusionKind;
+  text: string;
+  supporting_run_ids: string[];
+  evidence_refs: string[];
+  caveats: string[];
+  paper_claim_allowed: boolean;
+};
+
+export type AutoResearchProjectConclusionLedger = {
+  ledger_id: string;
+  project_id: string;
+  stable_conclusions: AutoResearchProjectConclusionEntry[];
+  conditional_conclusions: AutoResearchProjectConclusionEntry[];
+  negative_findings: AutoResearchProjectConclusionEntry[];
+  failed_hypotheses: AutoResearchProjectConclusionEntry[];
+  limitations: AutoResearchProjectConclusionEntry[];
+  conclusion_count: number;
+  ledger_fingerprint: string;
+};
+
+export type AutoResearchProjectClaimTrace = {
+  claim_id: string;
+  claim: string;
+  source_conclusion_id: string;
+  support_status: AutoResearchProjectClaimTraceStatus;
+  supporting_run_ids: string[];
+  evidence_refs: string[];
+  unsupported_reasons: string[];
+  strong_claim: boolean;
+};
+
+export type AutoResearchProjectPaperOrchestration = {
+  generated_at: string;
+  orchestrator_id: string;
+  project_id: string;
+  brief_count: number;
+  latest_brief_id?: string | null;
+  latest_brief_selected_hypothesis_id?: string | null;
+  candidate_run_count: number;
+  selected_run_ids: string[];
+  selected_run_count: number;
+  meta_analysis: AutoResearchCrossRunMetaAnalysis;
+  conclusion_ledger: AutoResearchProjectConclusionLedger;
+  claim_traces: AutoResearchProjectClaimTrace[];
+  core_claim_count: number;
+  supported_core_claim_count: number;
+  unsupported_core_claim_count: number;
+  reviewer_simulation_count: number;
+  reviewer_average_score: number;
+  should_write_paper: boolean;
+  project_level_paper_allowed: boolean;
+  paper_decision: AutoResearchProjectPaperDecision;
+  paper_tier: AutoResearchPaperTier;
+  source_strategy: AutoResearchProjectPaperSourceStrategy;
+  project_publish_gate_passed: boolean;
+  blockers: string[];
+  warnings: string[];
+  next_actions: string[];
+  orchestration_fingerprint: string;
+};
+
 export type AutoResearchSystemEvaluationTask = {
   task_id: string;
   task_kind: AutoResearchEvaluationTaskKind;

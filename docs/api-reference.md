@@ -119,6 +119,15 @@ This document focuses on the current auto-research API surface.
 - returns both total run count and filtered run count, and each run summary now includes bridge posture, publish status, review risk, novelty posture, budget posture, and queue priority
 - operators can inspect queue bottlenecks, stale-worker posture, and recent recoveries without reading `queue.json`
 
+### `GET /api/projects/{project_id}/auto-research/project-paper`
+
+- builds a deterministic project-level paper orchestration snapshot
+- reads idea briefs, selected runs, cross-run meta-analysis, run-level evidence ledgers, claim ledgers, and reviewer simulations when present
+- returns a project conclusion ledger split into stable conclusions, conditional conclusions, negative findings, failed hypotheses, and limitations
+- returns claim traces for every core project-level claim, with run IDs and evidence refs
+- decides whether the project should write no paper, a single-run technical report, a workshop candidate, or a conference candidate
+- prevents single-run evidence from being presented as a full project-level paper and blocks project-level publish readiness when strong claims lack run-level evidence
+
 ### `GET /api/projects/{project_id}/auto-research/{run_id}/bridge`
 
 - returns the persisted experiment-bridge state for the run

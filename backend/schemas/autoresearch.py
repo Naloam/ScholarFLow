@@ -275,6 +275,25 @@ AutoResearchReviewerDecision = Literal["accept", "weak_accept", "borderline", "w
 AutoResearchReviewerResponseActionKind = Literal["experiment", "evidence", "paper", "research_replan"]
 AutoResearchMetaAnalysisComparisonAxis = Literal["topic_hypothesis", "method_dataset", "dataset_method"]
 AutoResearchConclusionStability = Literal["stable", "conditional", "unreproducible"]
+AutoResearchProjectPaperDecision = Literal[
+    "do_not_write",
+    "technical_report",
+    "workshop_candidate",
+    "conference_candidate",
+]
+AutoResearchProjectPaperSourceStrategy = Literal[
+    "no_paper",
+    "single_run_report",
+    "project_level_paper",
+]
+AutoResearchProjectConclusionKind = Literal[
+    "stable",
+    "conditional",
+    "negative",
+    "failed_hypothesis",
+    "limitation",
+]
+AutoResearchProjectClaimTraceStatus = Literal["supported", "partial", "unsupported"]
 AutoResearchEvaluationTaskKind = Literal[
     "toy_task",
     "medium_benchmark_task",
@@ -2413,6 +2432,69 @@ class AutoResearchCrossRunMetaAnalysisRead(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     analysis_fingerprint: str
+
+
+class AutoResearchProjectConclusionEntryRead(BaseModel):
+    conclusion_id: str
+    kind: AutoResearchProjectConclusionKind
+    text: str
+    supporting_run_ids: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+    paper_claim_allowed: bool = False
+
+
+class AutoResearchProjectConclusionLedgerRead(BaseModel):
+    ledger_id: str = "project_conclusion_ledger_v1"
+    project_id: str
+    stable_conclusions: list[AutoResearchProjectConclusionEntryRead] = Field(default_factory=list)
+    conditional_conclusions: list[AutoResearchProjectConclusionEntryRead] = Field(default_factory=list)
+    negative_findings: list[AutoResearchProjectConclusionEntryRead] = Field(default_factory=list)
+    failed_hypotheses: list[AutoResearchProjectConclusionEntryRead] = Field(default_factory=list)
+    limitations: list[AutoResearchProjectConclusionEntryRead] = Field(default_factory=list)
+    conclusion_count: int = 0
+    ledger_fingerprint: str
+
+
+class AutoResearchProjectClaimTraceRead(BaseModel):
+    claim_id: str
+    claim: str
+    source_conclusion_id: str
+    support_status: AutoResearchProjectClaimTraceStatus = "unsupported"
+    supporting_run_ids: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    unsupported_reasons: list[str] = Field(default_factory=list)
+    strong_claim: bool = False
+
+
+class AutoResearchProjectPaperOrchestrationRead(BaseModel):
+    generated_at: datetime
+    orchestrator_id: str = "project_paper_orchestrator_v1"
+    project_id: str
+    brief_count: int = 0
+    latest_brief_id: str | None = None
+    latest_brief_selected_hypothesis_id: str | None = None
+    candidate_run_count: int = 0
+    selected_run_ids: list[str] = Field(default_factory=list)
+    selected_run_count: int = 0
+    meta_analysis: AutoResearchCrossRunMetaAnalysisRead
+    conclusion_ledger: AutoResearchProjectConclusionLedgerRead
+    claim_traces: list[AutoResearchProjectClaimTraceRead] = Field(default_factory=list)
+    core_claim_count: int = 0
+    supported_core_claim_count: int = 0
+    unsupported_core_claim_count: int = 0
+    reviewer_simulation_count: int = 0
+    reviewer_average_score: float = 0.0
+    should_write_paper: bool = False
+    project_level_paper_allowed: bool = False
+    paper_decision: AutoResearchProjectPaperDecision = "do_not_write"
+    paper_tier: AutoResearchPaperTier = "technical_report"
+    source_strategy: AutoResearchProjectPaperSourceStrategy = "no_paper"
+    project_publish_gate_passed: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    orchestration_fingerprint: str
 
 
 class AutoResearchSystemEvaluationTaskRead(BaseModel):

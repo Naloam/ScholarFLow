@@ -192,12 +192,28 @@ def _offline_papers(brief: AutoResearchResearchBriefRead) -> list[AutoResearchLi
 
 
 def build_literature_scout(brief: AutoResearchResearchBriefRead) -> AutoResearchLiteratureScoutRead:
+    return build_literature_scout_with_options(brief)
+
+
+def build_literature_scout_with_options(
+    brief: AutoResearchResearchBriefRead,
+    *,
+    sources: list[str] | None = None,
+    limit_per_source: int = 3,
+    cache_enabled: bool = True,
+    network_enabled: bool | None = None,
+) -> AutoResearchLiteratureScoutRead:
     search_queries = _search_queries(brief)
+    effective_network_enabled = brief.allow_web if network_enabled is None else bool(
+        network_enabled and brief.allow_web
+    )
     connector_papers, source_statuses = search_literature_connectors(
         brief,
         search_queries=search_queries,
-        network_enabled=brief.allow_web,
-        cache_enabled=True,
+        sources=sources,
+        limit_per_source=limit_per_source,
+        network_enabled=effective_network_enabled,
+        cache_enabled=cache_enabled,
     )
     papers = deduplicate_literature_papers([*connector_papers, *_offline_papers(brief)])
     source_counts = dict(Counter(item.source for item in papers))
@@ -216,7 +232,7 @@ def build_literature_scout(brief: AutoResearchResearchBriefRead) -> AutoResearch
         "source_statuses": [item.model_dump(mode="json") for item in source_statuses],
         "source_counts": source_counts,
         "cache_hit_count": cache_hit_count,
-        "network_enabled": brief.allow_web,
+        "network_enabled": effective_network_enabled,
         "connector_errors": connector_errors,
         "methods": _dedupe(
             [
@@ -392,8 +408,19 @@ def build_gap_miner(
 
 def scout_and_mine_gaps(
     brief: AutoResearchResearchBriefRead,
+    *,
+    sources: list[str] | None = None,
+    limit_per_source: int = 3,
+    cache_enabled: bool = True,
+    network_enabled: bool | None = None,
 ) -> AutoResearchResearchBriefRead:
-    scout = build_literature_scout(brief)
+    scout = build_literature_scout_with_options(
+        brief,
+        sources=sources,
+        limit_per_source=limit_per_source,
+        cache_enabled=cache_enabled,
+        network_enabled=network_enabled,
+    )
     miner = build_gap_miner(brief, literature_scout=scout)
     return brief.model_copy(
         update={

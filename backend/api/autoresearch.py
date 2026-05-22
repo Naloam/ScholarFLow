@@ -23,6 +23,7 @@ from schemas.autoresearch import (
     AutoResearchIdeaRequest,
     AutoResearchIdeaRunCreateRequest,
     AutoResearchHypothesisBankRead,
+    AutoResearchLiteratureScoutRequest,
     AutoResearchLiteratureScoutResultRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorConsoleRead,
@@ -202,6 +203,7 @@ def get_auto_research_idea_hypothesis_bank(
 def run_auto_research_idea_literature_scout(
     project_id: str,
     brief_id: str,
+    payload: AutoResearchLiteratureScoutRequest | None = Body(default=None),
     identity: AuthIdentity | None = Depends(get_identity),
     db: Session = Depends(get_db),
 ) -> AutoResearchLiteratureScoutResultRead:
@@ -209,7 +211,16 @@ def run_auto_research_idea_literature_scout(
     brief = load_research_brief(project_id, brief_id)
     if brief is None:
         raise HTTPException(status_code=404, detail="Auto research idea brief not found")
-    updated = save_research_brief(scout_and_mine_gaps(brief))
+    payload = payload or AutoResearchLiteratureScoutRequest()
+    updated = save_research_brief(
+        scout_and_mine_gaps(
+            brief,
+            sources=payload.sources,
+            limit_per_source=payload.limit_per_source,
+            cache_enabled=payload.cache_enabled,
+            network_enabled=payload.allow_network,
+        )
+    )
     if updated.literature_scout is None or updated.gap_miner is None:
         raise HTTPException(status_code=500, detail="Literature scout did not produce results")
     write_task_audit_log(

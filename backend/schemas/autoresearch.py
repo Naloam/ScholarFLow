@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking", "llm_evaluation"]
+AutoResearchLiteratureScoutSource = Literal["fixture", "arxiv", "semantic_scholar", "crossref"]
 AutoResearchExecutionProfile = Literal["exploratory", "publication"]
 AutoResearchPublicationTier = Literal["exploratory", "review_ready", "publish_candidate", "publish_ready"]
 AutoResearchPaperTier = Literal[
@@ -778,6 +779,30 @@ class AutoResearchHypothesisBankRead(BaseModel):
     hypotheses: list[AutoResearchHypothesisBankEntryRead] = Field(default_factory=list)
     selected_hypothesis_id: str | None = None
     direction_selection: AutoResearchDirectionSelectionRead | None = None
+
+
+class AutoResearchLiteratureScoutRequest(BaseModel):
+    sources: list[AutoResearchLiteratureScoutSource] | None = None
+    limit_per_source: int = Field(default=3, ge=1, le=10)
+    cache_enabled: bool = True
+    allow_network: bool | None = None
+
+    @field_validator("sources")
+    @classmethod
+    def normalize_sources(
+        cls,
+        value: list[AutoResearchLiteratureScoutSource] | None,
+    ) -> list[AutoResearchLiteratureScoutSource] | None:
+        if value is None:
+            return None
+        deduped: list[AutoResearchLiteratureScoutSource] = []
+        seen: set[str] = set()
+        for item in value:
+            if item in seen:
+                continue
+            seen.add(item)
+            deduped.append(item)
+        return deduped or None
 
 
 class AutoResearchLiteratureScoutResultRead(BaseModel):

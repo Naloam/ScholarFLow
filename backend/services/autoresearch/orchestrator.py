@@ -29,7 +29,7 @@ from schemas.autoresearch import (
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec
 from services.autoresearch.bridge import AutoResearchExperimentBridgeService, build_bridge_state
 from services.autoresearch.ingestion import resolve_benchmark
-from services.autoresearch.literature_scout import literature_insights_from_scout
+from services.autoresearch.literature_scout import literature_insights_from_scout, scout_and_mine_gaps
 from services.autoresearch.literature_pipeline import build_fallback_literature_context, gather_literature_context
 from services.autoresearch.narrative_analyst import analyze as analyze_narrative
 from services.autoresearch.planner import ResearchPlanner
@@ -62,6 +62,7 @@ from services.autoresearch.repository import (
     paper_sources_manifest_file_path,
     paper_file_path,
     publication_repair_execution_file_path,
+    save_research_brief,
     save_candidate_manifest,
     save_candidate_snapshot,
     save_benchmark_snapshot,
@@ -1665,17 +1666,25 @@ class AutoResearchOrchestrator:
                     task_family_hint=task_family_hint,
                     benchmark_source=benchmark_source,
                 )
+                use_cached_brief_scout = bool(run.brief_id)
                 _papers, literature, chunk_context, literature_synthesis = gather_literature_context(
                     db=db,
                     project_id=project_id,
                     topic=topic,
                     paper_ids=paper_ids,
-                    auto_search=auto_search_literature,
+                    auto_search=auto_search_literature and not use_cached_brief_scout,
                     auto_fetch=auto_fetch_literature,
                     task_family=benchmark.task_family,
                 )
                 if not literature and run.brief_id:
                     brief = load_research_brief(project_id, run.brief_id)
+                    if brief is not None and brief.literature_scout is None:
+                        brief = save_research_brief(
+                            scout_and_mine_gaps(
+                                brief,
+                                network_enabled=auto_search_literature,
+                            )
+                        )
                     if brief is not None and brief.literature_scout is not None:
                         literature = literature_insights_from_scout(brief.literature_scout)
                 if auto_search_literature and not literature:

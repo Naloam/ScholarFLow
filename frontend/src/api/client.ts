@@ -17,6 +17,7 @@ import type {
   AutoResearchHypothesisBank,
   AutoResearchIdeaRequest,
   AutoResearchIdeaRunCreateRequest,
+  AutoResearchLiteratureScoutRequest,
   AutoResearchLiteratureScoutResult,
   AutoResearchResearchBrief,
   AutoResearchResearchBriefList,
@@ -396,10 +397,14 @@ export const api = {
   runAutoResearchIdeaLiteratureScout(
     projectId: string,
     briefId: string,
+    payload?: AutoResearchLiteratureScoutRequest,
   ): Promise<AutoResearchLiteratureScoutResult> {
     return request(
       `/api/projects/${projectId}/auto-research/ideas/${briefId}/literature-scout`,
-      { method: "POST" },
+      {
+        method: "POST",
+        body: payload ? JSON.stringify(payload) : undefined,
+      },
     );
   },
 

@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from config.settings import settings
 from schemas.autoresearch import (
     AutoResearchLiteratureScoutPaperRead,
     AutoResearchLiteratureScoutSourceStatusRead,
@@ -685,6 +686,9 @@ def _fetch_connector_response(source: str, query: str, *, limit: int) -> object:
             response.raise_for_status()
             return response.text
     if source == SEMANTIC_SCHOLAR_SOURCE:
+        headers: dict[str, str] = {}
+        if settings.semantic_scholar_api_key:
+            headers["x-api-key"] = settings.semantic_scholar_api_key
         params = {
             "query": query,
             "limit": limit,
@@ -694,16 +698,19 @@ def _fetch_connector_response(source: str, query: str, *, limit: int) -> object:
             ),
         }
         with httpx.Client(timeout=20.0) as client:
-            response = client.get(_SEMANTIC_SCHOLAR_API, params=params)
+            response = client.get(_SEMANTIC_SCHOLAR_API, params=params, headers=headers)
             response.raise_for_status()
             return response.json()
     if source == CROSSREF_SOURCE:
+        headers: dict[str, str] = {}
+        if settings.crossref_api_key:
+            headers["Crossref-Plus-API-Token"] = f"Bearer {settings.crossref_api_key}"
         params = {
             "query": query,
             "rows": limit,
         }
         with httpx.Client(timeout=20.0) as client:
-            response = client.get(_CROSSREF_API, params=params)
+            response = client.get(_CROSSREF_API, params=params, headers=headers)
             response.raise_for_status()
             return response.json()
     return {}

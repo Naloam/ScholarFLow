@@ -2527,6 +2527,19 @@ export type AutoResearchIdeaRequest = {
   execution_profile?: AutoResearchExecutionProfile;
 };
 
+export type AutoResearchLiteratureScoutSource =
+  | "fixture"
+  | "arxiv"
+  | "semantic_scholar"
+  | "crossref";
+
+export type AutoResearchLiteratureScoutRequest = {
+  sources?: AutoResearchLiteratureScoutSource[] | null;
+  limit_per_source?: number;
+  cache_enabled?: boolean;
+  allow_network?: boolean | null;
+};
+
 export type AutoResearchIdeaFeasibilityAssessment = {
   score: number;
   level: "low" | "medium" | "high";

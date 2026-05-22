@@ -4844,6 +4844,94 @@ def test_literature_connectors_parse_cached_sources_without_network(
     assert all(item.relevance_score > 0 for item in papers)
 
 
+def test_literature_scout_network_override_respects_brief_web_consent(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    payload = _idea_request_payload()
+    payload["allow_web"] = False
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-scout-network-consent",
+        payload=AutoResearchIdeaRequest.model_validate(payload),
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("network fetch must not run when brief.allow_web is false")
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fail_fetch)
+
+    scouted = autoresearch_literature_scout.scout_and_mine_gaps(
+        brief,
+        sources=["arxiv"],
+        network_enabled=True,
+    )
+
+    assert scouted.literature_scout is not None
+    assert scouted.literature_scout.network_enabled is False
+    assert scouted.literature_scout.source_statuses[0].network_request_count == 0
+    assert "arxiv" not in scouted.literature_scout.source_counts
+
+
+def test_literature_scout_network_results_are_cached(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    payload = _idea_request_payload()
+    payload["allow_web"] = True
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-scout-network-cache",
+        payload=AutoResearchIdeaRequest.model_validate(payload),
+    )
+    calls: list[tuple[str, str, int]] = []
+
+    def fake_fetch(source: str, query: str, *, limit: int):
+        calls.append((source, query, limit))
+        return _semantic_scholar_cache_fixture()
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fake_fetch)
+
+    first = autoresearch_literature_scout.scout_and_mine_gaps(
+        brief,
+        sources=["semantic_scholar"],
+        limit_per_source=4,
+        network_enabled=True,
+    )
+
+    assert first.literature_scout is not None
+    assert first.literature_scout.network_enabled is True
+    assert first.literature_scout.source_statuses[0].network_request_count == len(calls)
+    assert first.literature_scout.source_counts["semantic_scholar"] == 1
+    assert any(
+        paper.cache_status == "network"
+        for paper in first.literature_scout.similar_papers
+        if paper.source == "semantic_scholar"
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("second scout should reuse cached connector responses")
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fail_fetch)
+
+    second = autoresearch_literature_scout.scout_and_mine_gaps(
+        brief,
+        sources=["semantic_scholar"],
+        limit_per_source=4,
+        network_enabled=False,
+    )
+
+    assert second.literature_scout is not None
+    assert second.literature_scout.network_enabled is False
+    assert second.literature_scout.cache_hit_count == len(calls)
+    assert second.literature_scout.source_statuses[0].network_request_count == 0
+    assert any(
+        paper.cache_status == "cache_hit"
+        for paper in second.literature_scout.similar_papers
+        if paper.source == "semantic_scholar"
+    )
+
+
 def test_literature_scout_mines_testable_gap_for_brief() -> None:
     brief = autoresearch_idea_brief.build_research_brief(
         project_id="project-scout",
@@ -4912,6 +5000,98 @@ def test_literature_scout_uses_cached_real_sources_for_novelty_graph(
     assert graph.known_sota
     assert validation.gap_validity == "valid"
     assert validation.complete is True
+
+
+def test_autoresearch_execute_reuses_cached_brief_scout_before_legacy_search(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    session_local = _session_local(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "llm_api_key", None)
+    project_id = "project-brief-scout-execute"
+    payload = _idea_request_payload()
+    payload["allow_web"] = True
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id=project_id,
+        payload=AutoResearchIdeaRequest.model_validate(payload),
+    )
+    autoresearch_repository.save_literature_scout_cache(
+        brief.project_id,
+        source="arxiv",
+        query=_cached_literature_query(brief),
+        limit=3,
+        payload={"raw": _arxiv_cache_fixture()},
+    )
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_literature_scout.scout_and_mine_gaps(
+            brief,
+            sources=["arxiv"],
+            network_enabled=False,
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def fake_gather_literature_context(**kwargs):
+        observed["auto_search"] = kwargs["auto_search"]
+        return [], [], {}, None
+
+    def fake_run(
+        self,
+        *,
+        code_filename_prefix: str,
+        round_index: int,
+        **kwargs,
+    ):
+        del self, kwargs
+        code_path = tmp_path / f"{code_filename_prefix}_{round_index}.py"
+        code_path.write_text("# cached brief scout candidate\n", encoding="utf-8")
+        return "cached_brief_scout_strategy", str(code_path), _result_artifact()
+
+    monkeypatch.setattr(
+        autoresearch_orchestrator,
+        "gather_literature_context",
+        fake_gather_literature_context,
+    )
+    monkeypatch.setattr(autoresearch_orchestrator.AutoExperimentRunner, "run", fake_run)
+    monkeypatch.setattr(
+        autoresearch_orchestrator.PaperWriter,
+        "write",
+        lambda self, *args, **kwargs: "# cached scout paper\n\nThe paper cites preserved context [1].",
+    )
+
+    db = session_local()
+    try:
+        _seed_project(db, project_id, title="Cached Brief Scout Execute")
+        run_request, hypothesis = autoresearch_idea_brief.run_request_from_selected_hypothesis(brief)
+        run = autoresearch_repository.create_run(
+            project_id,
+            run_request.topic,
+            request=AutoResearchRunConfig(
+                task_family_hint=run_request.task_family_hint,
+                auto_search_literature=True,
+                max_rounds=1,
+                candidate_execution_limit=1,
+            ),
+            brief_id=brief.brief_id,
+            hypothesis_id=hypothesis.hypothesis_id,
+            direction_selection_reason=brief.selection_reason,
+        )
+        result = autoresearch_orchestrator.AutoResearchOrchestrator().execute(
+            db=db,
+            project_id=project_id,
+            run_id=run.id,
+            topic=run.topic,
+            task_family_hint=run_request.task_family_hint,
+            max_rounds=1,
+            candidate_execution_limit=1,
+            auto_search_literature=True,
+        )
+    finally:
+        db.close()
+
+    assert observed["auto_search"] is False
+    assert result.literature
+    assert {item.source for item in result.literature} == {"arxiv"}
 
 
 def test_research_brief_repository_persists_and_console_summarizes(

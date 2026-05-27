@@ -2645,14 +2645,21 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     selected_hypothesis_id: str | None = None
     experiment_plan_id: str | None = None
     evidence_ledger_id: str | None = None
+    result_artifact_status: str | None = None
+    primary_metric: str | None = None
+    objective_score: float | None = None
     paper_decision: AutoResearchProjectPaperDecision = "do_not_write"
     steps_completed: list[str] = Field(default_factory=list)
     direction_count: int = 0
     hypothesis_count: int = 0
     experiment_job_count: int = 0
     evidence_entry_count: int = 0
+    repair_action_count: int = 0
     evidence_complete: bool = False
     paper_review_package_ready: bool = False
+    architecture_materials: list[str] = Field(default_factory=list)
+    case_study_materials: list[str] = Field(default_factory=list)
+    failure_analysis_materials: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
 
 
@@ -2677,10 +2684,15 @@ class AutoResearchEvaluationCaseSuiteRead(BaseModel):
     suite_id: str = "autoresearch_evaluation_case_suite_v1"
     project_id: str
     case_count: int = 0
+    executed_case_count: int = 0
     completed_case_count: int = 0
+    evaluation_artifact_count: int = 0
     cases: list[AutoResearchEvaluationCaseRead] = Field(default_factory=list)
     metrics: list[AutoResearchSystemEvaluationMetricRead] = Field(default_factory=list)
     scholarflow_paper_materials: list[str] = Field(default_factory=list)
+    architecture_materials: list[str] = Field(default_factory=list)
+    case_study_materials: list[str] = Field(default_factory=list)
+    failure_analysis_materials: list[str] = Field(default_factory=list)
     toy_end_to_end_ready: bool = False
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

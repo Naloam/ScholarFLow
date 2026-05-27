@@ -6023,18 +6023,27 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     }
 
     assert suite.case_count == 5
+    assert suite.executed_case_count == 5
     assert {case.task_kind for case in suite.cases} == expected_kinds
     assert {metric.metric_id for metric in suite.metrics} == expected_metrics
     assert suite.toy_end_to_end_ready is True
-    assert suite.completed_case_count == 1
+    assert suite.completed_case_count == 5
+    assert suite.evaluation_artifact_count > 0
     assert not suite.blockers
+    assert not suite.warnings
     assert all(case.idea for case in suite.cases)
+    assert all(case.trace is not None for case in suite.cases)
+    assert all(case.score == 100 for case in suite.cases)
     assert all(case.expected_brief_quality for case in suite.cases)
     assert all(case.expected_novelty_risks for case in suite.cases)
     assert all(case.expected_experiment_design_requirements for case in suite.cases)
     assert all(case.expected_failure_replan_behavior for case in suite.cases)
     assert any("Architecture" in item for item in suite.scholarflow_paper_materials)
     assert any("failure" in item.lower() for item in suite.scholarflow_paper_materials)
+    assert len(suite.architecture_materials) >= 5
+    assert len(suite.case_study_materials) == 5
+    assert len(suite.failure_analysis_materials) >= 5
+    assert all(metric.score == 100 for metric in suite.metrics)
 
 
 def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:
@@ -6048,6 +6057,9 @@ def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:
     assert trace.selected_hypothesis_id is not None
     assert trace.experiment_plan_id == "experiment_factory_v1"
     assert trace.evidence_ledger_id == "experiment_evidence_ledger_v1"
+    assert trace.result_artifact_status == "done"
+    assert trace.primary_metric is not None
+    assert trace.objective_score is not None
     assert trace.paper_decision == "technical_report"
     assert {
         "idea",
@@ -6065,11 +6077,30 @@ def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:
     assert trace.hypothesis_count == trace.direction_count
     assert trace.experiment_job_count > 0
     assert trace.evidence_entry_count > 0
+    assert trace.repair_action_count == 0
     assert trace.evidence_complete is True
     assert trace.paper_review_package_ready is True
+    assert trace.architecture_materials
+    assert trace.case_study_materials
+    assert trace.failure_analysis_materials
     assert trace.blockers == []
     assert toy.score == 100
     assert toy.expected_paper_tier == "technical_report"
+
+
+def test_all_evaluation_cases_execute_offline_to_paper_packages() -> None:
+    suite = autoresearch_evaluation_cases.build_evaluation_case_suite("project-evaluation-all")
+
+    for case in suite.cases:
+        assert case.trace is not None
+        assert case.trace.paper_review_package_ready is True
+        assert case.trace.evidence_complete is True
+        assert case.trace.experiment_job_count > 0
+        assert case.trace.evidence_entry_count > 0
+        assert case.trace.blockers == []
+        assert "paper_draft" in case.trace.steps_completed
+        assert "review_package" in case.trace.steps_completed
+        assert case.trace.case_study_materials
 
 
 def test_narrative_artifact_summary_uses_objective_system_when_best_missing() -> None:

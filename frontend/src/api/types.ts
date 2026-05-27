@@ -3403,14 +3403,21 @@ export type AutoResearchEvaluationCaseTrace = {
   selected_hypothesis_id?: string | null;
   experiment_plan_id?: string | null;
   evidence_ledger_id?: string | null;
+  result_artifact_status?: string | null;
+  primary_metric?: string | null;
+  objective_score?: number | null;
   paper_decision: AutoResearchProjectPaperDecision;
   steps_completed: string[];
   direction_count: number;
   hypothesis_count: number;
   experiment_job_count: number;
   evidence_entry_count: number;
+  repair_action_count: number;
   evidence_complete: boolean;
   paper_review_package_ready: boolean;
+  architecture_materials: string[];
+  case_study_materials: string[];
+  failure_analysis_materials: string[];
   blockers: string[];
 };
 
@@ -3435,10 +3442,15 @@ export type AutoResearchEvaluationCaseSuite = {
   suite_id: string;
   project_id: string;
   case_count: number;
+  executed_case_count: number;
   completed_case_count: number;
+  evaluation_artifact_count: number;
   cases: AutoResearchEvaluationCase[];
   metrics: AutoResearchSystemEvaluationMetric[];
   scholarflow_paper_materials: string[];
+  architecture_materials: string[];
+  case_study_materials: string[];
+  failure_analysis_materials: string[];
   toy_end_to_end_ready: boolean;
   blockers: string[];
   warnings: string[];

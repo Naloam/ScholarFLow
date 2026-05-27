@@ -56,7 +56,7 @@ Acceptance:
 
 ## Priority 5: P20 Real End-to-End Evaluation
 
-Status: next.
+Status: done.
 
 Goal: run executable evaluation cases that produce ScholarFlow's own system evidence.
 
@@ -66,6 +66,8 @@ Acceptance:
 - Produce architecture, case-study, and failure-analysis material from actual run artifacts.
 
 ## Priority 6: GitHub Sync
+
+Status: next.
 
 Goal: synchronize completed, tested work to the GitHub master branch.
 

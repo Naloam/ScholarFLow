@@ -240,7 +240,64 @@ def _payload_for_case(case: dict[str, Any]) -> AutoResearchIdeaRequest:
     )
 
 
-def _build_toy_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEvaluationCaseTraceRead:
+def _trace_materials(
+    *,
+    case: dict[str, Any],
+    brief,
+    scouted,
+    hypothesis,
+    plan,
+    execution,
+    blockers: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    task_kind = str(case["task_kind"])
+    architecture_materials = [
+        (
+            f"{task_kind}: idea brief `{brief.brief_id}` produced {scouted.direction_count} "
+            f"directions and {scouted.hypothesis_count} hypotheses before selecting "
+            f"`{hypothesis.hypothesis_id}`."
+        ),
+        (
+            f"{task_kind}: experiment factory `{plan.plan_id}` materialized "
+            f"{plan.job_count} auditable jobs and evidence ledger "
+            f"`{execution.evidence_ledger.ledger_id}`."
+        ),
+    ]
+    result = execution.result_artifact
+    objective = (
+        f"{result.primary_metric}={result.objective_score:.4f}"
+        if result.objective_score is not None
+        else f"primary metric `{result.primary_metric}`"
+    )
+    case_study_materials = [
+        (
+            f"{task_kind}: `{case['idea']}` selected `{hypothesis.research_question}` and completed "
+            f"{execution.evidence_ledger.entry_count} evidence entries with {objective}."
+        )
+    ]
+    repair_plan = execution.repair_plan
+    repair_actions = list(repair_plan.actions) if repair_plan is not None else []
+    failure_analysis_materials = [
+        (
+            f"{task_kind}: blockers={len(blockers)}, repair_actions={len(repair_actions)}, "
+            f"artifact_status=`{result.status}`."
+        )
+    ]
+    if blockers:
+        failure_analysis_materials.extend(f"{task_kind}: blocker - {item}" for item in blockers[:3])
+    elif repair_plan is not None and repair_actions and repair_actions != ["none"]:
+        failure_analysis_materials.extend(
+            f"{task_kind}: repair - {item}"
+            for item in repair_plan.action_reasons[:3]
+        )
+    else:
+        failure_analysis_materials.append(
+            f"{task_kind}: no failure-driven repair was required for the offline execution trace."
+        )
+    return architecture_materials, case_study_materials, failure_analysis_materials
+
+
+def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEvaluationCaseTraceRead:
     brief = build_research_brief(
         project_id=project_id,
         payload=_payload_for_case(case),
@@ -264,6 +321,15 @@ def _build_toy_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEvalu
     if execution.repair_plan is not None and execution.repair_plan.actions != ["none"]:
         blockers.extend(execution.repair_plan.action_reasons)
     blockers = _dedupe(blockers)
+    architecture_materials, case_study_materials, failure_analysis_materials = _trace_materials(
+        case=case,
+        brief=brief,
+        scouted=scouted,
+        hypothesis=hypothesis,
+        plan=plan,
+        execution=execution,
+        blockers=blockers,
+    )
     ready = (
         execution.result_artifact.status == "done"
         and execution.evidence_ledger.complete
@@ -290,16 +356,31 @@ def _build_toy_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEvalu
         selected_hypothesis_id=hypothesis.hypothesis_id,
         experiment_plan_id=plan.plan_id,
         evidence_ledger_id=execution.evidence_ledger.ledger_id,
+        result_artifact_status=execution.result_artifact.status,
+        primary_metric=execution.result_artifact.primary_metric,
+        objective_score=execution.result_artifact.objective_score,
         paper_decision=paper_decision,
         steps_completed=steps,
         direction_count=scouted.direction_count,
         hypothesis_count=scouted.hypothesis_count,
         experiment_job_count=plan.job_count,
         evidence_entry_count=execution.evidence_ledger.entry_count,
+        repair_action_count=(
+            len(execution.repair_plan.actions)
+            if execution.repair_plan is not None and execution.repair_plan.actions != ["none"]
+            else 0
+        ),
         evidence_complete=execution.evidence_ledger.complete,
         paper_review_package_ready=ready,
+        architecture_materials=architecture_materials,
+        case_study_materials=case_study_materials,
+        failure_analysis_materials=failure_analysis_materials,
         blockers=blockers,
     )
+
+
+def _build_toy_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEvaluationCaseTraceRead:
+    return _build_case_trace(project_id, case)
 
 
 def _case_from_definition(
@@ -329,11 +410,14 @@ def _case_from_definition(
 
 
 def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSystemEvaluationMetricRead]:
-    toy_trace = next(
-        (case.trace for case in cases if case.task_kind == "toy_task" and case.trace is not None),
-        None,
-    )
+    traces = [case.trace for case in cases if case.trace is not None]
+    ready_traces = [
+        trace
+        for trace in traces
+        if trace.paper_review_package_ready and not trace.blockers
+    ]
     case_count = len(cases)
+    executed_count = len(traces)
     definition_complete = sum(
         1
         for case in cases
@@ -343,7 +427,6 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
         and case.expected_experiment_design_requirements
         and case.expected_failure_replan_behavior
     )
-    toy_ready = toy_trace is not None and toy_trace.paper_review_package_ready and not toy_trace.blockers
     return [
         _metric(
             metric_id="idea_to_brief_completeness",
@@ -355,9 +438,13 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
         _metric(
             metric_id="hypothesis_selection_quality",
             label="Hypothesis Selection Quality",
-            numerator=1 if toy_trace is not None and toy_trace.selected_hypothesis_id and toy_trace.hypothesis_count >= 2 else 0,
-            denominator=1,
-            rationale="The deterministic toy trace must produce a hypothesis bank and selected hypothesis before execution.",
+            numerator=sum(
+                1
+                for trace in traces
+                if trace.selected_hypothesis_id and trace.hypothesis_count >= 2
+            ),
+            denominator=max(executed_count, 1),
+            rationale="Every deterministic trace must produce a hypothesis bank and selected hypothesis before execution.",
         ),
         _metric(
             metric_id="novelty_risk_detection",
@@ -369,62 +456,112 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
         _metric(
             metric_id="experiment_plan_executability",
             label="Experiment Plan Executability",
-            numerator=1 if toy_trace is not None and toy_trace.experiment_job_count > 0 and not toy_trace.blockers else 0,
-            denominator=1,
-            rationale="The toy trace must materialize baseline, method, ablation, seed, and sweep jobs without live GPU/network dependencies.",
+            numerator=sum(1 for trace in traces if trace.experiment_job_count > 0 and not trace.blockers),
+            denominator=max(executed_count, 1),
+            rationale="Each trace must materialize baseline, method, ablation, seed, and sweep jobs without live GPU/network dependencies.",
         ),
         _metric(
             metric_id="evidence_consistency",
             label="Evidence Consistency",
-            numerator=1 if toy_trace is not None and toy_trace.evidence_complete and toy_trace.evidence_entry_count > 0 else 0,
-            denominator=1,
-            rationale="The toy trace must map execution outputs back into a complete evidence ledger.",
+            numerator=sum(
+                1
+                for trace in traces
+                if trace.evidence_complete and trace.evidence_entry_count > 0
+            ),
+            denominator=max(executed_count, 1),
+            rationale="Each trace must map execution outputs back into a complete evidence ledger.",
         ),
         _metric(
             metric_id="reviewer_score_improvement",
             label="Reviewer Score Improvement",
-            numerator=1 if toy_ready else 0,
-            denominator=1,
-            rationale="The deterministic suite checks that the toy case reaches a paper/review package ready for reviewer-loop scoring.",
+            numerator=len(ready_traces),
+            denominator=max(executed_count, 1),
+            rationale="The deterministic suite checks that every case reaches a paper/review package ready for reviewer-loop scoring.",
         ),
         _metric(
             metric_id="final_publish_correctness",
             label="Final Publish Correctness",
-            numerator=1 if toy_trace is not None and toy_trace.paper_decision == "technical_report" and toy_ready else 0,
-            denominator=1,
-            rationale="The toy case should remain a technical report package instead of overclaiming a full project-level paper.",
+            numerator=sum(
+                1
+                for trace in ready_traces
+                if trace.paper_decision == "technical_report"
+            ),
+            denominator=max(executed_count, 1),
+            rationale="Offline execution cases should remain technical-report packages instead of overclaiming full project-level papers.",
         ),
     ]
 
 
 def build_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSuiteRead:
-    toy_definition = next(item for item in _CASE_DEFINITIONS if item["task_kind"] == "toy_task")
-    toy_trace = _build_toy_trace(project_id, toy_definition)
+    traces_by_task_kind = {
+        str(definition["task_kind"]): _build_case_trace(project_id, definition)
+        for definition in _CASE_DEFINITIONS
+    }
     cases = [
         _case_from_definition(
             definition=definition,
-            trace=toy_trace if definition["task_kind"] == "toy_task" else None,
+            trace=traces_by_task_kind[str(definition["task_kind"])],
         )
         for definition in _CASE_DEFINITIONS
     ]
     metrics = _metrics(cases)
-    toy_ready = toy_trace.paper_review_package_ready and not toy_trace.blockers
-    blockers = [] if toy_ready else ["Toy idea-to-paper evaluation case did not reach a paper/review package."]
-    warnings = [
-        "Medium, literature-heavy, ablation-heavy, and failed-hypothesis cases are currently deterministic specifications; only toy_task executes end-to-end offline."
+    traces = [case.trace for case in cases if case.trace is not None]
+    ready_traces = [
+        trace
+        for trace in traces
+        if trace.paper_review_package_ready and not trace.blockers
     ]
+    toy_trace = traces_by_task_kind["toy_task"]
+    toy_ready = toy_trace.paper_review_package_ready and not toy_trace.blockers
+    blockers = [
+        f"{case.case_id}: " + "; ".join(case.blockers)
+        for case in cases
+        if case.blockers
+    ]
+    warnings = [] if len(ready_traces) == len(cases) else [
+        "One or more deterministic evaluation cases did not reach a paper/review package."
+    ]
+    architecture_materials = _dedupe(
+        [
+            material
+            for trace in traces
+            for material in trace.architecture_materials
+        ]
+    )
+    case_study_materials = _dedupe(
+        [
+            material
+            for trace in traces
+            for material in trace.case_study_materials
+        ]
+    )
+    failure_analysis_materials = _dedupe(
+        [
+            material
+            for trace in traces
+            for material in trace.failure_analysis_materials
+        ]
+    )
     payload = {
         "suite_id": "autoresearch_evaluation_case_suite_v1",
         "project_id": project_id,
         "case_count": len(cases),
+        "executed_case_count": len(traces),
         "completed_case_count": sum(
             1
             for case in cases
             if case.trace is not None and case.score >= 60 and not case.blockers
         ),
+        "evaluation_artifact_count": sum(
+            trace.experiment_job_count + trace.evidence_entry_count
+            for trace in traces
+        ),
         "cases": [case.model_dump(mode="json") for case in cases],
         "metrics": [metric.model_dump(mode="json") for metric in metrics],
         "scholarflow_paper_materials": _SCHOLARFLOW_PAPER_MATERIALS,
+        "architecture_materials": architecture_materials,
+        "case_study_materials": case_study_materials,
+        "failure_analysis_materials": failure_analysis_materials,
         "toy_end_to_end_ready": toy_ready,
         "blockers": blockers,
         "warnings": warnings,

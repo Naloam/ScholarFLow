@@ -117,6 +117,11 @@ PUBLISH_ARCHIVE_FILENAME = "publish_bundle.zip"
 PUBLISH_ARCHIVE_MANIFEST_FILENAME = "archive_manifest.json"
 PUBLICATION_MANIFEST_FILENAME = "publication_manifest.json"
 CODE_PACKAGE_FILENAME = "code_package.zip"
+SUBMISSION_MANIFEST_FILENAME = "submission_manifest.json"
+REPRODUCIBILITY_CHECKLIST_FILENAME = "reproducibility_checklist.md"
+REVIEWER_RESPONSE_FILENAME = "reviewer_response.md"
+CLAIM_EVIDENCE_INDEX_FILENAME = "claim_evidence_index.md"
+LINEAGE_ARCHIVE_FILENAME = "lineage_archive.json"
 _DEFAULT_DEPLOYMENT_ID = "local_default"
 _DEFAULT_DEPLOYMENT_LABEL = "Local Deployment"
 _FINAL_PUBLISH_REQUIRED_ROLES = {
@@ -345,6 +350,26 @@ def _publication_manifest_path(project_id: str, run_id: str) -> Path:
 
 def _code_package_path(project_id: str, run_id: str) -> Path:
     return run_dir(project_id, run_id) / CODE_PACKAGE_FILENAME
+
+
+def _submission_manifest_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / SUBMISSION_MANIFEST_FILENAME
+
+
+def _reproducibility_checklist_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / REPRODUCIBILITY_CHECKLIST_FILENAME
+
+
+def _reviewer_response_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / REVIEWER_RESPONSE_FILENAME
+
+
+def _claim_evidence_index_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / CLAIM_EVIDENCE_INDEX_FILENAME
+
+
+def _lineage_archive_path(project_id: str, run_id: str) -> Path:
+    return run_dir(project_id, run_id) / LINEAGE_ARCHIVE_FILENAME
 
 
 def _normalize_deployment_id(value: str | None) -> str:
@@ -3017,6 +3042,323 @@ def _paper_summary(run: AutoResearchRunRead) -> str | None:
     return summary[:280] if summary else None
 
 
+def _status_mark(value: bool) -> str:
+    return "PASS" if value else "BLOCKED"
+
+
+def _write_markdown(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content.strip() + "\n", encoding="utf-8")
+
+
+def _submission_asset_ref(role: str, path: Path) -> dict[str, object]:
+    return {
+        "role": role,
+        "path": str(path),
+        "exists": path.is_file(),
+        "sha256": _file_sha256(path),
+    }
+
+
+def _build_reproducibility_checklist_markdown(
+    *,
+    run: AutoResearchRunRead,
+    review: AutoResearchRunReviewRead,
+    review_loop: AutoResearchReviewLoopRead | None,
+    package: AutoResearchPublishPackageRead,
+    registry_available: bool,
+) -> tuple[str, bool]:
+    checks = [
+        (
+            "Manuscript is materialized",
+            bool(run.paper_markdown or (run.paper_path and Path(run.paper_path).is_file())),
+            run.paper_path or "run_paper_markdown",
+        ),
+        (
+            "Claim-evidence index is present",
+            review.publication_evidence_index is not None,
+            review.publication_evidence_index_path or "publication_evidence_index.json",
+        ),
+        (
+            "Experiment protocol and design are present",
+            review.research_protocol is not None and review.experiment_design is not None,
+            ", ".join(
+                item
+                for item in [review.research_protocol_path, review.experiment_design_path]
+                if item
+            )
+            or "research_protocol.json, experiment_design.json",
+        ),
+        (
+            "Methodology audit is present",
+            review.methodology_audit is not None,
+            review.methodology_audit_path or "methodology_audit.json",
+        ),
+        (
+            "Supplemental registry bundle is inspectable",
+            package.review_bundle_ready and package.existing_asset_count > 0,
+            f"{package.existing_asset_count}/{package.asset_count} selected-bundle assets exist",
+        ),
+        (
+            "Artifact lineage archive is present",
+            registry_available,
+            "run registry lineage",
+        ),
+        (
+            "Reviewer response is present",
+            review.revision_dossier is not None or review.reviewer_simulation is not None,
+            review.revision_dossier_path or review.reviewer_simulation_path or "reviewer response inputs",
+        ),
+        (
+            "Final publish blockers are closed",
+            package.final_publish_ready and package.final_blocker_count == 0,
+            "no final publish blockers" if not package.final_blockers else "; ".join(package.final_blockers[:3]),
+        ),
+    ]
+    complete = all(item[1] for item in checks)
+    lines = [
+        "# Reproducibility Checklist",
+        "",
+        f"- Project: `{package.project_id}`",
+        f"- Run: `{package.run_id}`",
+        f"- Publication tier: `{package.publication_tier}`",
+        f"- Final publish ready: `{package.final_publish_ready}`",
+        f"- Review round: `{package.review_round}`",
+        "",
+        "## Checks",
+    ]
+    for label, passed, detail in checks:
+        lines.append(f"- [{_status_mark(passed)}] {label}: {detail}")
+    if review_loop is not None:
+        lines.extend(
+            [
+                "",
+                "## Review Loop",
+                f"- Open issues: {review_loop.open_issue_count}",
+                f"- Pending actions: {review_loop.pending_action_count}",
+                f"- Current round: {review_loop.current_round}",
+            ]
+        )
+    if package.final_blockers:
+        lines.extend(["", "## Publish Blockers"])
+        lines.extend(f"- {item}" for item in package.final_blockers)
+    return "\n".join(lines), complete
+
+
+def _build_reviewer_response_markdown(
+    *,
+    review: AutoResearchRunReviewRead,
+    review_loop: AutoResearchReviewLoopRead | None,
+    package: AutoResearchPublishPackageRead,
+) -> tuple[str, bool]:
+    lines = [
+        "# Reviewer Response",
+        "",
+        f"- Run: `{package.run_id}`",
+        f"- Review status: `{review.overall_status}`",
+        f"- Unsupported claim risk: `{review.unsupported_claim_risk}`",
+        f"- Final publish ready: `{package.final_publish_ready}`",
+        "",
+    ]
+    if review.reviewer_simulation is not None:
+        lines.extend(
+            [
+                "## Simulated Reviewer Summary",
+                f"- Average score: {review.reviewer_simulation.average_score:.2f}",
+                f"- Minimum decision: `{review.reviewer_simulation.minimum_decision}`",
+                f"- Weak reject or worse: {review.reviewer_simulation.weak_reject_or_worse_count}",
+                "",
+            ]
+        )
+        if review.reviewer_simulation.response_plan:
+            lines.append("## Reviewer Response Plan")
+            for action in review.reviewer_simulation.response_plan:
+                lines.append(
+                    f"- `{action.action_id}` [{action.reviewer_role}/{action.action_kind}/{action.priority}]: "
+                    f"{action.title} - {action.detail}"
+                )
+            lines.append("")
+    if review.revision_dossier is not None and review.revision_dossier.items:
+        lines.append("## Dossier Responses")
+        for item in review.revision_dossier.items:
+            lines.append(
+                f"- `{item.item_id}` [{item.status}/{item.severity}]: {item.summary} Response: {item.response}"
+            )
+        lines.append("")
+    elif review.findings:
+        lines.append("## Review Findings")
+        for finding in review.findings:
+            if finding.severity == "info":
+                continue
+            lines.append(f"- `{finding.id}` [{finding.severity}/{finding.category}]: {finding.summary}")
+        lines.append("")
+    if review_loop is not None and review_loop.actions:
+        lines.append("## Bounded Revision Actions")
+        for action in review_loop.actions:
+            lines.append(
+                f"- `{action.action_id}` [{action.action_kind}/{action.status}]: {action.title}. "
+                f"Terminal condition: {action.terminal_condition}"
+            )
+        lines.append("")
+    if package.final_blockers:
+        lines.append("## Remaining Blockers")
+        lines.extend(f"- {item}" for item in package.final_blockers)
+    complete = review.reviewer_simulation is not None or review.revision_dossier is not None or bool(review.findings)
+    return "\n".join(lines), complete
+
+
+def _build_claim_evidence_index_markdown(
+    *,
+    run: AutoResearchRunRead,
+    review: AutoResearchRunReviewRead,
+    package: AutoResearchPublishPackageRead,
+) -> tuple[str, bool]:
+    matrix = run.claim_evidence_matrix
+    evidence_index = review.publication_evidence_index
+    lines = [
+        "# Claim Evidence Index",
+        "",
+        f"- Run: `{package.run_id}`",
+        f"- Publication evidence index: `{review.publication_evidence_index_path or 'missing'}`",
+        f"- Claim-evidence matrix: `{run.claim_evidence_matrix_path or 'missing'}`",
+        "",
+    ]
+    if matrix is not None and matrix.entries:
+        lines.append("## Claims")
+        for entry in matrix.entries:
+            lines.append(f"- `{entry.claim_id}` [{entry.support_status}]: {entry.claim}")
+            if entry.evidence:
+                for evidence in entry.evidence:
+                    lines.append(f"  - [{evidence.source_kind}] {evidence.label}: {evidence.detail}")
+            if entry.gaps:
+                lines.append("  - Gaps: " + "; ".join(entry.gaps))
+        lines.append("")
+    else:
+        lines.extend(["## Claims", "- No claim-evidence matrix entries were available.", ""])
+    if evidence_index is not None and evidence_index.evidence_items:
+        lines.append("## Publication Evidence")
+        for item in evidence_index.evidence_items:
+            lines.append(
+                f"- `{item.evidence_id}` [{item.status}] {item.label}: "
+                f"{item.path or item.role or 'no path'}"
+            )
+        lines.append("")
+    if evidence_index is not None and evidence_index.blockers:
+        lines.append("## Evidence Blockers")
+        lines.extend(f"- {item}" for item in evidence_index.blockers)
+    complete = matrix is not None and bool(matrix.entries) and evidence_index is not None
+    return "\n".join(lines), complete
+
+
+def _materialize_submission_package_assets(
+    *,
+    project_id: str,
+    run_id: str,
+    run: AutoResearchRunRead,
+    review: AutoResearchRunReviewRead,
+    review_loop: AutoResearchReviewLoopRead | None,
+    package: AutoResearchPublishPackageRead,
+) -> dict[str, object]:
+    registry = load_run_registry(project_id, run_id)
+    checklist_path = _reproducibility_checklist_path(project_id, run_id)
+    reviewer_response_path = _reviewer_response_path(project_id, run_id)
+    claim_index_path = _claim_evidence_index_path(project_id, run_id)
+    lineage_archive_path = _lineage_archive_path(project_id, run_id)
+    submission_manifest_path = _submission_manifest_path(project_id, run_id)
+
+    checklist_markdown, checklist_complete = _build_reproducibility_checklist_markdown(
+        run=run,
+        review=review,
+        review_loop=review_loop,
+        package=package,
+        registry_available=registry is not None,
+    )
+    _write_markdown(checklist_path, checklist_markdown)
+    reviewer_response_markdown, reviewer_response_complete = _build_reviewer_response_markdown(
+        review=review,
+        review_loop=review_loop,
+        package=package,
+    )
+    _write_markdown(reviewer_response_path, reviewer_response_markdown)
+    claim_index_markdown, claim_index_complete = _build_claim_evidence_index_markdown(
+        run=run,
+        review=review,
+        package=package,
+    )
+    _write_markdown(claim_index_path, claim_index_markdown)
+
+    selected_bundle_assets = [
+        asset.model_dump(mode="json")
+        for asset in [*package.required_assets, *package.optional_assets]
+    ]
+    lineage_payload = {
+        "archive_id": "submission_lineage_archive_v1",
+        "project_id": project_id,
+        "run_id": run_id,
+        "generated_at": _utcnow().isoformat(),
+        "selected_candidate_id": package.selected_candidate_id,
+        "registry_available": registry is not None,
+        "lineage_edge_count": len(registry.lineage.edges) if registry is not None else 0,
+        "lineage": registry.lineage.model_dump(mode="json") if registry is not None else None,
+        "selected_bundle_asset_count": len(selected_bundle_assets),
+        "selected_bundle_assets": selected_bundle_assets,
+        "final_publish_ready": package.final_publish_ready,
+        "final_blockers": list(package.final_blockers),
+        "revision_actions": list(package.revision_actions),
+    }
+    _write_json(lineage_archive_path, lineage_payload)
+    lineage_complete = registry is not None
+
+    generated_assets = [
+        _submission_asset_ref("submission_manifest", submission_manifest_path),
+        _submission_asset_ref("reproducibility_checklist", checklist_path),
+        _submission_asset_ref("reviewer_response", reviewer_response_path),
+        _submission_asset_ref("claim_evidence_index", claim_index_path),
+        _submission_asset_ref("lineage_archive", lineage_archive_path),
+    ]
+    submission_manifest = {
+        "submission_id": f"submission_{run_id}",
+        "project_id": project_id,
+        "run_id": run_id,
+        "package_id": package.package_id,
+        "package_fingerprint": package.package_fingerprint,
+        "generated_at": _utcnow().isoformat(),
+        "status": package.status,
+        "review_bundle_ready": package.review_bundle_ready,
+        "final_publish_ready": package.final_publish_ready,
+        "publication_tier": package.publication_tier,
+        "publication_readiness_score": package.publication_readiness_score,
+        "manuscript_path": run.paper_path,
+        "archive_path": package.archive_path,
+        "generated_assets": generated_assets[1:],
+        "final_blocker_count": package.final_blocker_count,
+        "final_blockers": list(package.final_blockers),
+        "revision_actions": list(package.revision_actions),
+    }
+    _write_json(submission_manifest_path, submission_manifest)
+    generated_assets[0] = _submission_asset_ref("submission_manifest", submission_manifest_path)
+    submission_ready = (
+        checklist_complete
+        and reviewer_response_complete
+        and claim_index_complete
+        and lineage_complete
+        and package.final_publish_ready
+    )
+    return {
+        "submission_manifest_path": str(submission_manifest_path),
+        "reproducibility_checklist_path": str(checklist_path),
+        "reviewer_response_path": str(reviewer_response_path),
+        "claim_evidence_index_path": str(claim_index_path),
+        "lineage_archive_path": str(lineage_archive_path),
+        "submission_ready": submission_ready,
+        "submission_asset_count": sum(1 for item in generated_assets if item["exists"]),
+        "reproducibility_checklist_complete": checklist_complete,
+        "reviewer_response_complete": reviewer_response_complete,
+        "claim_evidence_index_complete": claim_index_complete,
+        "lineage_archive_complete": lineage_complete,
+    }
+
+
 def _project_title(project_id: str) -> str | None:
     db = db_module.SessionLocal()
     try:
@@ -3080,6 +3422,11 @@ def _publish_generated_paths(project_id: str, run_id: str) -> list[Path]:
         _publish_archive_manifest_path(project_id, run_id),
         _publication_manifest_path(project_id, run_id),
         _code_package_path(project_id, run_id),
+        _submission_manifest_path(project_id, run_id),
+        _reproducibility_checklist_path(project_id, run_id),
+        _reviewer_response_path(project_id, run_id),
+        _claim_evidence_index_path(project_id, run_id),
+        _lineage_archive_path(project_id, run_id),
     ]
 
 
@@ -3300,6 +3647,31 @@ def build_publication_manifest(
         if repair_execution_path.is_file()
         else package.publication_repair_execution_path
     )
+    submission_manifest_path = (
+        Path(package.submission_manifest_path)
+        if package.submission_manifest_path
+        else _submission_manifest_path(project_id, run_id)
+    )
+    reproducibility_checklist_path = (
+        Path(package.reproducibility_checklist_path)
+        if package.reproducibility_checklist_path
+        else _reproducibility_checklist_path(project_id, run_id)
+    )
+    reviewer_response_path = (
+        Path(package.reviewer_response_path)
+        if package.reviewer_response_path
+        else _reviewer_response_path(project_id, run_id)
+    )
+    claim_evidence_index_path = (
+        Path(package.claim_evidence_index_path)
+        if package.claim_evidence_index_path
+        else _claim_evidence_index_path(project_id, run_id)
+    )
+    lineage_archive_path = (
+        Path(package.lineage_archive_path)
+        if package.lineage_archive_path
+        else _lineage_archive_path(project_id, run_id)
+    )
 
     publication = AutoResearchPublicationManifestRead(
         publication_id=f"publication_{run_id}",
@@ -3353,6 +3725,30 @@ def build_publication_manifest(
         publication_repair_plan_sha256=_file_sha256(repair_plan_path),
         publication_repair_execution_path=repair_execution_path_value,
         publication_repair_execution_sha256=_file_sha256(repair_execution_path),
+        submission_manifest_path=(
+            str(submission_manifest_path) if submission_manifest_path.is_file() else package.submission_manifest_path
+        ),
+        submission_manifest_sha256=_file_sha256(submission_manifest_path),
+        reproducibility_checklist_path=(
+            str(reproducibility_checklist_path)
+            if reproducibility_checklist_path.is_file()
+            else package.reproducibility_checklist_path
+        ),
+        reproducibility_checklist_sha256=_file_sha256(reproducibility_checklist_path),
+        reviewer_response_path=(
+            str(reviewer_response_path) if reviewer_response_path.is_file() else package.reviewer_response_path
+        ),
+        reviewer_response_sha256=_file_sha256(reviewer_response_path),
+        claim_evidence_index_path=(
+            str(claim_evidence_index_path)
+            if claim_evidence_index_path.is_file()
+            else package.claim_evidence_index_path
+        ),
+        claim_evidence_index_sha256=_file_sha256(claim_evidence_index_path),
+        lineage_archive_path=(
+            str(lineage_archive_path) if lineage_archive_path.is_file() else package.lineage_archive_path
+        ),
+        lineage_archive_sha256=_file_sha256(lineage_archive_path),
         archive_ready=package.archive_ready,
         archive_current=package.archive_current,
         review_round=package.review_round,
@@ -3611,6 +4007,15 @@ def build_publish_package(project_id: str, run_id: str) -> AutoResearchPublishPa
             "revision_actions": revision_actions,
         }
     )
+    submission_updates = _materialize_submission_package_assets(
+        project_id=project_id,
+        run_id=run_id,
+        run=run,
+        review=review,
+        review_loop=review_loop,
+        package=package,
+    )
+    package = package.model_copy(update=submission_updates)
     _write_json(_publish_manifest_path(project_id, run_id), package.model_dump(mode="json"))
     return package
 

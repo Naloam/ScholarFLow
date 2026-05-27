@@ -45,7 +45,7 @@ Acceptance:
 
 ## Priority 4: P19 Submission Package
 
-Status: next.
+Status: done.
 
 Goal: create a final package suitable for submission workflows.
 
@@ -56,7 +56,7 @@ Acceptance:
 
 ## Priority 5: P20 Real End-to-End Evaluation
 
-Status: pending.
+Status: next.
 
 Goal: run executable evaluation cases that produce ScholarFlow's own system evidence.
 

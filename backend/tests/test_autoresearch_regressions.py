@@ -2018,6 +2018,201 @@ def test_publish_package_blocks_unresolved_repair_state(
     )
 
 
+def test_publish_package_materializes_submission_assets(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    project_id = "project_submission_assets"
+    run_id = "run_submission_assets"
+    run_root = autoresearch_repository.run_dir(project_id, run_id)
+    run_root.mkdir(parents=True, exist_ok=True)
+    paper_path = run_root / "paper.md"
+    paper_path.write_text("# Submission Asset Paper\n\nGrounded result.\n", encoding="utf-8")
+    run_json_path = run_root / "run.json"
+    run_json_path.write_text("{}", encoding="utf-8")
+    claim_matrix_path = run_root / "claim_evidence_matrix.json"
+    claim_matrix = AutoResearchClaimEvidenceMatrixRead(
+        generated_at=now,
+        claim_count=1,
+        supported_claim_count=1,
+        entries=[
+            AutoResearchClaimEvidenceEntryRead(
+                claim_id="claim_result_summary",
+                category="result",
+                section_hint="Results",
+                claim="The candidate improves the primary metric on the retained artifact.",
+                evidence=[
+                    AutoResearchClaimEvidenceRefRead(
+                        source_kind="artifact",
+                        label="Selected artifact",
+                        detail="Objective score is preserved in the run artifact.",
+                    )
+                ],
+            )
+        ],
+    )
+    claim_matrix_path.write_text(claim_matrix.model_dump_json(indent=2), encoding="utf-8")
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Submission package assets",
+        status="done",
+        task_family="text_classification",
+        created_at=now,
+        updated_at=now,
+        paper_path=str(paper_path),
+        paper_markdown=paper_path.read_text(encoding="utf-8"),
+        claim_evidence_matrix=claim_matrix,
+        claim_evidence_matrix_path=str(claim_matrix_path),
+    )
+    evidence_index_path = run_root / "publication_evidence_index.json"
+    evidence_index = AutoResearchPublicationEvidenceIndexRead(
+        generated_at=now,
+        project_id=project_id,
+        run_id=run_id,
+        evidence_item_count=1,
+        required_evidence_count=1,
+        present_required_evidence_count=1,
+        complete=True,
+        evidence_index_fingerprint="submission-assets-evidence",
+    )
+    evidence_index_path.write_text(evidence_index.model_dump_json(indent=2), encoding="utf-8")
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        overall_status="needs_revision",
+        unsupported_claim_risk="medium",
+        summary="Submission asset regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        findings=[
+            review_publish.AutoResearchReviewFindingRead(
+                id="finding_1",
+                severity="warning",
+                category="citation",
+                summary="Paper text does not include citation markers.",
+                detail="Add citation support before final publication.",
+            )
+        ],
+        publication_evidence_index=evidence_index,
+        publication_evidence_index_path=str(evidence_index_path),
+    )
+    review_loop = review_publish.AutoResearchReviewLoopRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        current_round=1,
+        latest_review_fingerprint="submission-assets-review",
+        pending_action_count=1,
+        pending_revision_actions=["Add citation support"],
+    )
+    asset = review_publish.AutoResearchBundleAssetRead(
+        asset_id=f"{run_id}:run_paper_markdown",
+        label="Paper",
+        role="run_paper_markdown",
+        required=True,
+        ref=AutoResearchRegistryAssetRef(
+            path=str(paper_path),
+            exists=True,
+            size_bytes=paper_path.stat().st_size,
+            sha256=hashlib.sha256(paper_path.read_bytes()).hexdigest(),
+        ),
+    )
+    bundle = review_publish.AutoResearchBundleRead(
+        id="selected_candidate_repro",
+        name="Selected Candidate Repro Bundle",
+        description="Submission asset bundle.",
+        asset_count=1,
+        existing_asset_count=1,
+        assets=[asset],
+    )
+    registry = AutoResearchRunRegistryRead(
+        project_id=project_id,
+        run_id=run_id,
+        topic=run.topic,
+        status=run.status,
+        root_path=str(run_root),
+        files=AutoResearchRunRegistryFiles(
+            root=AutoResearchRegistryAssetRef(path=str(run_root), kind="directory", exists=True),
+            run_json=AutoResearchRegistryAssetRef(path=str(run_json_path), exists=True),
+        ),
+        lineage=AutoResearchRunLineageRead(
+            selected_candidate_id="candidate_1",
+            edges=[
+                AutoResearchLineageEdgeRead(
+                    source_kind="artifact",
+                    source_id=f"{run_id}:artifact",
+                    relation="derived_from",
+                    target_kind="paper",
+                    target_id=f"{run_id}:paper",
+                    target_path=str(paper_path),
+                    exists=True,
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr(review_publish, "build_run_review", lambda *_args, **_kwargs: review)
+    monkeypatch.setattr(review_publish, "load_run", lambda *_args: run)
+    monkeypatch.setattr(review_publish, "_load_review_loop", lambda *_args: review_loop)
+    monkeypatch.setattr(review_publish, "load_run_registry", lambda *_args: registry)
+    monkeypatch.setattr(
+        review_publish,
+        "load_run_bundle_index",
+        lambda *_args: review_publish.AutoResearchBundleIndexRead(
+            project_id=project_id,
+            run_id=run_id,
+            bundles=[bundle],
+        ),
+    )
+
+    package = review_publish.build_publish_package(project_id, run_id)
+
+    assert package is not None
+    assert package.submission_asset_count == 5
+    assert package.submission_ready is False
+    assert package.claim_evidence_index_complete is True
+    assert package.reviewer_response_complete is True
+    assert package.lineage_archive_complete is True
+    checklist_path = Path(package.reproducibility_checklist_path)
+    response_path = Path(package.reviewer_response_path)
+    claim_index_path = Path(package.claim_evidence_index_path)
+    lineage_archive_path = Path(package.lineage_archive_path)
+    submission_manifest_path = Path(package.submission_manifest_path)
+    assert checklist_path.is_file()
+    assert response_path.is_file()
+    assert claim_index_path.is_file()
+    assert lineage_archive_path.is_file()
+    assert submission_manifest_path.is_file()
+    assert "Reproducibility Checklist" in checklist_path.read_text(encoding="utf-8")
+    assert "Reviewer Response" in response_path.read_text(encoding="utf-8")
+    assert "claim_result_summary" in claim_index_path.read_text(encoding="utf-8")
+    lineage_payload = json.loads(lineage_archive_path.read_text(encoding="utf-8"))
+    assert lineage_payload["lineage_edge_count"] == 1
+    submission_payload = json.loads(submission_manifest_path.read_text(encoding="utf-8"))
+    assert submission_payload["final_blocker_count"] == package.final_blocker_count
+    assert {item["role"] for item in submission_payload["generated_assets"]} == {
+        "reproducibility_checklist",
+        "reviewer_response",
+        "claim_evidence_index",
+        "lineage_archive",
+    }
+    generated_names = {
+        path.name
+        for path in review_publish._publish_generated_paths(project_id, run_id)
+    }
+    assert {
+        review_publish.SUBMISSION_MANIFEST_FILENAME,
+        review_publish.REPRODUCIBILITY_CHECKLIST_FILENAME,
+        review_publish.REVIEWER_RESPONSE_FILENAME,
+        review_publish.CLAIM_EVIDENCE_INDEX_FILENAME,
+        review_publish.LINEAGE_ARCHIVE_FILENAME,
+    }.issubset(generated_names)
+
+
 def test_publish_package_marks_archive_stale_when_asset_digest_changes(
     monkeypatch,
     tmp_path: Path,

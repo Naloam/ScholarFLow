@@ -98,6 +98,13 @@ This document focuses on the current auto-research API surface.
 - marks the run `done` and returns the execution plan, environment manifest, materialized jobs, result artifact, evidence ledger, and repair plan
 - repair actions distinguish missing baseline evidence, missing ablation evidence, insufficient seed count, and failed rerun needs
 
+### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory/materialize`
+
+- materializes local, Docker, or bridge job handoffs without claiming that experiments have completed
+- accepts `executor_mode` (`local`, `docker`, or `bridge`)
+- persists the execution plan, environment manifest, materialized planned jobs, and an incomplete evidence ledger
+- leaves result claims blocked until outputs are imported or toy execution produces a completed result artifact
+
 ### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory/import`
 
 - imports an externally produced factory result without live benchmark, GPU, or Docker access

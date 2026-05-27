@@ -14,6 +14,7 @@ import type {
   AutoResearchExperimentBridge,
   AutoResearchExperimentFactoryExecution,
   AutoResearchExperimentFactoryImportRequest,
+  AutoResearchExperimentFactoryMaterializeRequest,
   AutoResearchExperimentFactoryPlan,
   AutoResearchHypothesisBank,
   AutoResearchIdeaRequest,
@@ -456,6 +457,20 @@ export const api = {
     return request(
       `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/toy-execute`,
       { method: "POST" },
+    );
+  },
+
+  materializeAutoResearchRunExperimentFactory(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchExperimentFactoryMaterializeRequest,
+  ): Promise<AutoResearchExperimentFactoryExecution> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/materialize`,
+      {
+        method: "POST",
+        body: payload ? JSON.stringify(payload) : undefined,
+      },
     );
   },
 

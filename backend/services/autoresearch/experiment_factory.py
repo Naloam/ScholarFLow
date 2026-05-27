@@ -347,6 +347,7 @@ def materialize_factory_jobs(
     mode = executor_mode or environment_manifest.executor_mode
     failed_kinds = failed_job_kinds or set()
     failed_ids = failed_job_ids or set()
+    planned = artifact_status in {"queued", "running", "planned"}
     return [
         AutoResearchExperimentFactoryMaterializedJobRead(
             job_id=job.job_id,
@@ -368,6 +369,9 @@ def materialize_factory_jobs(
             repair_classification=_materialized_repair_classification(
                 job,
                 status=(
+                    "planned"
+                    if planned
+                    else
                     "done"
                     if artifact_status == "done"
                     and not plan.blockers
@@ -378,6 +382,9 @@ def materialize_factory_jobs(
                 plan=plan,
             ),  # type: ignore[arg-type]
             status=(
+                "planned"
+                if planned
+                else
                 "done"
                 if artifact_status == "done"
                 and not plan.blockers
@@ -738,6 +745,8 @@ def build_evidence_ledger(
         blockers.append("Materialized execution has insufficient seed/statistical outputs.")
     if any(job.repair_classification == "rerun_failed_job" for job in failed_jobs):
         blockers.append("Materialized execution has runtime job failures.")
+    if artifact.status != "done":
+        blockers.append("Materialized execution has no completed result artifact.")
     if plan.seed_job_count >= 3 and not artifact.significance_tests:
         blockers.append("Evidence ledger is missing statistical test evidence.")
     if materialized_jobs is not None and len(materialized_jobs) != plan.job_count:
@@ -846,6 +855,60 @@ def execute_toy_experiment_factory(
         result_artifact=artifact,
         evidence_ledger=ledger,
         repair_plan=repair,
+    )
+
+
+def materialize_factory_execution(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    *,
+    executor_mode: str = "local",
+) -> AutoResearchExperimentFactoryExecutionRead:
+    manifest = build_environment_manifest(plan, executor_mode=executor_mode)
+    materialized_jobs = materialize_factory_jobs(
+        plan,
+        environment_manifest=manifest,
+        executor_mode=executor_mode,
+        artifact_status="queued",
+    )
+    artifact = ResultArtifact(
+        status="queued",
+        summary=(
+            f"Experiment factory materialized {len(materialized_jobs)} "
+            f"{executor_mode} job handoff(s); results have not been imported yet."
+        ),
+        key_findings=[
+            "Materialized jobs are planned and cannot support claims until outputs are imported."
+        ],
+        primary_metric="primary_metric",
+        environment={
+            "executor_mode": executor_mode,
+            "environment_manifest_id": manifest.manifest_id,
+            "environment_manifest_fingerprint": manifest.manifest_fingerprint,
+            "materialized_job_count": len(materialized_jobs),
+        },
+        outputs={
+            "environment_manifest": "experiment_factory_environment_manifest.json",
+            "materialized_jobs": "experiment_factory_materialized_jobs.json",
+        },
+    )
+    ledger = build_evidence_ledger(
+        plan=plan,
+        artifact=artifact,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
+    )
+    return AutoResearchExperimentFactoryExecutionRead(
+        project_id=plan.project_id,
+        run_id=plan.run_id,
+        brief_id=plan.brief_id,
+        hypothesis_id=plan.hypothesis_id,
+        generated_at=_utcnow(),
+        execution_plan=plan,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
+        result_artifact=artifact,
+        evidence_ledger=ledger,
+        repair_plan=None,
     )
 
 

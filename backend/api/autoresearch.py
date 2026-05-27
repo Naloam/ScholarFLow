@@ -20,6 +20,7 @@ from schemas.autoresearch import (
     AutoResearchExperimentBridgeRead,
     AutoResearchExperimentFactoryExecutionRead,
     AutoResearchExperimentFactoryImportRequest,
+    AutoResearchExperimentFactoryMaterializeRequest,
     AutoResearchExperimentFactoryPlanRead,
     AutoResearchIdeaRequest,
     AutoResearchIdeaRunCreateRequest,
@@ -69,6 +70,7 @@ from services.autoresearch.experiment_factory import (
     build_experiment_factory_plan,
     execute_imported_experiment_factory,
     execute_toy_experiment_factory,
+    materialize_factory_execution,
 )
 from services.autoresearch.idea_brief import (
     build_research_brief,
@@ -519,6 +521,61 @@ def execute_auto_research_run_experiment_factory_toy(
         status_code=200,
         user_id=identity.user_id if identity else None,
         detail=f"run_id={run.id} jobs={plan.job_count} ledger_entries={execution.evidence_ledger.entry_count}",
+    )
+    return execution
+
+
+@router.post("/{run_id}/experiment-factory/materialize", response_model=AutoResearchExperimentFactoryExecutionRead)
+def materialize_auto_research_run_experiment_factory(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchExperimentFactoryMaterializeRequest | None = Body(default=None),
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryExecutionRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    payload = payload or AutoResearchExperimentFactoryMaterializeRequest()
+    brief = load_research_brief(project_id, run.brief_id) if run.brief_id else None
+    hypothesis = None
+    if brief is not None:
+        try:
+            hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=run.hypothesis_id)
+        except ValueError:
+            hypothesis = None
+    plan = build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+        run=run,
+        experiment_design=getattr(run, "experiment_design", None),
+    )
+    execution = materialize_factory_execution(
+        plan,
+        executor_mode=payload.executor_mode,
+    )
+    save_run(
+        run.model_copy(
+            update={
+                "status": "running" if run.status in {"queued", "running"} else run.status,
+                "experiment_factory_plan": execution.execution_plan,
+                "experiment_factory_environment_manifest": execution.environment_manifest,
+                "experiment_factory_materialized_jobs": execution.materialized_jobs,
+                "evidence_ledger": execution.evidence_ledger,
+            }
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.experiment_factory",
+        project_id=project_id,
+        action=f"{payload.executor_mode}_materialized",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=f"run_id={run.id} jobs={plan.job_count}",
     )
     return execution
 

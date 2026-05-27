@@ -59,6 +59,7 @@ from schemas.autoresearch import (
     AutoResearchRunRegistryRead,
     BaselineSpec,
     BenchmarkSource,
+    ExecutionBackendSpec,
     ExperimentAttempt,
     ExperimentSpec,
     HypothesisCandidate,
@@ -5390,6 +5391,73 @@ def test_experiment_factory_external_import_classifies_missing_evidence() -> Non
         "add_missing_ablation",
         "increase_seed_count",
     }.issubset(set(execution.repair_plan.actions))
+
+
+def test_experiment_factory_materializes_docker_handoff_without_claim_support() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-materialize-docker",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+    ).model_copy(
+        update={
+            "execution_backend": ExecutionBackendSpec(
+                kind="docker",
+                docker_image="scholarflow/factory-fixture:latest",
+                timeout_seconds=120,
+            )
+        }
+    )
+
+    execution = autoresearch_experiment_factory.materialize_factory_execution(
+        plan,
+        executor_mode="docker",
+    )
+
+    assert execution.environment_manifest is not None
+    assert execution.environment_manifest.executor_mode == "docker"
+    assert execution.environment_manifest.backend == "docker"
+    assert execution.environment_manifest.docker_image == "scholarflow/factory-fixture:latest"
+    assert execution.result_artifact.status == "queued"
+    assert len(execution.materialized_jobs) == plan.job_count
+    assert all(job.status == "planned" for job in execution.materialized_jobs)
+    assert all(job.executor_mode == "docker" for job in execution.materialized_jobs)
+    assert all(job.output_refs == [] for job in execution.materialized_jobs)
+    assert execution.evidence_ledger.complete is False
+    assert "Materialized execution has no completed result artifact." in execution.evidence_ledger.blockers
+    assert execution.repair_plan is None
+
+
+def test_experiment_factory_external_import_classifies_runtime_failure() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-import-runtime-failure",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+    )
+
+    execution = autoresearch_experiment_factory.execute_imported_experiment_factory(
+        plan,
+        summary="External backend failed before producing an objective score.",
+        primary_metric="macro_f1",
+        objective_system="candidate_method",
+        objective_score=None,
+    )
+
+    assert execution.result_artifact.status == "failed"
+    assert any(
+        job.repair_classification == "rerun_failed_job"
+        for job in execution.materialized_jobs
+        if job.job_kind == "candidate_method"
+    )
+    assert execution.evidence_ledger.complete is False
+    assert "Materialized execution has runtime job failures." in execution.evidence_ledger.blockers
+    assert execution.repair_plan is not None
+    assert "rerun_failed_job" in execution.repair_plan.actions
 
 
 def test_experiment_factory_artifacts_persist_on_run(

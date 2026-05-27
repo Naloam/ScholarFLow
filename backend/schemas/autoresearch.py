@@ -930,6 +930,20 @@ class AutoResearchExperimentFactoryImportRequest(BaseModel):
     notes: str | None = None
 
 
+class AutoResearchExperimentFactoryMaterializeRequest(BaseModel):
+    executor_mode: AutoResearchExperimentFactoryExecutorMode = "local"
+
+    @field_validator("executor_mode")
+    @classmethod
+    def validate_executor_mode(
+        cls,
+        value: AutoResearchExperimentFactoryExecutorMode,
+    ) -> AutoResearchExperimentFactoryExecutorMode:
+        if value in {"toy", "external_import"}:
+            raise ValueError("executor_mode must be local, docker, or bridge for materialization")
+        return value
+
+
 class AutoResearchEvidenceLedgerEntryRead(BaseModel):
     evidence_id: str
     source_job_id: str | None = None

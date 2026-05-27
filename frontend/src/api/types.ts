@@ -2892,6 +2892,10 @@ export type AutoResearchExperimentFactoryImportRequest = {
   notes?: string | null;
 };
 
+export type AutoResearchExperimentFactoryMaterializeRequest = {
+  executor_mode: "local" | "docker" | "bridge";
+};
+
 export type AutoResearchEvidenceLedgerEntry = {
   evidence_id: string;
   source_job_id?: string | null;

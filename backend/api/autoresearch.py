@@ -19,6 +19,7 @@ from schemas.autoresearch import (
     AutoResearchEvaluationCaseSuiteRead,
     AutoResearchExperimentBridgeRead,
     AutoResearchExperimentFactoryExecutionRead,
+    AutoResearchExperimentFactoryImportRequest,
     AutoResearchExperimentFactoryPlanRead,
     AutoResearchIdeaRequest,
     AutoResearchIdeaRunCreateRequest,
@@ -66,6 +67,7 @@ from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.evaluation_cases import build_evaluation_case_suite
 from services.autoresearch.experiment_factory import (
     build_experiment_factory_plan,
+    execute_imported_experiment_factory,
     execute_toy_experiment_factory,
 )
 from services.autoresearch.idea_brief import (
@@ -517,6 +519,76 @@ def execute_auto_research_run_experiment_factory_toy(
         status_code=200,
         user_id=identity.user_id if identity else None,
         detail=f"run_id={run.id} jobs={plan.job_count} ledger_entries={execution.evidence_ledger.entry_count}",
+    )
+    return execution
+
+
+@router.post("/{run_id}/experiment-factory/import", response_model=AutoResearchExperimentFactoryExecutionRead)
+def import_auto_research_run_experiment_factory_result(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchExperimentFactoryImportRequest,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentFactoryExecutionRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    brief = load_research_brief(project_id, run.brief_id) if run.brief_id else None
+    hypothesis = None
+    if brief is not None:
+        try:
+            hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=run.hypothesis_id)
+        except ValueError:
+            hypothesis = None
+    plan = build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+        hypothesis=hypothesis,
+        run=run,
+        experiment_design=getattr(run, "experiment_design", None),
+    )
+    execution = execute_imported_experiment_factory(
+        plan,
+        summary=payload.summary,
+        primary_metric=payload.primary_metric,
+        objective_system=payload.objective_system,
+        objective_score=payload.objective_score,
+        baseline_system=payload.baseline_system,
+        baseline_score=payload.baseline_score,
+        key_findings=payload.key_findings,
+        ablation_scores=payload.ablation_scores,
+        seed_count=payload.seed_count,
+        significance_p_value=payload.significance_p_value,
+        notes=payload.notes,
+    )
+    save_run(
+        run.model_copy(
+            update={
+                "status": "done" if execution.result_artifact.status == "done" else "failed",
+                "error": None if execution.result_artifact.status == "done" else execution.result_artifact.summary,
+                "experiment_factory_plan": execution.execution_plan,
+                "experiment_factory_environment_manifest": execution.environment_manifest,
+                "experiment_factory_materialized_jobs": execution.materialized_jobs,
+                "artifact": execution.result_artifact,
+                "evidence_ledger": execution.evidence_ledger,
+                "experiment_factory_repair_plan": execution.repair_plan,
+            }
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.experiment_factory",
+        project_id=project_id,
+        action="external_imported",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"run_id={run.id} jobs={plan.job_count} "
+            f"ledger_entries={execution.evidence_ledger.entry_count}"
+        ),
     )
     return execution
 

@@ -5316,6 +5316,82 @@ def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:
     assert execution.repair_plan.actions == ["none"]
 
 
+def test_experiment_factory_external_import_can_complete_ledger() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-import-complete",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+    )
+
+    execution = autoresearch_experiment_factory.execute_imported_experiment_factory(
+        plan,
+        summary="External backend completed candidate, baseline, ablation, and seed evidence.",
+        primary_metric="macro_f1",
+        objective_system="candidate_method",
+        objective_score=0.76,
+        baseline_system="keyword_baseline",
+        baseline_score=0.63,
+        key_findings=["External candidate beat the imported baseline."],
+        ablation_scores={"without_evidence_features": 0.71},
+        seed_count=3,
+        significance_p_value=0.031,
+        notes="Imported from deterministic regression fixture.",
+    )
+
+    assert execution.environment_manifest is not None
+    assert execution.environment_manifest.executor_mode == "external_import"
+    assert execution.result_artifact.status == "done"
+    assert execution.result_artifact.environment["external_imported"] is True
+    assert execution.result_artifact.significance_tests
+    assert len(execution.materialized_jobs) == plan.job_count
+    assert all(job.status == "done" for job in execution.materialized_jobs)
+    assert all(job.repair_classification == "none" for job in execution.materialized_jobs)
+    assert execution.evidence_ledger.complete is True
+    assert execution.repair_plan is not None
+    assert execution.repair_plan.actions == ["none"]
+
+
+def test_experiment_factory_external_import_classifies_missing_evidence() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-import-repair",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+    )
+
+    execution = autoresearch_experiment_factory.execute_imported_experiment_factory(
+        plan,
+        summary="External backend only returned candidate metrics.",
+        primary_metric="macro_f1",
+        objective_system="candidate_method",
+        objective_score=0.72,
+        seed_count=1,
+    )
+
+    assert execution.environment_manifest is not None
+    assert execution.environment_manifest.executor_mode == "external_import"
+    failed_by_kind = {
+        job.job_kind: job.repair_classification
+        for job in execution.materialized_jobs
+        if job.status == "failed"
+    }
+    assert failed_by_kind["baseline"] == "add_missing_baseline"
+    assert failed_by_kind["ablation"] == "add_missing_ablation"
+    assert failed_by_kind["seed"] == "increase_seed_count"
+    assert execution.evidence_ledger.complete is False
+    assert execution.repair_plan is not None
+    assert {
+        "add_missing_baseline",
+        "add_missing_ablation",
+        "increase_seed_count",
+    }.issubset(set(execution.repair_plan.actions))
+
+
 def test_experiment_factory_artifacts_persist_on_run(
     monkeypatch,
     tmp_path: Path,

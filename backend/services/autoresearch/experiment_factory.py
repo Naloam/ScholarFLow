@@ -323,6 +323,12 @@ def _materialized_repair_classification(
     plan: AutoResearchExperimentFactoryPlanRead,
 ) -> str:
     if status == "failed":
+        if job.job_kind == "baseline":
+            return "add_missing_baseline"
+        if job.job_kind == "ablation":
+            return "add_missing_ablation"
+        if job.job_kind == "seed":
+            return "increase_seed_count"
         return "rerun_failed_job"
     if job.job_kind == "seed" and plan.seed_job_count < 3:
         return "increase_seed_count"
@@ -335,9 +341,12 @@ def materialize_factory_jobs(
     environment_manifest: AutoResearchExperimentFactoryEnvironmentManifestRead,
     executor_mode: str | None = None,
     artifact_status: str = "done",
+    failed_job_kinds: set[str] | None = None,
+    failed_job_ids: set[str] | None = None,
 ) -> list[AutoResearchExperimentFactoryMaterializedJobRead]:
     mode = executor_mode or environment_manifest.executor_mode
-    status = "done" if artifact_status == "done" and not plan.blockers else "failed"
+    failed_kinds = failed_job_kinds or set()
+    failed_ids = failed_job_ids or set()
     return [
         AutoResearchExperimentFactoryMaterializedJobRead(
             job_id=job.job_id,
@@ -347,17 +356,162 @@ def materialize_factory_jobs(
             command=job.command,
             dependencies=job.dependencies,
             expected_outputs=job.expected_outputs,
-            output_refs=_materialized_output_refs(job) if status == "done" else [],
+            output_refs=(
+                _materialized_output_refs(job)
+                if artifact_status == "done"
+                and not plan.blockers
+                and job.job_kind not in failed_kinds
+                and job.job_id not in failed_ids
+                else []
+            ),
             environment_manifest_id=environment_manifest.manifest_id,
             repair_classification=_materialized_repair_classification(
                 job,
-                status=status,
+                status=(
+                    "done"
+                    if artifact_status == "done"
+                    and not plan.blockers
+                    and job.job_kind not in failed_kinds
+                    and job.job_id not in failed_ids
+                    else "failed"
+                ),
                 plan=plan,
             ),  # type: ignore[arg-type]
-            status=status,  # type: ignore[arg-type]
+            status=(
+                "done"
+                if artifact_status == "done"
+                and not plan.blockers
+                and job.job_kind not in failed_kinds
+                and job.job_id not in failed_ids
+                else "failed"
+            ),  # type: ignore[arg-type]
         )
         for job in plan.jobs
     ]
+
+
+def result_artifact_from_external_import(
+    *,
+    summary: str,
+    primary_metric: str,
+    objective_system: str,
+    objective_score: float | None,
+    baseline_system: str | None = None,
+    baseline_score: float | None = None,
+    key_findings: list[str] | None = None,
+    ablation_scores: dict[str, float] | None = None,
+    seed_count: int = 1,
+    significance_p_value: float | None = None,
+    notes: str | None = None,
+) -> ResultArtifact:
+    system_results = []
+    aggregate_results = []
+    if objective_score is not None:
+        system_results.append(
+            SystemMetricResult(system=objective_system, metrics={primary_metric: objective_score})
+        )
+        aggregate_results.append(
+            AggregateSystemMetricResult(
+                system=objective_system,
+                mean_metrics={primary_metric: objective_score},
+                std_metrics={primary_metric: 0.0},
+                min_metrics={primary_metric: objective_score},
+                max_metrics={primary_metric: objective_score},
+                sample_count=seed_count,
+            )
+        )
+    if baseline_system and baseline_score is not None:
+        system_results.append(
+            SystemMetricResult(system=baseline_system, metrics={primary_metric: baseline_score})
+        )
+        aggregate_results.append(
+            AggregateSystemMetricResult(
+                system=baseline_system,
+                mean_metrics={primary_metric: baseline_score},
+                std_metrics={primary_metric: 0.0},
+                min_metrics={primary_metric: baseline_score},
+                max_metrics={primary_metric: baseline_score},
+                sample_count=seed_count,
+            )
+        )
+    significance_tests = []
+    if (
+        significance_p_value is not None
+        and baseline_system
+        and objective_score is not None
+        and baseline_score is not None
+    ):
+        delta = objective_score - baseline_score
+        significance_tests.append(
+            SignificanceTestResult(
+                scope="system",
+                metric=primary_metric,
+                candidate=objective_system,
+                comparator=baseline_system,
+                comparison_family="external_import",
+                family_size=1,
+                alternative="greater",
+                method="paired_sign_flip_exact",
+                p_value=significance_p_value,
+                adjusted_p_value=significance_p_value,
+                correction="holm_bonferroni",
+                effect_size=round(delta, 4),
+                significant=significance_p_value < 0.05 and delta > 0,
+                sample_count=seed_count,
+                detail="Imported external experiment significance summary.",
+            )
+        )
+    rows = [[item.system, f"{item.metrics.get(primary_metric, 0):.4f}"] for item in system_results]
+    return ResultArtifact(
+        status="done" if objective_score is not None else "failed",
+        summary=summary,
+        key_findings=key_findings or ([summary] if summary else []),
+        primary_metric=primary_metric,
+        best_system=objective_system if objective_score is not None else None,
+        system_results=system_results,
+        aggregate_system_results=aggregate_results,
+        per_seed_results=[],
+        sweep_results=[],
+        significance_tests=significance_tests,
+        acceptance_checks=[],
+        tables=[
+            ResultTable(
+                title="External Factory Import Results",
+                columns=["system", primary_metric],
+                rows=rows,
+            )
+        ],
+        logs=notes,
+        environment={
+            "executor_mode": "external_import",
+            "seed_count": seed_count,
+            "external_imported": True,
+            "ablation_scores": ablation_scores or {},
+        },
+        outputs={"source": "experiment_factory_external_import"},
+        objective_system=objective_system if objective_score is not None else None,
+        objective_score=objective_score,
+    )
+
+
+def _failed_job_kinds_for_external_import(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    *,
+    artifact: ResultArtifact,
+    baseline_score: float | None,
+    ablation_scores: dict[str, float] | None,
+    seed_count: int,
+) -> set[str]:
+    failed: set[str] = set()
+    if artifact.status != "done":
+        return {job.job_kind for job in plan.jobs}
+    if plan.baseline_job_count and baseline_score is None:
+        failed.add("baseline")
+    if plan.ablation_job_count and not ablation_scores:
+        failed.add("ablation")
+    if plan.seed_job_count >= 3 and seed_count < 3:
+        failed.add("seed")
+    return failed
 
 
 def _metric_value_for_system(system: str, *, baseline_index: int = 0, seed: int = 0) -> float:
@@ -575,6 +729,17 @@ def build_evidence_ledger(
         blockers.append("Evidence ledger is missing baseline evidence.")
     if plan.ablation_job_count and not any(item.evidence_kind == "ablation" for item in entries):
         blockers.append("Evidence ledger is missing ablation evidence.")
+    failed_jobs = [job for job in materialized_jobs or [] if job.status == "failed"]
+    if any(job.job_kind == "baseline" for job in failed_jobs):
+        blockers.append("Materialized execution is missing required baseline outputs.")
+    if any(job.job_kind == "ablation" for job in failed_jobs):
+        blockers.append("Materialized execution is missing required ablation outputs.")
+    if any(job.job_kind == "seed" for job in failed_jobs):
+        blockers.append("Materialized execution has insufficient seed/statistical outputs.")
+    if any(job.repair_classification == "rerun_failed_job" for job in failed_jobs):
+        blockers.append("Materialized execution has runtime job failures.")
+    if plan.seed_job_count >= 3 and not artifact.significance_tests:
+        blockers.append("Evidence ledger is missing statistical test evidence.")
     if materialized_jobs is not None and len(materialized_jobs) != plan.job_count:
         blockers.append("Evidence ledger job materialization count does not match the factory plan.")
     payload = {
@@ -602,18 +767,21 @@ def build_factory_repair_plan(
 ) -> AutoResearchExperimentFactoryRepairPlanRead:
     actions = []
     reasons = []
-    if plan.baseline_job_count == 0 or "baseline" in " ".join(evidence_ledger.blockers).lower():
+    blocker_text = " ".join(evidence_ledger.blockers).lower()
+    if plan.baseline_job_count == 0 or "baseline" in blocker_text:
         actions.append("add_missing_baseline")
         reasons.append("Baseline evidence is missing.")
-    if plan.ablation_job_count == 0:
+    if plan.ablation_job_count == 0 or "ablation" in blocker_text:
         actions.append("add_missing_ablation")
         reasons.append("Ablation evidence is missing; mechanism claims must be repaired.")
-    if plan.seed_job_count < 3:
+    if plan.seed_job_count < 3 or "statistical" in blocker_text or "seed" in blocker_text:
         actions.append("increase_seed_count")
         reasons.append("Statistical evidence has fewer than three seed jobs.")
-    if plan.blockers:
+    if plan.blockers or "runtime job failures" in blocker_text:
         actions.append("rerun_failed_job")
         reasons.extend(plan.blockers)
+        if "runtime job failures" in blocker_text:
+            reasons.append("At least one materialized job failed at runtime.")
     if not actions:
         actions.append("none")
         reasons.append("Factory evidence is complete enough for the selected profile.")
@@ -651,6 +819,87 @@ def execute_toy_experiment_factory(
                 "environment_manifest_id": manifest.manifest_id,
                 "environment_manifest_fingerprint": manifest.manifest_fingerprint,
                 "materialized_job_count": len(materialized_jobs),
+            },
+            "outputs": {
+                **artifact.outputs,
+                "environment_manifest": "experiment_factory_environment_manifest.json",
+                "materialized_jobs": "experiment_factory_materialized_jobs.json",
+            },
+        }
+    )
+    ledger = build_evidence_ledger(
+        plan=plan,
+        artifact=artifact,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
+    )
+    repair = build_factory_repair_plan(plan=plan, evidence_ledger=ledger)
+    return AutoResearchExperimentFactoryExecutionRead(
+        project_id=plan.project_id,
+        run_id=plan.run_id,
+        brief_id=plan.brief_id,
+        hypothesis_id=plan.hypothesis_id,
+        generated_at=_utcnow(),
+        execution_plan=plan,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
+        result_artifact=artifact,
+        evidence_ledger=ledger,
+        repair_plan=repair,
+    )
+
+
+def execute_imported_experiment_factory(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    *,
+    summary: str,
+    primary_metric: str,
+    objective_system: str,
+    objective_score: float | None,
+    baseline_system: str | None = None,
+    baseline_score: float | None = None,
+    key_findings: list[str] | None = None,
+    ablation_scores: dict[str, float] | None = None,
+    seed_count: int = 1,
+    significance_p_value: float | None = None,
+    notes: str | None = None,
+) -> AutoResearchExperimentFactoryExecutionRead:
+    manifest = build_environment_manifest(plan, executor_mode="external_import")
+    artifact = result_artifact_from_external_import(
+        summary=summary,
+        primary_metric=primary_metric,
+        objective_system=objective_system,
+        objective_score=objective_score,
+        baseline_system=baseline_system,
+        baseline_score=baseline_score,
+        key_findings=key_findings,
+        ablation_scores=ablation_scores,
+        seed_count=seed_count,
+        significance_p_value=significance_p_value,
+        notes=notes,
+    )
+    failed_job_kinds = _failed_job_kinds_for_external_import(
+        plan,
+        artifact=artifact,
+        baseline_score=baseline_score,
+        ablation_scores=ablation_scores,
+        seed_count=seed_count,
+    )
+    materialized_jobs = materialize_factory_jobs(
+        plan,
+        environment_manifest=manifest,
+        executor_mode="external_import",
+        artifact_status=artifact.status,
+        failed_job_kinds=failed_job_kinds,
+    )
+    artifact = artifact.model_copy(
+        update={
+            "environment": {
+                **artifact.environment,
+                "environment_manifest_id": manifest.manifest_id,
+                "environment_manifest_fingerprint": manifest.manifest_fingerprint,
+                "materialized_job_count": len(materialized_jobs),
+                "failed_materialized_job_kinds": sorted(failed_job_kinds),
             },
             "outputs": {
                 **artifact.outputs,

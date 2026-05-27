@@ -2878,6 +2878,20 @@ export type AutoResearchExperimentFactoryMaterializedJob = {
   status: AutoResearchExperimentFactoryJobStatus;
 };
 
+export type AutoResearchExperimentFactoryImportRequest = {
+  summary: string;
+  primary_metric?: string;
+  objective_system?: string;
+  objective_score?: number | null;
+  baseline_system?: string | null;
+  baseline_score?: number | null;
+  key_findings?: string[];
+  ablation_scores?: Record<string, number>;
+  seed_count?: number;
+  significance_p_value?: number | null;
+  notes?: string | null;
+};
+
 export type AutoResearchEvidenceLedgerEntry = {
   evidence_id: string;
   source_job_id?: string | null;

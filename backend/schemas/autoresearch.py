@@ -916,6 +916,20 @@ class AutoResearchExperimentFactoryMaterializedJobRead(BaseModel):
     status: AutoResearchExperimentFactoryJobStatus = "planned"
 
 
+class AutoResearchExperimentFactoryImportRequest(BaseModel):
+    summary: str
+    primary_metric: str = "primary_metric"
+    objective_system: str = "candidate_method"
+    objective_score: float | None = None
+    baseline_system: str | None = None
+    baseline_score: float | None = None
+    key_findings: list[str] = Field(default_factory=list)
+    ablation_scores: dict[str, float] = Field(default_factory=dict)
+    seed_count: int = Field(default=1, ge=1)
+    significance_p_value: float | None = Field(default=None, ge=0.0, le=1.0)
+    notes: str | None = None
+
+
 class AutoResearchEvidenceLedgerEntryRead(BaseModel):
     evidence_id: str
     source_job_id: str | None = None

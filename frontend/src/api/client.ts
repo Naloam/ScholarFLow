@@ -13,6 +13,7 @@ import type {
   AutoResearchEvaluationCaseSuite,
   AutoResearchExperimentBridge,
   AutoResearchExperimentFactoryExecution,
+  AutoResearchExperimentFactoryImportRequest,
   AutoResearchExperimentFactoryPlan,
   AutoResearchHypothesisBank,
   AutoResearchIdeaRequest,
@@ -455,6 +456,20 @@ export const api = {
     return request(
       `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/toy-execute`,
       { method: "POST" },
+    );
+  },
+
+  importAutoResearchRunExperimentFactoryResult(
+    projectId: string,
+    runId: string,
+    payload: AutoResearchExperimentFactoryImportRequest,
+  ): Promise<AutoResearchExperimentFactoryExecution> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/import`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
     );
   },
 

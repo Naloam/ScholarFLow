@@ -98,6 +98,13 @@ This document focuses on the current auto-research API surface.
 - marks the run `done` and returns the execution plan, environment manifest, materialized jobs, result artifact, evidence ledger, and repair plan
 - repair actions distinguish missing baseline evidence, missing ablation evidence, insufficient seed count, and failed rerun needs
 
+### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory/import`
+
+- imports an externally produced factory result without live benchmark, GPU, or Docker access
+- persists the same environment manifest, materialized jobs, result artifact, evidence ledger, and repair plan as toy execution
+- classifies missing imported baselines as `add_missing_baseline`, missing ablations as `add_missing_ablation`, and insufficient seed/statistical evidence as `increase_seed_count`
+- keeps the run `failed` when no objective score is provided; otherwise marks the run `done` while preserving repair blockers for incomplete evidence
+
 ### `PATCH /api/projects/{project_id}/auto-research/{run_id}/controls`
 
 - patches the persisted run request snapshot for future scheduling/budget changes

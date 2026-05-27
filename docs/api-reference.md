@@ -94,8 +94,8 @@ This document focuses on the current auto-research API surface.
 ### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory/toy-execute`
 
 - executes the deterministic toy factory backend for the run's factory plan
-- persists `experiment_factory_plan.json`, `artifact.json`, `evidence_ledger.json`, and `experiment_factory_repair_plan.json`
-- marks the run `done` and returns the execution plan, result artifact, evidence ledger, and repair plan
+- persists `experiment_factory_plan.json`, `experiment_factory_environment_manifest.json`, `experiment_factory_materialized_jobs.json`, `artifact.json`, `evidence_ledger.json`, and `experiment_factory_repair_plan.json`
+- marks the run `done` and returns the execution plan, environment manifest, materialized jobs, result artifact, evidence ledger, and repair plan
 - repair actions distinguish missing baseline evidence, missing ablation evidence, insufficient seed count, and failed rerun needs
 
 ### `PATCH /api/projects/{project_id}/auto-research/{run_id}/controls`

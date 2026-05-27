@@ -5288,10 +5288,30 @@ def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:
     assert execution.result_artifact.status == "done"
     assert execution.result_artifact.objective_system == "candidate_method"
     assert execution.result_artifact.significance_tests
+    assert execution.environment_manifest is not None
+    assert execution.environment_manifest.executor_mode == "toy"
+    assert execution.environment_manifest.backend == "auto"
+    assert len(execution.materialized_jobs) == plan.job_count
+    assert all(job.status == "done" for job in execution.materialized_jobs)
+    assert all(job.output_refs for job in execution.materialized_jobs)
+    assert all(job.repair_classification == "none" for job in execution.materialized_jobs)
+    assert (
+        execution.result_artifact.environment["environment_manifest_id"]
+        == execution.environment_manifest.manifest_id
+    )
+    assert execution.result_artifact.environment["materialized_job_count"] == plan.job_count
     assert execution.evidence_ledger.complete is True
     assert execution.evidence_ledger.entry_count >= plan.baseline_job_count + plan.ablation_job_count
     assert any(item.evidence_kind == "baseline" for item in execution.evidence_ledger.entries)
     assert any(item.evidence_kind == "ablation" for item in execution.evidence_ledger.entries)
+    assert any(
+        item.artifact_ref == "experiment_factory_environment_manifest_json"
+        for item in execution.evidence_ledger.entries
+    )
+    assert any(
+        item.artifact_ref == "experiment_factory_materialized_jobs_json"
+        for item in execution.evidence_ledger.entries
+    )
     assert execution.repair_plan is not None
     assert execution.repair_plan.actions == ["none"]
 
@@ -5329,6 +5349,8 @@ def test_experiment_factory_artifacts_persist_on_run(
             update={
                 "status": "done",
                 "experiment_factory_plan": execution.execution_plan,
+                "experiment_factory_environment_manifest": execution.environment_manifest,
+                "experiment_factory_materialized_jobs": execution.materialized_jobs,
                 "artifact": execution.result_artifact,
                 "evidence_ledger": execution.evidence_ledger,
                 "experiment_factory_repair_plan": execution.repair_plan,
@@ -5341,22 +5363,32 @@ def test_experiment_factory_artifacts_persist_on_run(
 
     assert loaded is not None
     assert loaded.experiment_factory_plan is not None
+    assert loaded.experiment_factory_environment_manifest is not None
+    assert loaded.experiment_factory_materialized_jobs
     assert loaded.evidence_ledger is not None
     assert loaded.experiment_factory_repair_plan is not None
     assert loaded.experiment_factory_plan_path is not None
+    assert loaded.experiment_factory_environment_manifest_path is not None
+    assert loaded.experiment_factory_materialized_jobs_path is not None
     assert loaded.evidence_ledger_path is not None
     assert loaded.experiment_factory_repair_plan_path is not None
     assert Path(loaded.experiment_factory_plan_path).is_file()
+    assert Path(loaded.experiment_factory_environment_manifest_path).is_file()
+    assert Path(loaded.experiment_factory_materialized_jobs_path).is_file()
     assert Path(loaded.evidence_ledger_path).is_file()
     assert Path(loaded.experiment_factory_repair_plan_path).is_file()
     assert saved.artifact is not None
     assert registry is not None
     assert registry.files.experiment_factory_plan_json is not None
+    assert registry.files.experiment_factory_environment_manifest_json is not None
+    assert registry.files.experiment_factory_materialized_jobs_json is not None
     assert registry.files.evidence_ledger_json is not None
     assert registry.files.experiment_factory_repair_plan_json is not None
     assert bundles is not None
     roles = {asset.role for bundle in bundles.bundles for asset in bundle.assets}
     assert "run_experiment_factory_plan_json" in roles
+    assert "run_experiment_factory_environment_manifest_json" in roles
+    assert "run_experiment_factory_materialized_jobs_json" in roles
     assert "run_evidence_ledger_json" in roles
     assert "run_experiment_factory_repair_plan_json" in roles
 

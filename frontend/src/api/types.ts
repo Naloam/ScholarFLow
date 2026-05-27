@@ -647,6 +647,10 @@ export type AutoResearchRun = {
   paper_section_rewrite_index_path?: string | null;
   experiment_factory_plan?: AutoResearchExperimentFactoryPlan | null;
   experiment_factory_plan_path?: string | null;
+  experiment_factory_environment_manifest?: AutoResearchExperimentFactoryEnvironmentManifest | null;
+  experiment_factory_environment_manifest_path?: string | null;
+  experiment_factory_materialized_jobs: AutoResearchExperimentFactoryMaterializedJob[];
+  experiment_factory_materialized_jobs_path?: string | null;
   evidence_ledger?: AutoResearchEvidenceLedger | null;
   evidence_ledger_path?: string | null;
   experiment_factory_repair_plan?: AutoResearchExperimentFactoryRepairPlan | null;
@@ -904,6 +908,8 @@ export type AutoResearchRunRegistryFiles = {
   publication_repair_execution_json?: AutoResearchRegistryAssetRef | null;
   reviewer_simulation_json?: AutoResearchRegistryAssetRef | null;
   experiment_factory_plan_json?: AutoResearchRegistryAssetRef | null;
+  experiment_factory_environment_manifest_json?: AutoResearchRegistryAssetRef | null;
+  experiment_factory_materialized_jobs_json?: AutoResearchRegistryAssetRef | null;
   evidence_ledger_json?: AutoResearchRegistryAssetRef | null;
   experiment_factory_repair_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
@@ -1062,6 +1068,8 @@ export type AutoResearchBundleAssetRead = {
     | "run_publication_repair_execution_json"
     | "run_reviewer_simulation_json"
     | "run_experiment_factory_plan_json"
+    | "run_experiment_factory_environment_manifest_json"
+    | "run_experiment_factory_materialized_jobs_json"
     | "run_evidence_ledger_json"
     | "run_experiment_factory_repair_plan_json"
     | "run_paper_plan_json"
@@ -2780,6 +2788,13 @@ export type AutoResearchExperimentFactoryJobStatus =
   | "done"
   | "failed";
 
+export type AutoResearchExperimentFactoryExecutorMode =
+  | "toy"
+  | "local"
+  | "docker"
+  | "bridge"
+  | "external_import";
+
 export type AutoResearchExperimentFactoryRepairAction =
   | "none"
   | "add_missing_baseline"
@@ -2836,6 +2851,31 @@ export type AutoResearchExperimentFactoryPlan = {
   blockers: string[];
   warnings: string[];
   factory_fingerprint: string;
+};
+
+export type AutoResearchExperimentFactoryEnvironmentManifest = {
+  manifest_id: string;
+  generated_at: string;
+  executor_mode: AutoResearchExperimentFactoryExecutorMode;
+  backend: "auto" | "local" | "docker" | "docker_gpu" | "command";
+  docker_image?: string | null;
+  gpu_required: boolean;
+  runtime: Record<string, unknown>;
+  manifest_fingerprint: string;
+};
+
+export type AutoResearchExperimentFactoryMaterializedJob = {
+  job_id: string;
+  job_kind: AutoResearchExperimentFactoryJobKind;
+  executor_mode: AutoResearchExperimentFactoryExecutorMode;
+  backend: "auto" | "local" | "docker" | "docker_gpu" | "command";
+  command: string;
+  dependencies: string[];
+  expected_outputs: string[];
+  output_refs: string[];
+  environment_manifest_id: string;
+  repair_classification: AutoResearchExperimentFactoryRepairAction;
+  status: AutoResearchExperimentFactoryJobStatus;
 };
 
 export type AutoResearchEvidenceLedgerEntry = {
@@ -2904,6 +2944,8 @@ export type AutoResearchExperimentFactoryExecution = {
   hypothesis_id?: string | null;
   generated_at: string;
   execution_plan: AutoResearchExperimentFactoryPlan;
+  environment_manifest?: AutoResearchExperimentFactoryEnvironmentManifest | null;
+  materialized_jobs: AutoResearchExperimentFactoryMaterializedJob[];
   result_artifact: AutoResearchResultArtifact;
   evidence_ledger: AutoResearchEvidenceLedger;
   repair_plan?: AutoResearchExperimentFactoryRepairPlan | null;

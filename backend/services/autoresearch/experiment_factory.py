@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
+import sys
 from datetime import UTC, datetime
 
 from schemas.autoresearch import (
@@ -9,8 +11,10 @@ from schemas.autoresearch import (
     AutoResearchEvidenceLedgerEntryRead,
     AutoResearchEvidenceLedgerRead,
     AutoResearchExperimentDesignRead,
+    AutoResearchExperimentFactoryEnvironmentManifestRead,
     AutoResearchExperimentFactoryExecutionRead,
     AutoResearchExperimentFactoryJobRead,
+    AutoResearchExperimentFactoryMaterializedJobRead,
     AutoResearchExperimentFactoryPlanRead,
     AutoResearchExperimentFactoryRepairPlanRead,
     AutoResearchExperimentFactoryResourceEstimateRead,
@@ -52,6 +56,14 @@ def _dedupe(items: list[str]) -> list[str]:
         seen.add(key)
         deduped.append(cleaned)
     return deduped
+
+
+def _executor_mode_for_backend(backend: ExecutionBackendSpec) -> str:
+    if backend.kind in {"docker", "docker_gpu"}:
+        return "docker"
+    if backend.kind == "command":
+        return "local"
+    return "local" if backend.kind == "local" else "toy"
 
 
 def _backend_from_run_or_brief(
@@ -270,6 +282,84 @@ def build_experiment_factory_plan(
     )
 
 
+def build_environment_manifest(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    *,
+    executor_mode: str | None = None,
+) -> AutoResearchExperimentFactoryEnvironmentManifestRead:
+    mode = executor_mode or _executor_mode_for_backend(plan.execution_backend)
+    payload = {
+        "manifest_id": "experiment_factory_environment_v1",
+        "executor_mode": mode,
+        "backend": plan.execution_backend.kind,
+        "docker_image": plan.execution_backend.docker_image,
+        "gpu_required": plan.execution_backend.gpu_required,
+        "runtime": {
+            "python_version": sys.version.split()[0],
+            "platform": platform.platform(),
+            "timeout_seconds": plan.execution_backend.timeout_seconds,
+            "job_count": plan.job_count,
+            "expected_artifacts": plan.expected_artifacts,
+        },
+    }
+    return AutoResearchExperimentFactoryEnvironmentManifestRead(
+        generated_at=_utcnow(),
+        manifest_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def _materialized_output_refs(job: AutoResearchExperimentFactoryJobRead) -> list[str]:
+    return [
+        f"experiment_factory_outputs/{job.job_id}/{_slug(output)}"
+        for output in job.expected_outputs
+    ]
+
+
+def _materialized_repair_classification(
+    job: AutoResearchExperimentFactoryJobRead,
+    *,
+    status: str,
+    plan: AutoResearchExperimentFactoryPlanRead,
+) -> str:
+    if status == "failed":
+        return "rerun_failed_job"
+    if job.job_kind == "seed" and plan.seed_job_count < 3:
+        return "increase_seed_count"
+    return "none"
+
+
+def materialize_factory_jobs(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    *,
+    environment_manifest: AutoResearchExperimentFactoryEnvironmentManifestRead,
+    executor_mode: str | None = None,
+    artifact_status: str = "done",
+) -> list[AutoResearchExperimentFactoryMaterializedJobRead]:
+    mode = executor_mode or environment_manifest.executor_mode
+    status = "done" if artifact_status == "done" and not plan.blockers else "failed"
+    return [
+        AutoResearchExperimentFactoryMaterializedJobRead(
+            job_id=job.job_id,
+            job_kind=job.job_kind,
+            executor_mode=mode,  # type: ignore[arg-type]
+            backend=plan.execution_backend.kind,
+            command=job.command,
+            dependencies=job.dependencies,
+            expected_outputs=job.expected_outputs,
+            output_refs=_materialized_output_refs(job) if status == "done" else [],
+            environment_manifest_id=environment_manifest.manifest_id,
+            repair_classification=_materialized_repair_classification(
+                job,
+                status=status,
+                plan=plan,
+            ),  # type: ignore[arg-type]
+            status=status,  # type: ignore[arg-type]
+        )
+        for job in plan.jobs
+    ]
+
+
 def _metric_value_for_system(system: str, *, baseline_index: int = 0, seed: int = 0) -> float:
     lowered = system.lower()
     base = 0.58 + (baseline_index * 0.035)
@@ -424,6 +514,8 @@ def build_evidence_ledger(
     *,
     plan: AutoResearchExperimentFactoryPlanRead,
     artifact: ResultArtifact,
+    environment_manifest: AutoResearchExperimentFactoryEnvironmentManifestRead | None = None,
+    materialized_jobs: list[AutoResearchExperimentFactoryMaterializedJobRead] | None = None,
 ) -> AutoResearchEvidenceLedgerRead:
     entries: list[AutoResearchEvidenceLedgerEntryRead] = []
     for result in artifact.aggregate_system_results:
@@ -454,11 +546,37 @@ def build_evidence_ledger(
                 support_status="supported",
             )
         )
+    if environment_manifest is not None:
+        entries.append(
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id="evidence_experiment_environment_manifest",
+                evidence_kind="artifact",
+                claim=(
+                    "Experiment execution recorded an environment manifest for "
+                    f"{environment_manifest.executor_mode} execution."
+                ),
+                artifact_ref="experiment_factory_environment_manifest_json",
+                support_status="supported",
+            )
+        )
+    for job in materialized_jobs or []:
+        entries.append(
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id=f"evidence_materialized_{_slug(job.job_id)}",
+                source_job_id=job.job_id,
+                evidence_kind=job.job_kind if job.job_kind in {"baseline", "ablation", "seed", "sweep"} else "artifact",  # type: ignore[arg-type]
+                claim=f"Factory job {job.job_id} materialized with status {job.status}.",
+                artifact_ref="experiment_factory_materialized_jobs_json",
+                support_status="supported" if job.status == "done" else "missing",
+            )
+        )
     blockers: list[str] = []
     if not any(item.evidence_kind == "baseline" for item in entries):
         blockers.append("Evidence ledger is missing baseline evidence.")
     if plan.ablation_job_count and not any(item.evidence_kind == "ablation" for item in entries):
         blockers.append("Evidence ledger is missing ablation evidence.")
+    if materialized_jobs is not None and len(materialized_jobs) != plan.job_count:
+        blockers.append("Evidence ledger job materialization count does not match the factory plan.")
     payload = {
         "ledger_id": "experiment_evidence_ledger_v1",
         "project_id": plan.project_id,
@@ -518,8 +636,35 @@ def build_factory_repair_plan(
 def execute_toy_experiment_factory(
     plan: AutoResearchExperimentFactoryPlanRead,
 ) -> AutoResearchExperimentFactoryExecutionRead:
+    manifest = build_environment_manifest(plan, executor_mode="toy")
     artifact = run_toy_factory_backend(plan)
-    ledger = build_evidence_ledger(plan=plan, artifact=artifact)
+    materialized_jobs = materialize_factory_jobs(
+        plan,
+        environment_manifest=manifest,
+        executor_mode="toy",
+        artifact_status=artifact.status,
+    )
+    artifact = artifact.model_copy(
+        update={
+            "environment": {
+                **artifact.environment,
+                "environment_manifest_id": manifest.manifest_id,
+                "environment_manifest_fingerprint": manifest.manifest_fingerprint,
+                "materialized_job_count": len(materialized_jobs),
+            },
+            "outputs": {
+                **artifact.outputs,
+                "environment_manifest": "experiment_factory_environment_manifest.json",
+                "materialized_jobs": "experiment_factory_materialized_jobs.json",
+            },
+        }
+    )
+    ledger = build_evidence_ledger(
+        plan=plan,
+        artifact=artifact,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
+    )
     repair = build_factory_repair_plan(plan=plan, evidence_ledger=ledger)
     return AutoResearchExperimentFactoryExecutionRead(
         project_id=plan.project_id,
@@ -528,6 +673,8 @@ def execute_toy_experiment_factory(
         hypothesis_id=plan.hypothesis_id,
         generated_at=_utcnow(),
         execution_plan=plan,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
         result_artifact=artifact,
         evidence_ledger=ledger,
         repair_plan=repair,

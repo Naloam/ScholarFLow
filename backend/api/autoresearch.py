@@ -500,6 +500,8 @@ def execute_auto_research_run_experiment_factory_toy(
                 "status": "done",
                 "error": None,
                 "experiment_factory_plan": execution.execution_plan,
+                "experiment_factory_environment_manifest": execution.environment_manifest,
+                "experiment_factory_materialized_jobs": execution.materialized_jobs,
                 "artifact": execution.result_artifact,
                 "evidence_ledger": execution.evidence_ledger,
                 "experiment_factory_repair_plan": execution.repair_plan,

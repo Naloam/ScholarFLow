@@ -73,6 +73,8 @@ AutoResearchBundleAssetRole = Literal[
     "run_publication_repair_execution_json",
     "run_reviewer_simulation_json",
     "run_experiment_factory_plan_json",
+    "run_experiment_factory_environment_manifest_json",
+    "run_experiment_factory_materialized_jobs_json",
     "run_evidence_ledger_json",
     "run_experiment_factory_repair_plan_json",
     "run_paper_plan_json",
@@ -136,6 +138,8 @@ AutoResearchLineageNodeKind = Literal[
     "publication_repair_execution",
     "reviewer_simulation",
     "experiment_factory_plan",
+    "experiment_factory_environment_manifest",
+    "experiment_factory_materialized_jobs",
     "evidence_ledger",
     "experiment_factory_repair_plan",
     "paper_plan",
@@ -315,6 +319,7 @@ AutoResearchResearchActionRecommendation = Literal[
 ]
 AutoResearchExperimentFactoryJobKind = Literal["baseline", "candidate_method", "ablation", "seed", "sweep"]
 AutoResearchExperimentFactoryJobStatus = Literal["planned", "done", "failed"]
+AutoResearchExperimentFactoryExecutorMode = Literal["toy", "local", "docker", "bridge", "external_import"]
 AutoResearchExperimentFactoryRepairAction = Literal[
     "none",
     "add_missing_baseline",
@@ -886,6 +891,31 @@ class AutoResearchExperimentFactoryPlanRead(BaseModel):
     factory_fingerprint: str
 
 
+class AutoResearchExperimentFactoryEnvironmentManifestRead(BaseModel):
+    manifest_id: str = "experiment_factory_environment_v1"
+    generated_at: datetime
+    executor_mode: AutoResearchExperimentFactoryExecutorMode = "toy"
+    backend: ExecutionBackendKind = "auto"
+    docker_image: str | None = None
+    gpu_required: bool = False
+    runtime: dict[str, Any] = Field(default_factory=dict)
+    manifest_fingerprint: str
+
+
+class AutoResearchExperimentFactoryMaterializedJobRead(BaseModel):
+    job_id: str
+    job_kind: AutoResearchExperimentFactoryJobKind
+    executor_mode: AutoResearchExperimentFactoryExecutorMode = "toy"
+    backend: ExecutionBackendKind = "auto"
+    command: str
+    dependencies: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    output_refs: list[str] = Field(default_factory=list)
+    environment_manifest_id: str = "experiment_factory_environment_v1"
+    repair_classification: AutoResearchExperimentFactoryRepairAction = "none"
+    status: AutoResearchExperimentFactoryJobStatus = "planned"
+
+
 class AutoResearchEvidenceLedgerEntryRead(BaseModel):
     evidence_id: str
     source_job_id: str | None = None
@@ -931,6 +961,8 @@ class AutoResearchExperimentFactoryExecutionRead(BaseModel):
     hypothesis_id: str | None = None
     generated_at: datetime
     execution_plan: AutoResearchExperimentFactoryPlanRead
+    environment_manifest: AutoResearchExperimentFactoryEnvironmentManifestRead | None = None
+    materialized_jobs: list[AutoResearchExperimentFactoryMaterializedJobRead] = Field(default_factory=list)
     result_artifact: ResultArtifact
     evidence_ledger: AutoResearchEvidenceLedgerRead
     repair_plan: AutoResearchExperimentFactoryRepairPlanRead | None = None
@@ -1765,6 +1797,10 @@ class AutoResearchRunRead(BaseModel):
     paper_section_rewrite_index_path: str | None = None
     experiment_factory_plan: AutoResearchExperimentFactoryPlanRead | None = None
     experiment_factory_plan_path: str | None = None
+    experiment_factory_environment_manifest: AutoResearchExperimentFactoryEnvironmentManifestRead | None = None
+    experiment_factory_environment_manifest_path: str | None = None
+    experiment_factory_materialized_jobs: list[AutoResearchExperimentFactoryMaterializedJobRead] = Field(default_factory=list)
+    experiment_factory_materialized_jobs_path: str | None = None
     evidence_ledger: AutoResearchEvidenceLedgerRead | None = None
     evidence_ledger_path: str | None = None
     experiment_factory_repair_plan: AutoResearchExperimentFactoryRepairPlanRead | None = None
@@ -1846,6 +1882,8 @@ class AutoResearchRunRegistryFiles(BaseModel):
     publication_repair_execution_json: AutoResearchRegistryAssetRef | None = None
     reviewer_simulation_json: AutoResearchRegistryAssetRef | None = None
     experiment_factory_plan_json: AutoResearchRegistryAssetRef | None = None
+    experiment_factory_environment_manifest_json: AutoResearchRegistryAssetRef | None = None
+    experiment_factory_materialized_jobs_json: AutoResearchRegistryAssetRef | None = None
     evidence_ledger_json: AutoResearchRegistryAssetRef | None = None
     experiment_factory_repair_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None

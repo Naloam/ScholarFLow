@@ -6,6 +6,8 @@ claim-evidence ledger -> paper/reviewer/revision loop -> submission package.
 
 ## Priority 1: P16 Real Experiment Backend
 
+Status: done.
+
 Goal: materialize experiment factory plans into auditable execution jobs instead of only
 describing toy jobs.
 
@@ -20,6 +22,8 @@ Acceptance:
 
 ## Priority 2: P15+ Literature Depth
 
+Status: done.
+
 Goal: extend cached arXiv/Semantic Scholar/Crossref scouting beyond metadata-level signals.
 
 Acceptance:
@@ -30,6 +34,8 @@ Acceptance:
 
 ## Priority 3: P18 Autonomous Revision Loop
 
+Status: done.
+
 Goal: convert reviewer findings into bounded, auditable actions.
 
 Acceptance:
@@ -39,6 +45,8 @@ Acceptance:
 
 ## Priority 4: P19 Submission Package
 
+Status: next.
+
 Goal: create a final package suitable for submission workflows.
 
 Acceptance:
@@ -47,6 +55,8 @@ Acceptance:
 - Include publish blockers when the package is not strong enough for submission.
 
 ## Priority 5: P20 Real End-to-End Evaluation
+
+Status: pending.
 
 Goal: run executable evaluation cases that produce ScholarFlow's own system evidence.
 

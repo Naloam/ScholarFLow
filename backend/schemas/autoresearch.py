@@ -3099,8 +3099,31 @@ class AutoResearchReviewLoopIssueRead(BaseModel):
     supporting_asset_ids: list[str] = Field(default_factory=list)
 
 
+AutoResearchReviewLoopActionKind = Literal[
+    "paper_revision",
+    "experiment_repair",
+    "claim_downgrade",
+    "literature_refresh",
+    "publish_package",
+    "re_review",
+    "manual_review",
+]
+AutoResearchReviewLoopExecutionRoute = Literal[
+    "paper_rebuild",
+    "research_replan",
+    "experiment_rerun",
+    "literature_refresh",
+    "publish_rebuild",
+    "manual_review",
+    "re_review",
+]
+
+
 class AutoResearchReviewLoopActionRead(BaseModel):
     action_id: str
+    action_kind: AutoResearchReviewLoopActionKind = "paper_revision"
+    repair_kind: AutoResearchRepairActionKind | None = None
+    execution_route: AutoResearchReviewLoopExecutionRoute = "paper_rebuild"
     priority: AutoResearchRevisionPriority = "medium"
     title: str
     detail: str
@@ -3110,6 +3133,11 @@ class AutoResearchReviewLoopActionRead(BaseModel):
     completed_round: int | None = None
     finding_ids: list[str] = Field(default_factory=list)
     issue_ids: list[str] = Field(default_factory=list)
+    auto_applicable: bool = False
+    expected_output_asset_ids: list[str] = Field(default_factory=list)
+    terminal_condition: str = "Re-review confirms that the underlying finding no longer recurs."
+    requires_rereview: bool = True
+    max_auto_rounds: int = 3
 
 
 class AutoResearchReviewLoopRead(BaseModel):
@@ -3130,6 +3158,15 @@ class AutoResearchReviewLoopRead(BaseModel):
     pending_action_count: int = 0
     completed_action_count: int = 0
     pending_revision_actions: list[str] = Field(default_factory=list)
+    paper_revision_action_count: int = 0
+    experiment_repair_action_count: int = 0
+    claim_downgrade_action_count: int = 0
+    literature_refresh_action_count: int = 0
+    re_review_action_count: int = 0
+    manual_review_action_count: int = 0
+    next_review_required: bool = False
+    auto_revision_round_limit: int = 3
+    auto_revision_rounds_remaining: int = 0
 
 
 class AutoResearchRevisionDossierItemRead(BaseModel):
@@ -3775,6 +3812,9 @@ class AutoResearchReviewLoopApplyRead(BaseModel):
     run: AutoResearchRunRead
     review: AutoResearchRunReviewRead
     review_loop: AutoResearchReviewLoopRead
+    repair_execution: AutoResearchPublicationRepairExecutionRead | None = None
+    applied_action_ids: list[str] = Field(default_factory=list)
+    queued_rerun_required: bool = False
 
 
 class AutoResearchResearchReplanApplyRead(BaseModel):

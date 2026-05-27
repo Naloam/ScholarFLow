@@ -29,6 +29,7 @@ from schemas.autoresearch import (
     AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublicationReadinessRead,
     AutoResearchPublicationRepairExecutionRead,
+    AutoResearchRepairActionKind,
     AutoResearchResearchProtocolRead,
     AutoResearchPublishExportRead,
     AutoResearchPublishExportRequest,
@@ -39,6 +40,8 @@ from schemas.autoresearch import (
     AutoResearchReviewEvidenceRead,
     AutoResearchReviewFindingRead,
     AutoResearchReviewLoopActionRead,
+    AutoResearchReviewLoopActionKind,
+    AutoResearchReviewLoopExecutionRoute,
     AutoResearchReviewLoopIssueRead,
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopRoundRead,
@@ -94,7 +97,12 @@ from services.autoresearch.failure_replanning import build_failure_analysis, bui
 from services.autoresearch.literature_novelty import build_literature_graph, build_novelty_validation
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_evidence_index import build_publication_evidence_index
-from services.autoresearch.publication_repair_plan import build_publication_repair_plan
+from services.autoresearch.publication_repair_plan import (
+    build_publication_repair_plan,
+    classify_repair_action_kind,
+    repair_action_expected_outputs,
+    repair_action_is_auto_applicable,
+)
 from services.autoresearch.research_protocol import build_research_protocol
 from services.autoresearch.research_readiness import build_publication_readiness
 from services.autoresearch.reviewer_simulator import build_reviewer_simulation
@@ -1657,6 +1665,112 @@ def _loop_action_id(title: str) -> str:
     return f"review_action_{slug[:80]}"
 
 
+def _review_loop_action_kind(
+    *,
+    text: str,
+    repair_kind: AutoResearchRepairActionKind,
+) -> AutoResearchReviewLoopActionKind:
+    lowered = text.lower()
+    if any(marker in lowered for marker in ("demote", "downgrade", "unsupported claim", "unsupported claims")):
+        return "claim_downgrade"
+    if repair_kind in {"rerun_experiments", "repair_experiment_design", "research_replan"}:
+        return "experiment_repair"
+    if repair_kind == "repair_claim_evidence":
+        return "claim_downgrade" if "claim" in lowered else "paper_revision"
+    if repair_kind == "refresh_literature":
+        return "literature_refresh"
+    if repair_kind == "rebuild_publish_package":
+        return "publish_package"
+    if repair_kind == "rebuild_paper_sources":
+        return "paper_revision"
+    if repair_kind == "manual_review":
+        return "manual_review"
+    return "manual_review"
+
+
+def _review_loop_execution_route(
+    action_kind: AutoResearchReviewLoopActionKind,
+    repair_kind: AutoResearchRepairActionKind,
+) -> AutoResearchReviewLoopExecutionRoute:
+    if action_kind == "literature_refresh":
+        return "literature_refresh"
+    if action_kind == "publish_package":
+        return "publish_rebuild"
+    if action_kind == "manual_review":
+        return "manual_review"
+    if repair_kind == "rerun_experiments":
+        return "experiment_rerun"
+    if repair_kind in {"repair_experiment_design", "research_replan"}:
+        return "research_replan"
+    return "paper_rebuild"
+
+
+def _review_loop_terminal_condition(
+    action_kind: AutoResearchReviewLoopActionKind,
+    repair_kind: AutoResearchRepairActionKind,
+) -> str:
+    if action_kind == "claim_downgrade":
+        return (
+            "Unsupported or over-broad claims are downgraded in the claim-evidence ledger and manuscript, "
+            "then a later review round no longer reports the same claim-support issue."
+        )
+    if action_kind == "experiment_repair":
+        if repair_kind == "rerun_experiments":
+            return (
+                "A new experiment result artifact with the requested baselines, ablations, seeds, or statistics "
+                "is imported or materialized, then re-review clears the experiment finding."
+            )
+        return (
+            "The experiment design or research plan is updated with bounded repair actions, then a rerun or "
+            "re-review confirms that the same methodology finding no longer recurs."
+        )
+    if action_kind == "literature_refresh":
+        return (
+            "Retrieved literature/citation metadata is persisted through the literature graph and novelty validator, "
+            "then re-review clears the context or citation finding."
+        )
+    if action_kind == "publish_package":
+        return (
+            "Publish-facing package assets are rebuilt and lineage-indexed, then re-review confirms no package "
+            "asset finding remains open."
+        )
+    if action_kind == "manual_review":
+        return "An operator supplies the missing judgment or provenance before re-review can close the issue."
+    return "The manuscript is rebuilt from bounded revision packets and re-review no longer reports the same finding."
+
+
+def _review_loop_action_materialization(
+    action: AutoResearchRevisionActionRead,
+) -> dict[str, object]:
+    text = f"{action.title} {action.detail}"
+    lowered = text.lower()
+    repair_kind = classify_repair_action_kind(text)
+    if any(marker in lowered for marker in ("citation", "related-work", "related work", "references")):
+        repair_kind = "refresh_literature"
+    if repair_kind == "research_replan" and any(
+        marker in lowered
+        for marker in (
+            "make the publish-facing paper",
+            "manuscript should state",
+            "paper state",
+            "state clearly",
+            "write clearly",
+        )
+    ):
+        repair_kind = "rebuild_paper_sources"
+    action_kind = _review_loop_action_kind(text=text, repair_kind=repair_kind)
+    return {
+        "action_kind": action_kind,
+        "repair_kind": repair_kind,
+        "execution_route": _review_loop_execution_route(action_kind, repair_kind),
+        "auto_applicable": repair_action_is_auto_applicable(repair_kind),
+        "expected_output_asset_ids": repair_action_expected_outputs(repair_kind),
+        "terminal_condition": _review_loop_terminal_condition(action_kind, repair_kind),
+        "requires_rereview": True,
+        "max_auto_rounds": 3,
+    }
+
+
 def _load_review_loop(project_id: str, run_id: str) -> AutoResearchReviewLoopRead | None:
     path = _review_loop_path(project_id, run_id)
     if not path.is_file():
@@ -1827,8 +1941,10 @@ def _build_review_loop(
             }
         )
         existing_action = actions_by_id.get(action_id)
+        materialization = _review_loop_action_materialization(action)
         actions_by_id[action_id] = AutoResearchReviewLoopActionRead(
             action_id=action_id,
+            **materialization,
             priority=action.priority,
             title=action.title,
             detail=action.detail,
@@ -1904,6 +2020,19 @@ def _build_review_loop(
             item.action_id,
         ),
     )
+    pending_actions = [item for item in actions if item.status == "pending"]
+    action_kind_counts = {
+        kind: sum(1 for item in actions if item.action_kind == kind)
+        for kind in (
+            "paper_revision",
+            "experiment_repair",
+            "claim_downgrade",
+            "literature_refresh",
+            "re_review",
+            "manual_review",
+        )
+    }
+    auto_revision_round_limit = 3
     loop = AutoResearchReviewLoopRead(
         project_id=project_id,
         run_id=run_id,
@@ -1919,9 +2048,18 @@ def _build_review_loop(
         actions=actions,
         open_issue_count=sum(1 for item in issues if item.status == "open"),
         resolved_issue_count=sum(1 for item in issues if item.status == "resolved"),
-        pending_action_count=sum(1 for item in actions if item.status == "pending"),
+        pending_action_count=len(pending_actions),
         completed_action_count=sum(1 for item in actions if item.status == "completed"),
-        pending_revision_actions=[item.title for item in actions if item.status == "pending"],
+        pending_revision_actions=[item.title for item in pending_actions],
+        paper_revision_action_count=action_kind_counts["paper_revision"],
+        experiment_repair_action_count=action_kind_counts["experiment_repair"],
+        claim_downgrade_action_count=action_kind_counts["claim_downgrade"],
+        literature_refresh_action_count=action_kind_counts["literature_refresh"],
+        re_review_action_count=sum(1 for item in actions if item.requires_rereview),
+        manual_review_action_count=action_kind_counts["manual_review"],
+        next_review_required=bool(pending_actions),
+        auto_revision_round_limit=auto_revision_round_limit,
+        auto_revision_rounds_remaining=max(0, auto_revision_round_limit - current_round),
     )
     _write_json(_review_loop_path(project_id, run_id), loop.model_dump(mode="json"))
     return loop

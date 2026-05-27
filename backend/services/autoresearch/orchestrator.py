@@ -1144,7 +1144,12 @@ class AutoResearchOrchestrator:
         run_id: str,
         expected_round: int,
         expected_review_fingerprint: str,
-    ) -> AutoResearchRunRead:
+    ) -> tuple[
+        AutoResearchRunRead,
+        AutoResearchPublicationRepairExecutionRead | None,
+        list[str],
+        bool,
+    ]:
         from services.autoresearch.review_publish import build_review_loop, build_run_review
 
         review_loop = build_review_loop(project_id, run_id)
@@ -1160,6 +1165,30 @@ class AutoResearchOrchestrator:
             raise ValueError("Review loop has no pending revision actions to apply")
         review = build_run_review(project_id, run_id)
         repair_plan = review.publication_repair_plan if review is not None else None
+        selected_actions = (
+            selected_pending_auto_repair_actions(repair_plan)
+            if repair_plan is not None
+            else []
+        )
+        selected_kinds = {action.kind for action in selected_actions}
+        replan_kinds = {
+            "research_replan",
+            "repair_experiment_design",
+            "rerun_experiments",
+        }
+        if selected_kinds and not selected_kinds.intersection(PAPER_PIPELINE_REPAIR_KINDS):
+            if selected_kinds.intersection(replan_kinds):
+                return self.apply_research_replan(
+                    db=db,
+                    project_id=project_id,
+                    run_id=run_id,
+                    expected_review_fingerprint=expected_review_fingerprint,
+                )
+            required = ", ".join(sorted(selected_kinds))
+            raise ValueError(
+                "Review loop selected repair actions require manual or unsupported routing before automatic apply: "
+                f"{required}"
+            )
         _ensure_repair_plan_allows_paper_rebuild(repair_plan)
         rebuilt_run = self._rebuild_paper_pipeline(
             db=db,
@@ -1187,7 +1216,9 @@ class AutoResearchOrchestrator:
                 repair_execution.model_dump_json(indent=2),
                 encoding="utf-8",
             )
-        return rebuilt_run
+            applied_action_ids = [action.action_id for action in selected_actions]
+            return rebuilt_run, repair_execution, applied_action_ids, False
+        return rebuilt_run, None, [], False
 
     def _apply_research_replan_to_run(
         self,

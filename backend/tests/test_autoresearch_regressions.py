@@ -1276,6 +1276,117 @@ def test_apply_review_actions_respects_repair_plan_action_kind() -> None:
         autoresearch_orchestrator._ensure_repair_plan_allows_paper_rebuild(blocked_plan)
 
 
+def test_review_loop_materializes_bounded_action_routes(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    findings = [
+        review_publish.AutoResearchReviewFindingRead(
+            id="finding_seed",
+            severity="warning",
+            category="statistics",
+            summary="Seed coverage is insufficient for publication-level claims.",
+            detail="Run more seeds before making stability claims.",
+            supporting_asset_ids=["run_artifact_json"],
+        ),
+        review_publish.AutoResearchReviewFindingRead(
+            id="finding_claim",
+            severity="warning",
+            category="context",
+            summary="Claim-evidence matrix contains unsupported claims.",
+            detail="Unsupported claims must be demoted or backed by additional experiments.",
+            supporting_asset_ids=["run_claim_evidence_matrix_json"],
+        ),
+        review_publish.AutoResearchReviewFindingRead(
+            id="finding_paper",
+            severity="warning",
+            category="context",
+            summary="Original hypothesis is not clearly resolved.",
+            detail="The manuscript should state whether the planned hypothesis was supported.",
+            supporting_asset_ids=["run_paper_markdown"],
+        ),
+        review_publish.AutoResearchReviewFindingRead(
+            id="finding_citation",
+            severity="warning",
+            category="citation",
+            summary="Paper text does not include citation markers.",
+            detail="Add citation support to related work.",
+            supporting_asset_ids=["run_paper_markdown"],
+        ),
+    ]
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id="project_review_loop_routes",
+        run_id="run_review_loop_routes",
+        generated_at=now,
+        overall_status="needs_revision",
+        summary="Review loop action route regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        findings=findings,
+        revision_plan=[
+            review_publish.AutoResearchRevisionActionRead(
+                id="action_seed",
+                priority="high",
+                title="Run additional seeds before final publication",
+                detail="Complete the planned seed set and preserve per-seed artifacts.",
+                finding_ids=["finding_seed"],
+            ),
+            review_publish.AutoResearchRevisionActionRead(
+                id="action_claim",
+                priority="high",
+                title="Rerun experiments or demote unsupported claims",
+                detail="Unsupported claims must become limitations unless new evidence is imported.",
+                finding_ids=["finding_claim"],
+            ),
+            review_publish.AutoResearchRevisionActionRead(
+                id="action_paper",
+                priority="medium",
+                title="State clearly whether the original hypothesis was supported",
+                detail="Make the publish-facing paper state what the artifact supports.",
+                finding_ids=["finding_paper"],
+            ),
+            review_publish.AutoResearchRevisionActionRead(
+                id="action_citation",
+                priority="medium",
+                title="Add citation support to contextual and related-work claims",
+                detail="Introduce explicit citations in background and related-work sections.",
+                finding_ids=["finding_citation"],
+            ),
+        ],
+    )
+
+    loop = review_publish._build_review_loop(
+        project_id=review.project_id,
+        run_id=review.run_id,
+        review=review,
+    )
+
+    actions = {item.title: item for item in loop.actions}
+    seed_action = actions["Run additional seeds before final publication"]
+    claim_action = actions["Rerun experiments or demote unsupported claims"]
+    paper_action = actions["State clearly whether the original hypothesis was supported"]
+    citation_action = actions["Add citation support to contextual and related-work claims"]
+    assert seed_action.action_kind == "experiment_repair"
+    assert seed_action.repair_kind == "rerun_experiments"
+    assert seed_action.execution_route == "experiment_rerun"
+    assert "run_artifact_json" in seed_action.expected_output_asset_ids
+    assert claim_action.action_kind == "claim_downgrade"
+    assert claim_action.repair_kind == "repair_claim_evidence"
+    assert claim_action.execution_route == "paper_rebuild"
+    assert "claim-evidence ledger" in claim_action.terminal_condition
+    assert paper_action.action_kind == "paper_revision"
+    assert paper_action.execution_route == "paper_rebuild"
+    assert citation_action.action_kind == "literature_refresh"
+    assert citation_action.execution_route == "literature_refresh"
+    assert loop.experiment_repair_action_count == 1
+    assert loop.claim_downgrade_action_count == 1
+    assert loop.paper_revision_action_count == 1
+    assert loop.literature_refresh_action_count == 1
+    assert loop.re_review_action_count == 4
+    assert loop.next_review_required is True
+    assert loop.auto_revision_rounds_remaining == 2
+
+
 def test_operator_console_disables_apply_review_actions_for_non_paper_repair_plan() -> None:
     now = datetime.now(UTC).replace(tzinfo=None)
     run = AutoResearchRunRead(

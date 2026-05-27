@@ -910,12 +910,14 @@ def apply_auto_research_review_loop_actions(
     db: Session = Depends(get_db),
 ) -> AutoResearchReviewLoopApplyRead:
     try:
-        run = AutoResearchOrchestrator().apply_review_actions(
-            db=db,
-            project_id=project_id,
-            run_id=run_id,
-            expected_round=payload.expected_round,
-            expected_review_fingerprint=payload.expected_review_fingerprint,
+        run, repair_execution, applied_action_ids, queued_rerun_required = (
+            AutoResearchOrchestrator().apply_review_actions(
+                db=db,
+                project_id=project_id,
+                run_id=run_id,
+                expected_round=payload.expected_round,
+                expected_review_fingerprint=payload.expected_review_fingerprint,
+            )
         )
     except ValueError as exc:
         detail = str(exc)
@@ -929,6 +931,9 @@ def apply_auto_research_review_loop_actions(
         run=run,
         review=review,
         review_loop=review_loop,
+        repair_execution=repair_execution,
+        applied_action_ids=applied_action_ids,
+        queued_rerun_required=queued_rerun_required,
     )
 
 

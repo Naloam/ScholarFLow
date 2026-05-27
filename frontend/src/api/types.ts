@@ -2077,8 +2077,29 @@ export type AutoResearchReviewLoopIssue = {
   supporting_asset_ids: string[];
 };
 
+export type AutoResearchReviewLoopActionKind =
+  | "paper_revision"
+  | "experiment_repair"
+  | "claim_downgrade"
+  | "literature_refresh"
+  | "publish_package"
+  | "re_review"
+  | "manual_review";
+
+export type AutoResearchReviewLoopExecutionRoute =
+  | "paper_rebuild"
+  | "research_replan"
+  | "experiment_rerun"
+  | "literature_refresh"
+  | "publish_rebuild"
+  | "manual_review"
+  | "re_review";
+
 export type AutoResearchReviewLoopAction = {
   action_id: string;
+  action_kind: AutoResearchReviewLoopActionKind;
+  repair_kind?: AutoResearchRepairActionKind | null;
+  execution_route: AutoResearchReviewLoopExecutionRoute;
   priority: "high" | "medium" | "low";
   title: string;
   detail: string;
@@ -2088,6 +2109,11 @@ export type AutoResearchReviewLoopAction = {
   completed_round?: number | null;
   finding_ids: string[];
   issue_ids: string[];
+  auto_applicable: boolean;
+  expected_output_asset_ids: string[];
+  terminal_condition: string;
+  requires_rereview: boolean;
+  max_auto_rounds: number;
 };
 
 export type AutoResearchReviewLoop = {
@@ -2108,6 +2134,15 @@ export type AutoResearchReviewLoop = {
   pending_action_count: number;
   completed_action_count: number;
   pending_revision_actions: string[];
+  paper_revision_action_count: number;
+  experiment_repair_action_count: number;
+  claim_downgrade_action_count: number;
+  literature_refresh_action_count: number;
+  re_review_action_count: number;
+  manual_review_action_count: number;
+  next_review_required: boolean;
+  auto_revision_round_limit: number;
+  auto_revision_rounds_remaining: number;
 };
 
 export type AutoResearchRevisionDossierItem = {
@@ -2159,6 +2194,9 @@ export type AutoResearchReviewLoopApply = {
   run: AutoResearchRun;
   review: AutoResearchRunReview;
   review_loop: AutoResearchReviewLoop;
+  repair_execution?: AutoResearchPublicationRepairExecution | null;
+  applied_action_ids: string[];
+  queued_rerun_required: boolean;
 };
 
 export type AutoResearchResearchReplanApply = {

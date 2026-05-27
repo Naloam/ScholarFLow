@@ -198,6 +198,21 @@ def _status(kind: AutoResearchRepairActionKind) -> str:
     return "pending" if _auto_applicable(kind) else "blocked"
 
 
+def classify_repair_action_kind(
+    text: str,
+    supporting_asset_ids: list[str] | None = None,
+) -> AutoResearchRepairActionKind:
+    return _kind(text, supporting_asset_ids)
+
+
+def repair_action_expected_outputs(kind: AutoResearchRepairActionKind) -> list[str]:
+    return list(_expected_outputs(kind))
+
+
+def repair_action_is_auto_applicable(kind: AutoResearchRepairActionKind) -> bool:
+    return _auto_applicable(kind)
+
+
 def selected_pending_auto_repair_actions(
     repair_plan: AutoResearchPublicationRepairPlanRead,
 ) -> list[AutoResearchPublicationRepairActionRead]:

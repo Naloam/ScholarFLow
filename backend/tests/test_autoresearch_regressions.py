@@ -43,6 +43,7 @@ from schemas.autoresearch import (
     AutoResearchArtifactIntegrityAuditRead,
     AutoResearchArtifactIntegrityIssueRead,
     AutoResearchIdeaRequest,
+    AutoResearchLiteratureScoutPaperRead,
     AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublicationRepairExecutionActionRead,
     AutoResearchPublicationRepairExecutionRead,
@@ -4731,6 +4732,111 @@ def test_research_brief_selected_hypothesis_creates_metadata_run(
 
 def _cached_literature_query(brief) -> str:
     return f'"{brief.original_idea}"'
+
+
+def test_literature_connectors_reject_unsupported_sources_without_io(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-unsupported-literature-source",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+
+    def fail_io(*_args, **_kwargs):
+        raise AssertionError("unsupported source must not touch cache or network IO")
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "load_literature_scout_cache", fail_io)
+    monkeypatch.setattr(autoresearch_literature_connectors, "save_literature_scout_cache", fail_io)
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fail_io)
+
+    papers, statuses = autoresearch_literature_connectors.search_literature_connectors(
+        brief,
+        search_queries=[_cached_literature_query(brief)],
+        sources=["unknown_connector"],
+        network_enabled=True,
+        cache_enabled=True,
+    )
+
+    assert papers == []
+    assert len(statuses) == 1
+    assert statuses[0].source == "unknown_connector"
+    assert statuses[0].query_count == 0
+    assert statuses[0].network_request_count == 0
+    assert statuses[0].cache_hit_count == 0
+    assert statuses[0].error_count == 1
+    assert statuses[0].errors == [
+        "Unsupported literature connector source: unknown_connector"
+    ]
+
+
+def test_literature_dedup_merges_identifier_and_prefers_real_source() -> None:
+    synthetic = AutoResearchLiteratureScoutPaperRead(
+        paper_id="fixture:duplicate",
+        title="Deduplicated Search Paper",
+        source="fixture_offline",
+        authors=["Fixture Author"],
+        year=2024,
+        venue="Fixture Venue",
+        abstract="Fixture abstract with macro F1.",
+        method="fixture method",
+        methods=["fixture method"],
+        datasets=["Fixture Dataset"],
+        metrics=["macro_f1"],
+        reported_results=["Fixture result reports macro F1."],
+        known_sota="Fixture baseline note.",
+        relevance_score=0.55,
+        novelty_risk_signal="medium",
+        overlap_score=3,
+        shared_terms=["search"],
+        source_query="fixture query",
+        cache_status="fixture",
+        evidence="Fixture evidence.",
+    )
+    real = AutoResearchLiteratureScoutPaperRead(
+        paper_id="arxiv:2401.00001",
+        title="Deduplicated Search Paper",
+        source="arxiv",
+        authors=["Real Author"],
+        year=2025,
+        venue="arXiv",
+        abstract="Real abstract reports state-of-the-art nDCG on a benchmark.",
+        url="https://arxiv.org/abs/2401.00001",
+        doi="10.0000/dedup-real",
+        arxiv_id="2401.00001",
+        method="real method",
+        methods=["real method"],
+        datasets=["Real Benchmark"],
+        metrics=["ndcg"],
+        reported_results=["Real result reaches state-of-the-art nDCG."],
+        known_sota="Real result reaches state-of-the-art nDCG.",
+        relevance_score=0.85,
+        novelty_risk_signal="high",
+        overlap_score=7,
+        shared_terms=["search", "benchmark"],
+        source_query="real query",
+        cache_status="cache_hit",
+        evidence="Real evidence.",
+    )
+
+    papers = autoresearch_literature_connectors.deduplicate_literature_papers(
+        [synthetic, real]
+    )
+
+    assert len(papers) == 1
+    merged = papers[0]
+    assert merged.paper_id == "arxiv:2401.00001"
+    assert merged.source == "arxiv"
+    assert merged.cache_status == "cache_hit"
+    assert merged.doi == "10.0000/dedup-real"
+    assert merged.arxiv_id == "2401.00001"
+    assert merged.known_sota == "Real result reaches state-of-the-art nDCG."
+    assert merged.novelty_risk_signal == "high"
+    assert merged.relevance_score == 0.85
+    assert set(merged.methods) == {"fixture method", "real method"}
+    assert set(merged.datasets) == {"Fixture Dataset", "Real Benchmark"}
+    assert set(merged.metrics) == {"macro_f1", "ndcg"}
 
 
 def _arxiv_cache_fixture() -> str:

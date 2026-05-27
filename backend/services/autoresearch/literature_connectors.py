@@ -35,6 +35,8 @@ DEFAULT_CONNECTOR_SOURCES = (
     SEMANTIC_SCHOLAR_SOURCE,
     CROSSREF_SOURCE,
 )
+SUPPORTED_CONNECTOR_SOURCES = set(DEFAULT_CONNECTOR_SOURCES)
+_SYNTHETIC_SOURCES = {FIXTURE_SOURCE, "fixture", "offline_project_context"}
 
 _ARXIV_API = "http://export.arxiv.org/api/query"
 _SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -169,6 +171,25 @@ def _dedupe(items: Iterable[str | None]) -> list[str]:
         seen.add(key)
         deduped.append(cleaned)
     return deduped
+
+
+def _selected_sources(sources: Iterable[str] | None) -> list[str]:
+    selected: list[str] = []
+    seen: set[str] = set()
+    for source in sources or DEFAULT_CONNECTOR_SOURCES:
+        cleaned = _norm(str(source))
+        if cleaned == FIXTURE_SOURCE:
+            cleaned = "fixture"
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        selected.append(cleaned)
+    return selected
+
+
+def _selected_queries(search_queries: list[str]) -> list[str]:
+    queries = _dedupe(search_queries)
+    return queries[:4]
 
 
 def _brief_text(brief: AutoResearchResearchBriefRead | None) -> str:
@@ -720,6 +741,10 @@ def _merge_duplicate_papers(
     existing: AutoResearchLiteratureScoutPaperRead,
     incoming: AutoResearchLiteratureScoutPaperRead,
 ) -> AutoResearchLiteratureScoutPaperRead:
+    prefer_incoming_identity = (
+        existing.source in _SYNTHETIC_SOURCES
+        and incoming.source not in _SYNTHETIC_SOURCES
+    )
     methods = _dedupe([*existing.methods, existing.method, *incoming.methods, incoming.method])
     datasets = _dedupe([*existing.datasets, *incoming.datasets])
     metrics = _dedupe([*existing.metrics, *incoming.metrics])
@@ -727,6 +752,8 @@ def _merge_duplicate_papers(
     shared_terms = _dedupe([*existing.shared_terms, *incoming.shared_terms])
     return existing.model_copy(
         update={
+            "paper_id": incoming.paper_id if prefer_incoming_identity else existing.paper_id,
+            "source": incoming.source if prefer_incoming_identity else existing.source,
             "authors": _dedupe([*existing.authors, *incoming.authors]),
             "venue": existing.venue or incoming.venue,
             "abstract": existing.abstract or incoming.abstract,
@@ -738,7 +765,11 @@ def _merge_duplicate_papers(
             "datasets": datasets,
             "metrics": metrics,
             "reported_results": reported_results,
-            "known_sota": existing.known_sota or incoming.known_sota,
+            "known_sota": (
+                incoming.known_sota
+                if prefer_incoming_identity and incoming.known_sota
+                else existing.known_sota or incoming.known_sota
+            ),
             "relevance_score": max(existing.relevance_score, incoming.relevance_score),
             "novelty_risk_signal": (
                 "high"
@@ -749,6 +780,12 @@ def _merge_duplicate_papers(
             ),
             "overlap_score": max(existing.overlap_score, incoming.overlap_score),
             "shared_terms": shared_terms[:12],
+            "source_query": (
+                incoming.source_query
+                if prefer_incoming_identity and incoming.source_query
+                else existing.source_query or incoming.source_query
+            ),
+            "cache_status": incoming.cache_status if prefer_incoming_identity else existing.cache_status,
             "evidence": f"{existing.evidence} Duplicate metadata also found via {incoming.source}.",
         }
     )
@@ -759,22 +796,34 @@ def deduplicate_literature_papers(
 ) -> list[AutoResearchLiteratureScoutPaperRead]:
     deduped: list[AutoResearchLiteratureScoutPaperRead] = []
     index_by_key: dict[str, int] = {}
+    index_by_title: dict[str, int] = {}
     for paper in papers:
         title_key = re.sub(r"[^a-z0-9]+", " ", paper.title.lower()).strip()
-        key = (
-            f"doi:{paper.doi.lower()}"
-            if paper.doi
-            else f"arxiv:{paper.arxiv_id.lower()}"
-            if paper.arxiv_id
-            else f"title:{title_key}"
-        )
-        if not title_key and not paper.doi and not paper.arxiv_id:
+        keys: list[str] = []
+        if paper.doi:
+            keys.append(f"doi:{paper.doi.lower()}")
+        if paper.arxiv_id:
+            keys.append(f"arxiv:{paper.arxiv_id.lower()}")
+        if title_key:
+            keys.append(f"title:{title_key}")
+        if not keys:
             continue
-        if key in index_by_key:
-            index = index_by_key[key]
+
+        index = next((index_by_key[key] for key in keys if key in index_by_key), None)
+        if index is None and title_key:
+            index = index_by_title.get(title_key)
+        if index is not None:
             deduped[index] = _merge_duplicate_papers(deduped[index], paper)
+            for key in keys:
+                index_by_key[key] = index
+            if title_key:
+                index_by_title[title_key] = index
             continue
-        index_by_key[key] = len(deduped)
+        index = len(deduped)
+        for key in keys:
+            index_by_key[key] = index
+        if title_key:
+            index_by_title[title_key] = index
         deduped.append(paper)
     deduped.sort(
         key=lambda item: (
@@ -801,10 +850,15 @@ def search_literature_connectors(
 ]:
     papers: list[AutoResearchLiteratureScoutPaperRead] = []
     statuses: list[AutoResearchLiteratureScoutSourceStatusRead] = []
-    selected_sources = list(sources or DEFAULT_CONNECTOR_SOURCES)
-    queries = search_queries[: max(1, min(len(search_queries), 4))]
+    selected_sources = _selected_sources(sources)
+    queries = _selected_queries(search_queries)
     for source in selected_sources:
         status = AutoResearchLiteratureScoutSourceStatusRead(source=source)
+        if source not in SUPPORTED_CONNECTOR_SOURCES:
+            status.error_count = 1
+            status.errors.append(f"Unsupported literature connector source: {source}")
+            statuses.append(status)
+            continue
         if source == "fixture":
             status.query_count = 1
             fixture_papers = fixture_literature_papers(brief, query=queries[0] if queries else None)

@@ -664,6 +664,9 @@ class AutoResearchLiteratureScoutPaperRead(BaseModel):
     metrics: list[str] = Field(default_factory=list)
     reported_results: list[str] = Field(default_factory=list)
     known_sota: str | None = None
+    extraction_level: Literal["metadata", "abstract", "full_text"] = "metadata"
+    full_text_available: bool = False
+    full_text_excerpt: str | None = None
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     novelty_risk_signal: AutoResearchNoveltyRiskLevel = "medium"
     overlap_score: int = 0

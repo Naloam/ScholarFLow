@@ -268,6 +268,7 @@ def literature_insights_from_scout(
         result_text = " ".join(paper.reported_results[:2])
         insight_parts = [
             paper.abstract,
+            paper.full_text_excerpt,
             result_text,
             paper.known_sota,
         ]
@@ -299,7 +300,8 @@ def literature_insights_from_scout(
                 ),
                 relevance=(
                     f"relevance_score={paper.relevance_score}; datasets={dataset_label}; "
-                    f"metrics={metric_label}; novelty_risk_signal={paper.novelty_risk_signal}."
+                    f"metrics={metric_label}; extraction_level={paper.extraction_level}; "
+                    f"novelty_risk_signal={paper.novelty_risk_signal}."
                 ),
             )
         )

@@ -4951,6 +4951,57 @@ def test_literature_connectors_parse_cached_sources_without_network(
     assert all(item.relevance_score > 0 for item in papers)
 
 
+def test_literature_connectors_use_cached_full_text_for_structured_extraction(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-cached-full-text",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    query = _cached_literature_query(brief)
+    full_text = (
+        "The contrastive calibration reranker method evaluates MIMIC Dataset and "
+        "Publication Regression Benchmark. It reports nDCG and accuracy. "
+        "It achieves state-of-the-art nDCG after evidence ledger filtering."
+    )
+    autoresearch_repository.save_literature_scout_cache(
+        brief.project_id,
+        source="arxiv",
+        query=query,
+        limit=3,
+        payload={
+            "raw": _arxiv_cache_fixture(),
+            "full_text_by_paper": {"arxiv:2401.01234v1": full_text},
+        },
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("full-text cache test must not use network")
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fail_fetch)
+
+    papers, statuses = autoresearch_literature_connectors.search_literature_connectors(
+        brief,
+        search_queries=[query],
+        sources=["arxiv"],
+        network_enabled=False,
+    )
+
+    assert statuses[0].cache_hit_count == 1
+    paper = next(item for item in papers if item.paper_id == "arxiv:2401.01234v1")
+    assert paper.extraction_level == "full_text"
+    assert paper.full_text_available is True
+    assert paper.full_text_excerpt is not None
+    assert "contrastive calibration reranker" in paper.full_text_excerpt
+    assert "MIMIC" in paper.datasets
+    assert "ndcg" in paper.metrics
+    assert "accuracy" in paper.metrics
+    assert any("contrastive calibration" in method for method in paper.methods)
+    assert any("state-of-the-art nDCG" in result for result in paper.reported_results)
+
+
 def test_literature_scout_network_override_respects_brief_web_consent(
     monkeypatch,
     tmp_path: Path,

@@ -30,7 +30,8 @@ This document focuses on the current auto-research API surface.
 - accepts optional `sources` (`fixture`, `arxiv`, `semantic_scholar`, `crossref`), `limit_per_source`, `cache_enabled`, and `allow_network`
 - never enables network access unless the brief was created with `allow_web=true`; `allow_network=false` forces cache/offline-only behavior
 - persists `literature_scout` and `gap_miner` back into the brief snapshot
-- returns search queries, structured paper metadata, source/cache statuses, similar-paper risk signals, known baseline/SOTA notes, experimentally testable gap candidates, and whether the idea needs a changed research question or experiment design
+- returns search queries, structured paper metadata, source/cache statuses, extraction level (`metadata`, `abstract`, or cached `full_text`), similar-paper risk signals, known baseline/SOTA notes, experimentally testable gap candidates, and whether the idea needs a changed research question or experiment design
+- cached connector payloads may include `full_text`, `full_text_by_paper`, or `full_text_by_title` to enrich method/dataset/metric/result extraction without enabling live network access
 
 ### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/experiment-factory`
 

@@ -213,6 +213,13 @@ def _sentences(text: str) -> list[str]:
     return [part.strip(" .") for part in parts if part.strip(" .")]
 
 
+def _excerpt(text: str | None, *, limit: int = 720) -> str | None:
+    cleaned = _norm(text)
+    if not cleaned:
+        return None
+    return cleaned[:limit].rstrip()
+
+
 def _metric_alias(metric: str) -> str:
     lowered = metric.lower().replace("-", "_").replace(" ", "_")
     lowered = lowered.replace("macro_f_1", "macro_f1")
@@ -354,8 +361,11 @@ def _make_paper(
     provided_metrics: list[str] | None = None,
     provided_results: list[str] | None = None,
     provided_known_sota: str | None = None,
+    full_text: str | None = None,
 ) -> AutoResearchLiteratureScoutPaperRead:
-    text = " ".join(part for part in [title, abstract or "", venue or ""] if part)
+    full_text_excerpt = _excerpt(full_text)
+    extraction_level = "full_text" if full_text_excerpt else "abstract" if abstract else "metadata"
+    text = " ".join(part for part in [title, abstract or "", full_text_excerpt or "", venue or ""] if part)
     shared_terms = sorted(_terms(_brief_text(brief), query or "") & _terms(text))
     methods = _dedupe([*(provided_methods or []), *_extract_methods(text, brief)])
     datasets = _dedupe([*(provided_datasets or []), *_extract_datasets(text, brief)])
@@ -393,6 +403,9 @@ def _make_paper(
         metrics=metrics,
         reported_results=reported_results,
         known_sota=known_sota,
+        extraction_level=extraction_level,  # type: ignore[arg-type]
+        full_text_available=bool(full_text_excerpt),
+        full_text_excerpt=full_text_excerpt,
         relevance_score=relevance_score,
         novelty_risk_signal=_risk_signal(overlap_score, reported_results, known_sota),
         overlap_score=overlap_score,
@@ -686,6 +699,72 @@ def _raw_from_cache(payload: dict[str, object]) -> object:
     return payload
 
 
+def _cache_full_text(payload: dict[str, object] | None) -> object | None:
+    if payload is None:
+        return None
+    return payload.get("full_text") or payload.get("full_text_by_paper") or payload.get("full_text_by_title")
+
+
+def _full_text_for_paper(
+    payload: object | None,
+    paper: AutoResearchLiteratureScoutPaperRead,
+) -> str | None:
+    if isinstance(payload, str):
+        return payload
+    if not isinstance(payload, dict):
+        return None
+    keys = [
+        paper.paper_id,
+        paper.doi,
+        paper.arxiv_id,
+        paper.title,
+        paper.title.lower(),
+    ]
+    for key in keys:
+        if key and isinstance(payload.get(key), str):
+            return str(payload[key])
+    return None
+
+
+def _enrich_with_full_text(
+    papers: list[AutoResearchLiteratureScoutPaperRead],
+    *,
+    full_text_payload: object | None,
+    query: str,
+    brief: AutoResearchResearchBriefRead,
+) -> list[AutoResearchLiteratureScoutPaperRead]:
+    enriched: list[AutoResearchLiteratureScoutPaperRead] = []
+    for paper in papers:
+        full_text = _full_text_for_paper(full_text_payload, paper)
+        if not full_text:
+            enriched.append(paper)
+            continue
+        enriched.append(
+            _make_paper(
+                source=paper.source,
+                paper_id=paper.paper_id,
+                title=paper.title,
+                query=paper.source_query or query,
+                brief=brief,
+                cache_status=paper.cache_status,
+                authors=paper.authors,
+                year=paper.year,
+                venue=paper.venue,
+                abstract=paper.abstract,
+                url=paper.url,
+                doi=paper.doi,
+                arxiv_id=paper.arxiv_id,
+                provided_methods=paper.methods,
+                provided_datasets=paper.datasets,
+                provided_metrics=paper.metrics,
+                provided_results=paper.reported_results,
+                provided_known_sota=paper.known_sota,
+                full_text=full_text,
+            )
+        )
+    return enriched
+
+
 def _arxiv_query(query: str) -> str:
     terms = [term for term in _terms(query)][:5]
     if not terms:
@@ -750,6 +829,13 @@ def _merge_duplicate_papers(
     metrics = _dedupe([*existing.metrics, *incoming.metrics])
     reported_results = _dedupe([*existing.reported_results, *incoming.reported_results])
     shared_terms = _dedupe([*existing.shared_terms, *incoming.shared_terms])
+    extraction_rank = {"metadata": 0, "abstract": 1, "full_text": 2}
+    extraction_level = (
+        incoming.extraction_level
+        if extraction_rank.get(incoming.extraction_level, 0)
+        > extraction_rank.get(existing.extraction_level, 0)
+        else existing.extraction_level
+    )
     return existing.model_copy(
         update={
             "paper_id": incoming.paper_id if prefer_incoming_identity else existing.paper_id,
@@ -770,6 +856,9 @@ def _merge_duplicate_papers(
                 if prefer_incoming_identity and incoming.known_sota
                 else existing.known_sota or incoming.known_sota
             ),
+            "extraction_level": extraction_level,
+            "full_text_available": existing.full_text_available or incoming.full_text_available,
+            "full_text_excerpt": existing.full_text_excerpt or incoming.full_text_excerpt,
             "relevance_score": max(existing.relevance_score, incoming.relevance_score),
             "novelty_risk_signal": (
                 "high"
@@ -870,6 +959,7 @@ def search_literature_connectors(
         for query in queries:
             status.query_count += 1
             raw: object | None = None
+            cached_payload: dict[str, object] | None = None
             cache_status = "cache_hit"
             if cache_enabled:
                 cached = load_literature_scout_cache(
@@ -880,6 +970,7 @@ def search_literature_connectors(
                 )
                 if cached is not None:
                     status.cache_hit_count += 1
+                    cached_payload = cached
                     raw = _raw_from_cache(cached)
             if raw is None and network_enabled:
                 try:
@@ -909,6 +1000,12 @@ def search_literature_connectors(
                 query=query,
                 brief=brief,
                 cache_status=cache_status,
+            )
+            parsed = _enrich_with_full_text(
+                parsed,
+                full_text_payload=_cache_full_text(cached_payload),
+                query=query,
+                brief=brief,
             )
             status.paper_count += len(parsed)
             papers.extend(parsed)

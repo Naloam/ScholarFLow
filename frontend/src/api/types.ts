@@ -2638,6 +2638,9 @@ export type AutoResearchLiteratureScoutPaper = {
   metrics: string[];
   reported_results: string[];
   known_sota?: string | null;
+  extraction_level: "metadata" | "abstract" | "full_text";
+  full_text_available: boolean;
+  full_text_excerpt?: string | null;
   relevance_score: number;
   novelty_risk_signal: "low" | "medium" | "high";
   overlap_score: number;

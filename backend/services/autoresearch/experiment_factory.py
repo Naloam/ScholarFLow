@@ -521,6 +521,85 @@ def _failed_job_kinds_for_external_import(
     return failed
 
 
+def _artifact_metric_value(
+    artifact: ResultArtifact,
+    *,
+    system: str,
+    metric: str,
+) -> float | None:
+    for result in artifact.aggregate_system_results:
+        if result.system == system and metric in result.mean_metrics:
+            return result.mean_metrics[metric]
+    for result in artifact.system_results:
+        if result.system == system and metric in result.metrics:
+            return result.metrics[metric]
+    return None
+
+
+def _baseline_score_from_artifact(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    artifact: ResultArtifact,
+) -> float | None:
+    metric = artifact.primary_metric
+    objective_system = artifact.objective_system or artifact.best_system
+    planned_baselines = {
+        str(job.config.get("system")).lower()
+        for job in plan.jobs
+        if job.job_kind == "baseline" and job.config.get("system")
+    }
+    candidates: list[float] = []
+    system_names = [
+        result.system
+        for result in artifact.aggregate_system_results
+    ] or [result.system for result in artifact.system_results]
+    for system in system_names:
+        if system == objective_system:
+            continue
+        lowered = system.lower()
+        if planned_baselines and lowered not in planned_baselines and "baseline" not in lowered:
+            continue
+        value = _artifact_metric_value(artifact, system=system, metric=metric)
+        if value is not None:
+            candidates.append(value)
+    return max(candidates) if candidates else None
+
+
+def _ablation_scores_from_artifact(
+    artifact: ResultArtifact,
+) -> dict[str, float]:
+    raw_scores = artifact.environment.get("ablation_scores")
+    scores: dict[str, float] = {}
+    if isinstance(raw_scores, dict):
+        for key, value in raw_scores.items():
+            try:
+                scores[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+    metric = artifact.primary_metric
+    for result in artifact.aggregate_system_results:
+        lowered = result.system.lower()
+        if "ablation" not in lowered and "without_" not in lowered:
+            continue
+        value = result.mean_metrics.get(metric)
+        if value is not None:
+            scores[result.system] = value
+    return scores
+
+
+def _seed_count_from_artifact(artifact: ResultArtifact) -> int:
+    raw_seed_count = artifact.environment.get("seed_count")
+    if isinstance(raw_seed_count, int) and raw_seed_count > 0:
+        return raw_seed_count
+    if artifact.per_seed_results:
+        return len({item.seed for item in artifact.per_seed_results})
+    sample_counts = [
+        item.sample_count
+        for item in artifact.aggregate_system_results
+        if item.sample_count > 0
+    ]
+    return max(sample_counts) if sample_counts else 1
+
+
 def _metric_value_for_system(system: str, *, baseline_index: int = 0, seed: int = 0) -> float:
     lowered = system.lower()
     base = 0.58 + (baseline_index * 0.035)
@@ -912,6 +991,72 @@ def materialize_factory_execution(
     )
 
 
+def execute_imported_artifact_experiment_factory(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    *,
+    artifact: ResultArtifact,
+    executor_mode: str = "external_import",
+) -> AutoResearchExperimentFactoryExecutionRead:
+    manifest = build_environment_manifest(plan, executor_mode=executor_mode)
+    baseline_score = _baseline_score_from_artifact(plan, artifact)
+    ablation_scores = _ablation_scores_from_artifact(artifact)
+    seed_count = _seed_count_from_artifact(artifact)
+    failed_job_kinds = _failed_job_kinds_for_external_import(
+        plan,
+        artifact=artifact,
+        baseline_score=baseline_score,
+        ablation_scores=ablation_scores,
+        seed_count=seed_count,
+    )
+    materialized_jobs = materialize_factory_jobs(
+        plan,
+        environment_manifest=manifest,
+        executor_mode=executor_mode,
+        artifact_status=artifact.status,
+        failed_job_kinds=failed_job_kinds,
+    )
+    enriched_artifact = artifact.model_copy(
+        update={
+            "environment": {
+                **artifact.environment,
+                "executor_mode": artifact.environment.get("executor_mode", executor_mode),
+                "factory_executor_mode": executor_mode,
+                "environment_manifest_id": manifest.manifest_id,
+                "environment_manifest_fingerprint": manifest.manifest_fingerprint,
+                "materialized_job_count": len(materialized_jobs),
+                "failed_materialized_job_kinds": sorted(failed_job_kinds),
+                "external_imported": True,
+                "seed_count": seed_count,
+            },
+            "outputs": {
+                **artifact.outputs,
+                "environment_manifest": "experiment_factory_environment_manifest.json",
+                "materialized_jobs": "experiment_factory_materialized_jobs.json",
+            },
+        }
+    )
+    ledger = build_evidence_ledger(
+        plan=plan,
+        artifact=enriched_artifact,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
+    )
+    repair = build_factory_repair_plan(plan=plan, evidence_ledger=ledger)
+    return AutoResearchExperimentFactoryExecutionRead(
+        project_id=plan.project_id,
+        run_id=plan.run_id,
+        brief_id=plan.brief_id,
+        hypothesis_id=plan.hypothesis_id,
+        generated_at=_utcnow(),
+        execution_plan=plan,
+        environment_manifest=manifest,
+        materialized_jobs=materialized_jobs,
+        result_artifact=enriched_artifact,
+        evidence_ledger=ledger,
+        repair_plan=repair,
+    )
+
+
 def execute_imported_experiment_factory(
     plan: AutoResearchExperimentFactoryPlanRead,
     *,
@@ -927,7 +1072,6 @@ def execute_imported_experiment_factory(
     significance_p_value: float | None = None,
     notes: str | None = None,
 ) -> AutoResearchExperimentFactoryExecutionRead:
-    manifest = build_environment_manifest(plan, executor_mode="external_import")
     artifact = result_artifact_from_external_import(
         summary=summary,
         primary_metric=primary_metric,
@@ -941,53 +1085,8 @@ def execute_imported_experiment_factory(
         significance_p_value=significance_p_value,
         notes=notes,
     )
-    failed_job_kinds = _failed_job_kinds_for_external_import(
+    return execute_imported_artifact_experiment_factory(
         plan,
         artifact=artifact,
-        baseline_score=baseline_score,
-        ablation_scores=ablation_scores,
-        seed_count=seed_count,
-    )
-    materialized_jobs = materialize_factory_jobs(
-        plan,
-        environment_manifest=manifest,
         executor_mode="external_import",
-        artifact_status=artifact.status,
-        failed_job_kinds=failed_job_kinds,
-    )
-    artifact = artifact.model_copy(
-        update={
-            "environment": {
-                **artifact.environment,
-                "environment_manifest_id": manifest.manifest_id,
-                "environment_manifest_fingerprint": manifest.manifest_fingerprint,
-                "materialized_job_count": len(materialized_jobs),
-                "failed_materialized_job_kinds": sorted(failed_job_kinds),
-            },
-            "outputs": {
-                **artifact.outputs,
-                "environment_manifest": "experiment_factory_environment_manifest.json",
-                "materialized_jobs": "experiment_factory_materialized_jobs.json",
-            },
-        }
-    )
-    ledger = build_evidence_ledger(
-        plan=plan,
-        artifact=artifact,
-        environment_manifest=manifest,
-        materialized_jobs=materialized_jobs,
-    )
-    repair = build_factory_repair_plan(plan=plan, evidence_ledger=ledger)
-    return AutoResearchExperimentFactoryExecutionRead(
-        project_id=plan.project_id,
-        run_id=plan.run_id,
-        brief_id=plan.brief_id,
-        hypothesis_id=plan.hypothesis_id,
-        generated_at=_utcnow(),
-        execution_plan=plan,
-        environment_manifest=manifest,
-        materialized_jobs=materialized_jobs,
-        result_artifact=artifact,
-        evidence_ledger=ledger,
-        repair_plan=repair,
     )

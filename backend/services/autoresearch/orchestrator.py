@@ -28,6 +28,10 @@ from schemas.autoresearch import (
 )
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec
 from services.autoresearch.bridge import AutoResearchExperimentBridgeService, build_bridge_state
+from services.autoresearch.experiment_factory import (
+    build_experiment_factory_plan,
+    execute_imported_artifact_experiment_factory,
+)
 from services.autoresearch.ingestion import resolve_benchmark
 from services.autoresearch.literature_scout import literature_insights_from_scout, scout_and_mine_gaps
 from services.autoresearch.literature_pipeline import build_fallback_literature_context, gather_literature_context
@@ -1070,6 +1074,12 @@ class AutoResearchOrchestrator:
         if candidate is None:
             raise ValueError(f"Candidate not found for bridge session: {session.candidate_id}")
 
+        factory_execution = execute_imported_artifact_experiment_factory(
+            build_experiment_factory_plan(project_id=project_id, run=run),
+            artifact=artifact,
+            executor_mode="bridge",
+        )
+        artifact = factory_execution.result_artifact
         attempts = list(candidate.attempts)
         if any(item.round_index == session.round_index for item in attempts):
             raise ValueError(
@@ -1129,11 +1139,23 @@ class AutoResearchOrchestrator:
             candidates=candidates,
             decisions=run.portfolio.decisions,
         )
-        return self._checkpoint_run_state(
+        checkpointed = self._checkpoint_run_state(
             run,
             candidates=candidates,
             portfolio=run.portfolio,
             preferred_candidate_id=candidate.id,
+        )
+        return save_run(
+            checkpointed.model_copy(
+                update={
+                    "experiment_factory_plan": factory_execution.execution_plan,
+                    "experiment_factory_environment_manifest": factory_execution.environment_manifest,
+                    "experiment_factory_materialized_jobs": factory_execution.materialized_jobs,
+                    "evidence_ledger": factory_execution.evidence_ledger,
+                    "experiment_factory_repair_plan": factory_execution.repair_plan,
+                    "artifact": factory_execution.result_artifact,
+                }
+            )
         )
 
     def apply_review_actions(

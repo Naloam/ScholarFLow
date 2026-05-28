@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
 import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
+import services.autoresearch.bridge as autoresearch_bridge
 import services.autoresearch.evaluation_cases as autoresearch_evaluation_cases
 import services.autoresearch.experiment_factory as autoresearch_experiment_factory
 import services.autoresearch.idea_brief as autoresearch_idea_brief
@@ -36,6 +37,7 @@ from schemas.autoresearch import (
     AutoResearchClaimEvidenceEntryRead,
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
+    AutoResearchExperimentBridgeConfig,
     AutoResearchLineageEdgeRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchOperatorConsoleFiltersRead,
@@ -5909,6 +5911,166 @@ def test_experiment_factory_external_import_can_complete_ledger() -> None:
     assert execution.evidence_ledger.complete is True
     assert execution.repair_plan is not None
     assert execution.repair_plan.actions == ["none"]
+
+
+def test_experiment_factory_maps_imported_artifact_to_ledger() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-import-artifact",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+    )
+    artifact = autoresearch_experiment_factory.result_artifact_from_external_import(
+        summary="Bridge backend returned candidate, baseline, ablation, and seed evidence.",
+        primary_metric="macro_f1",
+        objective_system="candidate_method",
+        objective_score=0.78,
+        baseline_system="keyword_baseline",
+        baseline_score=0.64,
+        key_findings=["Bridge candidate beat the imported baseline."],
+        ablation_scores={"without_evidence_features": 0.72},
+        seed_count=3,
+        significance_p_value=0.027,
+        notes="Imported from bridge fixture.",
+    )
+
+    execution = autoresearch_experiment_factory.execute_imported_artifact_experiment_factory(
+        plan,
+        artifact=artifact,
+        executor_mode="bridge",
+    )
+
+    assert execution.environment_manifest is not None
+    assert execution.environment_manifest.executor_mode == "bridge"
+    assert execution.result_artifact.environment["executor_mode"] == "external_import"
+    assert execution.result_artifact.environment["factory_executor_mode"] == "bridge"
+    assert execution.result_artifact.environment["external_imported"] is True
+    assert len(execution.materialized_jobs) == plan.job_count
+    assert all(job.status == "done" for job in execution.materialized_jobs)
+    assert execution.evidence_ledger.complete is True
+    assert execution.repair_plan is not None
+    assert execution.repair_plan.actions == ["none"]
+
+
+def test_bridge_ingest_persists_factory_evidence_ledger(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    plan, spec = _writer_plan_and_spec()
+    spec = enforce_publication_protocol(spec)
+    artifact = _result_artifact()
+    candidate = HypothesisCandidate(
+        id="candidate_bridge_factory",
+        program_id="program_bridge_factory",
+        rank=1,
+        title="Bridge Factory Candidate",
+        hypothesis=plan.hypotheses[0],
+        proposed_method=plan.proposed_method,
+        rationale="Exercise bridge-to-factory evidence mapping.",
+        status="running",
+    )
+    portfolio = PortfolioSummary(
+        status="running",
+        total_candidates=1,
+        candidate_rankings=[candidate.id],
+        selected_candidate_id=candidate.id,
+        selection_policy="bridge import fixture",
+        decision_summary="Waiting for bridge import fixture.",
+    )
+    project_id = "project-bridge-factory"
+    run_id = "run-bridge-factory"
+    bridge_config = AutoResearchExperimentBridgeConfig(
+        enabled=True,
+        notification_hooks=[],
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = autoresearch_repository.save_run(
+        AutoResearchRunRead(
+            id=run_id,
+            project_id=project_id,
+            topic=plan.topic,
+            status="running",
+            request=AutoResearchRunConfig(experiment_bridge=bridge_config),
+            task_family="text_classification",
+            plan=plan,
+            spec=spec,
+            candidates=[candidate],
+            portfolio=portfolio,
+            artifact=artifact,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    handoff_dir = Path(autoresearch_bridge._handoff_root(project_id, run_id)) / "session_bridge_factory"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    code_path = handoff_dir / "candidate.py"
+    manifest_path = handoff_dir / "manifest.json"
+    instructions_path = handoff_dir / "instructions.md"
+    result_path = handoff_dir / "result_artifact.json"
+    code_path.write_text("print('bridge fixture')\n", encoding="utf-8")
+    manifest_path.write_text("{}", encoding="utf-8")
+    instructions_path.write_text("bridge fixture", encoding="utf-8")
+    session = autoresearch_bridge.AutoResearchBridgeSessionRead(
+        session_id="session_bridge_factory",
+        created_at=now,
+        updated_at=now,
+        status="waiting_result",
+        candidate_id=candidate.id,
+        candidate_title=candidate.title,
+        round_index=1,
+        goal="external_bridge_result",
+        strategy="bridge_import",
+        handoff_dir=str(handoff_dir),
+        manifest_path=str(manifest_path),
+        instructions_path=str(instructions_path),
+        code_path=str(code_path),
+        result_path=str(result_path),
+    )
+    state = autoresearch_bridge.AutoResearchExperimentBridgeRead(
+        project_id=project_id,
+        run_id=run_id,
+        enabled=True,
+        config=bridge_config,
+        persisted_path=str(autoresearch_bridge.bridge_state_path(project_id, run_id)),
+        active_session_id=session.session_id,
+        sessions=[session],
+    )
+    autoresearch_bridge.bridge_state_path(project_id, run_id).write_text(
+        state.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    bridge_artifact = autoresearch_experiment_factory.result_artifact_from_external_import(
+        summary="Bridge backend returned complete factory evidence.",
+        primary_metric=artifact.primary_metric,
+        objective_system="candidate_method",
+        objective_score=0.79,
+        baseline_system="keyword_baseline",
+        baseline_score=0.62,
+        key_findings=["Bridge candidate beat the imported baseline."],
+        ablation_scores={"without_evidence_features": 0.73},
+        seed_count=3,
+        significance_p_value=0.024,
+    )
+
+    updated = autoresearch_orchestrator.AutoResearchOrchestrator().ingest_bridge_result(
+        project_id=run.project_id,
+        run_id=run.id,
+        session_id=session.session_id,
+        artifact=bridge_artifact,
+    )
+
+    assert updated.experiment_factory_plan is not None
+    assert updated.experiment_factory_environment_manifest is not None
+    assert updated.experiment_factory_environment_manifest.executor_mode == "bridge"
+    assert updated.experiment_factory_materialized_jobs
+    assert updated.evidence_ledger is not None
+    assert updated.evidence_ledger.complete is True
+    assert updated.experiment_factory_repair_plan is not None
+    assert updated.experiment_factory_repair_plan.actions == ["none"]
+    loaded = autoresearch_repository.load_run(project_id, run_id)
+    assert loaded is not None
+    assert loaded.evidence_ledger is not None
+    assert Path(loaded.evidence_ledger_path or "").is_file()
 
 
 def test_experiment_factory_external_import_classifies_missing_evidence() -> None:

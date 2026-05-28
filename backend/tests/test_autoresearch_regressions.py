@@ -5191,6 +5191,76 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
     )
 
 
+def test_paper_writer_dedupes_literature_context_in_paper_assets() -> None:
+    plan, spec = _writer_plan_and_spec()
+    artifact = _result_artifact()
+    literature = [
+        LiteratureInsight(
+            paper_id="paper-claim",
+            title="Claim Evidence Retrieval",
+            year=2025,
+            source="semantic_scholar",
+            insight="Claim-evidence retrieval needs citation support.",
+            method_hint="Claim-evidence retrieval needs citation support.",
+            gap_hint="Benchmark reports still duplicate related-work snippets.",
+        ),
+        LiteratureInsight(
+            paper_id="paper-claim",
+            title="Claim Evidence Retrieval",
+            year=2025,
+            source="arxiv",
+            insight="Claim-evidence retrieval needs citation support.",
+            method_hint="Ledger-aware reranking compares claim support passages.",
+            gap_hint="Benchmark reports still duplicate related-work snippets.",
+        ),
+        LiteratureInsight(
+            paper_id="paper-ledger",
+            title="Ledger Grounded Writing",
+            year=2024,
+            source="crossref",
+            insight="Ledger grounded writing tracks supported manuscript claims.",
+        ),
+    ]
+
+    writer = PaperWriter()
+
+    related_block = writer._literature_block(literature)
+    assert related_block.count("Claim Evidence Retrieval") == 1
+    assert related_block.count("Ledger Grounded Writing") == 1
+    assert "[1] Claim Evidence Retrieval" in related_block
+    assert "[2] Ledger Grounded Writing" in related_block
+    assert related_block.count("Claim-evidence retrieval needs citation support.") == 1
+    assert related_block.count("Benchmark reports still duplicate related-work snippets.") == 1
+    assert "Ledger-aware reranking compares claim support passages." in related_block
+
+    references = writer._references_block(literature)
+    assert references.count("Claim Evidence Retrieval") == 1
+    assert references.count("[2] Ledger Grounded Writing") == 1
+
+    bibliography = writer.build_paper_bibliography(literature)
+    assert bibliography.count("@misc{ref") == 2
+    assert bibliography.count("Claim Evidence Retrieval") == 1
+    assert bibliography.count("Claim-evidence retrieval needs citation support.") == 1
+    assert bibliography.count("Benchmark reports still duplicate related-work snippets.") == 1
+
+    claim_matrix = writer.build_claim_evidence_matrix(
+        plan,
+        spec,
+        artifact,
+        literature=literature,
+        attempts=[],
+        portfolio=None,
+        candidates=[],
+    )
+    context_entry = next(
+        item for item in claim_matrix.entries if item.claim_id == "claim_context_grounding"
+    )
+    assert [item.label for item in context_entry.evidence] == [
+        "Claim Evidence Retrieval",
+        "Ledger Grounded Writing",
+    ]
+
+
 def test_paper_writer_sanitizes_repeated_title_and_ir_language(monkeypatch) -> None:
     monkeypatch.setattr(PaperWriter, "_write_full_paper_with_llm", lambda *args, **kwargs: {})
     monkeypatch.setattr(

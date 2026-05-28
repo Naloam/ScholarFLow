@@ -566,6 +566,143 @@ class PaperWriter:
             return None
         return excerpt if excerpt.endswith((".", "!", "?")) else f"{excerpt}."
 
+    def _literature_identity_keys(self, item: LiteratureInsight) -> list[str]:
+        keys: list[str] = []
+        if item.paper_id:
+            keys.append(f"id:{item.paper_id.strip().lower()}")
+        title_key = self._normalize_prose_text(item.title)
+        if title_key:
+            if item.year is not None:
+                keys.append(f"title_year:{title_key}:{item.year}")
+            keys.append(f"title:{title_key}")
+        if not keys:
+            source_key = (item.source or "unknown").strip().lower()
+            insight_key = self._normalize_prose_text(item.insight)[:120]
+            keys.append(f"context:{source_key}:{insight_key}")
+        return keys
+
+    def _merge_literature_labels(self, *values: str | None, max_items: int = 3) -> str | None:
+        labels: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not value:
+                continue
+            for part in re.split(r"[/,;]+", value):
+                label = part.strip()
+                key = label.lower()
+                if not label or key in seen:
+                    continue
+                seen.add(key)
+                labels.append(label)
+        if not labels:
+            return None
+        return "/".join(labels[:max_items])
+
+    def _compact_literature_fragments(
+        self,
+        values: list[str | None],
+        *,
+        limit: int = 420,
+    ) -> str | None:
+        fragments: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            collapsed = " ".join((value or "").split())
+            if not collapsed:
+                continue
+            for fragment in re.split(r"(?<=[.!?])\s+|;\s+", collapsed):
+                cleaned = fragment.strip()
+                key = self._normalize_prose_text(cleaned)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                if cleaned[-1] not in ".!?":
+                    cleaned = f"{cleaned}."
+                fragments.append(cleaned)
+        if not fragments:
+            return None
+        return self._revision_sentence_fragment(" ".join(fragments), limit=limit)
+
+    def _merge_literature_items(
+        self,
+        existing: LiteratureInsight,
+        incoming: LiteratureInsight,
+    ) -> LiteratureInsight:
+        insight = self._compact_literature_fragments(
+            [existing.insight, incoming.insight],
+            limit=420,
+        ) or existing.insight or incoming.insight
+        updates = {
+            "paper_id": existing.paper_id or incoming.paper_id,
+            "title": existing.title or incoming.title,
+            "year": existing.year if existing.year is not None else incoming.year,
+            "source": self._merge_literature_labels(existing.source, incoming.source),
+            "insight": insight,
+            "method_hint": self._compact_literature_fragments(
+                [existing.method_hint, incoming.method_hint],
+                limit=320,
+            ),
+            "gap_hint": self._compact_literature_fragments(
+                [existing.gap_hint, incoming.gap_hint],
+                limit=320,
+            ),
+            "thematic_group": self._merge_literature_labels(
+                existing.thematic_group,
+                incoming.thematic_group,
+            ),
+            "methodological_detail": self._compact_literature_fragments(
+                [existing.methodological_detail, incoming.methodological_detail],
+                limit=320,
+            ),
+            "limitation": self._compact_literature_fragments(
+                [existing.limitation, incoming.limitation],
+                limit=320,
+            ),
+            "relevance": self._compact_literature_fragments(
+                [existing.relevance, incoming.relevance],
+                limit=320,
+            ),
+        }
+        return existing.model_copy(update=updates)
+
+    def _dedupe_literature(self, literature: list[LiteratureInsight]) -> list[LiteratureInsight]:
+        if not literature:
+            return []
+        deduped: list[LiteratureInsight] = []
+        key_to_index: dict[str, int] = {}
+        for item in literature:
+            keys = self._literature_identity_keys(item)
+            match_index = next((key_to_index[key] for key in keys if key in key_to_index), None)
+            if match_index is None:
+                match_index = len(deduped)
+                deduped.append(item)
+            else:
+                deduped[match_index] = self._merge_literature_items(
+                    deduped[match_index],
+                    item,
+                )
+            for key in self._literature_identity_keys(deduped[match_index]):
+                key_to_index[key] = match_index
+            for key in keys:
+                key_to_index[key] = match_index
+        return deduped
+
+    def _literature_detail(self, item: LiteratureInsight, *, limit: int = 360) -> str:
+        return (
+            self._compact_literature_fragments(
+                [
+                    item.insight,
+                    item.method_hint,
+                    item.gap_hint,
+                    item.methodological_detail,
+                    item.limitation,
+                    item.relevance,
+                ],
+                limit=limit,
+            )
+            or "Provides adjacent context for the benchmark framing."
+        )
+
     def _section_revision_scope_sentence(self, section: AutoResearchPaperPlanSectionRead) -> str:
         slug = _section_slug(section.title)
         section_scope = {
@@ -896,6 +1033,7 @@ class PaperWriter:
         )
 
     def _literature_citation_span(self, literature: list[LiteratureInsight], *, limit: int = 2) -> str:
+        literature = self._dedupe_literature(literature)
         if not literature:
             return ""
         count = min(len(literature), max(1, limit))
@@ -903,6 +1041,7 @@ class PaperWriter:
         return f"[{labels}]"
 
     def _fallback_context_only(self, literature: list[LiteratureInsight]) -> bool:
+        literature = self._dedupe_literature(literature)
         return bool(literature) and all((item.source or "").endswith("_context") for item in literature)
 
     def _literature_context_sentence(self, literature: list[LiteratureInsight]) -> str:
@@ -1686,6 +1825,7 @@ class PaperWriter:
         narrative_analysis: NarrativeAnalysis | None = None,
         research_brief: str | None = None,
     ) -> dict[str, str]:
+        literature = self._dedupe_literature(literature)
         figure_paths = figure_paths or {}
         section_slugs = [_section_slug(s.title) for s in paper_plan.sections]
 
@@ -1695,8 +1835,9 @@ class PaperWriter:
             lit_items = []
             for i, item in enumerate(literature, 1):
                 parts = [f"[{i}] {item.title}"]
-                if item.insight:
-                    lit_items.append(f"{parts[0]}: {item.insight}")
+                detail = self._literature_detail(item, limit=220)
+                if detail:
+                    lit_items.append(f"{parts[0]}: {detail}")
                 else:
                     lit_items.append(parts[0])
             literature_context_block = "## Available literature\n" + "\n".join(f"- {s}" for s in lit_items)
@@ -1874,6 +2015,7 @@ class PaperWriter:
         return f"[{index}] {item.title}. {source}, {year}."
 
     def _references_block(self, literature: list[LiteratureInsight]) -> str:
+        literature = self._dedupe_literature(literature)
         if not literature:
             return ""
         return "\n".join(
@@ -1882,20 +2024,12 @@ class PaperWriter:
         )
 
     def _literature_synthesis_sentence(self, literature: list[LiteratureInsight], *, limit: int = 2) -> str:
+        literature = self._dedupe_literature(literature)
         if not literature:
             return ""
         rendered: list[str] = []
         for index, item in enumerate(literature[: max(1, limit)], start=1):
-            detail = self._revision_sentence_fragment(
-                " ".join(
-                    part
-                    for part in (item.insight, item.method_hint, item.gap_hint)
-                    if part
-                ),
-                limit=150,
-            )
-            if detail is None:
-                detail = "provides adjacent context for the benchmark framing."
+            detail = self._literature_detail(item, limit=150)
             rendered.append(f"[{index}] `{item.title}` {detail}")
         return " ".join(rendered)
 
@@ -2084,6 +2218,7 @@ class PaperWriter:
         return "\n".join(rendered).strip()
 
     def _literature_block(self, literature: list[LiteratureInsight]) -> str:
+        literature = self._dedupe_literature(literature)
         if not literature:
             return (
                 "No project-specific papers were available for this run. The background context below is "
@@ -2092,15 +2227,7 @@ class PaperWriter:
         return "\n".join(
             (
                 f"- [{index + 1}] {item.title} ({item.year or 'n.d.'}; {(item.source or 'unknown source').replace('_', ' ')}): "
-                + " ".join(
-                    part
-                    for part in (
-                        item.insight,
-                        item.method_hint,
-                        item.gap_hint,
-                    )
-                    if part
-                )
+                + self._literature_detail(item)
             )
             for index, item in enumerate(literature)
         )
@@ -2997,7 +3124,7 @@ class PaperWriter:
         portfolio: PortfolioSummary | None = None,
         candidates: list[HypothesisCandidate] | None = None,
     ) -> AutoResearchClaimEvidenceMatrixRead:
-        literature = literature or []
+        literature = self._dedupe_literature(literature or [])
         attempts = attempts or []
         candidates = candidates or []
         entries = self._claim_entries(
@@ -3033,7 +3160,7 @@ class PaperWriter:
         candidates: list[HypothesisCandidate] | None = None,
         project_context: AutoResearchProjectFlowContextRead | None = None,
     ) -> str:
-        literature = literature or []
+        literature = self._dedupe_literature(literature or [])
         attempts = attempts or []
         candidates = candidates or []
         benchmark_display = benchmark_name or spec.benchmark_name
@@ -3983,7 +4110,7 @@ Program objective:
         self,
         literature: list[LiteratureInsight] | None = None,
     ) -> str:
-        literature = literature or []
+        literature = self._dedupe_literature(literature or [])
         if not literature:
             return "% No persisted literature entries were available for this run.\n"
         entries: list[str] = []
@@ -3993,12 +4120,9 @@ Program objective:
                 note_parts.append(f"source={item.source.replace('_', ' ')}")
             if item.paper_id:
                 note_parts.append(f"paper_id={item.paper_id}")
-            if item.insight:
-                note_parts.append(item.insight)
-            if item.method_hint:
-                note_parts.append(f"method_hint={item.method_hint}")
-            if item.gap_hint:
-                note_parts.append(f"gap_hint={item.gap_hint}")
+            detail = self._literature_detail(item)
+            if detail:
+                note_parts.append(detail)
             fields = [f"  title = {{{_latex_escape(item.title)}}}"]
             if item.year is not None:
                 fields.append(f"  year = {{{item.year}}}")
@@ -4408,6 +4532,7 @@ Program objective:
         This is the ARIS pattern: before writing paper sections, synthesize what was
         actually discovered into a coherent narrative brief.
         """
+        literature = self._dedupe_literature(literature)
         try:
             best_system_name = artifact.best_system or artifact.objective_system
             best_metric = self._artifact_score(artifact)
@@ -4525,7 +4650,7 @@ Program objective:
         problem_anchor: str | None = None,
         is_negative_result: bool = False,
     ) -> AutoResearchPaperPipelineArtifactsRead:
-        literature = literature or []
+        literature = self._dedupe_literature(literature or [])
         attempts = attempts or []
         candidates = candidates or []
         claim_evidence_matrix = self.build_claim_evidence_matrix(
@@ -4694,7 +4819,7 @@ Program objective:
         if artifact.status != "done":
             raise ValueError("PaperWriter requires a completed ResultArtifact")
 
-        literature = literature or []
+        literature = self._dedupe_literature(literature or [])
         attempts = attempts or []
         candidates = candidates or []
         claim_evidence_matrix = claim_evidence_matrix or self.build_claim_evidence_matrix(

@@ -251,6 +251,14 @@ def _trace_materials(
     blockers: list[str],
 ) -> tuple[list[str], list[str], list[str]]:
     task_kind = str(case["task_kind"])
+    planned_dataset = next(
+        (
+            str(job.config.get("dataset"))
+            for job in plan.jobs
+            if isinstance(job.config.get("dataset"), str) and job.config.get("dataset")
+        ),
+        "unknown dataset",
+    )
     architecture_materials = [
         (
             f"{task_kind}: idea brief `{brief.brief_id}` produced {scouted.direction_count} "
@@ -259,7 +267,7 @@ def _trace_materials(
         ),
         (
             f"{task_kind}: experiment factory `{plan.plan_id}` materialized "
-            f"{plan.job_count} auditable jobs and evidence ledger "
+            f"{plan.job_count} auditable jobs on `{planned_dataset}` and evidence ledger "
             f"`{execution.evidence_ledger.ledger_id}`."
         ),
     ]

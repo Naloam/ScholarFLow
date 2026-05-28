@@ -82,6 +82,7 @@ from schemas.autoresearch import (
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
 from services.autoresearch.benchmark_card import build_benchmark_card
+from services.autoresearch.codegen import ExperimentCodeGenerator
 from services.autoresearch.contribution_assessment import build_contribution_assessment
 from services.autoresearch.experiment_design import build_experiment_design
 from services.autoresearch.failure_replanning import build_failure_analysis, build_research_replan
@@ -90,6 +91,7 @@ from services.autoresearch.paper_evidence_compiler import compile_paper_evidence
 from services.autoresearch.methodology_audit import build_methodology_audit
 from services.autoresearch.publication_repair_execution import build_publication_repair_execution
 from services.autoresearch.research_protocol import build_research_protocol
+from services.autoresearch.runner import AutoExperimentRunner
 from services.autoresearch.research_readiness import (
     PUBLICATION_MIN_COMPLETED_SEEDS,
     build_publication_readiness,
@@ -212,6 +214,92 @@ def _idea_request_payload() -> dict[str, object]:
         "task_family_hint": "ir_reranking",
         "execution_profile": "exploratory",
     }
+
+
+def _claim_evidence_runner_plan(spec: ExperimentSpec) -> ResearchPlan:
+    return ResearchPlan(
+        topic="claim evidence retrieval",
+        title="Frozen Claim Evidence Retrieval",
+        task_family="ir_reranking",
+        problem_statement="Evaluate claim-evidence retrieval under structured near-miss distractors.",
+        motivation="Autonomous paper writers need retrieval evidence that does not overfit lexical overlap.",
+        proposed_method="Use rarity-aware and bigram lexical reranking as a deterministic candidate method.",
+        research_questions=["Does bigram reranking improve MRR on claim-evidence retrieval?"],
+        hypotheses=[spec.hypothesis],
+        planned_contributions=["A deterministic claim-evidence reranking execution trace."],
+        experiment_outline=["Run the frozen claim-evidence benchmark with lexical baselines."],
+    )
+
+
+def test_claim_evidence_ir_routes_to_frozen_non_publication_fixture() -> None:
+    benchmark = builtin_benchmark(
+        "ir_reranking",
+        topic="claim evidence retrieval unsupported claims citation grounded scientific writing agents",
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+
+    assert benchmark.benchmark_name == "frozen_claim_evidence_reranking"
+    assert benchmark.source.kind == "builtin"
+    assert benchmark.source.url == "local://scholarflow/fixtures/frozen_claim_evidence_reranking/v1"
+    assert benchmark.source.dataset_id == "scholarflow:frozen_claim_evidence_reranking"
+    assert benchmark.source.revision == "v1.0.0"
+    assert benchmark.source.license == "synthetic-fixture"
+    assert spec.dataset.name == "Frozen Claim Evidence Reranking"
+    assert spec.dataset.train_size == 12
+    assert spec.dataset.test_size == 12
+    assert spec.dataset.candidate_count == 5
+    assert spec.dataset.source_kind == "builtin"
+    assert spec.dataset.publication_grade is False
+    assert spec.metrics[0].name == "mrr"
+
+
+def test_frozen_claim_evidence_ir_runner_executes_non_degenerate_fixture(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    benchmark = builtin_benchmark(
+        "ir_reranking",
+        topic="claim evidence retrieval unsupported claims citation grounded scientific writing agents",
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+    plan = _claim_evidence_runner_plan(spec)
+    code = ExperimentCodeGenerator()._ir_template(
+        plan,
+        spec,
+        benchmark.payload,
+        "bigram_reranker_search",
+    )
+
+    _, _, artifact = AutoExperimentRunner().run(
+        project_id="project-frozen-claim-evidence",
+        run_id="run-frozen-claim-evidence",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=benchmark.payload,
+        round_index=3,
+        goal="evaluate frozen claim-evidence fixture",
+        prior_attempts=[],
+        execution_backend=ExecutionBackendSpec(kind="local", timeout_seconds=30),
+        code_override=code,
+        strategy_override="bigram_reranker_search",
+    )
+
+    scores = {
+        item.system: item.mean_metrics[artifact.primary_metric]
+        for item in artifact.aggregate_system_results
+    }
+    assert artifact.status == "done"
+    assert artifact.primary_metric == "mrr"
+    assert artifact.objective_system == "bigram_ranker"
+    assert artifact.best_system == "bigram_ranker"
+    assert scores["random_ranker"] < scores["overlap_ranker"] < scores["bigram_ranker"]
+    assert scores["bigram_ranker"] < 1.0
+    assert artifact.objective_score == scores["bigram_ranker"]
+    assert len(artifact.per_seed_results) == len(spec.seeds)
+    assert artifact.significance_tests
+    assert all(check.passed for check in artifact.acceptance_checks)
+    assert artifact.environment["benchmark_name"] == "Frozen Claim Evidence Reranking"
 
 
 def _result_artifact() -> ResultArtifact:
@@ -6482,6 +6570,12 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert len(suite.case_study_materials) == 5
     assert len(suite.failure_analysis_materials) >= 5
     assert all(metric.score == 100 for metric in suite.metrics)
+    literature_heavy = next(case for case in suite.cases if case.task_kind == "literature_heavy_task")
+    assert literature_heavy.trace is not None
+    assert any(
+        "Frozen Claim Evidence Reranking" in material
+        for material in literature_heavy.trace.architecture_materials
+    )
 
 
 def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:

@@ -1081,11 +1081,683 @@ IR_SECURITY_BENCHMARK = _ir_benchmark(
     ],
 )
 
+IR_CLAIM_EVIDENCE_BENCHMARK = _ir_benchmark(
+    benchmark_name="frozen_claim_evidence_reranking",
+    benchmark_description=(
+        "A frozen local reranking benchmark for claim-evidence retrieval in autonomous "
+        "scientific writing. Queries contain claim, citation, ablation, and reviewer-support "
+        "needs; candidate pools include near-miss passages so lexical overlap alone is not "
+        "sufficient."
+    ),
+    dataset_name="Frozen Claim Evidence Reranking",
+    dataset_description=(
+        "Twelve training queries and twelve held-out queries with five candidate passages per "
+        "query. The fixture is deterministic and synthetic, but designed to exercise real "
+        "claim-evidence retrieval failure modes such as unsupported-claim distractors, citation "
+        "near misses, and ablation/reporting ambiguity."
+    ),
+    train=[
+        {
+            "query": "claim evidence ledger unsupported claims",
+            "candidates": [
+                {
+                    "id": "ce_tr_1_rel",
+                    "text": "A claim evidence ledger links unsupported claims to cited paper passages before review.",
+                },
+                {
+                    "id": "ce_tr_1_d1",
+                    "text": "A ledger records project budgets and evidence fields but omits citation validation.",
+                },
+                {
+                    "id": "ce_tr_1_d2",
+                    "text": "Unsupported optimization claims can appear in benchmark summaries without an audit.",
+                },
+                {
+                    "id": "ce_tr_1_d3",
+                    "text": "Reviewer comments ask authors to clarify paper contributions and novelty risks.",
+                },
+                {
+                    "id": "ce_tr_1_d4",
+                    "text": "Artifact lineage stores code paths, result tables, and environment metadata.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_1_rel"],
+        },
+        {
+            "query": "citation grounding for generated paper claims",
+            "candidates": [
+                {
+                    "id": "ce_tr_2_d1",
+                    "text": "Generated papers may contain fluent claims that are not tied to any bibliography entry.",
+                },
+                {
+                    "id": "ce_tr_2_rel",
+                    "text": "Citation grounding verifies generated paper claims against retrieved evidence passages.",
+                },
+                {
+                    "id": "ce_tr_2_d2",
+                    "text": "A citation graph clusters related work by venue, year, and author overlap.",
+                },
+                {
+                    "id": "ce_tr_2_d3",
+                    "text": "Paper formatting tools generate references, figures, and source archives.",
+                },
+                {
+                    "id": "ce_tr_2_d4",
+                    "text": "Claim templates can simplify abstract writing but do not prove factual support.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_2_rel"],
+        },
+        {
+            "query": "ablation evidence in reranking experiment",
+            "candidates": [
+                {
+                    "id": "ce_tr_3_d1",
+                    "text": "A reranking experiment reports aggregate MRR without isolating the evidence feature.",
+                },
+                {
+                    "id": "ce_tr_3_d2",
+                    "text": "Ablation plans list model components but lack evidence from executed runs.",
+                },
+                {
+                    "id": "ce_tr_3_rel",
+                    "text": "Ablation evidence in reranking shows that removing citation features lowers MRR.",
+                },
+                {
+                    "id": "ce_tr_3_d3",
+                    "text": "Dataset cards describe train and test partitions for retrieval tasks.",
+                },
+                {
+                    "id": "ce_tr_3_d4",
+                    "text": "Failure replanning adds missing baselines when execution artifacts are incomplete.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_3_rel"],
+        },
+        {
+            "query": "reviewer asks for baseline comparison evidence",
+            "candidates": [
+                {
+                    "id": "ce_tr_4_rel",
+                    "text": "Reviewer baseline comparison evidence requires candidate results against lexical and random systems.",
+                },
+                {
+                    "id": "ce_tr_4_d1",
+                    "text": "A reviewer asks for a clearer motivation paragraph and more concise related work.",
+                },
+                {
+                    "id": "ce_tr_4_d2",
+                    "text": "Baseline comparison tables can omit confidence intervals and seed coverage.",
+                },
+                {
+                    "id": "ce_tr_4_d3",
+                    "text": "Evidence ledgers track supported claims but do not automatically resolve reviewer comments.",
+                },
+                {
+                    "id": "ce_tr_4_d4",
+                    "text": "A paper checklist includes ethics, limitations, and artifact availability statements.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_4_rel"],
+        },
+        {
+            "query": "literature gap citation supported novelty",
+            "candidates": [
+                {
+                    "id": "ce_tr_5_d1",
+                    "text": "Novelty statements should be scoped when literature coverage is incomplete.",
+                },
+                {
+                    "id": "ce_tr_5_rel",
+                    "text": "A literature gap is citation supported when retrieved papers establish missing evidence.",
+                },
+                {
+                    "id": "ce_tr_5_d2",
+                    "text": "Citation counts alone do not prove that a proposed novelty gap is real.",
+                },
+                {
+                    "id": "ce_tr_5_d3",
+                    "text": "A dataset gap can motivate benchmark creation without demonstrating method novelty.",
+                },
+                {
+                    "id": "ce_tr_5_d4",
+                    "text": "Known SOTA tables collect metrics, datasets, and reported results from papers.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_5_rel"],
+        },
+        {
+            "query": "evidence constrained paper conclusion",
+            "candidates": [
+                {
+                    "id": "ce_tr_6_d1",
+                    "text": "Paper conclusions often overstate broader generalization beyond the benchmark.",
+                },
+                {
+                    "id": "ce_tr_6_rel",
+                    "text": "An evidence constrained paper conclusion only states claims supported by run artifacts.",
+                },
+                {
+                    "id": "ce_tr_6_d2",
+                    "text": "Conclusion sections can summarize experiments, limitations, and future work.",
+                },
+                {
+                    "id": "ce_tr_6_d3",
+                    "text": "Claim evidence matrices connect manuscript sentences to tables and citations.",
+                },
+                {
+                    "id": "ce_tr_6_d4",
+                    "text": "Publication gates block unsupported results when artifacts are missing.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_6_rel"],
+        },
+        {
+            "query": "artifact lineage experiment evidence",
+            "candidates": [
+                {
+                    "id": "ce_tr_7_d1",
+                    "text": "Experiment evidence includes metrics, logs, and generated code snapshots.",
+                },
+                {
+                    "id": "ce_tr_7_rel",
+                    "text": "Artifact lineage connects experiment evidence to the exact run, benchmark, and paper claim.",
+                },
+                {
+                    "id": "ce_tr_7_d2",
+                    "text": "Lineage graphs can show ownership edges between projects and run assets.",
+                },
+                {
+                    "id": "ce_tr_7_d3",
+                    "text": "Evidence ledgers may record a failed job as missing support.",
+                },
+                {
+                    "id": "ce_tr_7_d4",
+                    "text": "A benchmark card documents source kind, license, revision, and split sizes.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_7_rel"],
+        },
+        {
+            "query": "unsupported result claim repair action",
+            "candidates": [
+                {
+                    "id": "ce_tr_8_d1",
+                    "text": "Repair actions can rerun a failed job or add a missing ablation.",
+                },
+                {
+                    "id": "ce_tr_8_rel",
+                    "text": "An unsupported result claim repair action downgrades the manuscript until evidence is added.",
+                },
+                {
+                    "id": "ce_tr_8_d2",
+                    "text": "Result claims compare objective scores, baselines, and confidence intervals.",
+                },
+                {
+                    "id": "ce_tr_8_d3",
+                    "text": "Unsupported citations create reviewer issues that remain open after compilation.",
+                },
+                {
+                    "id": "ce_tr_8_d4",
+                    "text": "Failure-driven replanning classifies baseline, ablation, statistics, and runtime gaps.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_8_rel"],
+        },
+        {
+            "query": "known sota metric from abstract",
+            "candidates": [
+                {
+                    "id": "ce_tr_9_d1",
+                    "text": "An abstract may mention benchmarks without giving enough metric detail.",
+                },
+                {
+                    "id": "ce_tr_9_rel",
+                    "text": "Known SOTA metric extraction from abstracts records datasets, methods, and reported scores.",
+                },
+                {
+                    "id": "ce_tr_9_d2",
+                    "text": "Metric tables should distinguish validation, test, and ablation measurements.",
+                },
+                {
+                    "id": "ce_tr_9_d3",
+                    "text": "Related work paragraphs summarize methods but can omit numerical results.",
+                },
+                {
+                    "id": "ce_tr_9_d4",
+                    "text": "Novelty validators compare candidate gaps with known papers and methods.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_9_rel"],
+        },
+        {
+            "query": "claim support retrieval benchmark",
+            "candidates": [
+                {
+                    "id": "ce_tr_10_rel",
+                    "text": "A claim support retrieval benchmark ranks evidence passages for manuscript claims.",
+                },
+                {
+                    "id": "ce_tr_10_d1",
+                    "text": "Retrieval benchmark suites measure ranking quality across queries and candidates.",
+                },
+                {
+                    "id": "ce_tr_10_d2",
+                    "text": "Claim classifiers label sentences as supported, contradicted, or uncertain.",
+                },
+                {
+                    "id": "ce_tr_10_d3",
+                    "text": "Support tickets can be ranked by service priority and incident severity.",
+                },
+                {
+                    "id": "ce_tr_10_d4",
+                    "text": "Benchmark cards record source provenance but not paper claim alignment.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_10_rel"],
+        },
+        {
+            "query": "revision loop resolves citation issue",
+            "candidates": [
+                {
+                    "id": "ce_tr_11_d1",
+                    "text": "A revision loop may rewrite claims, rerun experiments, or downgrade unsupported sections.",
+                },
+                {
+                    "id": "ce_tr_11_rel",
+                    "text": "The revision loop resolves a citation issue only after the paper cites valid evidence.",
+                },
+                {
+                    "id": "ce_tr_11_d2",
+                    "text": "Reviewer simulators create issue lists for paper clarity and reproducibility.",
+                },
+                {
+                    "id": "ce_tr_11_d3",
+                    "text": "Citation formatting issues can be fixed without changing scientific claims.",
+                },
+                {
+                    "id": "ce_tr_11_d4",
+                    "text": "Action indexes track pending, completed, and blocked revision work.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_11_rel"],
+        },
+        {
+            "query": "paper package reproducibility evidence",
+            "candidates": [
+                {
+                    "id": "ce_tr_12_rel",
+                    "text": "A paper package reproducibility evidence index includes code, data snapshots, and ledgers.",
+                },
+                {
+                    "id": "ce_tr_12_d1",
+                    "text": "Reproducibility checklists ask authors to share artifacts and random seeds.",
+                },
+                {
+                    "id": "ce_tr_12_d2",
+                    "text": "Paper packages include source files, bibliography, figures, and supplementary material.",
+                },
+                {
+                    "id": "ce_tr_12_d3",
+                    "text": "Evidence indexes list claim identifiers and supporting source references.",
+                },
+                {
+                    "id": "ce_tr_12_d4",
+                    "text": "Submission archives can be stale when manifest hashes do not match files.",
+                },
+            ],
+            "relevant_ids": ["ce_tr_12_rel"],
+        },
+    ],
+    test=[
+        {
+            "query": "unsupported claim detection writing agent",
+            "candidates": [
+                {
+                    "id": "ce_te_1_z1",
+                    "text": "An agent stores writing notes about detection thresholds for unsupported research and a claim queue.",
+                },
+                {
+                    "id": "ce_te_1_rel",
+                    "text": "Unsupported claim detection in a writing agent compares draft claims with cited evidence.",
+                },
+                {
+                    "id": "ce_te_1_d2",
+                    "text": "Claim detection models may classify sentences without using citation context.",
+                },
+                {
+                    "id": "ce_te_1_d3",
+                    "text": "Agent memory stores previous review comments and revision plans.",
+                },
+                {
+                    "id": "ce_te_1_d4",
+                    "text": "Detection thresholds tune precision and recall for classification tasks.",
+                },
+            ],
+            "relevant_ids": ["ce_te_1_rel"],
+        },
+        {
+            "query": "citation evidence for novelty gap",
+            "candidates": [
+                {
+                    "id": "ce_te_2_d1",
+                    "text": "A novelty gap can be stated in the introduction without retrieved citations.",
+                },
+                {
+                    "id": "ce_te_2_rel",
+                    "text": "Citation evidence for a novelty gap compares the proposed claim with related papers.",
+                },
+                {
+                    "id": "ce_te_2_d2",
+                    "text": "Evidence tables report metrics but cannot alone establish literature novelty.",
+                },
+                {
+                    "id": "ce_te_2_d3",
+                    "text": "Gap mining narrows broad ideas into dataset and metric obligations.",
+                },
+                {
+                    "id": "ce_te_2_d4",
+                    "text": "Citation style rules determine author-year or numeric reference formatting.",
+                },
+            ],
+            "relevant_ids": ["ce_te_2_rel"],
+        },
+        {
+            "query": "reranking evidence ledger ablation",
+            "candidates": [
+                {
+                    "id": "ce_te_3_z1",
+                    "text": "A ledger lists ablation notes and evidence fragments for reranking without testing feature removal.",
+                },
+                {
+                    "id": "ce_te_3_rel",
+                    "text": "The reranking evidence ledger ablation shows which citation features drive MRR gains.",
+                },
+                {
+                    "id": "ce_te_3_d2",
+                    "text": "Ablation experiments can fail when seed coverage is too small.",
+                },
+                {
+                    "id": "ce_te_3_d3",
+                    "text": "Evidence ledgers are complete only when baseline artifacts are materialized.",
+                },
+                {
+                    "id": "ce_te_3_d4",
+                    "text": "Reranking models compare candidate passages under lexical and neural scoring.",
+                },
+            ],
+            "relevant_ids": ["ce_te_3_rel"],
+        },
+        {
+            "query": "paper reviewer requests evidence downgrade",
+            "candidates": [
+                {
+                    "id": "ce_te_4_d1",
+                    "text": "A paper reviewer requests stronger experiments and clearer motivation.",
+                },
+                {
+                    "id": "ce_te_4_rel",
+                    "text": "A reviewer requests evidence downgrade when the paper makes unsupported claims.",
+                },
+                {
+                    "id": "ce_te_4_d2",
+                    "text": "Evidence downgrade actions revise claims until result artifacts support them.",
+                },
+                {
+                    "id": "ce_te_4_d3",
+                    "text": "Reviewer forms score novelty, clarity, soundness, and reproducibility.",
+                },
+                {
+                    "id": "ce_te_4_d4",
+                    "text": "Paper drafts can be regenerated after section-level edit packets are applied.",
+                },
+            ],
+            "relevant_ids": ["ce_te_4_rel"],
+        },
+        {
+            "query": "experiment result claim supported by artifact",
+            "candidates": [
+                {
+                    "id": "ce_te_5_d1",
+                    "text": "Experiment result tables summarize candidate and baseline systems.",
+                },
+                {
+                    "id": "ce_te_5_rel",
+                    "text": "An experiment result claim is supported by an artifact when metrics and logs match.",
+                },
+                {
+                    "id": "ce_te_5_d2",
+                    "text": "Artifact registries include generated code, benchmark snapshots, and paper files.",
+                },
+                {
+                    "id": "ce_te_5_d3",
+                    "text": "Claim support labels may be missing when evidence references are stale.",
+                },
+                {
+                    "id": "ce_te_5_d4",
+                    "text": "A result claim can be contradicted by a later failed seed run.",
+                },
+            ],
+            "relevant_ids": ["ce_te_5_rel"],
+        },
+        {
+            "query": "known sota extraction citation metric",
+            "candidates": [
+                {
+                    "id": "ce_te_6_rel",
+                    "text": "Known SOTA extraction records citation, metric, dataset, and reported result fields.",
+                },
+                {
+                    "id": "ce_te_6_d1",
+                    "text": "Citation extraction finds paper identifiers, authors, and venue metadata.",
+                },
+                {
+                    "id": "ce_te_6_d2",
+                    "text": "Metric extraction can collect accuracy, MRR, nDCG, and macro F1 strings.",
+                },
+                {
+                    "id": "ce_te_6_d3",
+                    "text": "SOTA claims require comparing reported results across compatible datasets.",
+                },
+                {
+                    "id": "ce_te_6_d4",
+                    "text": "Known failure modes include missing abstracts and ambiguous venue names.",
+                },
+            ],
+            "relevant_ids": ["ce_te_6_rel"],
+        },
+        {
+            "query": "failure driven repair missing baseline evidence",
+            "candidates": [
+                {
+                    "id": "ce_te_7_d1",
+                    "text": "A missing baseline can make performance claims too weak for review.",
+                },
+                {
+                    "id": "ce_te_7_rel",
+                    "text": "Failure driven repair adds missing baseline evidence before promoting result claims.",
+                },
+                {
+                    "id": "ce_te_7_d2",
+                    "text": "Repair planning also handles missing ablations and insufficient statistics.",
+                },
+                {
+                    "id": "ce_te_7_d3",
+                    "text": "Baseline evidence should include matched datasets and metrics.",
+                },
+                {
+                    "id": "ce_te_7_d4",
+                    "text": "Runtime failures are classified separately from scientific negative results.",
+                },
+            ],
+            "relevant_ids": ["ce_te_7_rel"],
+        },
+        {
+            "query": "claim evidence matrix manuscript sentence",
+            "candidates": [
+                {
+                    "id": "ce_te_8_rel",
+                    "text": "A claim evidence matrix links each manuscript sentence to artifact or literature support.",
+                },
+                {
+                    "id": "ce_te_8_d1",
+                    "text": "Manuscript sentences may be rewritten to improve clarity and remove repetition.",
+                },
+                {
+                    "id": "ce_te_8_d2",
+                    "text": "Evidence matrices can expose unsupported claims before submission packaging.",
+                },
+                {
+                    "id": "ce_te_8_d3",
+                    "text": "Claim classifiers assign support labels to sentences using retrieved evidence.",
+                },
+                {
+                    "id": "ce_te_8_d4",
+                    "text": "A matrix factorization model is unrelated to paper evidence tracking.",
+                },
+            ],
+            "relevant_ids": ["ce_te_8_rel"],
+        },
+        {
+            "query": "review loop citation issue resolved",
+            "candidates": [
+                {
+                    "id": "ce_te_9_d1",
+                    "text": "A review loop can leave citation issues open when evidence is still missing.",
+                },
+                {
+                    "id": "ce_te_9_rel",
+                    "text": "A review loop citation issue is resolved only after valid evidence is attached.",
+                },
+                {
+                    "id": "ce_te_9_d2",
+                    "text": "Issue trackers record reviewer severity, category, and action priority.",
+                },
+                {
+                    "id": "ce_te_9_d3",
+                    "text": "Citation repair may update bibliography entries without fixing claim support.",
+                },
+                {
+                    "id": "ce_te_9_d4",
+                    "text": "Resolved actions should be reflected in the revision dossier.",
+                },
+            ],
+            "relevant_ids": ["ce_te_9_rel"],
+        },
+        {
+            "query": "submission package evidence index reproducibility",
+            "candidates": [
+                {
+                    "id": "ce_te_10_rel",
+                    "text": "A submission package evidence index ties reproducibility files to supported claims.",
+                },
+                {
+                    "id": "ce_te_10_d1",
+                    "text": "Submission packages contain manuscript sources, compiled PDFs, and archives.",
+                },
+                {
+                    "id": "ce_te_10_d2",
+                    "text": "Evidence indexes list artifact hashes, claim identifiers, and reviewer responses.",
+                },
+                {
+                    "id": "ce_te_10_d3",
+                    "text": "Reproducibility statements describe code availability and compute requirements.",
+                },
+                {
+                    "id": "ce_te_10_d4",
+                    "text": "Package manifests fail when archives are stale or incomplete.",
+                },
+            ],
+            "relevant_ids": ["ce_te_10_rel"],
+        },
+        {
+            "query": "literature scout structured paper metadata",
+            "candidates": [
+                {
+                    "id": "ce_te_11_rel",
+                    "text": "A literature scout returns structured paper metadata with methods, datasets, metrics, and risk signals.",
+                },
+                {
+                    "id": "ce_te_11_d1",
+                    "text": "Paper metadata includes title, authors, venue, DOI, and abstract fields.",
+                },
+                {
+                    "id": "ce_te_11_d2",
+                    "text": "Structured metadata can be cached before graph construction and novelty validation.",
+                },
+                {
+                    "id": "ce_te_11_d3",
+                    "text": "Scout queries should respect network settings and offline fixtures.",
+                },
+                {
+                    "id": "ce_te_11_d4",
+                    "text": "Risk signals estimate whether a proposed idea overlaps existing work.",
+                },
+            ],
+            "relevant_ids": ["ce_te_11_rel"],
+        },
+        {
+            "query": "paper false positive unsupported result audit",
+            "candidates": [
+                {
+                    "id": "ce_te_12_d1",
+                    "text": "A paper audit can find a false positive benchmark improvement.",
+                },
+                {
+                    "id": "ce_te_12_rel",
+                    "text": "Artifact checking downgrades hallucinated experimental statements after evidence review.",
+                },
+                {
+                    "id": "ce_te_12_d2",
+                    "text": "False positive unsupported result detectors may require adversarial examples.",
+                },
+                {
+                    "id": "ce_te_12_d3",
+                    "text": "Unsupported paper results often arise from missing baselines or incomplete seeds.",
+                },
+                {
+                    "id": "ce_te_12_d4",
+                    "text": "Audit logs should preserve reviewer issues and repair actions.",
+                },
+            ],
+            "relevant_ids": ["ce_te_12_rel"],
+        },
+    ],
+    topic_keywords=[
+        "claim",
+        "claims",
+        "evidence",
+        "retrieval",
+        "reranking",
+        "ledger",
+        "unsupported",
+        "grounding",
+        "citation",
+        "novelty",
+        "autonomous",
+        "review",
+        "writing agent",
+        "scientific writing",
+        "ablation",
+        "repair",
+    ],
+)
+IR_CLAIM_EVIDENCE_BENCHMARK["dataset"].update(
+    {
+        "source_url": "local://scholarflow/fixtures/frozen_claim_evidence_reranking/v1",
+        "source_dataset_id": "scholarflow:frozen_claim_evidence_reranking",
+        "source_revision": "v1.0.0",
+        "source_license": "synthetic-fixture",
+    }
+)
+
 IR_BENCHMARKS = [
     IR_BENCHMARK,
     IR_CODE_BENCHMARK,
     IR_PAPER_BENCHMARK,
     IR_SECURITY_BENCHMARK,
+    IR_CLAIM_EVIDENCE_BENCHMARK,
 ]
 
 
@@ -1340,16 +2012,25 @@ def builtin_benchmark(
     topic: str | None = None,
 ) -> ResolvedBenchmark:
     selected = benchmark_payload_for(task_family, topic=topic, source=source)
+    dataset_payload = selected["dataset"]
     effective_source = (source or BenchmarkSource(kind="builtin", task_family_hint=task_family)).model_copy(
         update={
             "task_family_hint": task_family,
             "name": source.name if source and source.name else selected["benchmark_name"],
+            "url": source.url if source and source.url else dataset_payload.get("source_url"),
+            "dataset_id": (
+                source.dataset_id
+                if source and source.dataset_id
+                else dataset_payload.get("source_dataset_id")
+            ),
+            "revision": source.revision if source and source.revision else dataset_payload.get("source_revision"),
+            "license": source.license if source and source.license else dataset_payload.get("source_license"),
         }
     )
     return ResolvedBenchmark(
         source=effective_source,
         task_family=task_family,
-        payload=selected["dataset"],
+        payload=dataset_payload,
         benchmark_name=selected["benchmark_name"],
         benchmark_description=selected["benchmark_description"],
     )

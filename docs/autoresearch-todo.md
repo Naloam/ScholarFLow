@@ -67,7 +67,7 @@ Acceptance:
 
 ## Priority 6: GitHub Sync
 
-Status: next.
+Status: done.
 
 Goal: synchronize completed, tested work to the GitHub master branch.
 

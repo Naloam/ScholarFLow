@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import math
 import random
 import re
@@ -31,6 +32,9 @@ from schemas.autoresearch import (
 from services.autoresearch.codegen import ExperimentCodeGenerator
 from services.autoresearch.runtime_contract import runtime_environment_violations
 from services.autoresearch.repository import save_generated_code
+
+
+logger = logging.getLogger(__name__)
 
 
 def _round_metric(value: float) -> float:

@@ -374,6 +374,83 @@ class PaperWriter:
                 return matched
         return fallback
 
+    def _clean_paper_title(self, title: str, *, fallback: str) -> str:
+        cleaned = " ".join((title or "").split()).strip(" #`")
+        if not cleaned:
+            cleaned = " ".join(fallback.split()).strip() or "Autonomous Research Report"
+        separators = (": ", " - ", " -- ", " | ")
+        changed = True
+        while changed:
+            changed = False
+            lowered = cleaned.lower()
+            for separator in separators:
+                if separator not in cleaned:
+                    continue
+                left, right = cleaned.split(separator, 1)
+                left_key = left.strip().lower()
+                right_key = right.strip().lower()
+                if left_key and right_key.startswith(left_key):
+                    cleaned = right.strip()
+                    changed = True
+                    break
+                repeated_prefix = f"{left_key}{separator.strip().lower()}"
+                if left_key and lowered.startswith(repeated_prefix * 2):
+                    cleaned = cleaned[len(left + separator):].strip()
+                    changed = True
+                    break
+        max_chars = 140
+        if len(cleaned) <= max_chars:
+            return cleaned
+        breakpoint = max(cleaned.rfind(": ", 0, max_chars), cleaned.rfind(" - ", 0, max_chars))
+        if breakpoint >= 48:
+            return cleaned[:breakpoint].rstrip(" :-")
+        words = cleaned.split()
+        shortened: list[str] = []
+        for word in words:
+            candidate = " ".join([*shortened, word])
+            if len(candidate) > max_chars:
+                break
+            shortened.append(word)
+        return " ".join(shortened).rstrip(" :-") or cleaned[:max_chars].rstrip(" :-")
+
+    def _paper_display_title(self, plan: ResearchPlan) -> str:
+        return self._clean_paper_title(plan.title, fallback=plan.topic)
+
+    def _task_approach_phrase(self, spec: ExperimentSpec) -> str:
+        if spec.task_family == "ir_reranking":
+            return "retrieval and reranking approaches"
+        if spec.task_family in {"text_classification", "tabular_classification"}:
+            return "classification approaches"
+        if spec.task_family == "llm_evaluation":
+            return "prompting and evaluation strategies"
+        return "experimental approaches"
+
+    def _task_result_phrase(self, spec: ExperimentSpec) -> str:
+        if spec.task_family == "ir_reranking":
+            return "retrieval and ranking behavior"
+        if spec.task_family in {"text_classification", "tabular_classification"}:
+            return "classification behavior"
+        if spec.task_family == "llm_evaluation":
+            return "prompting behavior"
+        return "task behavior"
+
+    def _dataset_context_sentence(self, spec: ExperimentSpec, benchmark_display: str) -> str:
+        if spec.task_family == "ir_reranking":
+            return (
+                f"Benchmark `{benchmark_display}` targets the `{spec.task_family}` setting "
+                f"on dataset `{spec.dataset.name}`, containing {spec.dataset.train_size} training "
+                f"queries and {spec.dataset.test_size} test queries. Queries use "
+                f"{', '.join(spec.dataset.query_fields or ['query'])}, with up to "
+                f"{spec.dataset.candidate_count or 'unknown'} candidates per query."
+            )
+        return (
+            f"Benchmark `{benchmark_display}` targets the `{spec.task_family}` setting "
+            f"on dataset `{spec.dataset.name}`, containing {spec.dataset.train_size} training "
+            f"and {spec.dataset.test_size} test examples. "
+            f"Input features include {', '.join(spec.dataset.input_fields)}, "
+            f"and the label space covers {{{', '.join(spec.dataset.label_space)}}}."
+        )
+
     def _section_rewrite_packet_relative_path(self, section: AutoResearchPaperPlanSectionRead) -> str:
         packet_id = section.section_id.strip() or _section_slug(section.title)
         return f"rewrite_packets/{packet_id}.md"
@@ -4687,6 +4764,10 @@ Program objective:
         failure_block = self._failure_block(artifact)
         anomaly_block = self._anomaly_block(artifact)
         benchmark_display = benchmark_name or spec.benchmark_name
+        paper_title = self._paper_display_title(plan)
+        task_approach_phrase = self._task_approach_phrase(spec)
+        task_result_phrase = self._task_result_phrase(spec)
+        dataset_context_sentence = self._dataset_context_sentence(spec, benchmark_display)
         benchmark_slice_sentence = self._benchmark_slice_sentence(plan, spec, benchmark_display)
         proxy_scope_sentence = self._proxy_scope_sentence(plan, spec, benchmark_display)
         bounded_interpretation_sentence = self._bounded_interpretation_sentence(plan, spec, benchmark_display)
@@ -4780,7 +4861,7 @@ Program objective:
         section_bodies = {
             "abstract": (
                 f"This paper investigates the problem of **{plan.topic}** through controlled experiments on "
-                f"the `{benchmark_display}` benchmark. We compare several classification approaches, ranging "
+                f"the `{benchmark_display}` benchmark. We compare several {task_approach_phrase}, ranging "
                 f"from simple baselines to learned models, and evaluate them using {metrics}. "
                 + (
                     f"Our results show that `{best_system_name or 'the best system'}` achieves the highest "
@@ -4816,11 +4897,7 @@ Program objective:
                         f"A number of benchmark suites have been developed to evaluate approaches on the "
                         f"`{spec.task_family}` task, including `{benchmark_display}` "
                         f"which provides a standardized evaluation framework.\n\n"
-                        f"Benchmark `{benchmark_display}` targets the `{spec.task_family}` setting "
-                        f"on dataset `{spec.dataset.name}`, containing {spec.dataset.train_size} training "
-                        f"and {spec.dataset.test_size} test examples. "
-                        f"Input features include {', '.join(spec.dataset.input_fields)}, "
-                        f"and the label space covers {{{', '.join(spec.dataset.label_space)}}}.\n\n"
+                        f"{dataset_context_sentence}\n\n"
                     )
                 )
                 + "This study tracks the planned hypotheses against executed evidence:\n\n"
@@ -4905,7 +4982,7 @@ Program objective:
             ),
             "limitations": limitation_block,
             "conclusion": (
-                f"This work presents a systematic comparison of classification methods for `{plan.topic}` "
+                f"This work presents a systematic comparison of {task_approach_phrase} for `{plan.topic}` "
                 f"on the `{benchmark_display}` benchmark. "
                 + (
                     f"Our experiments demonstrate that "
@@ -4922,7 +4999,7 @@ Program objective:
                     else "Our experiments provide a systematic evaluation of multiple approaches, "
                 )
                 + "The results establish a reproducible benchmark for this task and highlight the relative strengths "
-                "of different modeling approaches.\n\n"
+                f"of different approaches for {task_result_phrase}.\n\n"
                 + (
                     f"{conclusion_context_sentence}\n\n"
                     if conclusion_context_sentence
@@ -4958,7 +5035,7 @@ Program objective:
                     paper_revision_state=paper_revision_state,
                 )
         seed_markdown = self._render_section_sequence(
-            title=plan.title,
+            title=paper_title,
             paper_plan=paper_plan,
             section_bodies=section_bodies,
             references_block=references_block,
@@ -4983,7 +5060,7 @@ Program objective:
             merged_bodies = dict(section_bodies)
             merged_bodies.update(llm_sections)
             llm_markdown = self._render_section_sequence(
-                title=plan.title,
+                title=paper_title,
                 paper_plan=paper_plan,
                 section_bodies=merged_bodies,
                 references_block=references_block,

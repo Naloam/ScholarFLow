@@ -34,6 +34,7 @@ from models.base import Base
 from models.project import Project
 from schemas.autoresearch import (
     AblationSpec,
+    AggregateSystemMetricResult,
     AutoResearchClaimEvidenceEntryRead,
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
@@ -76,6 +77,7 @@ from schemas.autoresearch import (
     ResultArtifact,
     ResultTable,
     SignificanceTestResult,
+    SystemMetricResult,
 )
 from schemas.papers import PaperMeta
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
@@ -4918,6 +4920,81 @@ def test_review_blocks_final_publish_when_only_synthetic_literature_is_cited() -
         "real literature sources" in item
         for item in review_publish._semantic_final_publish_blockers(review)
     )
+
+
+def test_paper_writer_sanitizes_repeated_title_and_ir_language(monkeypatch) -> None:
+    monkeypatch.setattr(PaperWriter, "_write_full_paper_with_llm", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        PaperWriter,
+        "_maybe_refine_with_llm",
+        lambda self, *, seed_markdown, **kwargs: seed_markdown,
+    )
+    benchmark = builtin_benchmark("ir_reranking", topic="claim evidence retrieval")
+    spec = build_experiment_spec("ir_reranking", benchmark)
+    plan = ResearchPlan(
+        topic="claim evidence retrieval",
+        title=(
+            "Claim Evidence Retrieval: Claim Evidence Retrieval: "
+            "Lightweight Reranking With Ledger Grounding"
+        ),
+        task_family="ir_reranking",
+        problem_statement="Autonomous literature agents need retrieval results tied to evidence ledgers.",
+        motivation="Unsupported retrieval claims can mislead downstream paper writing.",
+        proposed_method="Use lexical overlap, IDF weighting, and ledger-aware reranking signals.",
+        research_questions=["Does ledger-aware reranking improve retrieval quality?"],
+        hypotheses=["Ledger-aware reranking improves MRR over overlap-only ranking."],
+        planned_contributions=["A bounded reranking evaluation tied to evidence ledgers."],
+        experiment_outline=["Compare overlap, IDF, and ledger-aware reranking variants."],
+    )
+    artifact = ResultArtifact(
+        status="done",
+        summary="Ledger-aware reranking completed on the fixture benchmark.",
+        key_findings=["ledger_ranker improved MRR over overlap_ranker"],
+        primary_metric="mrr",
+        best_system="ledger_ranker",
+        objective_system="ledger_ranker",
+        objective_score=0.82,
+        system_results=[
+            SystemMetricResult(system="ledger_ranker", metrics={"mrr": 0.82}),
+            SystemMetricResult(system="overlap_ranker", metrics={"mrr": 0.71}),
+        ],
+        aggregate_system_results=[
+            AggregateSystemMetricResult(
+                system="ledger_ranker",
+                mean_metrics={"mrr": 0.82},
+                std_metrics={"mrr": 0.01},
+                min_metrics={"mrr": 0.81},
+                max_metrics={"mrr": 0.83},
+                sample_count=3,
+            ),
+            AggregateSystemMetricResult(
+                system="overlap_ranker",
+                mean_metrics={"mrr": 0.71},
+                std_metrics={"mrr": 0.01},
+                min_metrics={"mrr": 0.70},
+                max_metrics={"mrr": 0.72},
+                sample_count=3,
+            ),
+        ],
+        tables=[
+            ResultTable(
+                title="Reranking Results",
+                columns=["System", "MRR"],
+                rows=[["ledger_ranker", "0.82"], ["overlap_ranker", "0.71"]],
+            )
+        ],
+        environment={"seed_count": 3},
+    )
+
+    paper = PaperWriter().write(plan, spec, artifact, literature=[], attempts=[])
+
+    title_line = paper.splitlines()[0]
+    assert title_line == "# Claim Evidence Retrieval: Lightweight Reranking With Ledger Grounding"
+    assert "classification approaches" not in paper
+    assert "classification methods" not in paper
+    assert "retrieval and reranking approaches" in paper
+    assert "training queries" in paper
+    assert "test queries" in paper
 
 
 def test_operator_console_summary_exposes_final_publish_blockers() -> None:

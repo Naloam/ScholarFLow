@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZipFile
@@ -21,6 +22,7 @@ import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.planner as autoresearch_planner
 import services.autoresearch.project_paper_orchestrator as autoresearch_project_paper_orchestrator
+import services.autoresearch.publication_repair_execution as publication_repair_execution
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
 import services.autoresearch.writer as autoresearch_writer
@@ -90,6 +92,77 @@ from services.autoresearch.research_readiness import (
     enforce_publication_protocol,
 )
 from services.autoresearch.writer import PaperWriter
+
+
+def test_llm_chat_hard_timeout_returns_fallback(monkeypatch) -> None:
+    recorded: dict[str, object] = {}
+
+    monkeypatch.delenv("SCHOLARFLOW_OFFLINE_LLM", raising=False)
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "0.2")
+    monkeypatch.setenv("LLM_HARD_TIMEOUT_SECONDS", "0.2")
+    monkeypatch.setattr(settings, "llm_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_api_base", "https://example.invalid")
+    monkeypatch.setattr(llm_client, "record_usage_event", lambda **kwargs: recorded.update(kwargs))
+
+    def slow_completion(**kwargs):
+        time.sleep(5)
+        return {"choices": [{"message": {"role": "assistant", "content": "late"}}]}
+
+    monkeypatch.setattr(llm_client, "litellm_completion", slow_completion)
+
+    started = time.perf_counter()
+    response = llm_client.chat([{"role": "user", "content": "hello"}], model="test-model")
+    elapsed = time.perf_counter() - started
+
+    assert response == llm_client.FALLBACK_RESPONSE
+    assert elapsed < 2
+    assert recorded["model"] == "test-model"
+    assert recorded["completion_tokens"] == 0
+
+
+def test_planner_repairs_structured_string_lists(monkeypatch) -> None:
+    payload = {
+        "title": "Evidence-Constrained Retrieval Planning",
+        "problem_statement": {"summary": "Autonomous review agents need grounded retrieval decisions."},
+        "motivation": "Reduce unsupported literature claims.",
+        "proposed_method": {"method": "claim-evidence reranking", "rationale": "prefer cited support"},
+        "research_questions": [
+            {"question": "Does evidence-aware scoring improve retrieval quality?"},
+        ],
+        "hypotheses": [
+            {
+                "hypothesis": "Evidence-aware reranking improves MRR over overlap baselines.",
+                "rationale": "claim support filters distractors",
+            }
+        ],
+        "planned_contributions": [
+            {"contribution": "A deterministic evidence-constrained reranking benchmark."}
+        ],
+        "experiment_outline": [{"description": "Compare overlap, IDF, and evidence-aware variants."}],
+        "scope_limits": [{"description": "Use local benchmark fixtures only."}],
+        "literature_gaps_addressed": [{"gap": "limited evidence-ledger evaluation"}],
+        "novelty_statement": {"claim": "The novelty is bounded to evidence-aware orchestration."},
+        "contribution_statements": [{"statement": "All claims remain tied to executable artifacts."}],
+    }
+
+    monkeypatch.setattr(
+        autoresearch_planner,
+        "chat",
+        lambda *args, **kwargs: {"choices": [{"message": {"content": json.dumps(payload)}}]},
+    )
+
+    plan = autoresearch_planner.ResearchPlanner().plan(
+        "evidence aware retrieval",
+        task_family_hint="ir_reranking",
+    )
+
+    assert plan.title == "Evidence-Constrained Retrieval Planning"
+    assert plan.problem_statement == "Autonomous review agents need grounded retrieval decisions."
+    assert plan.proposed_method == "claim-evidence reranking; prefer cited support"
+    assert plan.hypotheses == [
+        "Evidence-aware reranking improves MRR over overlap baselines.; claim support filters distractors"
+    ]
+    assert all(isinstance(item, str) for item in plan.planned_contributions)
 
 
 def _session_local(monkeypatch, tmp_path: Path):
@@ -1274,6 +1347,87 @@ def test_apply_review_actions_respects_repair_plan_action_kind() -> None:
     )
     with pytest.raises(ValueError, match="manual repair"):
         autoresearch_orchestrator._ensure_repair_plan_allows_paper_rebuild(blocked_plan)
+
+
+def test_publication_repair_execution_requires_review_loop_closure(monkeypatch) -> None:
+    project_id = "project-repair-loop-closure"
+    run_id = "run-repair-loop-closure"
+    action_title = "Tighten statistical reporting"
+    repair_plan = AutoResearchPublicationRepairPlanRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        project_id=project_id,
+        run_id=run_id,
+        action_count=1,
+        pending_action_count=1,
+        auto_applicable_action_count=1,
+        next_action_ids=["repair_stats"],
+        actions=[
+            AutoResearchPublicationRepairActionRead(
+                action_id="repair_stats",
+                kind="rerun_experiments",
+                source="revision_action",
+                title=action_title,
+                detail="Add missing statistical report.",
+                auto_applicable=True,
+                expected_outputs=["run_artifact_json"],
+            )
+        ],
+        repair_plan_fingerprint="repair-stats-fingerprint",
+    )
+
+    def loop_with(status: str) -> review_publish.AutoResearchReviewLoopRead:
+        return review_publish.AutoResearchReviewLoopRead(
+            project_id=project_id,
+            run_id=run_id,
+            generated_at=datetime.now(UTC).replace(tzinfo=None),
+            current_round=1,
+            latest_review_fingerprint=f"fingerprint-{status}",
+            actions=[
+                review_publish.AutoResearchReviewLoopActionRead(
+                    action_id="loop_repair_stats",
+                    action_kind="experiment_repair",
+                    repair_kind="rerun_experiments",
+                    execution_route="experiment_rerun",
+                    title=action_title,
+                    detail="Add missing statistical report.",
+                    status=status,
+                    auto_applicable=True,
+                    expected_output_asset_ids=["run_artifact_json"],
+                )
+            ],
+            pending_action_count=1 if status == "pending" else 0,
+            completed_action_count=1 if status == "completed" else 0,
+            pending_revision_actions=[action_title] if status == "pending" else [],
+        )
+
+    monkeypatch.setattr(
+        publication_repair_execution,
+        "_selected_output_roles",
+        lambda *_args: {"run_artifact_json"},
+    )
+
+    unresolved = publication_repair_execution.build_publication_repair_execution(
+        project_id=project_id,
+        run_id=run_id,
+        repair_plan=repair_plan,
+        review_loop_before=loop_with("pending"),
+        review_loop_after=loop_with("pending"),
+    )
+    assert unresolved.success is False
+    assert unresolved.partial_action_count == 1
+    assert unresolved.action_results[0].status == "partial"
+    assert "still reports the action as pending" in unresolved.action_results[0].detail
+
+    resolved = publication_repair_execution.build_publication_repair_execution(
+        project_id=project_id,
+        run_id=run_id,
+        repair_plan=repair_plan,
+        review_loop_before=loop_with("pending"),
+        review_loop_after=loop_with("completed"),
+    )
+    assert resolved.success is True
+    assert resolved.executed_action_count == 1
+    assert resolved.action_results[0].status == "executed"
 
 
 def test_review_loop_materializes_bounded_action_routes(monkeypatch, tmp_path: Path) -> None:
@@ -5255,6 +5409,51 @@ def test_literature_connectors_parse_cached_sources_without_network(
     assert any("macro_f1" in item.metrics for item in papers)
     assert all(item.methods for item in papers)
     assert all(item.relevance_score > 0 for item in papers)
+
+
+def test_literature_connector_retries_transient_network_errors(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    timeouts: list[object] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return _semantic_scholar_cache_fixture()
+
+    class FakeClient:
+        def __init__(self, *, timeout: object) -> None:
+            timeouts.append(timeout)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def get(self, url: str, **kwargs):
+            calls.append((url, kwargs))
+            if len(calls) == 1:
+                raise autoresearch_literature_connectors.httpx.TimeoutException(
+                    "transient timeout"
+                )
+            return FakeResponse()
+
+    monkeypatch.setenv("LITERATURE_SCOUT_TIMEOUT_SECONDS", "0.5")
+    monkeypatch.setenv("LITERATURE_SCOUT_RETRIES", "2")
+    monkeypatch.setenv("LITERATURE_SCOUT_RETRY_BACKOFF_SECONDS", "0")
+    monkeypatch.setattr(autoresearch_literature_connectors.httpx, "Client", FakeClient)
+
+    raw = autoresearch_literature_connectors._fetch_connector_response(
+        "semantic_scholar",
+        "evidence constrained reranking",
+        limit=1,
+    )
+
+    assert raw == _semantic_scholar_cache_fixture()
+    assert len(calls) == 2
+    assert len(timeouts) == 2
 
 
 def test_literature_connectors_use_cached_full_text_for_structured_extraction(

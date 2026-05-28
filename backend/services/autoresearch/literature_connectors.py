@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -45,6 +47,9 @@ _ARXIV_NS = {
     "a": "http://www.w3.org/2005/Atom",
     "arxiv": "http://arxiv.org/schemas/atom",
 }
+_DEFAULT_CONNECTOR_TIMEOUT_SECONDS = 15.0
+_DEFAULT_CONNECTOR_RETRIES = 2
+_DEFAULT_CONNECTOR_RETRY_BACKOFF_SECONDS = 0.25
 
 _STOPWORDS = {
     "about",
@@ -772,6 +777,72 @@ def _arxiv_query(query: str) -> str:
     return " AND ".join(f'all:"{term}"' for term in terms[:4])
 
 
+def _env_positive_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _connector_timeout() -> httpx.Timeout:
+    total = _env_positive_float(
+        "LITERATURE_SCOUT_TIMEOUT_SECONDS",
+        _DEFAULT_CONNECTOR_TIMEOUT_SECONDS,
+    )
+    connect = min(total, _env_positive_float("LITERATURE_SCOUT_CONNECT_TIMEOUT_SECONDS", 5.0))
+    return httpx.Timeout(total, connect=connect, read=total, write=total, pool=connect)
+
+
+def _connector_retries() -> int:
+    return _env_positive_int("LITERATURE_SCOUT_RETRIES", _DEFAULT_CONNECTOR_RETRIES)
+
+
+def _retryable_http_error(exc: httpx.HTTPStatusError) -> bool:
+    status_code = exc.response.status_code if exc.response is not None else 0
+    return status_code == 429 or status_code >= 500
+
+
+def _with_connector_retries(source: str, query: str, fetch: Any) -> object:
+    retries = _connector_retries()
+    backoff = _env_positive_float(
+        "LITERATURE_SCOUT_RETRY_BACKOFF_SECONDS",
+        _DEFAULT_CONNECTOR_RETRY_BACKOFF_SECONDS,
+    )
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return fetch()
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            if not _retryable_http_error(exc) or attempt >= retries:
+                break
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            if attempt >= retries:
+                break
+        if backoff > 0:
+            time.sleep(backoff * (2 ** (attempt - 1)))
+    detail = str(last_exc) if last_exc is not None else "unknown connector failure"
+    raise RuntimeError(
+        f"{source} query failed after {retries} attempt(s) for {query!r}: {detail}"
+    ) from last_exc
+
+
 def _fetch_connector_response(source: str, query: str, *, limit: int) -> object:
     if source == ARXIV_SOURCE:
         params = {
@@ -781,10 +852,13 @@ def _fetch_connector_response(source: str, query: str, *, limit: int) -> object:
             "sortBy": "relevance",
             "sortOrder": "descending",
         }
-        with httpx.Client(timeout=20.0) as client:
-            response = client.get(_ARXIV_API, params=params)
-            response.raise_for_status()
-            return response.text
+        def fetch() -> str:
+            with httpx.Client(timeout=_connector_timeout()) as client:
+                response = client.get(_ARXIV_API, params=params)
+                response.raise_for_status()
+                return response.text
+
+        return _with_connector_retries(source, query, fetch)
     if source == SEMANTIC_SCHOLAR_SOURCE:
         headers: dict[str, str] = {}
         if settings.semantic_scholar_api_key:
@@ -797,10 +871,13 @@ def _fetch_connector_response(source: str, query: str, *, limit: int) -> object:
                 "abstract,doi,url,externalIds"
             ),
         }
-        with httpx.Client(timeout=20.0) as client:
-            response = client.get(_SEMANTIC_SCHOLAR_API, params=params, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        def fetch() -> object:
+            with httpx.Client(timeout=_connector_timeout()) as client:
+                response = client.get(_SEMANTIC_SCHOLAR_API, params=params, headers=headers)
+                response.raise_for_status()
+                return response.json()
+
+        return _with_connector_retries(source, query, fetch)
     if source == CROSSREF_SOURCE:
         headers: dict[str, str] = {}
         if settings.crossref_api_key:
@@ -809,10 +886,13 @@ def _fetch_connector_response(source: str, query: str, *, limit: int) -> object:
             "query": query,
             "rows": limit,
         }
-        with httpx.Client(timeout=20.0) as client:
-            response = client.get(_CROSSREF_API, params=params, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        def fetch() -> object:
+            with httpx.Client(timeout=_connector_timeout()) as client:
+                response = client.get(_CROSSREF_API, params=params, headers=headers)
+                response.raise_for_status()
+                return response.json()
+
+        return _with_connector_retries(source, query, fetch)
     return {}
 
 
@@ -974,9 +1054,9 @@ def search_literature_connectors(
                     raw = _raw_from_cache(cached)
             if raw is None and network_enabled:
                 try:
+                    status.network_request_count += 1
                     raw = _fetch_connector_response(source, query, limit=limit_per_source)
                     cache_status = "network"
-                    status.network_request_count += 1
                     if cache_enabled:
                         save_literature_scout_cache(
                             brief.project_id,

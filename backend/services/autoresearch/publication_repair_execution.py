@@ -45,6 +45,15 @@ def build_publication_repair_execution(
 ) -> AutoResearchPublicationRepairExecutionRead:
     materialized_roles = _selected_output_roles(project_id, run_id)
     next_action_ids = set(repair_plan.next_action_ids)
+    pending_after_titles = (
+        {
+            action.title
+            for action in review_loop_after.actions
+            if action.status == "pending"
+        }
+        if review_loop_after is not None
+        else set()
+    )
     selected_actions = [
         action
         for action in repair_plan.actions
@@ -59,6 +68,9 @@ def build_publication_repair_execution(
         if not action.auto_applicable:
             status = "blocked"
             detail = "Repair action requires manual input and was not executed automatically."
+        elif action.title in pending_after_titles:
+            status = "partial"
+            detail = "Repair action ran, but re-review still reports the action as pending."
         elif missing:
             status = "partial"
             detail = "Repair action ran but some expected output assets are still missing."

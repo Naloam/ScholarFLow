@@ -153,6 +153,59 @@ class ResearchPlanner:
         except Exception:
             return None
 
+    def _stringify_llm_value(self, value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, list):
+            parts = [self._stringify_llm_value(item) for item in value]
+            return "; ".join(part for part in parts if part)
+        if isinstance(value, dict):
+            preferred_keys = (
+                "hypothesis",
+                "question",
+                "contribution",
+                "statement",
+                "claim",
+                "gap",
+                "text",
+                "summary",
+                "description",
+                "method",
+                "name",
+                "title",
+                "rationale",
+                "expected_outcome",
+            )
+            parts = [
+                self._stringify_llm_value(value[key])
+                for key in preferred_keys
+                if key in value
+            ]
+            parts = [part for part in parts if part]
+            if parts:
+                return "; ".join(parts)
+            try:
+                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                return str(value)
+        return str(value).strip()
+
+    def _normalize_string_list(self, value: object, fallback: list[str]) -> list[str]:
+        if isinstance(value, str):
+            items = [
+                line.lstrip("- 0123456789.) ").strip()
+                for line in value.split("\n")
+                if line.strip()
+            ]
+        elif isinstance(value, list):
+            items = [self._stringify_llm_value(item).strip() for item in value]
+        else:
+            return fallback
+        normalized = [item for item in items if item]
+        return normalized or fallback
+
     def _fallback_plan(
         self,
         topic: str,
@@ -586,18 +639,12 @@ class ResearchPlanner:
             # Normalize LLM outputs: convert non-string fields that expect strings
             for _key in ("problem_statement", "motivation", "proposed_method", "novelty_statement"):
                 _val = parsed.get(_key)
-                if isinstance(_val, dict):
-                    parsed[_key] = ". ".join(str(v) for v in _val.values() if v)
-                elif _val is not None and not isinstance(_val, str):
-                    parsed[_key] = str(_val)
+                if _val is not None and not isinstance(_val, str):
+                    parsed[_key] = self._stringify_llm_value(_val)
                 parsed.setdefault(_key, getattr(fallback, _key))
             for _list_key in ("research_questions", "hypotheses", "planned_contributions", "experiment_outline", "scope_limits", "literature_gaps_addressed", "contribution_statements"):
                 _val = parsed.get(_list_key)
-                if isinstance(_val, str):
-                    parsed[_list_key] = [line.lstrip("- 0123456789.) ").strip() for line in _val.split("\n") if line.strip()]
-                elif not isinstance(_val, list):
-                    parsed[_list_key] = getattr(fallback, _list_key)
-                parsed.setdefault(_list_key, getattr(fallback, _list_key))
+                parsed[_list_key] = self._normalize_string_list(_val, getattr(fallback, _list_key))
             # Handle conceptual_framework: parse if dict, else None
             cf_raw = parsed.get("conceptual_framework")
             if isinstance(cf_raw, dict):

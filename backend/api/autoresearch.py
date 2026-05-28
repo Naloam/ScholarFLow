@@ -47,6 +47,8 @@ from schemas.autoresearch import (
     AutoResearchRunStatus,
     AutoResearchRunReviewRead,
     AutoResearchReviewLoopRead,
+    AutoResearchReviewLoopAutoApplyRead,
+    AutoResearchReviewLoopAutoApplyRequest,
     AutoResearchReviewLoopApplyRead,
     AutoResearchReviewLoopApplyRequest,
     AutoResearchResearchReplanApplyRead,
@@ -935,6 +937,28 @@ def apply_auto_research_review_loop_actions(
         applied_action_ids=applied_action_ids,
         queued_rerun_required=queued_rerun_required,
     )
+
+
+@router.post("/{run_id}/review-loop/auto-apply", response_model=AutoResearchReviewLoopAutoApplyRead)
+def auto_apply_auto_research_review_loop_actions(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchReviewLoopAutoApplyRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchReviewLoopAutoApplyRead:
+    payload = payload or AutoResearchReviewLoopAutoApplyRequest()
+    try:
+        return AutoResearchOrchestrator().auto_apply_review_loop(
+            db=db,
+            project_id=project_id,
+            run_id=run_id,
+            max_rounds=payload.max_rounds,
+            expected_review_fingerprint=payload.expected_review_fingerprint,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.post("/{run_id}/research-replan/apply", response_model=AutoResearchResearchReplanApplyRead)

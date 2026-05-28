@@ -12,6 +12,8 @@ from schemas.autoresearch import (
     AutoResearchJobAction,
     AutoResearchPublicationRepairPlanRead,
     AutoResearchPublicationRepairExecutionRead,
+    AutoResearchReviewLoopAutoApplyRead,
+    AutoResearchReviewLoopAutoApplyStepRead,
     AutoResearchResearchReplanRead,
     AutoResearchRunRead,
     BaselineSpec,
@@ -1241,6 +1243,161 @@ class AutoResearchOrchestrator:
             applied_action_ids = [action.action_id for action in selected_actions]
             return rebuilt_run, repair_execution, applied_action_ids, False
         return rebuilt_run, None, [], False
+
+    def auto_apply_review_loop(
+        self,
+        *,
+        db: Session,
+        project_id: str,
+        run_id: str,
+        max_rounds: int = 3,
+        expected_review_fingerprint: str | None = None,
+    ) -> AutoResearchReviewLoopAutoApplyRead:
+        from services.autoresearch.review_publish import build_review_loop, build_run_review
+
+        if max_rounds < 1:
+            raise ValueError("max_rounds must be at least 1")
+        if max_rounds > 10:
+            raise ValueError("max_rounds must be at most 10")
+
+        review_loop = build_review_loop(project_id, run_id)
+        review = build_run_review(project_id, run_id)
+        run = load_run(project_id, run_id)
+        if run is None or review is None or review_loop is None:
+            raise ValueError(f"Run not found: {run_id}")
+        if (
+            expected_review_fingerprint is not None
+            and review_loop.latest_review_fingerprint != expected_review_fingerprint
+        ):
+            raise ValueError("Review loop fingerprint changed; refresh review state before auto-applying revisions")
+
+        steps: list[AutoResearchReviewLoopAutoApplyStepRead] = []
+        applied_action_ids: list[str] = []
+        queued_rerun_required = False
+        stop_reason = "max_rounds_exhausted"
+
+        for _ in range(max_rounds):
+            review_loop = build_review_loop(project_id, run_id)
+            review = build_run_review(project_id, run_id)
+            run = load_run(project_id, run_id) or run
+            if review is None or review_loop is None:
+                raise ValueError(f"Run not found: {run_id}")
+            if review_loop.pending_action_count < 1:
+                stop_reason = "no_pending_actions"
+                steps.append(
+                    AutoResearchReviewLoopAutoApplyStepRead(
+                        round_before=review_loop.current_round,
+                        review_fingerprint_before=review_loop.latest_review_fingerprint,
+                        status="no_pending_actions",
+                        detail="Review loop has no pending revision actions.",
+                    )
+                )
+                break
+            if review_loop.auto_revision_rounds_remaining <= 0:
+                stop_reason = "round_limit_reached"
+                steps.append(
+                    AutoResearchReviewLoopAutoApplyStepRead(
+                        round_before=review_loop.current_round,
+                        review_fingerprint_before=review_loop.latest_review_fingerprint,
+                        status="round_limit_reached",
+                        detail="Review loop reached its automatic revision round limit.",
+                    )
+                )
+                break
+
+            round_before = review_loop.current_round
+            fingerprint_before = review_loop.latest_review_fingerprint
+            try:
+                run, repair_execution, step_action_ids, rerun_required = self.apply_review_actions(
+                    db=db,
+                    project_id=project_id,
+                    run_id=run_id,
+                    expected_round=round_before,
+                    expected_review_fingerprint=fingerprint_before or "",
+                )
+            except ValueError as exc:
+                stop_reason = "blocked"
+                steps.append(
+                    AutoResearchReviewLoopAutoApplyStepRead(
+                        round_before=round_before,
+                        review_fingerprint_before=fingerprint_before,
+                        status="blocked",
+                        detail=str(exc),
+                    )
+                )
+                break
+
+            applied_action_ids.extend(step_action_ids)
+            queued_rerun_required = queued_rerun_required or rerun_required
+            if rerun_required:
+                stop_reason = "rerun_required"
+                steps.append(
+                    AutoResearchReviewLoopAutoApplyStepRead(
+                        round_before=round_before,
+                        review_fingerprint_before=fingerprint_before,
+                        status="rerun_required",
+                        detail="Revision actions updated the research plan; a rerun/import is required before the loop can continue.",
+                        applied_action_ids=step_action_ids,
+                        repair_execution=repair_execution,
+                        queued_rerun_required=True,
+                    )
+                )
+                break
+            if repair_execution is not None and not repair_execution.success:
+                stop_reason = "repair_incomplete"
+                steps.append(
+                    AutoResearchReviewLoopAutoApplyStepRead(
+                        round_before=round_before,
+                        review_fingerprint_before=fingerprint_before,
+                        status="repair_incomplete",
+                        detail="Repair execution did not complete all selected actions or re-review still reports pending work.",
+                        applied_action_ids=step_action_ids,
+                        repair_execution=repair_execution,
+                    )
+                )
+                break
+            steps.append(
+                AutoResearchReviewLoopAutoApplyStepRead(
+                    round_before=round_before,
+                    review_fingerprint_before=fingerprint_before,
+                    status="applied",
+                    detail="Applied selected auto-repair actions and refreshed the review loop.",
+                    applied_action_ids=step_action_ids,
+                    repair_execution=repair_execution,
+                )
+            )
+
+        review = build_run_review(project_id, run_id)
+        review_loop = build_review_loop(project_id, run_id)
+        run = load_run(project_id, run_id) or run
+        if review is None or review_loop is None:
+            raise ValueError(f"Run not found: {run_id}")
+        completed = review_loop.pending_action_count == 0 and review_loop.open_issue_count == 0
+        if completed:
+            stop_reason = "completed"
+        blocked = (
+            not completed
+            and not queued_rerun_required
+            and stop_reason
+            in {
+                "blocked",
+                "repair_incomplete",
+                "round_limit_reached",
+                "max_rounds_exhausted",
+            }
+        )
+        return AutoResearchReviewLoopAutoApplyRead(
+            run=run,
+            review=review,
+            review_loop=review_loop,
+            steps=steps,
+            step_count=len(steps),
+            applied_action_ids=applied_action_ids,
+            completed=completed,
+            blocked=blocked,
+            queued_rerun_required=queued_rerun_required,
+            stop_reason=stop_reason,
+        )
 
     def _apply_research_replan_to_run(
         self,

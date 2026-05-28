@@ -31,6 +31,8 @@ import type {
   AutoResearchPublishPackage,
   AutoResearchPublicationManifest,
   AutoResearchResearchReplanApply,
+  AutoResearchReviewLoopAutoApply,
+  AutoResearchReviewLoopAutoApplyRequest,
   AutoResearchReviewLoopApply,
   AutoResearchReviewLoopApplyRequest,
   AutoResearchReviewLoop,
@@ -686,6 +688,20 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  autoApplyAutoResearchReviewLoop(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchReviewLoopAutoApplyRequest,
+  ): Promise<AutoResearchReviewLoopAutoApply> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/review-loop/auto-apply`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
       },
     );
   },

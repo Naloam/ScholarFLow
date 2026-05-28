@@ -3841,6 +3841,40 @@ class AutoResearchReviewLoopApplyRequest(BaseModel):
         return value
 
 
+class AutoResearchReviewLoopAutoApplyRequest(BaseModel):
+    max_rounds: int = 3
+    expected_review_fingerprint: str | None = None
+
+    @field_validator("max_rounds")
+    @classmethod
+    def validate_max_rounds(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("max_rounds must be at least 1")
+        if value > 10:
+            raise ValueError("max_rounds must be at most 10")
+        return value
+
+
+AutoResearchReviewLoopAutoApplyStepStatus = Literal[
+    "applied",
+    "rerun_required",
+    "repair_incomplete",
+    "blocked",
+    "round_limit_reached",
+    "no_pending_actions",
+]
+
+
+class AutoResearchReviewLoopAutoApplyStepRead(BaseModel):
+    round_before: int
+    review_fingerprint_before: str | None = None
+    status: AutoResearchReviewLoopAutoApplyStepStatus = "applied"
+    detail: str
+    applied_action_ids: list[str] = Field(default_factory=list)
+    repair_execution: AutoResearchPublicationRepairExecutionRead | None = None
+    queued_rerun_required: bool = False
+
+
 class AutoResearchReviewLoopApplyRead(BaseModel):
     run: AutoResearchRunRead
     review: AutoResearchRunReviewRead
@@ -3848,6 +3882,19 @@ class AutoResearchReviewLoopApplyRead(BaseModel):
     repair_execution: AutoResearchPublicationRepairExecutionRead | None = None
     applied_action_ids: list[str] = Field(default_factory=list)
     queued_rerun_required: bool = False
+
+
+class AutoResearchReviewLoopAutoApplyRead(BaseModel):
+    run: AutoResearchRunRead
+    review: AutoResearchRunReviewRead
+    review_loop: AutoResearchReviewLoopRead
+    steps: list[AutoResearchReviewLoopAutoApplyStepRead] = Field(default_factory=list)
+    step_count: int = 0
+    applied_action_ids: list[str] = Field(default_factory=list)
+    completed: bool = False
+    blocked: bool = False
+    queued_rerun_required: bool = False
+    stop_reason: str
 
 
 class AutoResearchResearchReplanApplyRead(BaseModel):

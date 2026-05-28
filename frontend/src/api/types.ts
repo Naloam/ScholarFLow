@@ -749,6 +749,11 @@ export type AutoResearchReviewLoopApplyRequest = {
   expected_review_fingerprint: string;
 };
 
+export type AutoResearchReviewLoopAutoApplyRequest = {
+  max_rounds?: number;
+  expected_review_fingerprint?: string | null;
+};
+
 export type AutoResearchDeploymentRef = {
   deployment_id: string;
   label: string;
@@ -2197,6 +2202,37 @@ export type AutoResearchReviewLoopApply = {
   repair_execution?: AutoResearchPublicationRepairExecution | null;
   applied_action_ids: string[];
   queued_rerun_required: boolean;
+};
+
+export type AutoResearchReviewLoopAutoApplyStepStatus =
+  | "applied"
+  | "rerun_required"
+  | "repair_incomplete"
+  | "blocked"
+  | "round_limit_reached"
+  | "no_pending_actions";
+
+export type AutoResearchReviewLoopAutoApplyStep = {
+  round_before: number;
+  review_fingerprint_before?: string | null;
+  status: AutoResearchReviewLoopAutoApplyStepStatus;
+  detail: string;
+  applied_action_ids: string[];
+  repair_execution?: AutoResearchPublicationRepairExecution | null;
+  queued_rerun_required: boolean;
+};
+
+export type AutoResearchReviewLoopAutoApply = {
+  run: AutoResearchRun;
+  review: AutoResearchRunReview;
+  review_loop: AutoResearchReviewLoop;
+  steps: AutoResearchReviewLoopAutoApplyStep[];
+  step_count: number;
+  applied_action_ids: string[];
+  completed: boolean;
+  blocked: boolean;
+  queued_rerun_required: boolean;
+  stop_reason: string;
 };
 
 export type AutoResearchResearchReplanApply = {

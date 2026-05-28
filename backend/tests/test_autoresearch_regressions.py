@@ -1633,6 +1633,187 @@ def test_review_loop_materializes_bounded_action_routes(monkeypatch, tmp_path: P
     assert loop.auto_revision_rounds_remaining == 2
 
 
+def _minimal_review_loop(
+    *,
+    project_id: str,
+    run_id: str,
+    round_index: int,
+    fingerprint: str,
+    pending_actions: int,
+    open_issues: int,
+    rounds_remaining: int = 2,
+) -> review_publish.AutoResearchReviewLoopRead:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    return review_publish.AutoResearchReviewLoopRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        current_round=round_index,
+        latest_review_fingerprint=fingerprint,
+        pending_action_count=pending_actions,
+        open_issue_count=open_issues,
+        auto_revision_rounds_remaining=rounds_remaining,
+        next_review_required=pending_actions > 0,
+    )
+
+
+def _minimal_run_review(project_id: str, run_id: str) -> review_publish.AutoResearchRunReviewRead:
+    return review_publish.AutoResearchRunReviewRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Auto apply review-loop regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+    )
+
+
+def _minimal_repair_execution(
+    *,
+    project_id: str,
+    run_id: str,
+    success: bool,
+    partial_count: int = 0,
+) -> AutoResearchPublicationRepairExecutionRead:
+    return AutoResearchPublicationRepairExecutionRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        project_id=project_id,
+        run_id=run_id,
+        attempted_action_count=1,
+        executed_action_count=0 if partial_count else 1,
+        partial_action_count=partial_count,
+        success=success,
+        execution_fingerprint="auto-apply-repair-execution",
+    )
+
+
+def test_auto_apply_review_loop_rechecks_until_clean(monkeypatch) -> None:
+    project_id = "project_auto_apply_clean"
+    run_id = "run_auto_apply_clean"
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Auto apply clean",
+        status="done",
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        updated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    state = {"applied": False}
+
+    def fake_build_review_loop(*_args, **_kwargs):
+        if state["applied"]:
+            return _minimal_review_loop(
+                project_id=project_id,
+                run_id=run_id,
+                round_index=2,
+                fingerprint="fp-clean",
+                pending_actions=0,
+                open_issues=0,
+            )
+        return _minimal_review_loop(
+            project_id=project_id,
+            run_id=run_id,
+            round_index=1,
+            fingerprint="fp-pending",
+            pending_actions=1,
+            open_issues=1,
+        )
+
+    def fake_apply(self, **kwargs):
+        del self
+        assert kwargs["expected_round"] == 1
+        assert kwargs["expected_review_fingerprint"] == "fp-pending"
+        state["applied"] = True
+        return (
+            run,
+            _minimal_repair_execution(project_id=project_id, run_id=run_id, success=True),
+            ["repair_claims"],
+            False,
+        )
+
+    monkeypatch.setattr(autoresearch_orchestrator, "load_run", lambda *_args, **_kwargs: run)
+    monkeypatch.setattr(review_publish, "build_review_loop", fake_build_review_loop)
+    monkeypatch.setattr(review_publish, "build_run_review", lambda *_args, **_kwargs: _minimal_run_review(project_id, run_id))
+    monkeypatch.setattr(autoresearch_orchestrator.AutoResearchOrchestrator, "apply_review_actions", fake_apply)
+
+    result = autoresearch_orchestrator.AutoResearchOrchestrator().auto_apply_review_loop(
+        db=None,  # type: ignore[arg-type]
+        project_id=project_id,
+        run_id=run_id,
+        max_rounds=3,
+        expected_review_fingerprint="fp-pending",
+    )
+
+    assert result.completed is True
+    assert result.blocked is False
+    assert result.stop_reason == "completed"
+    assert result.applied_action_ids == ["repair_claims"]
+    assert [step.status for step in result.steps] == ["applied", "no_pending_actions"]
+    assert result.review_loop.pending_action_count == 0
+    assert result.review_loop.open_issue_count == 0
+
+
+def test_auto_apply_review_loop_stops_on_incomplete_repair(monkeypatch) -> None:
+    project_id = "project_auto_apply_partial"
+    run_id = "run_auto_apply_partial"
+    run = AutoResearchRunRead(
+        id=run_id,
+        project_id=project_id,
+        topic="Auto apply partial",
+        status="done",
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        updated_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+
+    def fake_build_review_loop(*_args, **_kwargs):
+        return _minimal_review_loop(
+            project_id=project_id,
+            run_id=run_id,
+            round_index=1,
+            fingerprint="fp-partial",
+            pending_actions=1,
+            open_issues=1,
+        )
+
+    def fake_apply(self, **_kwargs):
+        del self
+        return (
+            run,
+            _minimal_repair_execution(
+                project_id=project_id,
+                run_id=run_id,
+                success=False,
+                partial_count=1,
+            ),
+            ["repair_claims"],
+            False,
+        )
+
+    monkeypatch.setattr(autoresearch_orchestrator, "load_run", lambda *_args, **_kwargs: run)
+    monkeypatch.setattr(review_publish, "build_review_loop", fake_build_review_loop)
+    monkeypatch.setattr(review_publish, "build_run_review", lambda *_args, **_kwargs: _minimal_run_review(project_id, run_id))
+    monkeypatch.setattr(autoresearch_orchestrator.AutoResearchOrchestrator, "apply_review_actions", fake_apply)
+
+    result = autoresearch_orchestrator.AutoResearchOrchestrator().auto_apply_review_loop(
+        db=None,  # type: ignore[arg-type]
+        project_id=project_id,
+        run_id=run_id,
+        max_rounds=3,
+        expected_review_fingerprint="fp-partial",
+    )
+
+    assert result.completed is False
+    assert result.blocked is True
+    assert result.stop_reason == "repair_incomplete"
+    assert result.step_count == 1
+    assert result.steps[0].status == "repair_incomplete"
+    assert result.steps[0].repair_execution is not None
+    assert result.steps[0].repair_execution.partial_action_count == 1
+
+
 def test_operator_console_disables_apply_review_actions_for_non_paper_repair_plan() -> None:
     now = datetime.now(UTC).replace(tzinfo=None)
     run = AutoResearchRunRead(

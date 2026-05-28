@@ -60,6 +60,21 @@ def _apply_deepseek_v4_thinking_defaults(model: str, request_kwargs: dict[str, A
         )
 
 
+def _apply_request_timeout(request_kwargs: dict[str, Any]) -> None:
+    if "timeout" in request_kwargs:
+        return
+    raw_timeout = os.getenv("LLM_TIMEOUT_SECONDS")
+    if not raw_timeout:
+        return
+    try:
+        timeout = float(raw_timeout)
+    except ValueError:
+        logger.warning("Ignoring invalid LLM_TIMEOUT_SECONDS=%r", raw_timeout)
+        return
+    if timeout > 0:
+        request_kwargs["timeout"] = timeout
+
+
 def chat(messages: list[dict[str, Any]], model: str | None = None, **kwargs: Any) -> dict:
     model = model or settings.llm_model or DEFAULT_CHAT_MODEL
     started = perf_counter()
@@ -101,6 +116,7 @@ def chat(messages: list[dict[str, Any]], model: str | None = None, **kwargs: Any
         request_kwargs["api_base"] = settings.llm_api_base
     if settings.llm_api_key and "api_key" not in request_kwargs:
         request_kwargs["api_key"] = settings.llm_api_key
+    _apply_request_timeout(request_kwargs)
     _apply_deepseek_v4_thinking_defaults(model, request_kwargs)
     logger.info("LLM call: model=%s api_base=%s messages=%d", model, settings.llm_api_base, len(messages))
     max_retries = 3

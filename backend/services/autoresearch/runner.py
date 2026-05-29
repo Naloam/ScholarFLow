@@ -266,6 +266,7 @@ def _claim_evidence_vertical_package(
     aggregate_results: list[AggregateSystemMetricResult],
     objective_system: str | None,
     objective_score: float | None,
+    objective_query_diagnostics: list[dict[str, Any]],
     objective_failure_cases: list[dict[str, Any]],
     review_loop_repair_actions: list[AutoResearchReviewLoopActionRead],
 ) -> dict[str, Any]:
@@ -286,6 +287,65 @@ def _claim_evidence_vertical_package(
         if spec.dataset.source_kind == "builtin" or spec.dataset.publication_grade is False
         else "external_cached_benchmark"
     )
+    repair_actions_by_query = {
+        action.action_id.removeprefix("retrieval_repair_"): action.action_id
+        for action in review_loop_repair_actions
+    }
+    ledger_entries_by_slug: dict[str, dict[str, Any]] = {}
+    for index, record in enumerate(objective_query_diagnostics, start=1):
+        query = str(record.get("query") or f"retrieval query {index}").strip()
+        slug = _slug_identifier(query, fallback=f"query_{index}")
+        if slug in ledger_entries_by_slug:
+            continue
+        relevant_ids = [str(item) for item in record.get("relevant_ids") or []]
+        ranked_ids = [str(item) for item in record.get("ranked_ids_at_10") or []]
+        ranked_set = set(ranked_ids)
+        retrieved_relevant_ids = [item for item in ranked_ids if item in set(relevant_ids)]
+        missing_relevant_ids = [item for item in relevant_ids if item not in ranked_set]
+        recall_at_1 = _as_float(record.get("recall_at_1"))
+        recall_at_10 = _as_float(record.get("recall_at_10"))
+        evidence_coverage = _as_float(record.get("evidence_coverage"))
+        if recall_at_1 >= 1.0 and evidence_coverage >= 1.0:
+            support_status = "supported"
+        elif recall_at_10 >= 1.0 or evidence_coverage >= 1.0:
+            support_status = "partial"
+        else:
+            support_status = "unsupported"
+        repair_action_ids = [repair_actions_by_query[slug]] if slug in repair_actions_by_query else []
+        ledger_entries_by_slug[slug] = {
+            "entry_id": f"retrieval_evidence_{slug}",
+            "query": query,
+            "support_status": support_status,
+            "ranked_ids_at_10": ranked_ids,
+            "gold_evidence_ids": relevant_ids,
+            "retrieved_relevant_ids": retrieved_relevant_ids,
+            "missing_relevant_ids": missing_relevant_ids,
+            "metrics": {
+                "recall_at_1": recall_at_1,
+                "recall_at_10": recall_at_10,
+                "ndcg_at_10": _as_float(record.get("ndcg_at_10")),
+                "evidence_coverage": evidence_coverage,
+            },
+            "failure_modes": [str(item) for item in record.get("failure_modes") or []],
+            "repair_action_ids": repair_action_ids,
+        }
+    ledger_entries = list(ledger_entries_by_slug.values())
+    ledger_blockers = [
+        f"{item['entry_id']} remains {item['support_status']} and needs repair routing."
+        for item in ledger_entries
+        if item["support_status"] != "supported"
+    ]
+    retrieval_evidence_ledger = {
+        "ledger_id": "claim_evidence_retrieval_ledger_v1",
+        "entry_count": len(ledger_entries),
+        "supported_entry_count": sum(1 for item in ledger_entries if item["support_status"] == "supported"),
+        "partial_entry_count": sum(1 for item in ledger_entries if item["support_status"] == "partial"),
+        "unsupported_entry_count": sum(1 for item in ledger_entries if item["support_status"] == "unsupported"),
+        "repair_action_count": sum(1 for item in ledger_entries if item["repair_action_ids"]),
+        "complete": not ledger_blockers,
+        "blockers": ledger_blockers,
+        "entries": ledger_entries,
+    }
     claim_evidence_index = [
         {
             "claim_id": "claim_benchmark_scope",
@@ -370,6 +430,7 @@ def _claim_evidence_vertical_package(
         "objective_metrics": objective_metrics,
         "metric_rows": metric_rows,
         "claim_evidence_index": claim_evidence_index,
+        "retrieval_evidence_ledger": retrieval_evidence_ledger,
         "sections": sections,
         "reviewer_response_plan": [
             item.model_dump(mode="json") for item in review_loop_repair_actions
@@ -2201,6 +2262,7 @@ class AutoExperimentRunner:
                 aggregate_results=aggregate_results,
                 objective_system=objective_system,
                 objective_score=selected_sweep.objective_score_mean,
+                objective_query_diagnostics=objective_query_diagnostics,
                 objective_failure_cases=objective_failure_cases,
                 review_loop_repair_actions=review_loop_repair_actions,
             )

@@ -402,6 +402,17 @@ def test_ledger_aware_claim_evidence_ranker_beats_bigram_fixture(
     assert vertical_package["objective_system"] == "ledger_aware_ranker"
     assert vertical_package["open_repair_case_count"] == len(artifact.outputs["objective_failure_cases"])
     assert any(item["claim_id"] == "claim_repair_routing" for item in vertical_package["claim_evidence_index"])
+    retrieval_ledger = vertical_package["retrieval_evidence_ledger"]
+    assert retrieval_ledger["ledger_id"] == "claim_evidence_retrieval_ledger_v1"
+    assert retrieval_ledger["entry_count"] == 12
+    assert retrieval_ledger["partial_entry_count"] >= 1
+    assert retrieval_ledger["repair_action_count"] == 1
+    assert retrieval_ledger["complete"] is False
+    repaired_entries = [
+        item for item in retrieval_ledger["entries"] if item["repair_action_ids"]
+    ]
+    assert repaired_entries[0]["repair_action_ids"] == [repair_actions[0]["action_id"]]
+    assert repaired_entries[0]["support_status"] == "partial"
     assert any(section["section"] == "limitations" for section in vertical_package["sections"])
     assert "review-loop repair actions" in vertical_package["reproducibility_assets"]
     assert vertical_package["reviewer_response_plan"][0]["action_kind"] == "claim_downgrade"

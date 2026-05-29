@@ -387,6 +387,15 @@ def test_ledger_aware_claim_evidence_ranker_beats_bigram_fixture(
     assert ndcg["ledger_aware_ranker"] > ndcg["bigram_ranker"]
     assert artifact.outputs["objective_failure_cases"]
     assert all("top_rank_not_relevant" in item["failure_modes"] for item in artifact.outputs["objective_failure_cases"])
+    repair_actions = artifact.outputs["review_loop_repair_actions"]
+    assert len(repair_actions) == 1
+    assert repair_actions[0]["action_kind"] == "claim_downgrade"
+    assert repair_actions[0]["repair_kind"] == "repair_claim_evidence"
+    assert repair_actions[0]["execution_route"] == "paper_rebuild"
+    assert repair_actions[0]["requires_rereview"] is True
+    assert "run_claim_evidence_matrix_json" in repair_actions[0]["expected_output_asset_ids"]
+    assert artifact.outputs["review_loop_repair_summary"] == {"claim_downgrade": 1}
+    assert any("bounded review-loop repair actions" in item for item in artifact.key_findings)
 
 
 def test_scifact_json_adapter_normalizes_claim_evidence_fixture(

@@ -23,6 +23,7 @@ from schemas.autoresearch import (
     ResearchPlan,
     ResultArtifact,
     ResultTable,
+    AutoResearchReviewLoopActionRead,
     SeedArtifactResult,
     SignificanceTestResult,
     SweepConfig,
@@ -30,6 +31,7 @@ from schemas.autoresearch import (
     SystemMetricResult,
 )
 from services.autoresearch.codegen import ExperimentCodeGenerator
+from services.autoresearch.publication_repair_plan import repair_action_expected_outputs
 from services.autoresearch.runtime_contract import runtime_environment_violations
 from services.autoresearch.repository import save_generated_code
 
@@ -158,6 +160,88 @@ def _detail_excerpt(text: str, *, limit: int = 220) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return f"{cleaned[: limit - 3]}..."
+
+
+def _slug_identifier(value: str, *, fallback: str = "item") -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug[:80] or fallback
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _retrieval_failure_route(case: dict[str, Any]) -> tuple[str, str, str, str]:
+    recall_at_10 = _as_float(case.get("recall_at_10"))
+    evidence_coverage = _as_float(case.get("evidence_coverage"))
+    if recall_at_10 < 1.0 or evidence_coverage < 1.0:
+        return (
+            "literature_refresh",
+            "refresh_literature",
+            "literature_refresh",
+            (
+                "Additional retrieval evidence is persisted through the literature graph and "
+                "claim-evidence matrix, then re-review confirms the query no longer lacks support."
+            ),
+        )
+    return (
+        "claim_downgrade",
+        "repair_claim_evidence",
+        "paper_rebuild",
+        (
+            "Unsupported or weakly supported claims are downgraded in the claim-evidence ledger "
+            "and manuscript, then re-review no longer reports the same retrieval support issue."
+        ),
+    )
+
+
+def _review_loop_actions_for_retrieval_failures(
+    failure_cases: list[dict[str, Any]],
+) -> list[AutoResearchReviewLoopActionRead]:
+    actions_by_query: dict[str, AutoResearchReviewLoopActionRead] = {}
+    for index, case in enumerate(failure_cases, start=1):
+        if not isinstance(case, dict):
+            continue
+        query = str(case.get("query") or f"retrieval query {index}").strip()
+        slug = _slug_identifier(query, fallback=f"query_{index}")
+        if slug in actions_by_query:
+            continue
+        action_kind, repair_kind, execution_route, terminal_condition = _retrieval_failure_route(case)
+        failure_modes = ", ".join(str(item) for item in case.get("failure_modes") or []) or "retrieval failure"
+        ranked_ids = ", ".join(str(item) for item in case.get("ranked_ids_at_10") or [])
+        if action_kind == "literature_refresh":
+            title = f"Refresh retrieval evidence for `{_detail_excerpt(query, limit=72)}`"
+            detail = (
+                f"The objective retrieval system did not cover all required evidence for query `{query}` "
+                f"({failure_modes}). Retrieve or cache additional evidence before the paper uses this claim."
+            )
+        else:
+            title = f"Downgrade claim until evidence supports `{_detail_excerpt(query, limit=72)}`"
+            detail = (
+                f"The objective retrieval system found evidence for query `{query}`, but the top-ranked result "
+                f"was not relevant ({failure_modes}). Keep the claim downgraded or attach ranked evidence "
+                f"before promoting it. Top-10 ids: {ranked_ids or 'n/a'}."
+            )
+        actions_by_query[slug] = AutoResearchReviewLoopActionRead(
+            action_id=f"retrieval_repair_{slug}",
+            action_kind=action_kind,  # type: ignore[arg-type]
+            repair_kind=repair_kind,  # type: ignore[arg-type]
+            execution_route=execution_route,  # type: ignore[arg-type]
+            priority="high",
+            title=title,
+            detail=detail,
+            status="pending",
+            finding_ids=[f"retrieval_failure:{slug}"],
+            auto_applicable=True,
+            expected_output_asset_ids=repair_action_expected_outputs(repair_kind),  # type: ignore[arg-type]
+            terminal_condition=terminal_condition,
+            requires_rereview=True,
+            max_auto_rounds=2,
+        )
+    return list(actions_by_query.values())
 
 
 def _paired_sign_flip_test(
@@ -1952,6 +2036,14 @@ class AutoExperimentRunner:
                     objective_failure_cases.append(
                         {**item, "seed": seed_result.seed, "sweep": seed_result.sweep_label}
                     )
+        review_loop_repair_actions = _review_loop_actions_for_retrieval_failures(objective_failure_cases)
+        review_loop_repair_summary: dict[str, int] = {}
+        for action in review_loop_repair_actions:
+            review_loop_repair_summary[action.action_kind] = review_loop_repair_summary.get(action.action_kind, 0) + 1
+        if review_loop_repair_actions:
+            key_findings.append(
+                f"Converted {len(review_loop_repair_actions)} retrieval failure query(s) into bounded review-loop repair actions."
+            )
 
         artifact = ResultArtifact(
             status="done",
@@ -1992,6 +2084,10 @@ class AutoExperimentRunner:
                 "anomalous_trials": [item.model_dump(mode="json") for item in anomalous_trials],
                 "objective_query_diagnostics": objective_query_diagnostics,
                 "objective_failure_cases": objective_failure_cases,
+                "review_loop_repair_actions": [
+                    item.model_dump(mode="json") for item in review_loop_repair_actions
+                ],
+                "review_loop_repair_summary": review_loop_repair_summary,
             },
         )
         artifact.environment.setdefault("generated_code_path", code_path)

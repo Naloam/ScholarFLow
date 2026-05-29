@@ -2051,6 +2051,13 @@ def build_experiment_spec(
         metrics = [
             MetricSpec(name="mrr", goal="maximize", description="Mean reciprocal rank."),
             MetricSpec(name="recall_at_1", goal="maximize", description="Whether the relevant document is ranked first."),
+            MetricSpec(name="ndcg_at_10", goal="maximize", description="Binary-relevance nDCG over the top 10 ranked documents."),
+            MetricSpec(name="recall_at_10", goal="maximize", description="Fraction of gold evidence documents recovered in the top 10."),
+            MetricSpec(
+                name="evidence_coverage",
+                goal="maximize",
+                description="Fraction of queries whose complete gold evidence set is covered in the top 10.",
+            ),
         ]
         ablations = [
             AblationSpec(
@@ -2061,7 +2068,7 @@ def build_experiment_spec(
         notes = [
             "Use only Python standard library utilities.",
             "Treat each example as a query with a short candidate list.",
-            "Report MRR and Recall@1 on the held-out split.",
+            "Report MRR, Recall@1, nDCG@10, Recall@10, and evidence coverage on the held-out split.",
             "Support BEIR-style normalized JSON as an external adapter target.",
         ]
         hypothesis = (

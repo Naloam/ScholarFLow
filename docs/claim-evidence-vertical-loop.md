@@ -82,6 +82,7 @@ Current implementation:
 - `beir_json` loads BEIR-style `queries` / `corpus` / `qrels` payloads.
 - `scifact_json` loads SciFact-style `claims` / `corpus` / `evidence` payloads.
 - Both paths can read from `BenchmarkSource.file_path`, allowing CI and local runs to use cached fixtures without live network.
+- IR runner output now reports MRR, Recall@1, nDCG@10, Recall@10, evidence coverage, and per-query objective failure cases for paper analysis.
 
 ### V3: Runner Metrics
 

@@ -350,22 +350,86 @@ def reciprocal_rank(relevant_ids, ranked_ids):
 def recall_at_1(relevant_ids, ranked_ids):
     if not ranked_ids:
         return 0.0
-    return 1.0 if ranked_ids[0] in relevant_ids else 0.0
+    return 1.0 if ranked_ids[0] in set(relevant_ids) else 0.0
+
+
+def recall_at_k(relevant_ids, ranked_ids, k):
+    relevant = set(relevant_ids)
+    if not relevant:
+        return 0.0
+    covered = set(ranked_ids[:k]) & relevant
+    return len(covered) / len(relevant)
+
+
+def ndcg_at_k(relevant_ids, ranked_ids, k):
+    relevant = set(relevant_ids)
+    if not relevant:
+        return 0.0
+    dcg = 0.0
+    for idx, doc_id in enumerate(ranked_ids[:k], start=1):
+        if doc_id in relevant:
+            dcg += 1.0 / math.log2(idx + 1)
+    ideal_hits = min(len(relevant), k)
+    idcg = sum(1.0 / math.log2(idx + 1) for idx in range(1, ideal_hits + 1))
+    return dcg / idcg if idcg else 0.0
+
+
+def complete_evidence_coverage(relevant_ids, ranked_ids, k):
+    relevant = set(relevant_ids)
+    if not relevant:
+        return 0.0
+    return 1.0 if relevant.issubset(set(ranked_ids[:k])) else 0.0
+
+
+def query_metric_record(example, ranked):
+    relevant_ids = example["relevant_ids"]
+    record = {{
+        "query": example.get("query", ""),
+        "relevant_ids": list(relevant_ids),
+        "ranked_ids_at_10": ranked[:10],
+        "reciprocal_rank": reciprocal_rank(relevant_ids, ranked),
+        "recall_at_1": recall_at_1(relevant_ids, ranked),
+        "ndcg_at_10": ndcg_at_k(relevant_ids, ranked, 10),
+        "recall_at_10": recall_at_k(relevant_ids, ranked, 10),
+        "evidence_coverage": complete_evidence_coverage(relevant_ids, ranked, 10),
+    }}
+    failure_modes = []
+    if record["recall_at_1"] < 1.0:
+        failure_modes.append("top_rank_not_relevant")
+    if record["recall_at_10"] < 1.0:
+        failure_modes.append("missing_relevant_evidence_top_10")
+    if record["evidence_coverage"] < 1.0:
+        failure_modes.append("incomplete_gold_evidence_coverage")
+    record["failure_modes"] = failure_modes
+    return record
 
 
 def evaluate(system_name, examples, ranking_fn):
     reciprocal_ranks = []
-    recalls = []
+    recalls_at_1 = []
+    ndcgs_at_10 = []
+    recalls_at_10 = []
+    evidence_coverages = []
+    diagnostics = []
     for example in examples:
         ranked = ranking_fn(example)
-        reciprocal_ranks.append(reciprocal_rank(example["relevant_ids"], ranked))
-        recalls.append(recall_at_1(example["relevant_ids"], ranked))
+        record = query_metric_record(example, ranked)
+        diagnostics.append(record)
+        reciprocal_ranks.append(record["reciprocal_rank"])
+        recalls_at_1.append(record["recall_at_1"])
+        ndcgs_at_10.append(record["ndcg_at_10"])
+        recalls_at_10.append(record["recall_at_10"])
+        evidence_coverages.append(record["evidence_coverage"])
     return {{
         "system": system_name,
         "metrics": {{
             "mrr": round(sum(reciprocal_ranks) / len(reciprocal_ranks), 4),
-            "recall_at_1": round(sum(recalls) / len(recalls), 4),
+            "recall_at_1": round(sum(recalls_at_1) / len(recalls_at_1), 4),
+            "ndcg_at_10": round(sum(ndcgs_at_10) / len(ndcgs_at_10), 4),
+            "recall_at_10": round(sum(recalls_at_10) / len(recalls_at_10), 4),
+            "evidence_coverage": round(sum(evidence_coverages) / len(evidence_coverages), 4),
         }},
+        "diagnostics": diagnostics,
     }}
 
 
@@ -458,15 +522,29 @@ def run():
 
     objective = next(item for item in results if item["system"] == candidate_system)
     best = max(results, key=lambda item: item["metrics"][PRIMARY_METRIC])
+    system_results = [{{"system": item["system"], "metrics": item["metrics"]}} for item in results]
+    objective_diagnostics = objective.get("diagnostics", [])
+    objective_failure_cases = [
+        item for item in objective_diagnostics
+        if item.get("failure_modes")
+    ]
     rows = [
-        [item["system"], f'{{item["metrics"]["mrr"]:.4f}}', f'{{item["metrics"]["recall_at_1"]:.4f}}']
+        [
+            item["system"],
+            f'{{item["metrics"]["mrr"]:.4f}}',
+            f'{{item["metrics"]["recall_at_1"]:.4f}}',
+            f'{{item["metrics"]["ndcg_at_10"]:.4f}}',
+            f'{{item["metrics"]["recall_at_10"]:.4f}}',
+            f'{{item["metrics"]["evidence_coverage"]:.4f}}',
+        ]
         for item in results
     ]
 
     artifact = {{
         "summary": (
             f'{{TITLE}} executed strategy {{STRATEGY}} on benchmark {{DATASET.get("name", "dataset")}}. '
-            f'Best system: {{best["system"]}} with mrr={{best["metrics"]["mrr"]:.4f}}.'
+            f'Best system: {{best["system"]}} with mrr={{best["metrics"]["mrr"]:.4f}} '
+            f'and ndcg_at_10={{best["metrics"]["ndcg_at_10"]:.4f}}.'
         ),
         "primary_metric": PRIMARY_METRIC,
         "best_system": best["system"],
@@ -476,13 +554,14 @@ def run():
             f'Best system: {{best["system"]}}',
             f'Search objective system: {{objective["system"]}}',
             critique,
+            f'Objective evidence coverage: {{objective["metrics"]["evidence_coverage"]:.4f}}',
             f'Hypothesis under test: {{HYPOTHESIS}}',
         ],
-        "system_results": results,
+        "system_results": system_results,
         "tables": [
             {{
                 "title": "Main Results",
-                "columns": ["System", "MRR", "Recall@1"],
+                "columns": ["System", "MRR", "Recall@1", "nDCG@10", "Recall@10", "Evidence Coverage"],
                 "rows": rows,
             }}
         ],
@@ -496,6 +575,17 @@ def run():
             "sweep": SWEEP,
             "benchmark_name": DATASET.get("name"),
             "source_url": DATASET.get("source_url"),
+        }},
+        "outputs": {{
+            "objective_query_diagnostics": objective_diagnostics,
+            "objective_failure_cases": objective_failure_cases,
+            "metric_definitions": {{
+                "mrr": "Mean reciprocal rank over gold evidence documents.",
+                "recall_at_1": "Whether the first-ranked document is relevant.",
+                "ndcg_at_10": "Binary-relevance nDCG over top 10.",
+                "recall_at_10": "Fraction of gold evidence documents recovered in top 10.",
+                "evidence_coverage": "Whether every gold evidence document is covered in top 10.",
+            }},
         }},
     }}
     print("__RESULT__" + json.dumps(artifact))
@@ -1143,43 +1233,105 @@ def predict(train, test):
         if is_ir:
             eval_lines = '''
     method_rankings = method_predict(train, test)
-    for example, ranked in zip(test, method_rankings):
-        method_rr.append(reciprocal_rank(example["relevant_ids"], ranked))
-        method_r1.append(recall_at_1(example["relevant_ids"], ranked))
-    method_mrr = round(sum(method_rr) / len(method_rr), 4)
-    method_r1_score = round(sum(method_r1) / len(method_r1), 4)
 
     for example in test:
         ids = [c["id"] for c in example["candidates"]]
-        random.Random(SEED + hash(example.get("query", ""))).shuffle(ids)
+        random.Random(SEED + len(example.get("query", ""))).shuffle(ids)
         random_rankings.append(ids)
         scored = [(sum(1 for t in tokenize(example["query"]) if t in tokenize(c["text"])), c["id"]) for c in example["candidates"]]
         overlap_rankings.append([d for _, d in sorted(scored, reverse=True)])
-    for ex, r in zip(test, random_rankings):
-        random_rr.append(reciprocal_rank(ex["relevant_ids"], r))
-    for ex, r in zip(test, overlap_rankings):
-        overlap_rr.append(reciprocal_rank(ex["relevant_ids"], r))
 
     results_data = [
-        {"system": "random", "metrics": {"mrr": round(sum(random_rr)/len(random_rr), 4), "recall_at_1": 0.0}},
-        {"system": "overlap", "metrics": {"mrr": round(sum(overlap_rr)/len(overlap_rr), 4), "recall_at_1": 0.0}},
-        {"system": METHOD_NAME, "metrics": {"mrr": method_mrr, "recall_at_1": method_r1_score}},
+        {"system": "random", "metrics": metrics_for_rankings(test, random_rankings)},
+        {"system": "overlap", "metrics": metrics_for_rankings(test, overlap_rankings)},
+        {"system": METHOD_NAME, "metrics": metrics_for_rankings(test, method_rankings)},
     ]
     best = max(results_data, key=lambda x: x["metrics"]["mrr"])
     objective = next(x for x in results_data if x["system"] == METHOD_NAME)
-    rows = [[x["system"], f'{x["metrics"]["mrr"]:.4f}', f'{x["metrics"]["recall_at_1"]:.4f}'] for x in results_data]
+    metric_order = ["mrr", "recall_at_1", "ndcg_at_10", "recall_at_10", "evidence_coverage"]
+    rows = [[x["system"], *[f'{x["metrics"][metric]:.4f}' for metric in metric_order]] for x in results_data]
+    table_columns = ["System", "MRR", "Recall@1", "nDCG@10", "Recall@10", "Evidence Coverage"]
+    objective_query_diagnostics = diagnostics_for_rankings(test, method_rankings, METHOD_NAME)
+    objective_failure_cases = [item for item in objective_query_diagnostics if item["failure_modes"]]
     primary_val = objective["metrics"]["mrr"]
 '''
             metric_defs = '''
 PRIMARY_METRIC = "mrr"
+METRIC_DEFINITIONS = {
+    "mrr": "Mean reciprocal rank over gold evidence documents.",
+    "recall_at_1": "Whether the first-ranked document is relevant.",
+    "ndcg_at_10": "Binary-relevance nDCG over top 10.",
+    "recall_at_10": "Fraction of gold evidence documents recovered in top 10.",
+    "evidence_coverage": "Whether every gold evidence document is covered in top 10.",
+}
 def reciprocal_rank(rel, ranked):
     for i, d in enumerate(ranked, 1):
-        if d in rel: return 1.0 / i
+        if d in set(rel): return 1.0 / i
     return 0.0
 def recall_at_1(rel, ranked):
-    return 1.0 if ranked and ranked[0] in rel else 0.0
+    return 1.0 if ranked and ranked[0] in set(rel) else 0.0
+def recall_at_k(rel, ranked, k):
+    relevant = set(rel)
+    if not relevant:
+        return 0.0
+    return len(set(ranked[:k]) & relevant) / len(relevant)
+def ndcg_at_k(rel, ranked, k):
+    relevant = set(rel)
+    if not relevant:
+        return 0.0
+    dcg = 0.0
+    for idx, doc_id in enumerate(ranked[:k], start=1):
+        if doc_id in relevant:
+            dcg += 1.0 / math.log2(idx + 1)
+    ideal_hits = min(len(relevant), k)
+    idcg = sum(1.0 / math.log2(idx + 1) for idx in range(1, ideal_hits + 1))
+    return dcg / idcg if idcg else 0.0
+def complete_evidence_coverage(rel, ranked, k):
+    relevant = set(rel)
+    if not relevant:
+        return 0.0
+    return 1.0 if relevant.issubset(set(ranked[:k])) else 0.0
+def query_metric_record(example, ranked):
+    rel = example["relevant_ids"]
+    record = {
+        "query": example.get("query", ""),
+        "relevant_ids": list(rel),
+        "ranked_ids_at_10": list(ranked[:10]),
+        "reciprocal_rank": reciprocal_rank(rel, ranked),
+        "recall_at_1": recall_at_1(rel, ranked),
+        "ndcg_at_10": ndcg_at_k(rel, ranked, 10),
+        "recall_at_10": recall_at_k(rel, ranked, 10),
+        "evidence_coverage": complete_evidence_coverage(rel, ranked, 10),
+    }
+    failure_modes = []
+    if record["recall_at_1"] < 1.0:
+        failure_modes.append("top_rank_not_relevant")
+    if record["recall_at_10"] < 1.0:
+        failure_modes.append("missing_relevant_evidence_top_10")
+    if record["evidence_coverage"] < 1.0:
+        failure_modes.append("incomplete_gold_evidence_coverage")
+    record["failure_modes"] = failure_modes
+    return record
+def metrics_for_rankings(examples, rankings):
+    records = [query_metric_record(example, ranked) for example, ranked in zip(examples, rankings)]
+    if not records:
+        return {"mrr": 0.0, "recall_at_1": 0.0, "ndcg_at_10": 0.0, "recall_at_10": 0.0, "evidence_coverage": 0.0}
+    return {
+        "mrr": round(sum(item["reciprocal_rank"] for item in records) / len(records), 4),
+        "recall_at_1": round(sum(item["recall_at_1"] for item in records) / len(records), 4),
+        "ndcg_at_10": round(sum(item["ndcg_at_10"] for item in records) / len(records), 4),
+        "recall_at_10": round(sum(item["recall_at_10"] for item in records) / len(records), 4),
+        "evidence_coverage": round(sum(item["evidence_coverage"] for item in records) / len(records), 4),
+    }
+def diagnostics_for_rankings(examples, rankings, system_name):
+    records = []
+    for example, ranked in zip(examples, rankings):
+        record = query_metric_record(example, ranked)
+        record["system"] = system_name
+        records.append(record)
+    return records
 '''
-            init_vars = '    method_rr, method_r1, random_rr, overlap_rr = [], [], [], []\n    random_rankings, overlap_rankings = [], []'
+            init_vars = '    random_rankings, overlap_rankings = [], []'
         else:
             eval_lines = '''
     method_preds = method_predict(train, test)
@@ -1196,10 +1348,14 @@ def recall_at_1(rel, ranked):
     best = max(results_data, key=lambda x: x["metrics"]["macro_f1"])
     objective = next(x for x in results_data if x["system"] == METHOD_NAME)
     rows = [[x["system"], f'{x["metrics"]["accuracy"]:.4f}', f'{x["metrics"]["macro_f1"]:.4f}'] for x in results_data]
+    table_columns = ["System", "Accuracy", "Macro F1"]
+    objective_query_diagnostics = []
+    objective_failure_cases = []
     primary_val = objective["metrics"]["macro_f1"]
 '''
             metric_defs = '''
 PRIMARY_METRIC = "macro_f1"
+METRIC_DEFINITIONS = {}
 def accuracy(y_true, y_pred):
     return sum(1 for t, p in zip(y_true, y_pred) if t == p) / len(y_true) if y_true else 0.0
 def macro_f1(y_true, y_pred, labels):
@@ -1219,6 +1375,7 @@ def majority_predict(train, test):
             init_vars = '    y_true = [item["label"] for item in test]'
 
         return f'''import json
+import math
 import os
 import platform
 import random
@@ -1280,7 +1437,7 @@ def run():
         "failed_trials": [],
         "anomalous_trials": [],
         "acceptance_checks": [{{"criterion": "{{PRIMARY_METRIC}} > 0", "passed": primary_val > 0, "detail": f"{{PRIMARY_METRIC}}={{primary_val:.4f}}"}}],
-        "tables": [{{"title": "Main Results", "columns": ["System"] + list(results_data[0]["metrics"].keys()), "rows": rows}}],
+        "tables": [{{"title": "Main Results", "columns": table_columns, "rows": rows}}],
         "logs": None,
         "environment": {{
             "python_version": sys.version.split()[0],
@@ -1292,6 +1449,11 @@ def run():
             "sweep": SWEEP,
             "benchmark_name": DATASET.get("name"),
             "method_file": "method.py",
+        }},
+        "outputs": {{
+            "objective_query_diagnostics": objective_query_diagnostics,
+            "objective_failure_cases": objective_failure_cases,
+            "metric_definitions": METRIC_DEFINITIONS,
         }},
     }}
     print("__RESULT__" + json.dumps(artifact))

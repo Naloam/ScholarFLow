@@ -251,7 +251,13 @@ def test_claim_evidence_ir_routes_to_frozen_non_publication_fixture() -> None:
     assert spec.dataset.candidate_count == 5
     assert spec.dataset.source_kind == "builtin"
     assert spec.dataset.publication_grade is False
-    assert spec.metrics[0].name == "mrr"
+    assert [metric.name for metric in spec.metrics] == [
+        "mrr",
+        "recall_at_1",
+        "ndcg_at_10",
+        "recall_at_10",
+        "evidence_coverage",
+    ]
 
 
 def test_frozen_claim_evidence_ir_runner_executes_non_degenerate_fixture(
@@ -297,6 +303,35 @@ def test_frozen_claim_evidence_ir_runner_executes_non_degenerate_fixture(
     assert scores["random_ranker"] < scores["overlap_ranker"] < scores["bigram_ranker"]
     assert scores["bigram_ranker"] < 1.0
     assert artifact.objective_score == scores["bigram_ranker"]
+    bigram_metrics = next(
+        item.mean_metrics
+        for item in artifact.aggregate_system_results
+        if item.system == "bigram_ranker"
+    )
+    assert set(bigram_metrics) >= {
+        "mrr",
+        "recall_at_1",
+        "ndcg_at_10",
+        "recall_at_10",
+        "evidence_coverage",
+    }
+    assert 0.0 < bigram_metrics["ndcg_at_10"] <= 1.0
+    assert bigram_metrics["recall_at_10"] == 1.0
+    assert bigram_metrics["evidence_coverage"] == 1.0
+    main_table = next(table for table in artifact.tables if table.title == "Main Results")
+    assert main_table.columns == [
+        "System",
+        "MRR",
+        "Recall@1",
+        "nDCG@10",
+        "Recall@10",
+        "Evidence Coverage",
+    ]
+    assert artifact.outputs["objective_query_diagnostics"]
+    assert artifact.outputs["objective_failure_cases"]
+    assert {"query", "ranked_ids_at_10", "failure_modes", "ndcg_at_10"} <= set(
+        artifact.outputs["objective_query_diagnostics"][0]
+    )
     assert len(artifact.per_seed_results) == len(spec.seeds)
     assert artifact.significance_tests
     assert all(check.passed for check in artifact.acceptance_checks)

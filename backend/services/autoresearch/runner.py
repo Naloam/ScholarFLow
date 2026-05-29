@@ -119,6 +119,9 @@ def _metric_label(name: str) -> str:
         "macro_f1": "Macro F1",
         "mrr": "MRR",
         "recall_at_1": "Recall@1",
+        "ndcg_at_10": "nDCG@10",
+        "recall_at_10": "Recall@10",
+        "evidence_coverage": "Evidence Coverage",
     }
     return labels.get(name, name.replace("_", " ").title())
 
@@ -529,6 +532,10 @@ class AutoExperimentRunner:
                 "host_python": outputs.get("host_python"),
             }
         )
+        artifact_outputs = dict(outputs)
+        payload_outputs = payload.get("outputs")
+        if isinstance(payload_outputs, dict):
+            artifact_outputs["artifact_outputs"] = payload_outputs
         return ResultArtifact(
             status="done" if outputs.get("returncode", 1) == 0 else "failed",
             summary=str(payload.get("summary") or "Experiment completed."),
@@ -561,7 +568,7 @@ class AutoExperimentRunner:
             tables=self._normalize_tables(payload.get("tables")),
             logs=logs,
             environment=environment,
-            outputs=outputs,
+            outputs=artifact_outputs,
         )
 
     def _runtime_contract_failure(
@@ -1929,6 +1936,23 @@ class AutoExperimentRunner:
                 f"Preserved {len(failed_trials)} failed seed configurations across {failed_sweep_count} non-complete sweeps."
             )
 
+        objective_query_diagnostics: list[dict[str, Any]] = []
+        objective_failure_cases: list[dict[str, Any]] = []
+        for seed_result, seed_artifact in zip(per_seed_results, artifacts, strict=False):
+            payload_outputs = seed_artifact.outputs.get("artifact_outputs")
+            if not isinstance(payload_outputs, dict):
+                continue
+            for item in payload_outputs.get("objective_query_diagnostics") or []:
+                if isinstance(item, dict):
+                    objective_query_diagnostics.append(
+                        {**item, "seed": seed_result.seed, "sweep": seed_result.sweep_label}
+                    )
+            for item in payload_outputs.get("objective_failure_cases") or []:
+                if isinstance(item, dict):
+                    objective_failure_cases.append(
+                        {**item, "seed": seed_result.seed, "sweep": seed_result.sweep_label}
+                    )
+
         artifact = ResultArtifact(
             status="done",
             summary=(
@@ -1966,6 +1990,8 @@ class AutoExperimentRunner:
                 "negative_results": [item.model_dump(mode="json") for item in negative_results],
                 "failed_trials": [item.model_dump(mode="json") for item in failed_trials],
                 "anomalous_trials": [item.model_dump(mode="json") for item in anomalous_trials],
+                "objective_query_diagnostics": objective_query_diagnostics,
+                "objective_failure_cases": objective_failure_cases,
             },
         )
         artifact.environment.setdefault("generated_code_path", code_path)

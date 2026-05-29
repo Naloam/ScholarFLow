@@ -930,7 +930,36 @@ class AutoResearchExperimentFactoryImportRequest(BaseModel):
     ablation_scores: dict[str, float] = Field(default_factory=dict)
     seed_count: int = Field(default=1, ge=1)
     significance_p_value: float | None = Field(default=None, ge=0.0, le=1.0)
+    failed_job_ids: list[str] = Field(default_factory=list)
+    failed_job_kinds: list[AutoResearchExperimentFactoryJobKind] = Field(default_factory=list)
+    runtime_failure_notes: list[str] = Field(default_factory=list)
     notes: str | None = None
+
+    @field_validator("failed_job_ids", "runtime_failure_notes")
+    @classmethod
+    def dedupe_import_failure_text(cls, value: list[str]) -> list[str]:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for item in value:
+            cleaned = " ".join(str(item).split()).strip()
+            key = cleaned.lower()
+            if not cleaned or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(cleaned)
+        return deduped
+
+    @field_validator("failed_job_kinds")
+    @classmethod
+    def dedupe_failed_job_kinds(
+        cls,
+        value: list[AutoResearchExperimentFactoryJobKind],
+    ) -> list[AutoResearchExperimentFactoryJobKind]:
+        deduped: list[AutoResearchExperimentFactoryJobKind] = []
+        for item in value:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped
 
 
 class AutoResearchExperimentFactoryMaterializeRequest(BaseModel):

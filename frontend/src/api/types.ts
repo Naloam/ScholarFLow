@@ -2987,6 +2987,9 @@ export type AutoResearchExperimentFactoryImportRequest = {
   ablation_scores?: Record<string, number>;
   seed_count?: number;
   significance_p_value?: number | null;
+  failed_job_ids?: string[];
+  failed_job_kinds?: AutoResearchExperimentFactoryJobKind[];
+  runtime_failure_notes?: string[];
   notes?: string | null;
 };
 

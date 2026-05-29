@@ -6594,6 +6594,61 @@ def test_experiment_factory_external_import_classifies_runtime_failure() -> None
     assert "rerun_failed_job" in execution.repair_plan.actions
 
 
+def test_experiment_factory_external_import_records_reported_partial_runtime_failure() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-factory-import-partial-runtime-failure",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=brief.project_id,
+        brief=brief,
+    )
+    failed_sweep_job = next(job for job in plan.jobs if job.job_kind == "sweep")
+
+    execution = autoresearch_experiment_factory.execute_imported_experiment_factory(
+        plan,
+        summary="External backend imported candidate, baseline, and ablation metrics, but one sweep job failed.",
+        primary_metric="macro_f1",
+        objective_system="candidate_method",
+        objective_score=0.77,
+        baseline_system="keyword_baseline",
+        baseline_score=0.62,
+        key_findings=["External candidate beat the imported baseline."],
+        ablation_scores={"without_evidence_features": 0.71},
+        seed_count=3,
+        significance_p_value=0.029,
+        failed_job_ids=[failed_sweep_job.job_id],
+        runtime_failure_notes=[
+            "Sweep summary crashed after primary candidate evidence was imported.",
+            "Sweep summary crashed after primary candidate evidence was imported.",
+        ],
+    )
+
+    jobs_by_id = {job.job_id: job for job in execution.materialized_jobs}
+    failed_job = jobs_by_id[failed_sweep_job.job_id]
+
+    assert execution.result_artifact.status == "done"
+    assert failed_job.status == "failed"
+    assert failed_job.repair_classification == "rerun_failed_job"
+    assert failed_job.output_refs == []
+    assert all(
+        job.status == "done"
+        for job_id, job in jobs_by_id.items()
+        if job_id != failed_sweep_job.job_id
+    )
+    assert execution.result_artifact.environment["reported_failed_job_ids"] == [
+        failed_sweep_job.job_id
+    ]
+    assert execution.result_artifact.environment["failed_materialized_job_kinds"] == ["sweep"]
+    assert execution.result_artifact.environment["runtime_failure_notes"] == [
+        "Sweep summary crashed after primary candidate evidence was imported."
+    ]
+    assert execution.evidence_ledger.complete is False
+    assert "Materialized execution has runtime job failures." in execution.evidence_ledger.blockers
+    assert execution.repair_plan is not None
+    assert execution.repair_plan.actions == ["rerun_failed_job"]
+
+
 def test_experiment_factory_artifacts_persist_on_run(
     monkeypatch,
     tmp_path: Path,

@@ -521,6 +521,26 @@ def _failed_job_kinds_for_external_import(
     return failed
 
 
+def _known_failed_job_ids(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    failed_job_ids: set[str] | None,
+) -> set[str]:
+    if not failed_job_ids:
+        return set()
+    known_ids = {job.job_id for job in plan.jobs}
+    return {job_id for job_id in failed_job_ids if job_id in known_ids}
+
+
+def _known_failed_job_kinds(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    failed_job_kinds: set[str] | None,
+) -> set[str]:
+    if not failed_job_kinds:
+        return set()
+    known_kinds = {job.job_kind for job in plan.jobs}
+    return {job_kind for job_kind in failed_job_kinds if job_kind in known_kinds}
+
+
 def _artifact_metric_value(
     artifact: ResultArtifact,
     *,
@@ -996,25 +1016,38 @@ def execute_imported_artifact_experiment_factory(
     *,
     artifact: ResultArtifact,
     executor_mode: str = "external_import",
+    failed_job_ids: set[str] | None = None,
+    failed_job_kinds: set[str] | None = None,
+    runtime_failure_notes: list[str] | None = None,
 ) -> AutoResearchExperimentFactoryExecutionRead:
     manifest = build_environment_manifest(plan, executor_mode=executor_mode)
     baseline_score = _baseline_score_from_artifact(plan, artifact)
     ablation_scores = _ablation_scores_from_artifact(artifact)
     seed_count = _seed_count_from_artifact(artifact)
-    failed_job_kinds = _failed_job_kinds_for_external_import(
+    inferred_failed_job_kinds = _failed_job_kinds_for_external_import(
         plan,
         artifact=artifact,
         baseline_score=baseline_score,
         ablation_scores=ablation_scores,
         seed_count=seed_count,
     )
+    reported_failed_job_ids = _known_failed_job_ids(plan, failed_job_ids)
+    reported_failed_job_kinds = _known_failed_job_kinds(plan, failed_job_kinds)
+    failed_job_kinds = inferred_failed_job_kinds | reported_failed_job_kinds
     materialized_jobs = materialize_factory_jobs(
         plan,
         environment_manifest=manifest,
         executor_mode=executor_mode,
         artifact_status=artifact.status,
         failed_job_kinds=failed_job_kinds,
+        failed_job_ids=reported_failed_job_ids,
     )
+    normalized_runtime_notes = _dedupe(runtime_failure_notes or [])
+    failed_materialized_job_kinds = {
+        job.job_kind
+        for job in materialized_jobs
+        if job.status == "failed"
+    }
     enriched_artifact = artifact.model_copy(
         update={
             "environment": {
@@ -1024,7 +1057,10 @@ def execute_imported_artifact_experiment_factory(
                 "environment_manifest_id": manifest.manifest_id,
                 "environment_manifest_fingerprint": manifest.manifest_fingerprint,
                 "materialized_job_count": len(materialized_jobs),
-                "failed_materialized_job_kinds": sorted(failed_job_kinds),
+                "failed_materialized_job_kinds": sorted(failed_materialized_job_kinds),
+                "reported_failed_job_ids": sorted(reported_failed_job_ids),
+                "reported_failed_job_kinds": sorted(reported_failed_job_kinds),
+                "runtime_failure_notes": normalized_runtime_notes,
                 "external_imported": True,
                 "seed_count": seed_count,
             },
@@ -1070,6 +1106,9 @@ def execute_imported_experiment_factory(
     ablation_scores: dict[str, float] | None = None,
     seed_count: int = 1,
     significance_p_value: float | None = None,
+    failed_job_ids: list[str] | None = None,
+    failed_job_kinds: list[str] | None = None,
+    runtime_failure_notes: list[str] | None = None,
     notes: str | None = None,
 ) -> AutoResearchExperimentFactoryExecutionRead:
     artifact = result_artifact_from_external_import(
@@ -1089,4 +1128,7 @@ def execute_imported_experiment_factory(
         plan,
         artifact=artifact,
         executor_mode="external_import",
+        failed_job_ids=set(failed_job_ids or []),
+        failed_job_kinds=set(failed_job_kinds or []),
+        runtime_failure_notes=runtime_failure_notes,
     )

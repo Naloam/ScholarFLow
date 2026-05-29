@@ -620,6 +620,9 @@ def import_auto_research_run_experiment_factory_result(
         ablation_scores=payload.ablation_scores,
         seed_count=payload.seed_count,
         significance_p_value=payload.significance_p_value,
+        failed_job_ids=payload.failed_job_ids,
+        failed_job_kinds=list(payload.failed_job_kinds),
+        runtime_failure_notes=payload.runtime_failure_notes,
         notes=payload.notes,
     )
     save_run(

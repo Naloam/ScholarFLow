@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
@@ -48,6 +48,19 @@ def _default_name(source: BenchmarkSource) -> str:
     if source.dataset_id:
         return source.dataset_id
     return "builtin_benchmark"
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        cleaned = " ".join(str(item).split()).strip()
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cleaned)
+    return deduped
 
 
 def _rows_from_csv(text: str) -> list[dict[str, Any]]:
@@ -186,6 +199,8 @@ def _normalize_tabular_rows(
 def _source_url(source: BenchmarkSource) -> str | None:
     if source.url:
         return source.url
+    if source.file_path:
+        return f"file://{Path(source.file_path).resolve()}"
     if source.kind == "huggingface_file" and source.dataset_id:
         return f"https://huggingface.co/datasets/{source.dataset_id}"
     if source.kind == "openml_file" and source.dataset_id:
@@ -452,6 +467,148 @@ def _normalize_beir_payload(source: BenchmarkSource, payload: dict[str, Any], na
     return _normalize_ir_dataset(source, rows, name)
 
 
+def _scifact_doc_id(item: Any) -> str:
+    if isinstance(item, dict):
+        for key in ("doc_id", "id", "paper_id", "corpus_id"):
+            value = item.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return str(item).strip()
+
+
+def _scifact_doc_text(item: Any) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if not isinstance(item, dict):
+        return ""
+    title = str(item.get("title") or "").strip()
+    abstract = item.get("abstract") or item.get("text") or item.get("passage") or ""
+    if isinstance(abstract, list):
+        abstract_text = " ".join(str(part).strip() for part in abstract if str(part).strip())
+    else:
+        abstract_text = str(abstract).strip()
+    return " ".join(part for part in (title, abstract_text) if part).strip()
+
+
+def _scifact_corpus_map(payload: dict[str, Any]) -> dict[str, str]:
+    corpus_raw = payload.get("corpus") or payload.get("abstracts") or payload.get("documents") or {}
+    if isinstance(corpus_raw, dict):
+        return {
+            str(doc_id): _scifact_doc_text(item)
+            for doc_id, item in corpus_raw.items()
+            if str(doc_id).strip() and _scifact_doc_text(item)
+        }
+    if isinstance(corpus_raw, list):
+        corpus: dict[str, str] = {}
+        for item in corpus_raw:
+            doc_id = _scifact_doc_id(item)
+            text = _scifact_doc_text(item)
+            if doc_id and text:
+                corpus[doc_id] = text
+        return corpus
+    return {}
+
+
+def _scifact_evidence_doc_ids(claim: dict[str, Any]) -> list[str]:
+    evidence = claim.get("evidence") or claim.get("evidence_doc_ids") or {}
+    doc_ids: list[str] = []
+    if isinstance(evidence, dict):
+        for doc_id, entries in evidence.items():
+            if isinstance(entries, list):
+                labels = [
+                    str(entry.get("label") or entry.get("evidence_label") or "").lower()
+                    for entry in entries
+                    if isinstance(entry, dict)
+                ]
+                if labels and all(label in {"nei", "not_enough_info", "not enough info"} for label in labels):
+                    continue
+            doc_ids.append(str(doc_id))
+    elif isinstance(evidence, list):
+        for item in evidence:
+            doc_id = _scifact_doc_id(item)
+            label = str(item.get("label") if isinstance(item, dict) else "").lower()
+            if doc_id and label not in {"nei", "not_enough_info", "not enough info"}:
+                doc_ids.append(doc_id)
+    return _dedupe(doc_ids)
+
+
+def _scifact_candidate_doc_ids(claim: dict[str, Any], corpus_map: dict[str, str]) -> list[str]:
+    candidates: list[str] = []
+    for field in ("candidate_doc_ids", "doc_ids", "retrieved_doc_ids", "hard_negative_doc_ids"):
+        raw = claim.get(field)
+        if isinstance(raw, list):
+            candidates.extend(str(item) for item in raw if str(item).strip())
+    candidates.extend(_scifact_evidence_doc_ids(claim))
+    if not candidates:
+        candidates.extend(list(corpus_map)[:8])
+    return _dedupe([doc_id for doc_id in candidates if doc_id in corpus_map])
+
+
+def _normalize_scifact_payload(source: BenchmarkSource, payload: dict[str, Any], name: str) -> dict[str, Any]:
+    if "train" in payload and "test" in payload:
+        return _normalize_pre_split_json(source, payload, "ir_reranking", name)
+    corpus_map = _scifact_corpus_map(payload)
+    claims_raw = payload.get("claims") or payload.get("queries") or []
+    if isinstance(claims_raw, dict):
+        claims = [
+            {"id": claim_id, **claim}
+            if isinstance(claim, dict)
+            else {"id": claim_id, "claim": str(claim)}
+            for claim_id, claim in claims_raw.items()
+        ]
+    elif isinstance(claims_raw, list):
+        claims = [claim for claim in claims_raw if isinstance(claim, dict)]
+    else:
+        claims = []
+    if not corpus_map or not claims:
+        raise BenchmarkIngestionError("SciFact benchmark needs corpus and claims")
+
+    split_payload = payload.get("split") or payload.get("splits") or {}
+    train_ids = {str(item) for item in split_payload.get("train", [])} if isinstance(split_payload, dict) else set()
+    test_ids = {
+        str(item)
+        for item in (
+            split_payload.get("test", []) or split_payload.get("dev", []) or split_payload.get("validation", [])
+        )
+    } if isinstance(split_payload, dict) else set()
+    rows_by_split = {"train": [], "test": [], "unsplit": []}
+    for claim in claims:
+        claim_id = str(claim.get("id") or claim.get("claim_id") or "").strip()
+        query = str(claim.get("claim") or claim.get("query") or "").strip()
+        relevant_ids = [doc_id for doc_id in _scifact_evidence_doc_ids(claim) if doc_id in corpus_map]
+        candidate_ids = _scifact_candidate_doc_ids(claim, corpus_map)
+        candidates = [{"id": doc_id, "text": corpus_map[doc_id]} for doc_id in candidate_ids]
+        if not query or not candidates or not relevant_ids:
+            continue
+        row = {"query": query, "candidates": candidates, "relevant_ids": relevant_ids}
+        claim_split = str(claim.get("split") or "").lower()
+        if claim_id in train_ids or claim_split == "train":
+            rows_by_split["train"].append(row)
+        elif claim_id in test_ids or claim_split in {"test", "dev", "validation"}:
+            rows_by_split["test"].append(row)
+        else:
+            rows_by_split["unsplit"].append(row)
+
+    if rows_by_split["train"] and rows_by_split["test"]:
+        normalized = _normalize_pre_split_rows(
+            source,
+            rows_by_split["train"],
+            rows_by_split["test"],
+            "ir_reranking",
+            payload.get("name") or name,
+            payload.get("description") or "SciFact-style claim-evidence retrieval benchmark.",
+        )
+    else:
+        normalized = _normalize_ir_dataset(
+            source,
+            [*rows_by_split["train"], *rows_by_split["test"], *rows_by_split["unsplit"]],
+            payload.get("name") or name,
+        )
+        normalized["description"] = payload.get("description") or "SciFact-style claim-evidence retrieval benchmark."
+    normalized["source_url"] = _source_url(source)
+    return normalized
+
+
 class BenchmarkAdapter(Protocol):
     kind: str
 
@@ -476,12 +633,17 @@ class RemoteFileAdapter:
         return source.url
 
     def load(self, source: BenchmarkSource, task_family: TaskFamily) -> ResolvedBenchmark:
-        source = source.model_copy(update={"url": self.build_url(source)})
-        raw = _fetch_remote_text(source.url or "")
+        if source.file_path:
+            raw = Path(source.file_path).read_text(encoding="utf-8")
+        else:
+            source = source.model_copy(update={"url": self.build_url(source)})
+            raw = _fetch_remote_text(source.url or "")
         name = _default_name(source)
         parsed = self.parser(raw)
         if self.kind == "beir_json":
             payload = _normalize_beir_payload(source, parsed, name)
+        elif self.kind == "scifact_json":
+            payload = _normalize_scifact_payload(source, parsed, name)
         else:
             payload = _normalize_dataset_payload(source, task_family, parsed, name)
 
@@ -898,6 +1060,11 @@ class BeirJSONAdapter(RemoteFileAdapter):
     parser = staticmethod(_rows_from_json)
 
 
+class SciFactJSONAdapter(RemoteFileAdapter):
+    kind = "scifact_json"
+    parser = staticmethod(_rows_from_json)
+
+
 ADAPTERS: dict[str, BenchmarkAdapter] = {
     "builtin": BuiltinBenchmarkAdapter(),
     "remote_csv": RemoteCSVAdapter(),
@@ -906,6 +1073,7 @@ ADAPTERS: dict[str, BenchmarkAdapter] = {
     "huggingface_file": HuggingFaceFileAdapter(),
     "openml_file": OpenMLFileAdapter(),
     "beir_json": BeirJSONAdapter(),
+    "scifact_json": SciFactJSONAdapter(),
 }
 
 

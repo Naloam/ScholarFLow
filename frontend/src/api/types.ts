@@ -281,7 +281,8 @@ export type AutoResearchBenchmarkKind =
   | "remote_json"
   | "huggingface_file"
   | "openml_file"
-  | "beir_json";
+  | "beir_json"
+  | "scifact_json";
 
 export type AutoResearchAcceptanceStatistic =
   | "mean"

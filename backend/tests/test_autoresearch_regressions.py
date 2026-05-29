@@ -18,6 +18,7 @@ import services.autoresearch.bridge as autoresearch_bridge
 import services.autoresearch.evaluation_cases as autoresearch_evaluation_cases
 import services.autoresearch.experiment_factory as autoresearch_experiment_factory
 import services.autoresearch.idea_brief as autoresearch_idea_brief
+import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_connectors as autoresearch_literature_connectors
 import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
@@ -300,6 +301,88 @@ def test_frozen_claim_evidence_ir_runner_executes_non_degenerate_fixture(
     assert artifact.significance_tests
     assert all(check.passed for check in artifact.acceptance_checks)
     assert artifact.environment["benchmark_name"] == "Frozen Claim Evidence Reranking"
+
+
+def test_scifact_json_adapter_normalizes_claim_evidence_fixture(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "name": "SciFact Claim Evidence Fixture",
+        "description": "Cache-backed SciFact-style claim-evidence retrieval fixture.",
+        "corpus": [
+            {
+                "doc_id": "doc_support_train",
+                "title": "Vitamin D and Respiratory Infection",
+                "abstract": ["Vitamin D supplementation reduces respiratory infection risk in adults."],
+            },
+            {
+                "doc_id": "doc_neutral_train",
+                "title": "Respiratory Survey Design",
+                "abstract": ["A survey describes respiratory symptoms without intervention evidence."],
+            },
+            {
+                "doc_id": "doc_support_test",
+                "title": "Masks and Aerosol Transmission",
+                "abstract": ["Mask wearing reduces aerosol transmission in controlled environments."],
+            },
+            {
+                "doc_id": "doc_distractor_test",
+                "title": "Aerosol Measurement Devices",
+                "abstract": ["Measurement devices characterize aerosols but do not test mask wearing."],
+            },
+        ],
+        "claims": [
+            {
+                "id": "claim_train",
+                "claim": "Vitamin D supplementation reduces respiratory infection risk.",
+                "candidate_doc_ids": ["doc_support_train", "doc_neutral_train"],
+                "evidence": {"doc_support_train": [{"label": "SUPPORT"}]},
+            },
+            {
+                "id": "claim_test",
+                "claim": "Masks reduce aerosol transmission.",
+                "candidate_doc_ids": ["doc_support_test", "doc_distractor_test"],
+                "evidence": {"doc_support_test": [{"label": "SUPPORT"}]},
+            },
+        ],
+        "split": {"train": ["claim_train"], "test": ["claim_test"]},
+    }
+    cache_path = tmp_path / "scifact_fixture.json"
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"SciFact fixture should load from cache, not network: {url}"),
+    )
+
+    source = BenchmarkSource(
+        kind="scifact_json",
+        name="SciFact fixture",
+        file_path=str(cache_path),
+        dataset_id="allenai/scifact",
+        revision="fixture-v1",
+        license="cc-by-nc",
+    )
+    benchmark = autoresearch_ingestion.resolve_benchmark(
+        topic="claim evidence retrieval for scientific writing agents",
+        task_family_hint="ir_reranking",
+        benchmark_source=source,
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+
+    assert benchmark.benchmark_name == "SciFact Claim Evidence Fixture"
+    assert benchmark.source.kind == "scifact_json"
+    assert benchmark.payload["train"][0]["query"] == "Vitamin D supplementation reduces respiratory infection risk."
+    assert benchmark.payload["test"][0]["relevant_ids"] == ["doc_support_test"]
+    assert benchmark.payload["test"][0]["candidates"][0]["text"].startswith("Masks and Aerosol Transmission")
+    assert spec.dataset.source_kind == "scifact_json"
+    assert spec.dataset.source_url == f"file://{cache_path.resolve()}"
+    assert spec.dataset.source_dataset_id == "allenai/scifact"
+    assert spec.dataset.source_revision == "fixture-v1"
+    assert spec.dataset.source_license == "cc-by-nc"
+    assert spec.dataset.candidate_count == 2
+    assert spec.dataset.publication_grade is False
 
 
 def _result_artifact() -> ResultArtifact:

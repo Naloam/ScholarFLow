@@ -32,6 +32,7 @@ BenchmarkKind = Literal[
     "huggingface_file",
     "openml_file",
     "beir_json",
+    "scifact_json",
 ]
 ExecutionBackendKind = Literal["auto", "local", "docker", "docker_gpu", "command"]
 AutoResearchExperimentBridgeMode = Literal["manual_async"]

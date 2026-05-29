@@ -77,6 +77,12 @@ The vertical loop is complete only when all of the following are true:
 - Keep network disabled in tests.
 - Add fixture tests for parsing corpus, queries, qrels, and metrics.
 
+Current implementation:
+
+- `beir_json` loads BEIR-style `queries` / `corpus` / `qrels` payloads.
+- `scifact_json` loads SciFact-style `claims` / `corpus` / `evidence` payloads.
+- Both paths can read from `BenchmarkSource.file_path`, allowing CI and local runs to use cached fixtures without live network.
+
 ### V3: Runner Metrics
 
 - Extend IR runner reporting with nDCG@10 and Recall@10.

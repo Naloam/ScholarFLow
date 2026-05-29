@@ -252,6 +252,17 @@ def _infer_feature_fields(rows: list[dict[str, Any]], label_field: str, split_fi
     return fields
 
 
+def _normalize_scifact_verdict(value: Any) -> str | None:
+    lowered = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if lowered in {"support", "supports", "supported", "entails", "entailment"}:
+        return "supported"
+    if lowered in {"refute", "refutes", "refuted", "contradict", "contradicts", "contradicted"}:
+        return "refuted"
+    if lowered in {"nei", "not_enough_info", "not_enough_evidence", "notenoughinfo", "unknown", "unverifiable"}:
+        return "not_enough_info"
+    return None
+
+
 def _normalize_text_dataset(source: BenchmarkSource, rows: list[dict[str, Any]], name: str) -> dict[str, Any]:
     limited_rows = _limit_rows(rows, source)
     if source.split_field:
@@ -314,7 +325,9 @@ def _normalize_ir_row(source: BenchmarkSource, row: dict[str, Any]) -> dict[str,
     query = str(row.get(query_field, "")).strip()
     candidates = row.get(candidates_field) or []
     relevant_ids = row.get(relevant_ids_field) or []
-    if not query or not isinstance(candidates, list) or not relevant_ids:
+    claim_label = _normalize_scifact_verdict(row.get("claim_label") or row.get("label") or row.get("verdict"))
+    allow_empty_relevant = claim_label == "not_enough_info"
+    if not query or not isinstance(candidates, list) or (not relevant_ids and not allow_empty_relevant):
         raise BenchmarkIngestionError("IR benchmark rows need query, candidates, and relevant_ids")
 
     normalized_candidates = []
@@ -327,11 +340,18 @@ def _normalize_ir_row(source: BenchmarkSource, row: dict[str, Any]) -> dict[str,
             normalized_candidates.append({"id": candidate_id, "text": text})
     if not normalized_candidates:
         raise BenchmarkIngestionError("IR benchmark candidates must include id/text")
-    return {
+    normalized = {
         "query": query,
         "candidates": normalized_candidates,
         "relevant_ids": [str(item) for item in relevant_ids if str(item).strip()],
     }
+    for key in ("claim_id", "claim_label", "evidence_labels", "unsupported_claim"):
+        if key in row:
+            normalized[key] = row[key]
+    if claim_label:
+        normalized["claim_label"] = claim_label
+        normalized["unsupported_claim"] = claim_label != "supported"
+    return normalized
 
 
 def _normalize_ir_dataset(source: BenchmarkSource, rows: list[dict[str, Any]], name: str) -> dict[str, Any]:
@@ -520,16 +540,75 @@ def _scifact_evidence_doc_ids(claim: dict[str, Any]) -> list[str]:
                     for entry in entries
                     if isinstance(entry, dict)
                 ]
-                if labels and all(label in {"nei", "not_enough_info", "not enough info"} for label in labels):
+                if labels and all(_normalize_scifact_verdict(label) == "not_enough_info" for label in labels):
                     continue
             doc_ids.append(str(doc_id))
     elif isinstance(evidence, list):
         for item in evidence:
             doc_id = _scifact_doc_id(item)
-            label = str(item.get("label") if isinstance(item, dict) else "").lower()
-            if doc_id and label not in {"nei", "not_enough_info", "not enough info"}:
+            label = _normalize_scifact_verdict(item.get("label") if isinstance(item, dict) else "")
+            if doc_id and label != "not_enough_info":
                 doc_ids.append(doc_id)
     return _dedupe(doc_ids)
+
+
+def _scifact_claim_label(claim: dict[str, Any]) -> str | None:
+    for key in ("label", "claim_label", "verdict", "classification", "gold_label"):
+        label = _normalize_scifact_verdict(claim.get(key))
+        if label:
+            return label
+    evidence = claim.get("evidence") or {}
+    labels: list[str] = []
+    if isinstance(evidence, dict):
+        for entries in evidence.values():
+            if isinstance(entries, list):
+                labels.extend(
+                    label
+                    for entry in entries
+                    if isinstance(entry, dict)
+                    and (label := _normalize_scifact_verdict(entry.get("label") or entry.get("evidence_label")))
+                )
+    elif isinstance(evidence, list):
+        labels.extend(
+            label
+            for entry in evidence
+            if isinstance(entry, dict)
+            and (label := _normalize_scifact_verdict(entry.get("label") or entry.get("evidence_label")))
+        )
+    if "refuted" in labels:
+        return "refuted"
+    if "supported" in labels:
+        return "supported"
+    if "not_enough_info" in labels:
+        return "not_enough_info"
+    return None
+
+
+def _scifact_evidence_label_map(claim: dict[str, Any]) -> dict[str, str]:
+    evidence = claim.get("evidence") or {}
+    labels: dict[str, str] = {}
+    if isinstance(evidence, dict):
+        for doc_id, entries in evidence.items():
+            label = None
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict):
+                        label = _normalize_scifact_verdict(entry.get("label") or entry.get("evidence_label"))
+                        if label:
+                            break
+            elif isinstance(entries, dict):
+                label = _normalize_scifact_verdict(entries.get("label") or entries.get("evidence_label"))
+            if label and label != "not_enough_info":
+                labels[str(doc_id)] = label
+    elif isinstance(evidence, list):
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            doc_id = _scifact_doc_id(item)
+            label = _normalize_scifact_verdict(item.get("label") or item.get("evidence_label"))
+            if doc_id and label and label != "not_enough_info":
+                labels[doc_id] = label
+    return labels
 
 
 def _scifact_candidate_doc_ids(claim: dict[str, Any], corpus_map: dict[str, str]) -> list[str]:
@@ -575,12 +654,22 @@ def _normalize_scifact_payload(source: BenchmarkSource, payload: dict[str, Any],
     for claim in claims:
         claim_id = str(claim.get("id") or claim.get("claim_id") or "").strip()
         query = str(claim.get("claim") or claim.get("query") or "").strip()
+        claim_label = _scifact_claim_label(claim)
+        evidence_labels = _scifact_evidence_label_map(claim)
         relevant_ids = [doc_id for doc_id in _scifact_evidence_doc_ids(claim) if doc_id in corpus_map]
         candidate_ids = _scifact_candidate_doc_ids(claim, corpus_map)
         candidates = [{"id": doc_id, "text": corpus_map[doc_id]} for doc_id in candidate_ids]
-        if not query or not candidates or not relevant_ids:
+        if not query or not candidates or (not relevant_ids and claim_label != "not_enough_info"):
             continue
-        row = {"query": query, "candidates": candidates, "relevant_ids": relevant_ids}
+        row = {
+            "claim_id": claim_id,
+            "query": query,
+            "candidates": candidates,
+            "relevant_ids": relevant_ids,
+            "claim_label": claim_label,
+            "evidence_labels": evidence_labels,
+            "unsupported_claim": claim_label in {"refuted", "not_enough_info"},
+        }
         claim_split = str(claim.get("split") or "").lower()
         if claim_id in train_ids or claim_split == "train":
             rows_by_split["train"].append(row)
@@ -606,6 +695,14 @@ def _normalize_scifact_payload(source: BenchmarkSource, payload: dict[str, Any],
         )
         normalized["description"] = payload.get("description") or "SciFact-style claim-evidence retrieval benchmark."
     normalized["source_url"] = _source_url(source)
+    normalized["verification_label_space"] = sorted(
+        {
+            item["claim_label"]
+            for item in [*normalized.get("train", []), *normalized.get("test", [])]
+            if item.get("claim_label")
+        }
+    )
+    normalized["supports_claim_verification"] = bool(normalized["verification_label_space"])
     return normalized
 
 

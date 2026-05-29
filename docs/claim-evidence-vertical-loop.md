@@ -82,7 +82,8 @@ Current implementation:
 - `beir_json` loads BEIR-style `queries` / `corpus` / `qrels` payloads.
 - `scifact_json` loads SciFact-style `claims` / `corpus` / `evidence` payloads.
 - Both paths can read from `BenchmarkSource.file_path`, allowing CI and local runs to use cached fixtures without live network.
-- IR runner output now reports MRR, Recall@1, nDCG@10, Recall@10, evidence coverage, and per-query objective failure cases for paper analysis.
+- SciFact fixtures preserve supported/refuted/not-enough-info labels, including not-enough-info claims with no gold evidence document.
+- IR runner output now reports MRR, Recall@1, nDCG@10, Recall@10, evidence coverage, claim-verification accuracy, unsupported-claim precision/recall, abstention accuracy, and per-query objective failure cases for paper analysis.
 - The IR search ladder includes `ledger_aware_reranker_search`, which combines IDF, bigram overlap, and transparent claim/citation/artifact/experiment/review cue alignment.
 - Retrieval failure cases are converted into deduplicated review-loop repair actions such as claim downgrades or literature refreshes.
 - Claim-evidence IR runs now emit a workshop-style vertical package with manuscript section requirements, a per-query retrieval evidence ledger, claim-evidence index entries, reproducibility assets, limitations, and reviewer-response actions.

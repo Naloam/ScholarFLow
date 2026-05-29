@@ -257,6 +257,10 @@ def test_claim_evidence_ir_routes_to_frozen_non_publication_fixture() -> None:
         "ndcg_at_10",
         "recall_at_10",
         "evidence_coverage",
+        "verification_accuracy",
+        "unsupported_claim_precision",
+        "unsupported_claim_recall",
+        "abstention_accuracy",
     ]
     assert spec.search_strategies[-1] == "ledger_aware_reranker_search"
     assert spec.sweeps[0].params["ledger_weight"] == 1.0
@@ -491,6 +495,9 @@ def test_scifact_json_adapter_normalizes_claim_evidence_fixture(
     assert benchmark.source.kind == "scifact_json"
     assert benchmark.payload["train"][0]["query"] == "Vitamin D supplementation reduces respiratory infection risk."
     assert benchmark.payload["test"][0]["relevant_ids"] == ["doc_support_test"]
+    assert benchmark.payload["test"][0]["claim_label"] == "supported"
+    assert benchmark.payload["test"][0]["evidence_labels"] == {"doc_support_test": "supported"}
+    assert benchmark.payload["verification_label_space"] == ["supported"]
     assert benchmark.payload["test"][0]["candidates"][0]["text"].startswith("Masks and Aerosol Transmission")
     assert spec.dataset.source_kind == "scifact_json"
     assert spec.dataset.source_url == f"file://{cache_path.resolve()}"
@@ -499,6 +506,177 @@ def test_scifact_json_adapter_normalizes_claim_evidence_fixture(
     assert spec.dataset.source_license == "cc-by-nc"
     assert spec.dataset.candidate_count == 2
     assert spec.dataset.publication_grade is False
+
+
+def test_scifact_verification_fixture_reports_unsupported_claim_metrics(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    payload = {
+        "name": "SciFact Verification Fixture",
+        "description": "Cached support/refute/not-enough-info claim verification fixture.",
+        "corpus": [
+            {
+                "doc_id": "support_train",
+                "title": "Training Support Evidence",
+                "abstract": ["Training intervention improves measured outcomes in a randomized trial."],
+            },
+            {
+                "doc_id": "refute_train",
+                "title": "Training Refutation Evidence",
+                "abstract": ["The candidate intervention does not improve measured outcomes."],
+            },
+            {
+                "doc_id": "nei_train",
+                "title": "Training Background Evidence",
+                "abstract": ["Background notes discuss study design without testing the intervention."],
+            },
+            {
+                "doc_id": "support_test",
+                "title": "Omega Inflammation Trial",
+                "abstract": ["Omega treatment reduces inflammation in controlled clinical trials."],
+            },
+            {
+                "doc_id": "support_distractor",
+                "title": "Inflammation Survey",
+                "abstract": ["Surveys describe inflammation symptoms without testing omega treatment."],
+            },
+            {
+                "doc_id": "refute_test",
+                "title": "Coffee Sleep Trial",
+                "abstract": ["Coffee does not reduce sleep latency and increases wakefulness."],
+            },
+            {
+                "doc_id": "refute_distractor",
+                "title": "Sleep Questionnaire",
+                "abstract": ["Questionnaires measure sleep latency in observational cohorts."],
+            },
+            {
+                "doc_id": "nei_test",
+                "title": "Reading Comfort Study",
+                "abstract": ["Cognitive training improves memory and reading comfort in adults."],
+            },
+            {
+                "doc_id": "nei_distractor",
+                "title": "Screen Brightness Study",
+                "abstract": ["Screen brightness changes user comfort during evening reading."],
+            },
+        ],
+        "claims": [
+            {
+                "id": "train_support",
+                "claim": "Training intervention improves measured outcomes.",
+                "candidate_doc_ids": ["support_train", "nei_train"],
+                "evidence": {"support_train": [{"label": "SUPPORT"}]},
+            },
+            {
+                "id": "train_refute",
+                "claim": "Candidate intervention improves measured outcomes.",
+                "candidate_doc_ids": ["refute_train", "support_train"],
+                "evidence": {"refute_train": [{"label": "REFUTE"}]},
+            },
+            {
+                "id": "train_nei",
+                "claim": "Training intervention cures seasonal allergies.",
+                "candidate_doc_ids": ["nei_train", "support_train"],
+                "label": "NEI",
+                "evidence": {},
+            },
+            {
+                "id": "test_support",
+                "claim": "Omega treatment reduces inflammation.",
+                "candidate_doc_ids": ["support_test", "support_distractor", "nei_test"],
+                "evidence": {"support_test": [{"label": "SUPPORT"}]},
+            },
+            {
+                "id": "test_refute",
+                "claim": "Coffee reduces sleep latency.",
+                "candidate_doc_ids": ["refute_test", "refute_distractor", "nei_test"],
+                "evidence": {"refute_test": [{"label": "REFUTE"}]},
+            },
+            {
+                "id": "test_nei",
+                "claim": "Blue light cures migraine.",
+                "candidate_doc_ids": ["nei_test", "nei_distractor", "support_distractor"],
+                "label": "NEI",
+                "evidence": {},
+            },
+        ],
+        "split": {
+            "train": ["train_support", "train_refute", "train_nei"],
+            "test": ["test_support", "test_refute", "test_nei"],
+        },
+    }
+    cache_path = tmp_path / "scifact_verification_fixture.json"
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"SciFact verification fixture should load from cache, not network: {url}"),
+    )
+
+    source = BenchmarkSource(
+        kind="scifact_json",
+        name="SciFact verification fixture",
+        file_path=str(cache_path),
+        dataset_id="allenai/scifact",
+        revision="verification-fixture-v1",
+        license="cc-by-nc",
+    )
+    benchmark = autoresearch_ingestion.resolve_benchmark(
+        topic="claim evidence verification unsupported scientific claims",
+        task_family_hint="ir_reranking",
+        benchmark_source=source,
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+    plan = _claim_evidence_runner_plan(spec)
+    code = ExperimentCodeGenerator()._ir_template(
+        plan,
+        spec,
+        benchmark.payload,
+        "ledger_aware_reranker_search",
+    )
+
+    _, _, artifact = AutoExperimentRunner().run(
+        project_id="project-scifact-verification",
+        run_id="run-scifact-verification",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=benchmark.payload,
+        round_index=4,
+        goal="evaluate cached SciFact verification fixture",
+        prior_attempts=[],
+        execution_backend=ExecutionBackendSpec(kind="local", timeout_seconds=30),
+        code_override=code,
+        strategy_override="ledger_aware_reranker_search",
+    )
+
+    assert benchmark.payload["verification_label_space"] == ["not_enough_info", "refuted", "supported"]
+    assert benchmark.payload["test"][2]["claim_label"] == "not_enough_info"
+    assert benchmark.payload["test"][2]["relevant_ids"] == []
+    objective_metrics = next(
+        item.mean_metrics
+        for item in artifact.aggregate_system_results
+        if item.system == "ledger_aware_ranker"
+    )
+    assert artifact.status == "done"
+    assert objective_metrics["verification_accuracy"] == 1.0
+    assert objective_metrics["unsupported_claim_precision"] == 1.0
+    assert objective_metrics["unsupported_claim_recall"] == 1.0
+    assert objective_metrics["abstention_accuracy"] == 1.0
+    main_table = next(table for table in artifact.tables if table.title == "Main Results")
+    assert "Verification Accuracy" in main_table.columns
+    assert "Unsupported Recall" in main_table.columns
+    vertical_package = artifact.outputs["claim_evidence_vertical_package"]
+    assert any(item["claim_id"] == "claim_verification_behavior" for item in vertical_package["claim_evidence_index"])
+    verification_entries = vertical_package["retrieval_evidence_ledger"]["entries"]
+    assert {item["claim_label"] for item in verification_entries} == {
+        "supported",
+        "refuted",
+        "not_enough_info",
+    }
+    assert all(item["metrics"]["verification_correct"] == 1.0 for item in verification_entries)
 
 
 def _result_artifact() -> ResultArtifact:

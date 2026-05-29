@@ -124,6 +124,10 @@ def _metric_label(name: str) -> str:
         "ndcg_at_10": "nDCG@10",
         "recall_at_10": "Recall@10",
         "evidence_coverage": "Evidence Coverage",
+        "verification_accuracy": "Verification Accuracy",
+        "unsupported_claim_precision": "Unsupported Precision",
+        "unsupported_claim_recall": "Unsupported Recall",
+        "abstention_accuracy": "Abstention Accuracy",
     }
     return labels.get(name, name.replace("_", " ").title())
 
@@ -305,7 +309,14 @@ def _claim_evidence_vertical_package(
         recall_at_1 = _as_float(record.get("recall_at_1"))
         recall_at_10 = _as_float(record.get("recall_at_10"))
         evidence_coverage = _as_float(record.get("evidence_coverage"))
-        if recall_at_1 >= 1.0 and evidence_coverage >= 1.0:
+        claim_label = str(record.get("claim_label") or "").strip() or None
+        predicted_claim_label = str(record.get("predicted_claim_label") or "").strip() or None
+        verification_correct = _as_float(record.get("verification_correct"))
+        if claim_label == "not_enough_info" and verification_correct >= 1.0:
+            support_status = "supported"
+        elif claim_label and verification_correct < 1.0:
+            support_status = "unsupported" if "unsupported_claim_missed" in record.get("failure_modes", []) else "partial"
+        elif recall_at_1 >= 1.0 and evidence_coverage >= 1.0:
             support_status = "supported"
         elif recall_at_10 >= 1.0 or evidence_coverage >= 1.0:
             support_status = "partial"
@@ -325,7 +336,17 @@ def _claim_evidence_vertical_package(
                 "recall_at_10": recall_at_10,
                 "ndcg_at_10": _as_float(record.get("ndcg_at_10")),
                 "evidence_coverage": evidence_coverage,
+                **(
+                    {
+                        "verification_correct": verification_correct,
+                        "unsupported_claim_detected": bool(record.get("predicted_unsupported")),
+                    }
+                    if claim_label
+                    else {}
+                ),
             },
+            "claim_label": claim_label,
+            "predicted_claim_label": predicted_claim_label,
             "failure_modes": [str(item) for item in record.get("failure_modes") or []],
             "repair_action_ids": repair_action_ids,
         }
@@ -385,6 +406,24 @@ def _claim_evidence_vertical_package(
             "evidence_refs": ["experiment_spec.dataset.publication_grade", "claim_evidence_vertical_loop.limitations"],
         },
     ]
+    if "verification_accuracy" in objective_metrics:
+        claim_evidence_index.insert(
+            2,
+            {
+                "claim_id": "claim_verification_behavior",
+                "claim": (
+                    f"The objective system reports claim-verification accuracy "
+                    f"{objective_metrics.get('verification_accuracy', 0.0):.4f}, unsupported-claim recall "
+                    f"{objective_metrics.get('unsupported_claim_recall', 0.0):.4f}, and abstention accuracy "
+                    f"{objective_metrics.get('abstention_accuracy', 0.0):.4f}."
+                ),
+                "support_status": "supported",
+                "evidence_refs": [
+                    "result_artifact.aggregate_system_results.verification_accuracy",
+                    "retrieval_evidence_ledger.entries",
+                ],
+            },
+        )
     sections = [
         {
             "section": "abstract",

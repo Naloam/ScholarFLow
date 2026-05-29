@@ -316,7 +316,7 @@ if __name__ == "__main__":
         benchmark_payload: dict[str, Any],
         strategy: str,
     ) -> str:
-        dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
+        dataset_json = repr(benchmark_payload)
         return f'''import json
 import math
 import os
@@ -381,54 +381,138 @@ def complete_evidence_coverage(relevant_ids, ranked_ids, k):
     return 1.0 if relevant.issubset(set(ranked_ids[:k])) else 0.0
 
 
+def normalize_verdict(value):
+    lowered = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if lowered in {{"support", "supports", "supported", "entails", "entailment"}}:
+        return "supported"
+    if lowered in {{"refute", "refutes", "refuted", "contradict", "contradicts", "contradicted"}}:
+        return "refuted"
+    if lowered in {{"nei", "not_enough_info", "not_enough_evidence", "notenoughinfo", "unknown", "unverifiable"}}:
+        return "not_enough_info"
+    return None
+
+
+def candidate_text_by_id(example):
+    return {{candidate["id"]: candidate.get("text", "") for candidate in example.get("candidates", [])}}
+
+
+def predict_verdict(example, ranked):
+    if not ranked:
+        return "not_enough_info"
+    top_text = candidate_text_by_id(example).get(ranked[0], "")
+    query_tokens = set(tokenize(example.get("query", "")))
+    doc_tokens = set(tokenize(top_text))
+    overlap = len(query_tokens & doc_tokens)
+    refute_markers = {{
+        "not", "no", "never", "without", "fails", "failed", "contradicts", "contradicted",
+        "refutes", "refuted", "increases", "worse",
+    }}
+    if overlap < 1:
+        return "not_enough_info"
+    if doc_tokens & refute_markers:
+        return "refuted"
+    if overlap >= 2:
+        return "supported"
+    return "not_enough_info"
+
+
+def verification_metric_record(example, ranked):
+    gold = normalize_verdict(example.get("claim_label"))
+    if not gold:
+        return {{}}
+    predicted = predict_verdict(example, ranked)
+    gold_unsupported = gold != "supported"
+    predicted_unsupported = predicted != "supported"
+    return {{
+        "claim_label": gold,
+        "predicted_claim_label": predicted,
+        "verification_correct": 1.0 if predicted == gold else 0.0,
+        "gold_unsupported": gold_unsupported,
+        "predicted_unsupported": predicted_unsupported,
+        "unsupported_true_positive": 1.0 if gold_unsupported and predicted_unsupported else 0.0,
+        "unsupported_false_positive": 1.0 if not gold_unsupported and predicted_unsupported else 0.0,
+        "unsupported_false_negative": 1.0 if gold_unsupported and not predicted_unsupported else 0.0,
+        "abstention_correct": 1.0 if gold == "not_enough_info" and predicted == "not_enough_info" else 0.0,
+        "abstention_applicable": 1.0 if gold == "not_enough_info" else 0.0,
+    }}
+
+
 def query_metric_record(example, ranked):
     relevant_ids = example["relevant_ids"]
+    retrieval_applicable = bool(relevant_ids)
     record = {{
         "query": example.get("query", ""),
         "relevant_ids": list(relevant_ids),
         "ranked_ids_at_10": ranked[:10],
-        "reciprocal_rank": reciprocal_rank(relevant_ids, ranked),
-        "recall_at_1": recall_at_1(relevant_ids, ranked),
-        "ndcg_at_10": ndcg_at_k(relevant_ids, ranked, 10),
-        "recall_at_10": recall_at_k(relevant_ids, ranked, 10),
-        "evidence_coverage": complete_evidence_coverage(relevant_ids, ranked, 10),
+        "retrieval_applicable": retrieval_applicable,
+        "reciprocal_rank": reciprocal_rank(relevant_ids, ranked) if retrieval_applicable else 0.0,
+        "recall_at_1": recall_at_1(relevant_ids, ranked) if retrieval_applicable else 0.0,
+        "ndcg_at_10": ndcg_at_k(relevant_ids, ranked, 10) if retrieval_applicable else 0.0,
+        "recall_at_10": recall_at_k(relevant_ids, ranked, 10) if retrieval_applicable else 0.0,
+        "evidence_coverage": complete_evidence_coverage(relevant_ids, ranked, 10) if retrieval_applicable else 0.0,
     }}
     failure_modes = []
-    if record["recall_at_1"] < 1.0:
+    if retrieval_applicable and record["recall_at_1"] < 1.0:
         failure_modes.append("top_rank_not_relevant")
-    if record["recall_at_10"] < 1.0:
+    if retrieval_applicable and record["recall_at_10"] < 1.0:
         failure_modes.append("missing_relevant_evidence_top_10")
-    if record["evidence_coverage"] < 1.0:
+    if retrieval_applicable and record["evidence_coverage"] < 1.0:
         failure_modes.append("incomplete_gold_evidence_coverage")
+    verification = verification_metric_record(example, ranked)
+    if verification:
+        record.update(verification)
+        if not verification["verification_correct"]:
+            failure_modes.append("verification_mismatch")
+        if verification["unsupported_false_negative"]:
+            failure_modes.append("unsupported_claim_missed")
+        if verification["unsupported_false_positive"]:
+            failure_modes.append("false_unsupported_alarm")
     record["failure_modes"] = failure_modes
     return record
 
 
 def evaluate(system_name, examples, ranking_fn):
-    reciprocal_ranks = []
-    recalls_at_1 = []
-    ndcgs_at_10 = []
-    recalls_at_10 = []
-    evidence_coverages = []
     diagnostics = []
     for example in examples:
         ranked = ranking_fn(example)
         record = query_metric_record(example, ranked)
         diagnostics.append(record)
-        reciprocal_ranks.append(record["reciprocal_rank"])
-        recalls_at_1.append(record["recall_at_1"])
-        ndcgs_at_10.append(record["ndcg_at_10"])
-        recalls_at_10.append(record["recall_at_10"])
-        evidence_coverages.append(record["evidence_coverage"])
+    retrieval_records = [record for record in diagnostics if record.get("retrieval_applicable")]
+    retrieval_denominator = len(retrieval_records) or 1
+    metrics = {{
+        "mrr": round(sum(record["reciprocal_rank"] for record in retrieval_records) / retrieval_denominator, 4),
+        "recall_at_1": round(sum(record["recall_at_1"] for record in retrieval_records) / retrieval_denominator, 4),
+        "ndcg_at_10": round(sum(record["ndcg_at_10"] for record in retrieval_records) / retrieval_denominator, 4),
+        "recall_at_10": round(sum(record["recall_at_10"] for record in retrieval_records) / retrieval_denominator, 4),
+        "evidence_coverage": round(sum(record["evidence_coverage"] for record in retrieval_records) / retrieval_denominator, 4),
+    }}
+    verification_records = [record for record in diagnostics if record.get("claim_label")]
+    if verification_records:
+        unsupported_tp = sum(record["unsupported_true_positive"] for record in verification_records)
+        unsupported_fp = sum(record["unsupported_false_positive"] for record in verification_records)
+        unsupported_fn = sum(record["unsupported_false_negative"] for record in verification_records)
+        abstention_denominator = sum(record["abstention_applicable"] for record in verification_records)
+        metrics.update({{
+            "verification_accuracy": round(
+                sum(record["verification_correct"] for record in verification_records) / len(verification_records),
+                4,
+            ),
+            "unsupported_claim_precision": round(
+                unsupported_tp / (unsupported_tp + unsupported_fp),
+                4,
+            ) if unsupported_tp + unsupported_fp else 0.0,
+            "unsupported_claim_recall": round(
+                unsupported_tp / (unsupported_tp + unsupported_fn),
+                4,
+            ) if unsupported_tp + unsupported_fn else 0.0,
+            "abstention_accuracy": round(
+                sum(record["abstention_correct"] for record in verification_records) / abstention_denominator,
+                4,
+            ) if abstention_denominator else 0.0,
+        }})
     return {{
         "system": system_name,
-        "metrics": {{
-            "mrr": round(sum(reciprocal_ranks) / len(reciprocal_ranks), 4),
-            "recall_at_1": round(sum(recalls_at_1) / len(recalls_at_1), 4),
-            "ndcg_at_10": round(sum(ndcgs_at_10) / len(ndcgs_at_10), 4),
-            "recall_at_10": round(sum(recalls_at_10) / len(recalls_at_10), 4),
-            "evidence_coverage": round(sum(evidence_coverages) / len(evidence_coverages), 4),
-        }},
+        "metrics": metrics,
         "diagnostics": diagnostics,
     }}
 
@@ -629,14 +713,26 @@ def run():
         item for item in objective_diagnostics
         if item.get("failure_modes")
     ]
+    metric_order = ["mrr", "recall_at_1", "ndcg_at_10", "recall_at_10", "evidence_coverage"]
+    metric_labels = {{
+        "mrr": "MRR",
+        "recall_at_1": "Recall@1",
+        "ndcg_at_10": "nDCG@10",
+        "recall_at_10": "Recall@10",
+        "evidence_coverage": "Evidence Coverage",
+        "verification_accuracy": "Verification Accuracy",
+        "unsupported_claim_precision": "Unsupported Precision",
+        "unsupported_claim_recall": "Unsupported Recall",
+        "abstention_accuracy": "Abstention Accuracy",
+    }}
+    for item in results:
+        for metric_name in item["metrics"]:
+            if metric_name not in metric_order:
+                metric_order.append(metric_name)
     rows = [
         [
             item["system"],
-            f'{{item["metrics"]["mrr"]:.4f}}',
-            f'{{item["metrics"]["recall_at_1"]:.4f}}',
-            f'{{item["metrics"]["ndcg_at_10"]:.4f}}',
-            f'{{item["metrics"]["recall_at_10"]:.4f}}',
-            f'{{item["metrics"]["evidence_coverage"]:.4f}}',
+            *[f'{{item["metrics"].get(metric, 0.0):.4f}}' for metric in metric_order],
         ]
         for item in results
     ]
@@ -662,7 +758,7 @@ def run():
         "tables": [
             {{
                 "title": "Main Results",
-                "columns": ["System", "MRR", "Recall@1", "nDCG@10", "Recall@10", "Evidence Coverage"],
+                "columns": ["System", *[metric_labels.get(metric, metric) for metric in metric_order]],
                 "rows": rows,
             }}
         ],
@@ -686,6 +782,10 @@ def run():
                 "ndcg_at_10": "Binary-relevance nDCG over top 10.",
                 "recall_at_10": "Fraction of gold evidence documents recovered in top 10.",
                 "evidence_coverage": "Whether every gold evidence document is covered in top 10.",
+                "verification_accuracy": "Exact supported/refuted/not-enough-info claim-verdict accuracy when labels are present.",
+                "unsupported_claim_precision": "Precision for detecting refuted or not-enough-info claims.",
+                "unsupported_claim_recall": "Recall for detecting refuted or not-enough-info claims.",
+                "abstention_accuracy": "Accuracy on not-enough-info claims.",
             }},
         }},
     }}
@@ -1327,7 +1427,7 @@ def predict(train, test):
         strategy: str,
     ) -> str:
         """Generate the fixed experiment framework that imports and evaluates method.py."""
-        dataset_json = json.dumps(benchmark_payload, ensure_ascii=False, indent=2)
+        dataset_json = repr(benchmark_payload)
         task_family = plan.task_family
         is_ir = task_family == "ir_reranking"
 

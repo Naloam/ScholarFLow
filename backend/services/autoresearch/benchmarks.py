@@ -2059,6 +2059,26 @@ def build_experiment_spec(
                 goal="maximize",
                 description="Fraction of queries whose complete gold evidence set is covered in the top 10.",
             ),
+            MetricSpec(
+                name="verification_accuracy",
+                goal="maximize",
+                description="Exact supported/refuted/not-enough-info verdict accuracy when claim labels are present.",
+            ),
+            MetricSpec(
+                name="unsupported_claim_precision",
+                goal="maximize",
+                description="Precision for detecting refuted or not-enough-info claims.",
+            ),
+            MetricSpec(
+                name="unsupported_claim_recall",
+                goal="maximize",
+                description="Recall for detecting refuted or not-enough-info claims.",
+            ),
+            MetricSpec(
+                name="abstention_accuracy",
+                goal="maximize",
+                description="Accuracy on not-enough-info claims.",
+            ),
         ]
         ablations = [
             AblationSpec(
@@ -2076,7 +2096,10 @@ def build_experiment_spec(
         notes = [
             "Use only Python standard library utilities.",
             "Treat each example as a query with a short candidate list.",
-            "Report MRR, Recall@1, nDCG@10, Recall@10, and evidence coverage on the held-out split.",
+            (
+                "Report MRR, Recall@1, nDCG@10, Recall@10, evidence coverage, and when labels "
+                "exist, claim-verification accuracy, unsupported-claim precision/recall, and abstention accuracy."
+            ),
             "Support BEIR-style normalized JSON as an external adapter target.",
             "Use ledger-aware cue alignment only as a transparent text signal; do not inspect relevance labels.",
         ]

@@ -258,6 +258,8 @@ def test_claim_evidence_ir_routes_to_frozen_non_publication_fixture() -> None:
         "recall_at_10",
         "evidence_coverage",
     ]
+    assert spec.search_strategies[-1] == "ledger_aware_reranker_search"
+    assert spec.sweeps[0].params["ledger_weight"] == 1.0
 
 
 def test_frozen_claim_evidence_ir_runner_executes_non_degenerate_fixture(
@@ -336,6 +338,55 @@ def test_frozen_claim_evidence_ir_runner_executes_non_degenerate_fixture(
     assert artifact.significance_tests
     assert all(check.passed for check in artifact.acceptance_checks)
     assert artifact.environment["benchmark_name"] == "Frozen Claim Evidence Reranking"
+
+
+def test_ledger_aware_claim_evidence_ranker_beats_bigram_fixture(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    benchmark = builtin_benchmark(
+        "ir_reranking",
+        topic="claim evidence retrieval unsupported claims citation grounded scientific writing agents",
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+    plan = _claim_evidence_runner_plan(spec)
+    code = ExperimentCodeGenerator()._ir_template(
+        plan,
+        spec,
+        benchmark.payload,
+        "ledger_aware_reranker_search",
+    )
+
+    _, _, artifact = AutoExperimentRunner().run(
+        project_id="project-ledger-aware-claim-evidence",
+        run_id="run-ledger-aware-claim-evidence",
+        plan=plan,
+        spec=spec,
+        benchmark_payload=benchmark.payload,
+        round_index=4,
+        goal="evaluate ledger-aware claim-evidence retrieval",
+        prior_attempts=[],
+        execution_backend=ExecutionBackendSpec(kind="local", timeout_seconds=30),
+        code_override=code,
+        strategy_override="ledger_aware_reranker_search",
+    )
+
+    scores = {
+        item.system: item.mean_metrics[artifact.primary_metric]
+        for item in artifact.aggregate_system_results
+    }
+    ndcg = {
+        item.system: item.mean_metrics["ndcg_at_10"]
+        for item in artifact.aggregate_system_results
+    }
+    assert artifact.status == "done"
+    assert artifact.best_system == "ledger_aware_ranker"
+    assert artifact.objective_system == "ledger_aware_ranker"
+    assert scores["ledger_aware_ranker"] > scores["bigram_ranker"] > scores["overlap_ranker"]
+    assert ndcg["ledger_aware_ranker"] > ndcg["bigram_ranker"]
+    assert artifact.outputs["objective_failure_cases"]
+    assert all("top_rank_not_relevant" in item["failure_modes"] for item in artifact.outputs["objective_failure_cases"])
 
 
 def test_scifact_json_adapter_normalizes_claim_evidence_fixture(

@@ -485,12 +485,99 @@ def idf_ranker_factory(train, use_bigrams, additive_smoothing, bigram_bonus):
     return rank
 
 
+LEDGER_CUE_GROUPS = {{
+    "claim_support": {{
+        "claim", "claims", "support", "supported", "unsupported", "grounding", "grounded",
+        "valid", "verified", "verifies", "downgrade", "hallucinated",
+    }},
+    "citation_literature": {{
+        "citation", "citations", "cited", "paper", "papers", "literature", "novelty",
+        "gap", "bibliography", "metadata", "sota",
+    }},
+    "experiment_result": {{
+        "experiment", "experiments", "experimental", "result", "results", "statement",
+        "statements", "metric", "metrics", "baseline", "baselines", "ablation", "seed",
+        "seeds", "mrr", "ndcg",
+    }},
+    "artifact_lineage": {{
+        "artifact", "artifacts", "lineage", "reproducibility", "package", "index",
+        "matrix", "ledger", "ledgers", "code", "data", "manifest",
+    }},
+    "review_repair": {{
+        "review", "reviewer", "revision", "repair", "issue", "issues", "action",
+        "actions", "gate", "blocked", "failure", "audit", "audits", "checking",
+    }},
+}}
+LEDGER_QUERY_EXPANSIONS = {{
+    "unsupported": {{"hallucinated", "downgrade", "downgrades", "missing", "contradicted", "evidence", "review"}},
+    "audit": {{"checking", "review", "evidence", "artifact", "logs"}},
+    "false": {{"hallucinated", "contradicted", "unsupported"}},
+    "positive": {{"hallucinated", "contradicted", "unsupported"}},
+    "result": {{"experimental", "experiment", "metrics", "artifact", "evidence"}},
+    "results": {{"experimental", "experiment", "metrics", "artifact", "evidence"}},
+}}
+SUPPORT_VERBS = {{
+    "links", "link", "compares", "compare", "verifies", "verify", "records", "record",
+    "ties", "tie", "attaches", "attached", "adds", "add", "requires", "downgrades",
+    "downgrade", "returns",
+}}
+NEGATIVE_NEAR_MISS = {{"without", "lack", "lacks", "omits", "omit", "cannot", "unrelated", "stale"}}
+NEGATIVE_QUERY_CONTEXT = {{"unsupported", "missing", "downgrade", "failure", "false", "repair", "contradicted"}}
+
+
+def ledger_signal_score(query, text):
+    query_tokens = set(tokenize(query))
+    doc_tokens = set(tokenize(text))
+    score = 0.0
+    for terms in LEDGER_CUE_GROUPS.values():
+        query_hits = query_tokens & terms
+        doc_hits = doc_tokens & terms
+        if query_hits and doc_hits:
+            score += 1.0 + 0.35 * len(query_hits & doc_hits) + 0.15 * min(len(doc_hits), 3)
+    for query_token, expansions in LEDGER_QUERY_EXPANSIONS.items():
+        if query_token in query_tokens:
+            score += 0.45 * len(doc_tokens & expansions)
+    if ("claim" in query_tokens or "claims" in query_tokens) and ("evidence" in doc_tokens):
+        score += 1.0
+    if "evidence" in query_tokens and (doc_tokens & SUPPORT_VERBS):
+        score += 0.6
+    if ("citation" in query_tokens or "cited" in query_tokens) and (
+        doc_tokens & {{"citation", "cited", "paper", "papers", "literature", "bibliography"}}
+    ):
+        score += 0.8
+    if ("artifact" in query_tokens or "reproducibility" in query_tokens) and (
+        doc_tokens & {{"artifact", "artifacts", "lineage", "index", "code", "data", "manifest"}}
+    ):
+        score += 0.8
+    if not (query_tokens & NEGATIVE_QUERY_CONTEXT) and (doc_tokens & NEGATIVE_NEAR_MISS):
+        score -= 0.8
+    return score
+
+
+def ledger_aware_ranker_factory(train, additive_smoothing, bigram_bonus, ledger_weight):
+    idf = build_idf(train, additive_smoothing)
+    def score(query, text):
+        query_tokens = tokenize(query)
+        doc_tokens = tokenize(text)
+        total = sum(idf.get(token, 1.0) for token in query_tokens if token in doc_tokens)
+        query_bigrams = set(zip(query_tokens, query_tokens[1:]))
+        doc_bigrams = set(zip(doc_tokens, doc_tokens[1:]))
+        total += bigram_bonus * len(query_bigrams & doc_bigrams)
+        total += ledger_weight * ledger_signal_score(query, text)
+        return total
+    def rank(example):
+        scored = [(score(example["query"], candidate["text"]), candidate["id"]) for candidate in example["candidates"]]
+        return [doc_id for _, doc_id in sorted(scored, reverse=True)]
+    return rank
+
+
 def run():
     started = time.perf_counter()
     train = DATASET["train"]
     test = DATASET["test"]
     idf_smoothing = float(SWEEP.get("idf_smoothing", 1.0))
     bigram_bonus = float(SWEEP.get("bigram_bonus", 0.5))
+    ledger_weight = float(SWEEP.get("ledger_weight", 1.0))
     results = []
 
     results.append(evaluate("random_ranker", test, random_ranker))
@@ -498,7 +585,7 @@ def run():
     candidate_system = "overlap_ranker"
     critique = "Search starts from simple lexical overlap between query and candidate text."
 
-    if STRATEGY in {{"idf_reranker_search", "bigram_reranker_search"}}:
+    if STRATEGY in {{"idf_reranker_search", "bigram_reranker_search", "ledger_aware_reranker_search"}}:
         idf_ranker = idf_ranker_factory(
             train,
             use_bigrams=False,
@@ -509,7 +596,7 @@ def run():
         candidate_system = "idf_ranker"
         critique = "The second round adds rarity-aware lexical weighting over training candidates."
 
-    if STRATEGY == "bigram_reranker_search":
+    if STRATEGY in {{"bigram_reranker_search", "ledger_aware_reranker_search"}}:
         bigram_ranker = idf_ranker_factory(
             train,
             use_bigrams=True,
@@ -519,6 +606,20 @@ def run():
         results.append(evaluate("bigram_ranker", test, bigram_ranker))
         candidate_system = "bigram_ranker"
         critique = "The final round augments IDF scoring with bigram overlap for more precise reranking."
+
+    if STRATEGY == "ledger_aware_reranker_search":
+        ledger_aware_ranker = ledger_aware_ranker_factory(
+            train,
+            additive_smoothing=idf_smoothing,
+            bigram_bonus=bigram_bonus,
+            ledger_weight=ledger_weight,
+        )
+        results.append(evaluate("ledger_aware_ranker", test, ledger_aware_ranker))
+        candidate_system = "ledger_aware_ranker"
+        critique = (
+            "The ledger-aware round combines IDF, bigrams, and transparent claim/citation/artifact/"
+            "experiment/review cue alignment."
+        )
 
     objective = next(item for item in results if item["system"] == candidate_system)
     best = max(results, key=lambda item: item["metrics"][PRIMARY_METRIC])

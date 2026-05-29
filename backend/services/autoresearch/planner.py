@@ -226,18 +226,20 @@ class ResearchPlanner:
         project_summary = project_context.summary if project_context is not None else ""
         title = self._fallback_title(topic, task_family)
         if task_family == "ir_reranking":
-            method = "a lexical rarity-aware reranker backed by overlap baselines"
+            method = "a ledger-aware lexical reranker backed by overlap, IDF, and bigram baselines"
             questions = [
                 f"Can a lightweight lexical reranker recover the relevant document on {benchmark_scope}?",
                 "Do rarity-aware query terms improve reciprocal rank over plain overlap scoring?",
+                "Do claim, citation, artifact, experiment, and review cues improve evidence retrieval?",
             ]
             hypothesis = [
                 "IDF-weighted overlap will outperform both random order and plain lexical overlap.",
                 "Adding bigram agreement will further improve ranking precision on focused CS queries.",
+                "Transparent evidence-ledger cue alignment will improve claim-evidence ranking over lexical variants.",
             ]
             contributions = [
                 f"A reproducible reranking benchmark scoped to {benchmark_scope}.",
-                "A multi-round reranking search trace with overlap, IDF, and bigram lexical variants.",
+                "A multi-round reranking search trace with overlap, IDF, bigram, and ledger-aware variants.",
                 "An artifact-grounded analysis of the executed ranking variants.",
             ]
         elif task_family == "tabular_classification":

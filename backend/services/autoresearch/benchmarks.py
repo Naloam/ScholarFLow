@@ -1891,6 +1891,7 @@ def default_search_strategies(task_family: TaskFamily) -> list[str]:
             "overlap_baseline_search",
             "idf_reranker_search",
             "bigram_reranker_search",
+            "ledger_aware_reranker_search",
         ]
     if task_family == "tabular_classification":
         return [
@@ -1920,13 +1921,13 @@ def default_sweeps(task_family: TaskFamily) -> list[SweepConfig]:
         return [
             SweepConfig(
                 label="default",
-                params={"idf_smoothing": 1.0, "bigram_bonus": 0.5},
-                description="Default rarity weighting with a modest bigram bonus.",
+                params={"idf_smoothing": 1.0, "bigram_bonus": 0.5, "ledger_weight": 1.0},
+                description="Default rarity weighting with modest bigram and ledger cue bonuses.",
             ),
             SweepConfig(
                 label="rarity_boosted",
-                params={"idf_smoothing": 1.4, "bigram_bonus": 0.9},
-                description="Increase IDF smoothing and emphasize bigram overlap.",
+                params={"idf_smoothing": 1.4, "bigram_bonus": 0.9, "ledger_weight": 1.4},
+                description="Increase IDF smoothing and emphasize bigram plus evidence-ledger cue alignment.",
             ),
         ]
     if task_family == "tabular_classification":
@@ -2063,6 +2064,13 @@ def build_experiment_spec(
             AblationSpec(
                 name="bigram_ranker",
                 description="Add query-document bigram overlap as a higher-order lexical reranking signal.",
+            ),
+            AblationSpec(
+                name="ledger_aware_ranker",
+                description=(
+                    "Add claim, citation, artifact, experiment, and review-repair cue alignment "
+                    "for evidence-ledger-aware reranking."
+                ),
             )
         ]
         notes = [
@@ -2070,6 +2078,7 @@ def build_experiment_spec(
             "Treat each example as a query with a short candidate list.",
             "Report MRR, Recall@1, nDCG@10, Recall@10, and evidence coverage on the held-out split.",
             "Support BEIR-style normalized JSON as an external adapter target.",
+            "Use ledger-aware cue alignment only as a transparent text signal; do not inspect relevance labels.",
         ]
         hypothesis = (
             "A lexical reranker with rarity-aware term weighting should outperform the random order "

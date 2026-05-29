@@ -244,6 +244,154 @@ def _review_loop_actions_for_retrieval_failures(
     return list(actions_by_query.values())
 
 
+def _is_claim_evidence_vertical_run(plan: ResearchPlan, spec: ExperimentSpec) -> bool:
+    text = " ".join(
+        [
+            plan.topic,
+            plan.title,
+            plan.problem_statement,
+            plan.proposed_method,
+            spec.benchmark_name,
+            spec.benchmark_description,
+        ]
+    ).lower()
+    return "claim" in text and "evidence" in text and spec.task_family == "ir_reranking"
+
+
+def _claim_evidence_vertical_package(
+    *,
+    plan: ResearchPlan,
+    spec: ExperimentSpec,
+    primary_metric: str,
+    aggregate_results: list[AggregateSystemMetricResult],
+    objective_system: str | None,
+    objective_score: float | None,
+    objective_failure_cases: list[dict[str, Any]],
+    review_loop_repair_actions: list[AutoResearchReviewLoopActionRead],
+) -> dict[str, Any]:
+    metric_rows = [
+        {
+            "system": item.system,
+            "mean_metrics": item.mean_metrics,
+            "sample_count": item.sample_count,
+        }
+        for item in aggregate_results
+    ]
+    objective_metrics = next(
+        (item.mean_metrics for item in aggregate_results if item.system == objective_system),
+        {},
+    )
+    benchmark_scope = (
+        "synthetic_fixture"
+        if spec.dataset.source_kind == "builtin" or spec.dataset.publication_grade is False
+        else "external_cached_benchmark"
+    )
+    claim_evidence_index = [
+        {
+            "claim_id": "claim_benchmark_scope",
+            "claim": (
+                f"The claim-evidence retrieval loop was evaluated on `{spec.benchmark_name}` "
+                f"with {spec.dataset.test_size} held-out queries."
+            ),
+            "support_status": "supported",
+            "evidence_refs": ["experiment_spec.dataset", "result_artifact.system_results"],
+        },
+        {
+            "claim_id": "claim_objective_metric",
+            "claim": (
+                f"The objective system `{objective_system or 'unknown'}` reached "
+                f"{primary_metric}={objective_score or 0.0:.4f} under the selected sweep."
+            ),
+            "support_status": "supported" if objective_score is not None else "partial",
+            "evidence_refs": ["result_artifact.aggregate_system_results", "result_artifact.tables.Main Results"],
+        },
+        {
+            "claim_id": "claim_repair_routing",
+            "claim": (
+                f"{len(review_loop_repair_actions)} retrieval failure query(s) were routed to "
+                "bounded review-loop repair actions."
+            ),
+            "support_status": "supported" if review_loop_repair_actions else "partial",
+            "evidence_refs": ["result_artifact.outputs.objective_failure_cases", "result_artifact.outputs.review_loop_repair_actions"],
+        },
+        {
+            "claim_id": "claim_publication_scope",
+            "claim": (
+                "The current run supports a workshop-style case study only; it must not be framed "
+                "as high-level publication evidence until cached external benchmarks and broader "
+                "verification labels are evaluated."
+            ),
+            "support_status": "partial",
+            "evidence_refs": ["experiment_spec.dataset.publication_grade", "claim_evidence_vertical_loop.limitations"],
+        },
+    ]
+    sections = [
+        {
+            "section": "abstract",
+            "required_content": [
+                "evidence-constrained autonomous writing motivation",
+                f"benchmark `{spec.benchmark_name}`",
+                f"objective metric `{primary_metric}`",
+                "bounded repair routing for unsupported retrieval outcomes",
+            ],
+        },
+        {
+            "section": "method",
+            "required_content": [
+                "claim-evidence query formulation",
+                "random, overlap, IDF, bigram, and ledger-aware reranking ladder",
+                "claim/citation/artifact/experiment/review cue alignment",
+            ],
+        },
+        {
+            "section": "results",
+            "required_content": [
+                "MRR, Recall@1, nDCG@10, Recall@10, and evidence coverage table",
+                "per-query failure cases",
+                "repair actions derived from retrieval failures",
+            ],
+        },
+        {
+            "section": "limitations",
+            "required_content": [
+                "synthetic fixture is not publication-grade by itself",
+                "candidate pools are small",
+                "SciFact/BEIR cached benchmark and support/refute labels remain required follow-up",
+            ],
+        },
+    ]
+    return {
+        "package_id": "claim_evidence_vertical_case_study_v1",
+        "paper_tier": "workshop_case_study",
+        "manuscript_title": plan.title,
+        "benchmark_scope": benchmark_scope,
+        "objective_system": objective_system,
+        "primary_metric": primary_metric,
+        "objective_metrics": objective_metrics,
+        "metric_rows": metric_rows,
+        "claim_evidence_index": claim_evidence_index,
+        "sections": sections,
+        "reviewer_response_plan": [
+            item.model_dump(mode="json") for item in review_loop_repair_actions
+        ],
+        "reproducibility_assets": [
+            "benchmark payload",
+            "experiment spec",
+            "generated code",
+            "result artifact",
+            "aggregate metric tables",
+            "per-query diagnostics",
+            "review-loop repair actions",
+        ],
+        "limitations": [
+            "The frozen benchmark is deterministic and synthetic, so it supports engineering validation rather than a final scientific claim.",
+            "Evidence coverage is top-10 based and must be extended to support/refute/not-enough-evidence verification labels.",
+            "External cached SciFact/BEIR-style evaluation remains required before a high-level publication claim.",
+        ],
+        "open_repair_case_count": len(objective_failure_cases),
+    }
+
+
 def _paired_sign_flip_test(
     values_a: list[float],
     values_b: list[float],
@@ -2044,6 +2192,21 @@ class AutoExperimentRunner:
             key_findings.append(
                 f"Converted {len(review_loop_repair_actions)} retrieval failure query(s) into bounded review-loop repair actions."
             )
+        claim_evidence_vertical_package = None
+        if _is_claim_evidence_vertical_run(plan, spec):
+            claim_evidence_vertical_package = _claim_evidence_vertical_package(
+                plan=plan,
+                spec=spec,
+                primary_metric=primary_metric,
+                aggregate_results=aggregate_results,
+                objective_system=objective_system,
+                objective_score=selected_sweep.objective_score_mean,
+                objective_failure_cases=objective_failure_cases,
+                review_loop_repair_actions=review_loop_repair_actions,
+            )
+            key_findings.append(
+                "Prepared a workshop-style claim-evidence vertical package with claims, evidence, limitations, and reviewer actions."
+            )
 
         artifact = ResultArtifact(
             status="done",
@@ -2088,6 +2251,11 @@ class AutoExperimentRunner:
                     item.model_dump(mode="json") for item in review_loop_repair_actions
                 ],
                 "review_loop_repair_summary": review_loop_repair_summary,
+                **(
+                    {"claim_evidence_vertical_package": claim_evidence_vertical_package}
+                    if claim_evidence_vertical_package is not None
+                    else {}
+                ),
             },
         )
         artifact.environment.setdefault("generated_code_path", code_path)

@@ -202,6 +202,7 @@ _SCHOLARFLOW_PAPER_MATERIALS = [
     "Assurance gates: novelty/gap validation, experiment design obligations, evidence consistency, reviewer simulation, and publish correctness.",
     "Artifact lineage: brief, selected hypothesis, factory plan, result artifact, evidence ledger, and project paper decision remain traceable.",
     "Case studies: toy, medium benchmark, literature-heavy, ablation-heavy, and failed-hypothesis evaluation cases.",
+    "Claim-evidence vertical package: IR metrics, per-query diagnostics, review-loop repair actions, reproducibility assets, and scoped limitations.",
     "Failure analysis: repair actions distinguish missing baselines, missing ablations, weak statistics, and failed hypotheses.",
 ]
 
@@ -333,6 +334,19 @@ def _trace_materials(
     else:
         failure_analysis_materials.append(
             f"{task_kind}: no failure-driven repair was required for the offline execution trace."
+        )
+    if task_kind == "claim_evidence_vertical_task":
+        case_study_materials.append(
+            (
+                f"{task_kind}: workshop package should report IR metrics, per-query failure cases, "
+                "claim-evidence index entries, repair actions, reproducibility assets, and synthetic-fixture limitations."
+            )
+        )
+        failure_analysis_materials.append(
+            (
+                f"{task_kind}: retrieval failures must route to claim downgrades or literature refreshes before "
+                "paper claims are promoted."
+            )
         )
     return architecture_materials, case_study_materials, failure_analysis_materials
 

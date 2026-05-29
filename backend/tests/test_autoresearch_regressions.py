@@ -396,6 +396,16 @@ def test_ledger_aware_claim_evidence_ranker_beats_bigram_fixture(
     assert "run_claim_evidence_matrix_json" in repair_actions[0]["expected_output_asset_ids"]
     assert artifact.outputs["review_loop_repair_summary"] == {"claim_downgrade": 1}
     assert any("bounded review-loop repair actions" in item for item in artifact.key_findings)
+    vertical_package = artifact.outputs["claim_evidence_vertical_package"]
+    assert vertical_package["paper_tier"] == "workshop_case_study"
+    assert vertical_package["benchmark_scope"] == "synthetic_fixture"
+    assert vertical_package["objective_system"] == "ledger_aware_ranker"
+    assert vertical_package["open_repair_case_count"] == len(artifact.outputs["objective_failure_cases"])
+    assert any(item["claim_id"] == "claim_repair_routing" for item in vertical_package["claim_evidence_index"])
+    assert any(section["section"] == "limitations" for section in vertical_package["sections"])
+    assert "review-loop repair actions" in vertical_package["reproducibility_assets"]
+    assert vertical_package["reviewer_response_plan"][0]["action_kind"] == "claim_downgrade"
+    assert any("workshop-style claim-evidence vertical package" in item for item in artifact.key_findings)
 
 
 def test_scifact_json_adapter_normalizes_claim_evidence_fixture(
@@ -7050,9 +7060,10 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert all(case.expected_experiment_design_requirements for case in suite.cases)
     assert all(case.expected_failure_replan_behavior for case in suite.cases)
     assert any("Architecture" in item for item in suite.scholarflow_paper_materials)
+    assert any("Claim-evidence vertical package" in item for item in suite.scholarflow_paper_materials)
     assert any("failure" in item.lower() for item in suite.scholarflow_paper_materials)
     assert len(suite.architecture_materials) >= 5
-    assert len(suite.case_study_materials) == 6
+    assert len(suite.case_study_materials) >= 6
     assert len(suite.failure_analysis_materials) >= 5
     assert all(metric.score == 100 for metric in suite.metrics)
     literature_heavy = next(case for case in suite.cases if case.task_kind == "literature_heavy_task")

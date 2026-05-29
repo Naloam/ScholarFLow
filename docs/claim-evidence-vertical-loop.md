@@ -85,6 +85,7 @@ Current implementation:
 - IR runner output now reports MRR, Recall@1, nDCG@10, Recall@10, evidence coverage, and per-query objective failure cases for paper analysis.
 - The IR search ladder includes `ledger_aware_reranker_search`, which combines IDF, bigram overlap, and transparent claim/citation/artifact/experiment/review cue alignment.
 - Retrieval failure cases are converted into deduplicated review-loop repair actions such as claim downgrades or literature refreshes.
+- Claim-evidence IR runs now emit a workshop-style vertical package with manuscript section requirements, claim-evidence index entries, reproducibility assets, limitations, and reviewer-response actions.
 
 ### V3: Runner Metrics
 

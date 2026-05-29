@@ -108,6 +108,38 @@ _CASE_DEFINITIONS: list[dict[str, Any]] = [
         "expected_paper_tier": "workshop_candidate",
     },
     {
+        "case_id": "eval_case_claim_evidence_vertical_task",
+        "task_kind": "claim_evidence_vertical_task",
+        "idea": (
+            "Build a claim-evidence retrieval and verification loop for autonomous scientific "
+            "writing agents"
+        ),
+        "domain": "claim-evidence retrieval for scientific writing",
+        "budget_label": "standard",
+        "max_rounds": 3,
+        "candidate_execution_limit": 3,
+        "target_tier": "workshop_candidate",
+        "task_family_hint": "ir_reranking",
+        "expected_brief_quality": (
+            "Brief should bind generated manuscript claims to evidence retrieval, support "
+            "verification, abstention, and claim-repair obligations rather than generic RAG quality."
+        ),
+        "expected_novelty_risks": [
+            "Scientific claim verification is a known task; novelty depends on ledger-constrained repair.",
+            "Citation-grounded writing overlaps RAG unless claim downgrading and reviewer-loop routing are evaluated.",
+        ],
+        "expected_experiment_design_requirements": [
+            "Run BM25/lexical and ledger-aware reranking baselines on a claim-evidence benchmark.",
+            "Report MRR, Recall@1, evidence support coverage, unsupported-claim detection, and abstention behavior.",
+            "Persist retrieved evidence into the claim-evidence ledger and trigger repair when support is missing.",
+        ],
+        "expected_failure_replan_behavior": (
+            "If retrieved evidence is missing or contradicts a generated claim, demote the claim, "
+            "attach an abstention rationale, or queue a bounded retrieval/experiment repair."
+        ),
+        "expected_paper_tier": "workshop_candidate",
+    },
+    {
         "case_id": "eval_case_ablation_heavy_task",
         "task_kind": "ablation_heavy_task",
         "idea": "Identify which planning memory component improves multi-step LLM evaluation reliability",

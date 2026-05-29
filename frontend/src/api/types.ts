@@ -1833,6 +1833,7 @@ export type AutoResearchEvaluationTaskKind =
   | "toy_task"
   | "medium_benchmark_task"
   | "literature_heavy_task"
+  | "claim_evidence_vertical_task"
   | "ablation_heavy_task"
   | "failed_hypothesis_task";
 export type AutoResearchGapValidityStatus = "valid" | "weak" | "invalid" | "missing";

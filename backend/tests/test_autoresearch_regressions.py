@@ -6841,6 +6841,7 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         "toy_task",
         "medium_benchmark_task",
         "literature_heavy_task",
+        "claim_evidence_vertical_task",
         "ablation_heavy_task",
         "failed_hypothesis_task",
     }
@@ -6854,12 +6855,12 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         "final_publish_correctness",
     }
 
-    assert suite.case_count == 5
-    assert suite.executed_case_count == 5
+    assert suite.case_count == 6
+    assert suite.executed_case_count == 6
     assert {case.task_kind for case in suite.cases} == expected_kinds
     assert {metric.metric_id for metric in suite.metrics} == expected_metrics
     assert suite.toy_end_to_end_ready is True
-    assert suite.completed_case_count == 5
+    assert suite.completed_case_count == 6
     assert suite.evaluation_artifact_count > 0
     assert not suite.blockers
     assert not suite.warnings
@@ -6873,7 +6874,7 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert any("Architecture" in item for item in suite.scholarflow_paper_materials)
     assert any("failure" in item.lower() for item in suite.scholarflow_paper_materials)
     assert len(suite.architecture_materials) >= 5
-    assert len(suite.case_study_materials) == 5
+    assert len(suite.case_study_materials) == 6
     assert len(suite.failure_analysis_materials) >= 5
     assert all(metric.score == 100 for metric in suite.metrics)
     literature_heavy = next(case for case in suite.cases if case.task_kind == "literature_heavy_task")
@@ -6881,6 +6882,19 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert any(
         "Frozen Claim Evidence Reranking" in material
         for material in literature_heavy.trace.architecture_materials
+    )
+    claim_evidence_vertical = next(
+        case for case in suite.cases if case.task_kind == "claim_evidence_vertical_task"
+    )
+    assert claim_evidence_vertical.trace is not None
+    assert claim_evidence_vertical.expected_paper_tier == "workshop_candidate"
+    assert any(
+        "Frozen Claim Evidence Reranking" in material
+        for material in claim_evidence_vertical.trace.architecture_materials
+    )
+    assert any(
+        "unsupported-claim detection" in requirement.lower()
+        for requirement in claim_evidence_vertical.expected_experiment_design_requirements
     )
 
 

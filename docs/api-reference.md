@@ -148,7 +148,7 @@ This document focuses on the current auto-research API surface.
 ### `GET /api/projects/{project_id}/auto-research/evaluation-cases`
 
 - returns the internal evaluation-case suite for idea-to-paper validation
-- includes five deterministic cases: toy, medium benchmark, literature-heavy, ablation-heavy, and failed-hypothesis
+- includes six deterministic cases: toy, medium benchmark, literature-heavy, claim-evidence vertical, ablation-heavy, and failed-hypothesis
 - the toy case runs end-to-end through brief, scout, hypothesis selection, experiment factory, evidence ledger, and paper/review package materialization
 - exposes the evaluation metrics used to judge idea-to-brief completeness, hypothesis selection, novelty risk detection, experiment executability, evidence consistency, reviewer readiness, and final publish correctness
 

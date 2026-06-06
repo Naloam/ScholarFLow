@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from schemas.autoresearch import (
     AutoResearchBudgetStatus,
     AutoResearchExperimentBridgeRead,
     AutoResearchOperatorConsoleRead,
     AutoResearchOperatorConsoleFiltersRead,
     AutoResearchOperatorProjectActionsRead,
+    AutoResearchOperatorPublicationCaseRead,
     AutoResearchOperatorRunActionsRead,
     AutoResearchOperatorRunDetailRead,
     AutoResearchOperatorRunSummaryRead,
@@ -24,6 +28,7 @@ from schemas.autoresearch import (
 from services.autoresearch.bridge import build_bridge_state
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
+from services.autoresearch.project_paper_orchestrator import build_project_paper_orchestration
 from services.autoresearch.publication_repair_plan import (
     repair_plan_allows_paper_pipeline_rebuild,
 )
@@ -36,6 +41,19 @@ from services.autoresearch.repository import (
 )
 from services.autoresearch.review_publish import build_publish_package, build_review_loop, build_run_review
 from services.autoresearch.system_evaluation import build_system_evaluation
+
+
+def _read_json(path: str | None) -> dict:
+    if not path:
+        return {}
+    candidate = Path(path)
+    if not candidate.is_file():
+        return {}
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _benchmark_name(run: AutoResearchRunRead) -> str | None:
@@ -521,6 +539,123 @@ def _matches_filters(
     return True
 
 
+def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicationCaseRead | None:
+    project_paper = build_project_paper_orchestration(project_id)
+    if project_paper.project_submission_manifest_path is None:
+        return None
+    submission_manifest = _read_json(project_paper.project_submission_manifest_path)
+    readiness_report = _read_json(project_paper.project_publication_readiness_report_path)
+    statistics_report = _read_json(project_paper.project_statistics_report_path)
+    negative_evidence_report = _read_json(project_paper.project_negative_evidence_report_path)
+    experiment_repair_index = _read_json(project_paper.project_experiment_repair_index_path)
+    repair_execution_log = _read_json(project_paper.project_repair_execution_log_path)
+    review_findings = _read_json(project_paper.project_review_findings_path)
+    rereview_report = _read_json(project_paper.project_revision_rereview_path)
+    offline_audit = _read_json(project_paper.project_offline_publication_audit_path)
+    evidence_profile = readiness_report.get("evidence_profile", {})
+    generated_assets = [
+        item
+        for item in submission_manifest.get("generated_assets", [])
+        if isinstance(item, dict)
+    ]
+    asset_statuses = [
+        {
+            "role": item.get("role"),
+            "path": item.get("path"),
+            "missing_status": item.get("missing_status"),
+            "blocked_status": item.get("blocked_status"),
+            "final_publish_blocking": item.get("final_publish_blocking"),
+            "blocking_check_ids": item.get("blocking_check_ids", []),
+            "blocking_reasons": item.get("blocking_reasons", []),
+            "readiness_contribution": item.get("readiness_contribution"),
+            "source_action": item.get("source_action"),
+        }
+        for item in generated_assets
+    ]
+    blocked_asset_roles = [
+        str(item.get("role"))
+        for item in generated_assets
+        if item.get("final_publish_blocking") and item.get("role") is not None
+    ]
+    repair_status_counts: dict[str, int] = {}
+    for entry in repair_execution_log.get("entries", []):
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status") or "unknown")
+        repair_status_counts[status] = repair_status_counts.get(status, 0) + 1
+    final_publish_ready = bool(project_paper.project_final_publish_ready)
+    review_bundle_ready = bool(project_paper.project_review_bundle_ready)
+    status = (
+        "final_publish_ready"
+        if final_publish_ready
+        else "review_ready"
+        if review_bundle_ready
+        else "blocked"
+        if project_paper.project_submission_blockers
+        else "not_started"
+    )
+    return AutoResearchOperatorPublicationCaseRead(
+        status=status,
+        review_bundle_ready=review_bundle_ready,
+        final_publish_ready=final_publish_ready,
+        submission_bundle_kind=project_paper.project_submission_manifest.get("bundle_kind")
+        if project_paper.project_submission_manifest is not None
+        else submission_manifest.get("bundle_kind"),
+        submission_asset_count=project_paper.project_submission_asset_count,
+        missing_asset_roles=[
+            item.get("role")
+            for item in generated_assets
+            if item.get("missing_status") != "present" and item.get("role") is not None
+        ],
+        blocked_asset_count=int(submission_manifest.get("blocked_asset_count") or len(blocked_asset_roles)),
+        blocked_asset_roles=blocked_asset_roles,
+        final_publish_blocking_asset_roles=list(
+            submission_manifest.get("final_publish_blocking_asset_roles", blocked_asset_roles)
+        ),
+        package_asset_statuses=asset_statuses,
+        repair_action_status_counts=repair_status_counts,
+        repair_action_recommendations={
+            str(key): str(value)
+            for key, value in rereview_report.get("recommendations", {}).items()
+        },
+        review_finding_count=int(review_findings.get("finding_count") or 0),
+        review_findings_path=project_paper.project_review_findings_path,
+        execution_source_counts={
+            str(key): int(value)
+            for key, value in experiment_repair_index.get("execution_source_counts", {}).items()
+        },
+        imported_replay_run_ids=list(experiment_repair_index.get("imported_result_replay_run_ids", [])),
+        materialized_execution_run_ids=list(experiment_repair_index.get("materialized_execution_run_ids", [])),
+        literature_source_counts={
+            str(key): int(value)
+            for key, value in evidence_profile.get("literature_source_counts", {}).items()
+        },
+        real_literature_count=int(evidence_profile.get("real_literature_count") or 0),
+        benchmark_provenance_ready=bool(evidence_profile.get("benchmark_provenance_ready")),
+        benchmark_publication_ready=bool(evidence_profile.get("benchmark_publication_ready")),
+        statistics_claim_ceiling=statistics_report.get("claim_ceiling_recommendation"),
+        statistics_complete=bool(statistics_report.get("complete")),
+        negative_evidence_count=int(negative_evidence_report.get("entry_count") or 0),
+        negative_evidence_blocking_count=int(
+            negative_evidence_report.get("blocking_entry_count") or 0
+        ),
+        rereview_complete=bool(rereview_report.get("rereview_complete")),
+        rereview_recommendations={
+            str(key): str(value)
+            for key, value in rereview_report.get("recommendations", {}).items()
+        },
+        publish_blockers=list(project_paper.project_submission_blockers),
+        required_followups=list(readiness_report.get("required_followups", [])),
+        kill_criteria=list(readiness_report.get("kill_criteria", [])),
+        offline_publication_case_path=project_paper.project_offline_publication_case_path,
+        offline_publication_audit_path=project_paper.project_offline_publication_audit_path,
+        submission_manifest_path=project_paper.project_submission_manifest_path,
+        publication_readiness_report_path=project_paper.project_publication_readiness_report_path,
+        statistics_report_path=project_paper.project_statistics_report_path,
+        negative_evidence_report_path=project_paper.project_negative_evidence_report_path,
+    )
+
+
 def build_operator_console(
     project_id: str,
     *,
@@ -620,6 +755,7 @@ def build_operator_console(
 
     meta_analysis = build_cross_run_meta_analysis(project_id)
     system_evaluation = build_system_evaluation(project_id)
+    publication_case = _publication_case_summary(project_id) if runs else None
     return AutoResearchOperatorConsoleRead(
         project_id=project_id,
         run_count=len(runs),
@@ -665,6 +801,7 @@ def build_operator_console(
         workers=workers,
         meta_analysis=meta_analysis,
         system_evaluation=system_evaluation,
+        publication_case=publication_case,
         runs=summaries,
         current_run=current_run,
     )

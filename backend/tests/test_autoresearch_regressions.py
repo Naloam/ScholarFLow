@@ -5,6 +5,7 @@ import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
@@ -39,7 +40,10 @@ from schemas.autoresearch import (
     AutoResearchClaimEvidenceEntryRead,
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
+    AutoResearchEvidenceLedgerEntryRead,
+    AutoResearchEvidenceLedgerRead,
     AutoResearchExperimentBridgeConfig,
+    AutoResearchExperimentFactoryMaterializedJobRead,
     AutoResearchLineageEdgeRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchOperatorConsoleFiltersRead,
@@ -55,6 +59,9 @@ from schemas.autoresearch import (
     AutoResearchPublicationRepairExecutionRead,
     AutoResearchPublicationRepairActionRead,
     AutoResearchPublicationRepairPlanRead,
+    AutoResearchProjectClaimTraceRead,
+    AutoResearchProjectConclusionEntryRead,
+    AutoResearchProjectConclusionLedgerRead,
     AutoResearchPublishPackageRead,
     AutoResearchRegistryAssetRef,
     AutoResearchRunConfig,
@@ -505,7 +512,156 @@ def test_scifact_json_adapter_normalizes_claim_evidence_fixture(
     assert spec.dataset.source_revision == "fixture-v1"
     assert spec.dataset.source_license == "cc-by-nc"
     assert spec.dataset.candidate_count == 2
+    assert spec.dataset.source_class == "cached_fixture"
+    assert spec.dataset.provenance_complete is True
+    assert any("fixture" in item.lower() for item in spec.dataset.publication_grade_blockers)
     assert spec.dataset.publication_grade is False
+
+
+def test_scifact_json_adapter_records_frozen_snapshot_metadata_without_promoting_miniature(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "name": "SciFact Frozen Mini Snapshot",
+        "description": "Repository-local SciFact-style snapshot with complete provenance but miniature scale.",
+        "corpus": [
+            {
+                "doc_id": "doc_support_train",
+                "title": "Training Support Evidence",
+                "abstract": ["Training intervention improves measured outcomes in randomized studies."],
+            },
+            {
+                "doc_id": "doc_nei_train",
+                "title": "Training Background Evidence",
+                "abstract": ["Background observations do not establish the intervention claim."],
+            },
+            {
+                "doc_id": "doc_refute_test",
+                "title": "Test Refutation Evidence",
+                "abstract": ["Independent trials found no reduction in the target outcome."],
+            },
+            {
+                "doc_id": "doc_distractor_test",
+                "title": "Test Distractor Evidence",
+                "abstract": ["A measurement paper describes the target outcome without intervention evidence."],
+            },
+        ],
+        "claims": [
+            {
+                "id": "claim_train",
+                "claim": "The training intervention improves measured outcomes.",
+                "candidate_doc_ids": ["doc_support_train", "doc_nei_train"],
+                "evidence": {"doc_support_train": [{"label": "SUPPORT"}]},
+            },
+            {
+                "id": "claim_test",
+                "claim": "The intervention reduces the target outcome.",
+                "candidate_doc_ids": ["doc_refute_test", "doc_distractor_test"],
+                "evidence": {"doc_refute_test": [{"label": "REFUTE"}]},
+            },
+        ],
+        "split": {"train": ["claim_train"], "test": ["claim_test"]},
+    }
+    snapshot_path = tmp_path / "scifact_frozen_mini_snapshot.json"
+    snapshot_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"Frozen SciFact snapshot should load from file, not network: {url}"),
+    )
+
+    source = BenchmarkSource(
+        kind="scifact_json",
+        name="SciFact frozen mini snapshot",
+        file_path=str(snapshot_path),
+        dataset_id="allenai/scifact-frozen-mini",
+        revision="2026-06-01",
+        license="cc-by-4.0",
+    )
+    benchmark = autoresearch_ingestion.resolve_benchmark(
+        topic="claim evidence verification for scientific writing agents",
+        task_family_hint="ir_reranking",
+        benchmark_source=source,
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+
+    assert spec.dataset.source_class == "frozen_snapshot"
+    assert spec.dataset.provenance_complete is True
+    assert spec.dataset.sample_count == 2
+    assert spec.dataset.split_count == 2
+    assert spec.dataset.supports_claim_verification is True
+    assert spec.dataset.verification_label_space == ["refuted", "supported"]
+    assert spec.dataset.publication_grade is False
+    assert "Benchmark has fewer than 20 normalized examples." in spec.dataset.publication_grade_blockers
+    assert spec.dataset.publication_grade_eligibility["checks"]["not_internal_fixture"] is True
+    assert spec.dataset.publication_grade_eligibility["checks"]["meets_min_examples"] is False
+
+
+def test_beir_json_adapter_accepts_publication_eligible_frozen_snapshot(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    queries = {
+        f"q{index}": f"claim evidence retrieval query {index}"
+        for index in range(20)
+    }
+    corpus = {}
+    qrels = {}
+    for index in range(20):
+        relevant_id = f"d{index}_rel"
+        distractor_id = f"d{index}_neg"
+        corpus[relevant_id] = {
+            "title": f"Relevant Evidence {index}",
+            "text": f"Relevant evidence document {index} supports claim-evidence retrieval query {index}.",
+        }
+        corpus[distractor_id] = {
+            "title": f"Distractor Evidence {index}",
+            "text": f"Distractor document {index} discusses adjacent scientific writing topics.",
+        }
+        qrels[f"q{index}"] = {relevant_id: 1, distractor_id: 0}
+    payload = {
+        "name": "BEIR Claim Evidence Frozen Snapshot",
+        "description": "Repository-local BEIR-style frozen snapshot with complete provenance and candidate pools.",
+        "queries": queries,
+        "corpus": corpus,
+        "qrels": qrels,
+    }
+    snapshot_path = tmp_path / "beir_claim_evidence_frozen_snapshot.json"
+    snapshot_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"Frozen BEIR snapshot should load from file, not network: {url}"),
+    )
+
+    source = BenchmarkSource(
+        kind="beir_json",
+        name="BEIR claim evidence frozen snapshot",
+        file_path=str(snapshot_path),
+        dataset_id="beir/claim-evidence-frozen-snapshot",
+        revision="2026-06-01",
+        license="cc-by-4.0",
+    )
+    benchmark = autoresearch_ingestion.resolve_benchmark(
+        topic="claim evidence retrieval for scientific writing agents",
+        task_family_hint="ir_reranking",
+        benchmark_source=source,
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+
+    assert benchmark.payload["test"]
+    assert benchmark.payload["test"][0]["relevant_ids"]
+    assert len(benchmark.payload["test"][0]["candidates"]) == 2
+    assert spec.dataset.source_class == "frozen_snapshot"
+    assert spec.dataset.provenance_complete is True
+    assert spec.dataset.sample_count == 20
+    assert spec.dataset.split_count == 2
+    assert spec.dataset.supports_claim_verification is False
+    assert spec.dataset.publication_grade_blockers == []
+    assert spec.dataset.publication_grade is True
+    assert spec.dataset.publication_grade_eligibility["sample_count"] == 20
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_fingerprint"] is True
 
 
 def test_scifact_verification_fixture_reports_unsupported_claim_metrics(
@@ -988,6 +1144,9 @@ def _external_publication_spec() -> tuple[ExperimentSpec, BenchmarkSource]:
         kind="remote_csv",
         name="Publication Regression Benchmark",
         url="https://example.com/publication-regression.csv",
+        dataset_id="example/publication-regression",
+        revision="2026-06-01",
+        license="cc-by-4.0",
         task_family_hint="text_classification",
     )
     rows = [
@@ -1119,12 +1278,16 @@ def test_publication_readiness_blocks_builtin_toy_benchmark_even_with_grounded_a
         item.check_id == "publication_grade_benchmark" and not item.passed
         for item in readiness.checks
     )
-    assert any("built-in toy benchmarks" in item for item in readiness.blockers)
+    assert any("Built-in toy benchmarks" in item for item in readiness.blockers)
     assert any("minimum completed seeds" in item for item in readiness.blockers)
 
 
 def test_publication_readiness_accepts_external_profile_with_final_ablation_evidence() -> None:
     spec, benchmark = _external_publication_spec()
+    assert spec.dataset.source_class == "remote_real"
+    assert spec.dataset.provenance_complete is True
+    assert spec.dataset.publication_grade_blockers == []
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_dataset_id"] is True
     run = _readiness_run(
         spec=spec,
         benchmark=benchmark,
@@ -1144,6 +1307,57 @@ def test_publication_readiness_accepts_external_profile_with_final_ablation_evid
     assert readiness.observed_ablation_count == readiness.planned_ablation_count == 1
     assert readiness.unsupported_claim_count == 0
     assert readiness.blockers == []
+
+
+def test_publication_readiness_blocks_external_benchmark_with_incomplete_provenance() -> None:
+    source = BenchmarkSource(
+        kind="remote_csv",
+        name="Incomplete Provenance Benchmark",
+        url="https://example.com/incomplete.csv",
+        task_family_hint="text_classification",
+    )
+    rows = [
+        {"text": f"retrieval example {index}", "label": "retrieval"}
+        for index in range(12)
+    ] + [
+        {"text": f"systems example {index}", "label": "systems"}
+        for index in range(12)
+    ]
+    spec = build_experiment_spec(
+        "text_classification",
+        ResolvedBenchmark(
+            source=source,
+            task_family="text_classification",
+            payload={
+                "name": "Incomplete Provenance Benchmark",
+                "description": "External-sized benchmark missing dataset id, revision, and license.",
+                "train": rows[:18],
+                "test": rows[18:],
+                "label_space": ["retrieval", "systems"],
+                "source_url": source.url,
+            },
+            benchmark_name="Incomplete Provenance Benchmark",
+            benchmark_description="External-sized benchmark missing dataset id, revision, and license.",
+        ),
+    )
+    run = _readiness_run(
+        spec=spec,
+        benchmark=source,
+        artifact=_publication_artifact(include_ablation=True, seed_count=5),
+        claim_matrix=_publication_claim_matrix(partial=True),
+    )
+
+    readiness = build_publication_readiness(run, paper_markdown=run.paper_markdown)
+
+    assert spec.dataset.source_class == "remote_real"
+    assert spec.dataset.provenance_complete is False
+    assert spec.dataset.publication_grade is False
+    assert "Benchmark provenance requires dataset_id." in spec.dataset.publication_grade_blockers
+    assert "Benchmark provenance requires revision." in spec.dataset.publication_grade_blockers
+    assert "Benchmark provenance requires license." in spec.dataset.publication_grade_blockers
+    assert readiness.final_publish_ready is False
+    assert readiness.publication_grade_benchmark is False
+    assert any("dataset_id" in item for item in readiness.blockers)
 
 
 def test_contribution_assessment_requires_more_than_experiment_completion() -> None:
@@ -2858,6 +3072,26 @@ def test_publish_package_materializes_submission_assets(
         ],
     )
     claim_matrix_path.write_text(claim_matrix.model_dump_json(indent=2), encoding="utf-8")
+    evidence_ledger_path = run_root / "evidence_ledger.json"
+    evidence_ledger = AutoResearchEvidenceLedgerRead(
+        project_id=project_id,
+        run_id=run_id,
+        generated_at=now,
+        entries=[
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id="evidence_retrieval_claim_result_summary",
+                source_job_id="job_candidate_method",
+                evidence_kind="artifact",
+                claim="Cached claim-evidence retrieval attached ranked evidence for the result claim.",
+                artifact_ref="run_artifact_json",
+                support_status="supported",
+            )
+        ],
+        entry_count=1,
+        complete=True,
+        ledger_fingerprint="submission-assets-ledger",
+    )
+    evidence_ledger_path.write_text(evidence_ledger.model_dump_json(indent=2), encoding="utf-8")
     run = AutoResearchRunRead(
         id=run_id,
         project_id=project_id,
@@ -2870,6 +3104,8 @@ def test_publish_package_materializes_submission_assets(
         paper_markdown=paper_path.read_text(encoding="utf-8"),
         claim_evidence_matrix=claim_matrix,
         claim_evidence_matrix_path=str(claim_matrix_path),
+        evidence_ledger=evidence_ledger,
+        evidence_ledger_path=str(evidence_ledger_path),
     )
     evidence_index_path = run_root / "publication_evidence_index.json"
     evidence_index = AutoResearchPublicationEvidenceIndexRead(
@@ -2993,7 +3229,10 @@ def test_publish_package_materializes_submission_assets(
     assert submission_manifest_path.is_file()
     assert "Reproducibility Checklist" in checklist_path.read_text(encoding="utf-8")
     assert "Reviewer Response" in response_path.read_text(encoding="utf-8")
-    assert "claim_result_summary" in claim_index_path.read_text(encoding="utf-8")
+    claim_index_text = claim_index_path.read_text(encoding="utf-8")
+    assert "claim_result_summary" in claim_index_text
+    assert "Experiment Evidence Ledger" in claim_index_text
+    assert "evidence_retrieval_claim_result_summary" in claim_index_text
     lineage_payload = json.loads(lineage_archive_path.read_text(encoding="utf-8"))
     assert lineage_payload["lineage_edge_count"] == 1
     submission_payload = json.loads(submission_manifest_path.read_text(encoding="utf-8"))
@@ -3015,6 +3254,74 @@ def test_publish_package_materializes_submission_assets(
         review_publish.CLAIM_EVIDENCE_INDEX_FILENAME,
         review_publish.LINEAGE_ARCHIVE_FILENAME,
     }.issubset(generated_names)
+
+
+def test_claim_evidence_index_accepts_retrieval_evidence_ledger_without_matrix() -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_ledger_only_claim_index",
+        project_id="project_ledger_only_claim_index",
+        topic="Ledger-only claim evidence index",
+        status="done",
+        task_family="ir_reranking",
+        created_at=now,
+        updated_at=now,
+        evidence_ledger=AutoResearchEvidenceLedgerRead(
+            project_id="project_ledger_only_claim_index",
+            run_id="run_ledger_only_claim_index",
+            generated_at=now,
+            entries=[
+                AutoResearchEvidenceLedgerEntryRead(
+                    evidence_id="evidence_retrieval_claim_support",
+                    source_job_id="job_candidate_method",
+                    evidence_kind="artifact",
+                    claim="Cached retrieval supports the selected scientific writing claim.",
+                    artifact_ref="run_artifact_json",
+                    support_status="supported",
+                )
+            ],
+            entry_count=1,
+            complete=True,
+            ledger_fingerprint="ledger-only-claim-index",
+        ),
+        evidence_ledger_path="/tmp/evidence_ledger.json",
+    )
+    review = review_publish.AutoResearchRunReviewRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        generated_at=now,
+        overall_status="ready",
+        unsupported_claim_risk="low",
+        summary="Ledger-only claim evidence index regression.",
+        evidence=review_publish.AutoResearchReviewEvidenceRead(),
+        citation_coverage=review_publish.AutoResearchCitationCoverageRead(),
+        scores=review_publish.AutoResearchReviewScoresRead(),
+        publication_evidence_index=AutoResearchPublicationEvidenceIndexRead(
+            generated_at=now,
+            project_id=run.project_id,
+            run_id=run.id,
+            complete=True,
+            evidence_index_fingerprint="ledger-only-publication-index",
+        ),
+        publication_evidence_index_path="/tmp/publication_evidence_index.json",
+    )
+    package = AutoResearchPublishPackageRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        package_id="ledger_only_package",
+        generated_at=now,
+    )
+
+    markdown, complete = review_publish._build_claim_evidence_index_markdown(
+        run=run,
+        review=review,
+        package=package,
+    )
+
+    assert complete is True
+    assert "No claim-evidence matrix entries were available" in markdown
+    assert "Experiment Evidence Ledger" in markdown
+    assert "evidence_retrieval_claim_support" in markdown
 
 
 def test_publish_package_marks_archive_stale_when_asset_digest_changes(
@@ -6647,6 +6954,12 @@ def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:
     assert all(job.status == "done" for job in execution.materialized_jobs)
     assert all(job.output_refs for job in execution.materialized_jobs)
     assert all(job.repair_classification == "none" for job in execution.materialized_jobs)
+    assert all(job.failure_classification == "none" for job in execution.materialized_jobs)
+    assert all(job.started_at_step >= 1 for job in execution.materialized_jobs)
+    assert all(job.completed_at_step == job.started_at_step for job in execution.materialized_jobs)
+    assert all(job.runtime_contract["status"] == "done" for job in execution.materialized_jobs)
+    assert all(job.runtime_contract["expected_outputs"] == job.expected_outputs for job in execution.materialized_jobs)
+    assert all(job.runtime_contract["timeout_seconds"] == plan.execution_backend.timeout_seconds for job in execution.materialized_jobs)
     assert (
         execution.result_artifact.environment["environment_manifest_id"]
         == execution.environment_manifest.manifest_id
@@ -6664,6 +6977,159 @@ def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:
         item.artifact_ref == "experiment_factory_materialized_jobs_json"
         for item in execution.evidence_ledger.entries
     )
+    assert execution.repair_plan is not None
+    assert execution.repair_plan.actions == ["none"]
+
+
+def test_experiment_factory_executes_cached_scifact_claim_evidence_benchmark(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "name": "Cached SciFact Claim Evidence Benchmark",
+        "description": "Offline cached SciFact-style claim-evidence benchmark for factory execution.",
+        "corpus": [
+            {
+                "doc_id": "support_train",
+                "title": "Training Evidence",
+                "abstract": ["Training improves retrieval quality for supported claims."],
+            },
+            {
+                "doc_id": "support_test",
+                "title": "Ledger Evidence Support",
+                "abstract": ["Claim evidence ledgers improve support retrieval for scientific writing agents."],
+            },
+            {
+                "doc_id": "support_distractor",
+                "title": "Writing Fluency",
+                "abstract": ["Writing fluency improves readability without evidence retrieval support."],
+            },
+            {
+                "doc_id": "refute_test",
+                "title": "Unsupported Claim Refutation",
+                "abstract": ["Unsupported claim generation does not improve evidence verification accuracy."],
+            },
+            {
+                "doc_id": "refute_distractor",
+                "title": "Verification Survey",
+                "abstract": ["A survey describes verification tasks without testing unsupported claim generation."],
+            },
+            {
+                "doc_id": "nei_test",
+                "title": "Background Evidence",
+                "abstract": ["Background work studies citation graphs but not autonomous claim repair."],
+            },
+        ],
+        "claims": [
+            {
+                "id": "train_support",
+                "claim": "Training improves retrieval quality.",
+                "candidate_doc_ids": ["support_train", "support_distractor"],
+                "evidence": {"support_train": [{"label": "SUPPORT"}]},
+            },
+            {
+                "id": "test_support",
+                "claim": "Claim evidence ledgers improve support retrieval.",
+                "candidate_doc_ids": ["support_test", "support_distractor", "nei_test"],
+                "evidence": {"support_test": [{"label": "SUPPORT"}]},
+            },
+            {
+                "id": "test_refute",
+                "claim": "Unsupported claim generation improves evidence verification accuracy.",
+                "candidate_doc_ids": ["refute_test", "refute_distractor", "support_distractor"],
+                "evidence": {"refute_test": [{"label": "REFUTE"}]},
+            },
+            {
+                "id": "test_nei",
+                "claim": "Blue light cures migraine.",
+                "candidate_doc_ids": ["nei_test", "support_distractor", "refute_distractor"],
+                "label": "NEI",
+                "evidence": {},
+            },
+        ],
+        "split": {"train": ["train_support"], "test": ["test_support", "test_refute", "test_nei"]},
+    }
+    cache_path = tmp_path / "cached_scifact_factory.json"
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"factory benchmark must load from cache, not network: {url}"),
+    )
+    benchmark = autoresearch_ingestion.resolve_benchmark(
+        topic="claim evidence retrieval and verification for scientific writing agents",
+        task_family_hint="ir_reranking",
+        benchmark_source=BenchmarkSource(
+            kind="scifact_json",
+            name="Cached SciFact Factory",
+            file_path=str(cache_path),
+            dataset_id="allenai/scifact",
+            revision="factory-fixture-v1",
+            license="cc-by-nc",
+        ),
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark).model_copy(update={"seeds": [0, 1, 2]})
+    plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id="project-factory-cached-scifact",
+        run=AutoResearchRunRead(
+            id="run-factory-cached-scifact",
+            project_id="project-factory-cached-scifact",
+            topic="Cached SciFact factory execution",
+            status="running",
+            task_family="ir_reranking",
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            updated_at=datetime.now(UTC).replace(tzinfo=None),
+            spec=spec,
+            benchmark=benchmark.source,
+            execution_backend=ExecutionBackendSpec(kind="local", timeout_seconds=30),
+        ),
+    )
+
+    execution = autoresearch_experiment_factory.execute_cached_claim_evidence_experiment_factory(
+        plan,
+        benchmark_payload=benchmark.payload,
+        executor_mode="local",
+    )
+
+    assert execution.result_artifact.status == "done"
+    assert execution.environment_manifest.executor_mode == "local"
+    assert execution.result_artifact.environment["factory_executor_mode"] == "cached_claim_evidence_benchmark"
+    assert execution.result_artifact.objective_system == "ledger_aware_ranker"
+    objective_metrics = next(
+        item.mean_metrics
+        for item in execution.result_artifact.aggregate_system_results
+        if item.system == "ledger_aware_ranker"
+    )
+    assert {"mrr", "recall_at_1", "ndcg_at_10", "recall_at_10", "evidence_coverage"}.issubset(
+        objective_metrics
+    )
+    assert {"verification_accuracy", "unsupported_claim_precision", "unsupported_claim_recall", "abstention_accuracy"}.issubset(
+        objective_metrics
+    )
+    objective_aggregate = next(
+        item
+        for item in execution.result_artifact.aggregate_system_results
+        if item.system == "ledger_aware_ranker"
+    )
+    assert objective_aggregate.sample_count == 3
+    assert "mrr" in objective_aggregate.confidence_intervals
+    assert objective_aggregate.std_metrics["mrr"] >= 0.0
+    assert execution.result_artifact.significance_tests
+    significance = execution.result_artifact.significance_tests[0]
+    assert significance.method == "paired_sign_flip_exact"
+    assert significance.sample_count == 3
+    assert "wins=" in significance.detail
+    assert execution.result_artifact.outputs["paired_query_comparisons"]
+    assert execution.result_artifact.outputs["paired_sign_test"]["sample_count"] == 3
+    assert execution.result_artifact.outputs["retrieval_evidence_ledger"]
+    assert execution.result_artifact.outputs["objective_query_diagnostics"]
+    assert len(execution.materialized_jobs) == plan.job_count
+    assert all(job.status == "done" for job in execution.materialized_jobs)
+    assert any(
+        item.evidence_id.startswith("evidence_retrieval_")
+        for item in execution.evidence_ledger.entries
+    )
+    assert execution.evidence_ledger.complete is True
     assert execution.repair_plan is not None
     assert execution.repair_plan.actions == ["none"]
 
@@ -6895,6 +7361,22 @@ def test_experiment_factory_external_import_classifies_missing_evidence() -> Non
     assert failed_by_kind["baseline"] == "add_missing_baseline"
     assert failed_by_kind["ablation"] == "add_missing_ablation"
     assert failed_by_kind["seed"] == "increase_seed_count"
+    failed_classes = {
+        job.job_kind: job.failure_classification
+        for job in execution.materialized_jobs
+        if job.status == "failed"
+    }
+    assert failed_classes["baseline"] == "missing_baseline_outputs"
+    assert failed_classes["ablation"] == "missing_ablation_outputs"
+    assert failed_classes["seed"] == "insufficient_statistics_outputs"
+    assert all(
+        job.runtime_contract["status"] == job.status
+        for job in execution.materialized_jobs
+    )
+    assert all(
+        job.completed_at_step == job.started_at_step
+        for job in execution.materialized_jobs
+    )
     assert execution.evidence_ledger.complete is False
     assert execution.repair_plan is not None
     assert {
@@ -6936,6 +7418,10 @@ def test_experiment_factory_materializes_docker_handoff_without_claim_support() 
     assert all(job.status == "planned" for job in execution.materialized_jobs)
     assert all(job.executor_mode == "docker" for job in execution.materialized_jobs)
     assert all(job.output_refs == [] for job in execution.materialized_jobs)
+    assert all(job.failure_classification == "planned" for job in execution.materialized_jobs)
+    assert all(job.completed_at_step is None for job in execution.materialized_jobs)
+    assert all(job.runtime_contract["executor_mode"] == "docker" for job in execution.materialized_jobs)
+    assert all(job.runtime_contract["status"] == "planned" for job in execution.materialized_jobs)
     assert execution.evidence_ledger.complete is False
     assert "Materialized execution has no completed result artifact." in execution.evidence_ledger.blockers
     assert execution.repair_plan is None
@@ -7170,6 +7656,1673 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert orchestration.conclusion_ledger.conditional_conclusions
     assert orchestration.supported_core_claim_count == orchestration.core_claim_count
     assert any("Only one completed run" in item for item in orchestration.warnings)
+    assert orchestration.project_paper_ready is True
+    assert orchestration.project_paper_path is not None
+    assert Path(orchestration.project_paper_path).is_file()
+    assert orchestration.project_paper_missing_sections == []
+    assert set(orchestration.project_paper_sections) == set(
+        autoresearch_project_paper_orchestrator.PROJECT_PAPER_REQUIRED_SECTIONS
+    )
+    paper_markdown = Path(orchestration.project_paper_path).read_text(encoding="utf-8")
+    assert "## Abstract" in paper_markdown
+    assert "## Research Question" in paper_markdown
+    assert "## Benchmark And Data" in paper_markdown
+    assert "## Experimental Setup" in paper_markdown
+    assert "## Negative Evidence" in paper_markdown
+    assert "## Reproducibility" in paper_markdown
+    assert "Artifact evidence map:" in paper_markdown
+    assert "submission_package/experiment_repair_index.json" in paper_markdown
+    assert "submission_package/statistics_report.json" in paper_markdown
+    assert "submission_package/negative_evidence_report.json" in paper_markdown
+    assert "submission_package/benchmark_provenance_manifest.json" in paper_markdown
+    assert "paper_sources/paper_compiler_evidence.json" in paper_markdown
+    assert "## References" in paper_markdown
+    assert run.id in paper_markdown
+    assert orchestration.project_paper_sources_dir is not None
+    sources_dir = Path(orchestration.project_paper_sources_dir)
+    assert sources_dir.is_dir()
+    assert Path(orchestration.project_paper_sources_manifest_path).is_file()
+    assert Path(orchestration.project_paper_compile_report_path).is_file()
+    assert Path(orchestration.project_paper_latex_path).is_file()
+    assert Path(orchestration.project_paper_bibliography_path).is_file()
+    assert Path(orchestration.project_paper_build_script_path).is_file()
+    assert Path(orchestration.project_paper_build_script_path).stat().st_mode & 0o111
+    assert orchestration.project_paper_sources_manifest is not None
+    source_files = {item.relative_path for item in orchestration.project_paper_sources_manifest.files}
+    assert {
+        "paper.md",
+        "main.tex",
+        "references.bib",
+        "build.sh",
+            "paper_compile_report.json",
+            "paper_compiler_evidence.json",
+            "project_revision_action_index.json",
+            "project_review_findings.json",
+            "revision_actions.md",
+        "paper_revised.md",
+        "project_revision_application.json",
+        "project_rereview_report.json",
+        "manifest.json",
+    } == source_files
+    assert all((sources_dir / item).exists() for item in source_files)
+    assert orchestration.project_paper_compile_report is not None
+    assert orchestration.project_paper_compile_report.source_package_complete is True
+    assert orchestration.project_paper_compile_report.missing_required_inputs == []
+    assert orchestration.project_paper_revision_action_count >= 3
+    assert orchestration.project_paper_revision_pending_action_count >= 3
+    assert orchestration.project_paper_revision_completed_action_count == 0
+    assert orchestration.project_paper_revision_action_index is not None
+    assert orchestration.project_paper_revision_action_index.pending_action_count >= 3
+    assert orchestration.project_paper_revision_action_index.completed_action_count == 0
+    assert {
+        "project_literature_refresh_multi_source",
+        "project_benchmark_provenance_repair",
+        "project_benchmark_scale_repair",
+    }.issubset({action.action_id for action in orchestration.project_paper_revision_actions})
+    assert Path(orchestration.project_paper_revision_action_index_path).is_file()
+    assert Path(orchestration.project_paper_revision_actions_markdown_path).is_file()
+    assert Path(orchestration.project_paper_revised_path).is_file()
+    assert Path(orchestration.project_paper_revision_application_path).is_file()
+    assert Path(orchestration.project_paper_rereview_report_path).is_file()
+    assert orchestration.project_paper_latex_source is not None
+    assert "\\section{Abstract}" in orchestration.project_paper_latex_source
+    assert orchestration.project_paper_bibliography_bib is not None
+    assert orchestration.project_review_bundle_ready is True
+    assert orchestration.project_final_publish_ready is False
+    assert orchestration.project_submission_ready is False
+    assert orchestration.project_submission_asset_count == 28
+    assert orchestration.project_submission_manifest_path is not None
+    assert Path(orchestration.project_submission_manifest_path).is_file()
+    assert Path(orchestration.project_reproducibility_checklist_path).is_file()
+    assert Path(orchestration.project_reviewer_response_path).is_file()
+    assert Path(orchestration.project_review_findings_path).is_file()
+    assert Path(orchestration.project_repair_execution_log_path).is_file()
+    assert Path(orchestration.project_claim_evidence_index_path).is_file()
+    assert Path(orchestration.project_retrieval_evidence_ledger_path).is_file()
+    assert Path(orchestration.project_lineage_archive_path).is_file()
+    assert Path(orchestration.project_paper_compiler_evidence_path).is_file()
+    assert Path(orchestration.project_publication_evidence_index_path).is_file()
+    assert Path(orchestration.project_publication_readiness_report_path).is_file()
+    assert Path(orchestration.project_supplemental_artifacts_path).is_file()
+    assert Path(orchestration.project_revision_application_path).is_file()
+    assert Path(orchestration.project_revision_rereview_path).is_file()
+    assert orchestration.project_code_package_path is not None
+    assert orchestration.project_benchmark_card_path is not None
+    assert orchestration.project_benchmark_provenance_manifest_path is not None
+    assert orchestration.project_benchmark_provenance_repair_index_path is not None
+    assert orchestration.project_statistics_report_path is not None
+    assert orchestration.project_experiment_repair_index_path is not None
+    assert orchestration.project_offline_publication_case_path is not None
+    assert orchestration.project_offline_publication_audit_path is not None
+    assert orchestration.project_publication_manifest_path is not None
+    assert Path(orchestration.project_code_package_path).is_file()
+    assert Path(orchestration.project_benchmark_card_path).is_file()
+    assert Path(orchestration.project_benchmark_provenance_manifest_path).is_file()
+    assert Path(orchestration.project_benchmark_provenance_repair_index_path).is_file()
+    assert Path(orchestration.project_statistics_report_path).is_file()
+    assert Path(orchestration.project_experiment_repair_index_path).is_file()
+    assert Path(orchestration.project_negative_evidence_report_path).is_file()
+    assert Path(orchestration.project_offline_publication_case_path).is_file()
+    assert Path(orchestration.project_offline_publication_audit_path).is_file()
+    assert Path(orchestration.project_publication_manifest_path).is_file()
+    assert orchestration.project_code_package_complete is True
+    assert orchestration.project_benchmark_card_complete is True
+    assert orchestration.project_benchmark_provenance_manifest_complete is True
+    assert orchestration.project_benchmark_provenance_repair_index_complete is True
+    assert orchestration.project_statistics_report_complete is True
+    assert orchestration.project_experiment_repair_index_complete is True
+    assert orchestration.project_negative_evidence_report_complete is True
+    assert orchestration.project_offline_publication_case_complete is True
+    assert orchestration.project_offline_publication_audit_complete is True
+    assert orchestration.project_repair_execution_log_complete is True
+    assert orchestration.project_review_findings_complete is True
+    assert orchestration.project_publication_manifest_complete is True
+    assert orchestration.project_retrieval_evidence_ledger_complete is True
+    assert orchestration.project_publication_readiness_report_complete is True
+    assert orchestration.project_paper_compiler_evidence_complete is True
+    assert orchestration.project_publication_evidence_index_complete is True
+    assert orchestration.project_supplemental_artifacts_complete is True
+    assert orchestration.project_revision_application_complete is True
+    assert orchestration.project_revision_rereview_complete is True
+    submission_manifest = json.loads(Path(orchestration.project_submission_manifest_path).read_text(encoding="utf-8"))
+    assert submission_manifest["bundle_kind"] == "review_bundle"
+    assert submission_manifest["review_bundle_ready"] is True
+    assert submission_manifest["final_publish_ready"] is False
+    assert all(item["source_action"] for item in submission_manifest["generated_assets"])
+    assert all(item["readiness_contribution"] for item in submission_manifest["generated_assets"])
+    assert all("source_evidence_refs" in item for item in submission_manifest["generated_assets"])
+    assert all(item["missing_status"] == "present" for item in submission_manifest["generated_assets"])
+    assert all("blocked_status" in item for item in submission_manifest["generated_assets"])
+    assert all("final_publish_blocking" in item for item in submission_manifest["generated_assets"])
+    assert all("blocking_check_ids" in item for item in submission_manifest["generated_assets"])
+    assert submission_manifest["blocked_asset_count"] > 0
+    assert "project_publication_readiness_report" in submission_manifest["final_publish_blocking_asset_roles"]
+    assert all(item["source_run_ids"] == [run.id] for item in submission_manifest["generated_assets"])
+    assets_by_role = {item["role"]: item for item in submission_manifest["generated_assets"]}
+    assert assets_by_role["project_review_findings"]["source_action"] == "run_project_reviewer_simulator"
+    assert assets_by_role["project_review_findings"]["readiness_contribution"] == "review_findings"
+    assert assets_by_role["project_statistics_report"]["source_action"] == "build_project_statistics_report"
+    assert assets_by_role["project_experiment_repair_index"]["readiness_contribution"] == "experiment_repair"
+    assert assets_by_role["project_negative_evidence_report"]["readiness_contribution"] == "negative_evidence"
+    assert assets_by_role["project_retrieval_evidence_ledger"]["readiness_contribution"] == "retrieval_evidence"
+    assert assets_by_role["project_offline_publication_case"]["readiness_contribution"] == "offline_publication_case"
+    assert assets_by_role["project_offline_publication_audit"]["readiness_contribution"] == "capability_audit"
+    assert "selected_run_result_artifacts" in assets_by_role["project_statistics_report"]["source_evidence_refs"]
+    assert "project_evidence_ledgers" in assets_by_role["project_negative_evidence_report"]["source_evidence_refs"]
+    assert submission_manifest["code_package_path"] == orchestration.project_code_package_path
+    assert submission_manifest["supplemental_artifacts_path"] == orchestration.project_supplemental_artifacts_path
+    assert submission_manifest["review_findings_path"] == orchestration.project_review_findings_path
+    assert submission_manifest["repair_execution_log_path"] == orchestration.project_repair_execution_log_path
+    assert submission_manifest["retrieval_evidence_ledger_path"] == orchestration.project_retrieval_evidence_ledger_path
+    assert submission_manifest["paper_compiler_evidence_path"] == orchestration.project_paper_compiler_evidence_path
+    assert submission_manifest["publication_evidence_index_path"] == orchestration.project_publication_evidence_index_path
+    assert submission_manifest["benchmark_card_path"] == orchestration.project_benchmark_card_path
+    assert submission_manifest["benchmark_provenance_manifest_path"] == orchestration.project_benchmark_provenance_manifest_path
+    assert submission_manifest["statistics_report_path"] == orchestration.project_statistics_report_path
+    assert submission_manifest["negative_evidence_report_path"] == orchestration.project_negative_evidence_report_path
+    assert submission_manifest["offline_publication_case_path"] == orchestration.project_offline_publication_case_path
+    assert submission_manifest["offline_publication_audit_path"] == orchestration.project_offline_publication_audit_path
+    assert submission_manifest["publication_manifest_path"] == orchestration.project_publication_manifest_path
+    assert "Project publish gate has not passed" in "\n".join(orchestration.project_submission_blockers)
+    assert "Project Reproducibility Checklist" in Path(
+        orchestration.project_reproducibility_checklist_path
+    ).read_text(encoding="utf-8")
+    benchmark_card = json.loads(Path(orchestration.project_benchmark_card_path).read_text(encoding="utf-8"))
+    assert benchmark_card["card_id"] == "project_benchmark_card_v1"
+    assert benchmark_card["selected_run_ids"] == [run.id]
+    run_card = benchmark_card["run_cards"][0]
+    assert run_card["sample_count"] == run_card["total_examples"]
+    assert "split_count" in run_card
+    assert "supports_claim_verification" in run_card
+    assert "verification_label_space" in run_card
+    assert "source_class" in run_card
+    assert "publication_grade_eligibility" in run_card
+    assert "publication_grade_blockers" in run_card
+    publication_manifest = json.loads(Path(orchestration.project_publication_manifest_path).read_text(encoding="utf-8"))
+    assert publication_manifest["publication_id"] == f"project_publication_{project_id}"
+    assert publication_manifest["review_bundle_ready"] is True
+    assert publication_manifest["final_publish_ready"] is False
+    readiness_decision = publication_manifest["readiness_decision"]
+    assert readiness_decision["decision_source"] == "publication_readiness_report.json"
+    assert readiness_decision["review_ready"] is True
+    assert readiness_decision["final_publish_ready"] is False
+    assert readiness_decision["bundle_kind"] == "review_bundle"
+    assert readiness_decision["failed_check_count"] > 0
+    assert {item["check_id"] for item in readiness_decision["failed_checks"]} >= {
+        "project_publish_gate",
+        "benchmark_scale",
+        "benchmark_provenance",
+    }
+    assert readiness_decision["blockers"]
+    assert readiness_decision["required_followups"]
+    assert readiness_decision["kill_criteria"]
+    assert "negative_evidence_report.json" in readiness_decision["evidence_refs"]
+    assert readiness_decision["claim_ceiling_recommendation"] in {
+        "workshop_case_study_claim",
+        "technical_report_only",
+    }
+    assert publication_manifest["paper_compiler_evidence_sha256"] is not None
+    assert publication_manifest["publication_evidence_index_sha256"] is not None
+    assert publication_manifest["publication_readiness_report_sha256"] is not None
+    assert publication_manifest["repair_execution_log_sha256"] is not None
+    assert publication_manifest["review_findings_sha256"] is not None
+    assert publication_manifest["retrieval_evidence_ledger_sha256"] is not None
+    assert publication_manifest["supplemental_artifacts_sha256"] is not None
+    assert publication_manifest["code_package_sha256"] is not None
+    assert publication_manifest["benchmark_provenance_manifest_sha256"] is not None
+    assert publication_manifest["statistics_report_sha256"] is not None
+    assert publication_manifest["negative_evidence_report_sha256"] is not None
+    assert publication_manifest["offline_publication_case_sha256"] is not None
+    assert publication_manifest["offline_publication_audit_sha256"] is not None
+    assert publication_manifest["asset_count"] == len(submission_manifest["generated_assets"])
+    assert publication_manifest["missing_asset_count"] == 0
+    publication_assets_by_role = {item["role"]: item for item in publication_manifest["generated_assets"]}
+    assert set(publication_assets_by_role) == set(assets_by_role)
+    assert all(item["source_action"] for item in publication_manifest["generated_assets"])
+    assert all(item["readiness_contribution"] for item in publication_manifest["generated_assets"])
+    assert all("source_evidence_refs" in item for item in publication_manifest["generated_assets"])
+    assert all(item["missing_status"] == "present" for item in publication_manifest["generated_assets"])
+    assert all("blocked_status" in item for item in publication_manifest["generated_assets"])
+    assert all("final_publish_blocking" in item for item in publication_manifest["generated_assets"])
+    assert publication_manifest["blocked_asset_count"] == len(
+        publication_manifest["final_publish_blocking_asset_roles"]
+    )
+    assert publication_manifest["blocked_asset_count"] > 0
+    assert publication_assets_by_role["project_publication_readiness_report"]["blocked_status"] == (
+        "blocked_for_final_publish"
+    )
+    assert "project_publish_gate" in (
+        publication_assets_by_role["project_publication_readiness_report"]["blocking_check_ids"]
+    )
+    assert publication_assets_by_role["project_benchmark_provenance_manifest"]["blocked_status"] == (
+        "blocked_for_final_publish"
+    )
+    assert all(item["source_run_ids"] == [run.id] for item in publication_manifest["generated_assets"])
+    assert all(
+        item["sha256"] is not None
+        for item in publication_manifest["generated_assets"]
+        if item["kind"] == "file" and item["role"] != "project_publication_manifest"
+    )
+    assert publication_assets_by_role["project_publication_manifest"]["self_referential_hash"] is True
+    assert publication_assets_by_role["project_publication_manifest"]["sha256"] is None
+    assert publication_assets_by_role["project_statistics_report"]["source_action"] == "build_project_statistics_report"
+    assert (
+        publication_assets_by_role["project_offline_publication_audit"]["readiness_contribution"]
+        == "capability_audit"
+    )
+    review_findings = json.loads(Path(orchestration.project_review_findings_path).read_text(encoding="utf-8"))
+    assert review_findings["review_id"] == "project_reviewer_simulation_findings_v1"
+    assert review_findings["finding_count"] == orchestration.project_paper_revision_action_count
+    assert {
+        item["mapped_revision_action_id"] for item in review_findings["findings"]
+    } == {action.action_id for action in orchestration.project_paper_revision_actions}
+    assert all(action.finding_ids for action in orchestration.project_paper_revision_actions)
+    compiler_evidence = json.loads(Path(orchestration.project_paper_compiler_evidence_path).read_text(encoding="utf-8"))
+    assert compiler_evidence["packet_id"] == "project_paper_compiler_evidence_v1"
+    assert compiler_evidence["section_coverage"]["complete"] is True
+    assert set(compiler_evidence["section_coverage"]["required_sections"]) == set(
+        autoresearch_project_paper_orchestrator.PROJECT_PAPER_REQUIRED_SECTIONS
+    )
+    assert {
+        "Research Question",
+        "Benchmark And Data",
+        "Negative Evidence",
+        "Reproducibility",
+    }.issubset(set(compiler_evidence["section_coverage"]["present_sections"]))
+    assert compiler_evidence["claim_support_coverage"]["core_claim_count"] == orchestration.core_claim_count
+    assert compiler_evidence["compile_readiness"]["source_package_complete"] is True
+    assert compiler_evidence["statistics_coverage"]["run_with_statistics_count"] >= 1
+    execution_coverage = compiler_evidence["execution_coverage"]
+    assert execution_coverage["complete"] is True
+    assert execution_coverage["complete_execution_profile_count"] == 1
+    assert execution_coverage["execution_source_counts"]
+    assert "run_result_artifact_json" in execution_coverage["execution_output_artifact_refs"]
+    assert execution_coverage["execution_evidence_ledger"]["entry_count"] == 1
+    assert execution_coverage["execution_evidence_ledger"]["entries"][0]["run_id"] == run.id
+    assert execution_coverage["metrics_artifact_refs"]
+    assert compiler_evidence["review_findings_coverage"]["finding_count"] == (
+        orchestration.project_paper_revision_action_count
+    )
+    assert compiler_evidence["review_findings_coverage"]["complete"] is True
+    assert compiler_evidence["reproducibility_coverage"]["review_findings_persisted"] is True
+    assert "project_review_findings" in compiler_evidence["reproducibility_coverage"]["planned_package_asset_roles"]
+    assert compiler_evidence["reproducibility_coverage"]["planned_package_asset_count"] == len(
+        autoresearch_project_paper_orchestrator.PROJECT_SUBMISSION_PACKAGE_ROLES
+    )
+    benchmark_coverage = compiler_evidence["benchmark_provenance_coverage"]
+    assert benchmark_coverage["snapshot_metadata"]["selected_run_count"] == 1
+    assert benchmark_coverage["snapshot_metadata"]["total_sample_count"] == run_card["sample_count"]
+    assert benchmark_coverage["run_profiles"][0]["sample_count"] == run_card["sample_count"]
+    benchmark_provenance_manifest = json.loads(
+        Path(orchestration.project_benchmark_provenance_manifest_path).read_text(encoding="utf-8")
+    )
+    assert benchmark_provenance_manifest["manifest_id"] == "project_benchmark_provenance_manifest_v1"
+    assert benchmark_provenance_manifest["snapshot_metadata"]["selected_run_count"] == 1
+    assert benchmark_provenance_manifest["run_profiles"][0]["split_count"] == run_card["split_count"]
+    source_record = benchmark_provenance_manifest["benchmark_source_records"][0]
+    assert source_record["run_id"] == run.id
+    assert source_record["dataset_id"] == run_card["source_dataset_id"]
+    assert source_record["revision"] == run_card["source_revision"]
+    assert source_record["license"] == run_card["source_license"]
+    assert source_record["source_locator"] == run_card["source_url"]
+    assert source_record["fingerprint"] == run_card["source_fingerprint"]
+    assert source_record["sample_count"] == run_card["sample_count"]
+    assert source_record["split_count"] == run_card["split_count"]
+    assert "query_document_evidence_schema" in source_record
+    assert "label_space" in source_record
+    assert "source_class" in source_record
+    assert "publication_grade_eligibility" in source_record
+    assert "publication_grade_blockers" in source_record
+    schema_coverage = benchmark_provenance_manifest["schema_coverage"]
+    assert schema_coverage["selected_run_count"] == 1
+    assert "schema_coverage_complete" in schema_coverage
+    assert "schema_blockers" in schema_coverage
+    publication_evidence_index = json.loads(
+        Path(orchestration.project_publication_evidence_index_path).read_text(encoding="utf-8")
+    )
+    assert publication_evidence_index["index_id"] == "project_publication_evidence_index_v1"
+    assert publication_evidence_index["benchmark_evidence_count"] == 1
+    benchmark_evidence_item = publication_evidence_index["benchmark_evidence_items"][0]
+    assert benchmark_evidence_item["run_id"] == run.id
+    assert benchmark_evidence_item["dataset_id"] == run_card["source_dataset_id"]
+    assert benchmark_evidence_item["artifact_refs"] == [
+        orchestration.project_benchmark_provenance_manifest_path,
+        orchestration.project_benchmark_provenance_repair_index_path,
+    ]
+    assert publication_evidence_index["package_evidence_refs"]["benchmark_provenance_manifest"] == (
+        orchestration.project_benchmark_provenance_manifest_path
+    )
+    assert publication_evidence_index["package_evidence_refs"]["benchmark_provenance_repair_index"] == (
+        orchestration.project_benchmark_provenance_repair_index_path
+    )
+    statistics_report = json.loads(Path(orchestration.project_statistics_report_path).read_text(encoding="utf-8"))
+    assert statistics_report["report_id"] == "project_statistics_report_v1"
+    assert statistics_report["per_method_metric_table"]
+    assert statistics_report["aggregate_metric_table"]
+    assert statistics_report["paired_comparisons"]
+    assert statistics_report["confidence_intervals"] or statistics_report["deterministic_equivalents"]
+    assert statistics_report["execution_coverage"]["complete"] is True
+    assert statistics_report["execution_coverage"]["complete_execution_profile_count"] == 1
+    assert "run_result_artifact_json" in statistics_report["execution_coverage"]["execution_output_artifact_refs"]
+    assert statistics_report["claim_ceiling_recommendation"] in {
+        "workshop_case_study_claim",
+        "technical_report_only",
+    }
+    assert statistics_report["statistics_limitations"]
+    experiment_repair_index = json.loads(Path(orchestration.project_experiment_repair_index_path).read_text(encoding="utf-8"))
+    execution_ledger = experiment_repair_index["execution_evidence_ledger"]
+    assert execution_ledger["ledger_id"] == "project_experiment_execution_evidence_ledger_v1"
+    assert execution_ledger["entry_count"] == 1
+    assert execution_ledger["entries"][0]["run_id"] == run.id
+    assert execution_ledger["entries"][0]["repair_action_linkage"] == [
+        "project_benchmark_scale_repair",
+        "project_insufficient_statistics_repair",
+    ]
+    assert execution_ledger["entries"][0]["metrics_artifact_refs"]
+    assert execution_ledger["entries"][0]["deterministic_fingerprint"]
+    negative_evidence_report = json.loads(Path(orchestration.project_negative_evidence_report_path).read_text(encoding="utf-8"))
+    assert negative_evidence_report["report_id"] == "project_negative_evidence_report_v1"
+    assert negative_evidence_report["entry_count"] > 0
+    assert negative_evidence_report["negative_evidence_retained"] is True
+    assert "claim_ceiling_recommendation" in negative_evidence_report
+    retrieval_ledger = json.loads(Path(orchestration.project_retrieval_evidence_ledger_path).read_text(encoding="utf-8"))
+    assert retrieval_ledger["ledger_id"] == "project_retrieval_evidence_ledger_v1"
+    assert "entries" in retrieval_ledger
+    assert "status_counts" in retrieval_ledger
+    offline_case = json.loads(Path(orchestration.project_offline_publication_case_path).read_text(encoding="utf-8"))
+    assert offline_case["case_id"] == "offline_publication_case_claim_evidence_v3"
+    assert offline_case["research_question"].startswith("Can evidence-ledger-guided retrieval")
+    assert offline_case["research_chain"]["method_ladder"] == [
+        "random_ranker",
+        "lexical_overlap",
+        "bm25_tfidf_style",
+        "phrase_or_bigram_aware_retrieval",
+        "ledger_aware_retrieval",
+        "abstention_repair_router",
+    ]
+    assert "project_negative_evidence_report" in offline_case["research_chain"]["paper_package_outputs"]
+    assert offline_case["evidence_classification"]["internal_fixtures_policy"]
+    offline_audit = json.loads(Path(orchestration.project_offline_publication_audit_path).read_text(encoding="utf-8"))
+    assert offline_audit["audit_id"] == "offline_publication_capability_audit_v1"
+    assert offline_audit["checkpoint_count"] == 7
+    assert offline_audit["review_ready"] is True
+    assert offline_audit["final_publish_ready"] is False
+    assert {item["checkpoint_id"] for item in offline_audit["checkpoints"]} == {
+        "literature_refresh",
+        "benchmark_snapshot_selection",
+        "experiment_execution_or_import_replay",
+        "statistics_strength",
+        "negative_evidence_retention",
+        "repair_aware_rereview",
+        "submission_package_v3",
+    }
+    assert offline_audit["remaining_breakpoints"]
+    repair_execution_log = json.loads(Path(orchestration.project_repair_execution_log_path).read_text(encoding="utf-8"))
+    assert repair_execution_log["log_id"] == "project_repair_execution_log_v1"
+    assert all("input_artifact_refs" in item for item in repair_execution_log["entries"])
+    assert all("output_artifact_refs" in item for item in repair_execution_log["entries"])
+    assert all("repair_output_audits" in item for item in repair_execution_log["entries"])
+    assert all("repair_outputs_consumed" in item for item in repair_execution_log["entries"])
+    publication_evidence_index = json.loads(Path(orchestration.project_publication_evidence_index_path).read_text(encoding="utf-8"))
+    assert publication_evidence_index["index_id"] == "project_publication_evidence_index_v1"
+    assert publication_evidence_index["paper_compiler_evidence_path"] == orchestration.project_paper_compiler_evidence_path
+    readiness_report = json.loads(Path(orchestration.project_publication_readiness_report_path).read_text(encoding="utf-8"))
+    assert readiness_report["readiness_id"] == "project_publication_readiness_report_v1"
+    assert readiness_report["publication_grade_ready"] is False
+    assert readiness_report["final_publish_ready"] is False
+    assert readiness_report["blockers"]
+    assert any("Do not submit as final publish" in item for item in readiness_report["kill_criteria"])
+    assert readiness_report["required_followups"]
+    checks_by_id = {item["check_id"]: item for item in readiness_report["checks"]}
+    assert checks_by_id["benchmark_scale"]["passed"] is False
+    assert checks_by_id["benchmark_provenance"]["passed"] is False
+    assert checks_by_id["cross_run_replication"]["passed"] is False
+    assert checks_by_id["real_literature_coverage"]["passed"] is False
+    assert checks_by_id["execution_evidence"]["passed"] is True
+    assert "run_result_artifact_json" in checks_by_id["execution_evidence"]["execution_output_artifact_refs"]
+    assert checks_by_id["paper_compiler_evidence"]["passed"] is False
+    assert readiness_report["paper_compiler_evidence"]["packet_id"] == "project_paper_compiler_evidence_v1"
+    assert readiness_report["repair_execution_log"]["log_id"] == "project_repair_execution_log_v1"
+    assert checks_by_id["repair_execution_log"]["passed"] is False
+    assert readiness_report["evidence_profile"]["real_literature_count"] == 0
+    assert any("benchmark" in item.lower() for item in readiness_report["required_followups"])
+    supplemental_manifest = json.loads(Path(orchestration.project_supplemental_artifacts_path).read_text(encoding="utf-8"))
+    assert supplemental_manifest["supplemental_id"] == "project_supplemental_artifacts_v1"
+    assert supplemental_manifest["present_artifact_count"] == supplemental_manifest["artifact_count"]
+    with ZipFile(orchestration.project_code_package_path) as archive:
+        names = set(archive.namelist())
+    assert "paper.md" in names
+    assert "paper_sources/main.tex" in names
+    assert "paper_sources/project_revision_application.json" in names
+    assert "paper_sources/project_rereview_report.json" in names
+    assert "paper_sources/paper_compiler_evidence.json" in names
+    assert "submission_package/claim_evidence_index.md" in names
+    assert "submission_package/retrieval_evidence_ledger.json" in names
+    assert "submission_package/project_review_findings.json" in names
+    assert "submission_package/repair_execution_log.json" in names
+    assert "submission_package/publication_evidence_index.json" in names
+    assert "submission_package/publication_readiness_report.json" in names
+    assert "submission_package/supplemental_artifacts.json" in names
+    assert "submission_package/benchmark_card.json" in names
+    assert "submission_package/benchmark_provenance_manifest.json" in names
+    assert "submission_package/statistics_report.json" in names
+    assert "submission_package/negative_evidence_report.json" in names
+    assert "submission_package/offline_publication_case.json" in names
+    assert "submission_package/offline_publication_audit.json" in names
+
+
+def test_project_paper_orchestrator_traces_retrieval_evidence_ledger(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-paper-retrieval-ledger"
+    run = autoresearch_repository.create_run(
+        project_id,
+        "Claim-evidence retrieval ledger trace",
+        request=AutoResearchRunConfig(task_family_hint="ir_reranking"),
+    )
+    evidence_ledger = AutoResearchEvidenceLedgerRead(
+        project_id=project_id,
+        run_id=run.id,
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        entries=[
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id="evidence_retrieval_supported_claim",
+                source_job_id="job_candidate_method",
+                evidence_kind="artifact",
+                claim="Cached SciFact-style retrieval attached ranked evidence for a supported claim.",
+                artifact_ref="run_artifact_json",
+                support_status="supported",
+            ),
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id="evidence_retrieval_partial_claim",
+                source_job_id="job_candidate_method",
+                evidence_kind="artifact",
+                claim="Cached SciFact-style retrieval found partial evidence for a weak claim.",
+                artifact_ref="run_artifact_json",
+                support_status="partial",
+            ),
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id="evidence_retrieval_missing_claim",
+                source_job_id="job_candidate_method",
+                evidence_kind="artifact",
+                claim="Cached SciFact-style retrieval failed to find support for an over-broad claim.",
+                artifact_ref="run_artifact_json",
+                support_status="missing",
+            ),
+        ],
+        entry_count=3,
+        complete=False,
+        blockers=["Claim-evidence retrieval ledger has missing evidence for at least one query."],
+        ledger_fingerprint="project-paper-retrieval-ledger",
+    )
+    autoresearch_repository.save_run(
+        run.model_copy(
+            update={
+                "status": "done",
+                "evidence_ledger": evidence_ledger,
+            }
+        )
+    )
+
+    orchestration = autoresearch_project_paper_orchestrator.build_project_paper_orchestration(project_id)
+
+    retrieval_conclusion = next(
+        item
+        for item in orchestration.conclusion_ledger.conditional_conclusions
+        if item.conclusion_id.startswith("claim_evidence_retrieval_")
+    )
+    missing_limitation = next(
+        item
+        for item in orchestration.conclusion_ledger.limitations
+        if item.conclusion_id.startswith("missing_claim_evidence_retrieval_")
+    )
+    retrieval_trace = next(
+        trace
+        for trace in orchestration.claim_traces
+        if trace.source_conclusion_id == retrieval_conclusion.conclusion_id
+    )
+
+    assert orchestration.should_write_paper is True
+    assert orchestration.paper_decision == "technical_report"
+    assert orchestration.project_level_paper_allowed is False
+    assert retrieval_conclusion.paper_claim_allowed is True
+    assert "1 supported and 1 partial" in retrieval_conclusion.text
+    assert all("evidence_ledger:evidence_retrieval_" in ref for ref in retrieval_conclusion.evidence_refs)
+    assert "missing support" in missing_limitation.text
+    assert retrieval_trace.support_status == "supported"
+    assert retrieval_trace.evidence_refs == retrieval_conclusion.evidence_refs
+    assert orchestration.project_paper_path is not None
+    project_paper_path = Path(orchestration.project_paper_path)
+    assert project_paper_path.is_file()
+    paper_markdown = project_paper_path.read_text(encoding="utf-8")
+    assert orchestration.project_paper_markdown == paper_markdown
+    assert orchestration.project_paper_ready is True
+    assert orchestration.project_paper_missing_sections == []
+    assert "## Abstract" in paper_markdown
+    assert "## Introduction" in paper_markdown
+    assert "## Related Work" in paper_markdown
+    assert "## Method" in paper_markdown
+    assert "## Experimental Setup" in paper_markdown
+    assert "## Results" in paper_markdown
+    assert "## Analysis" in paper_markdown
+    assert "## Limitations" in paper_markdown
+    assert "## Conclusion" in paper_markdown
+    assert "## References" in paper_markdown
+    assert "evidence_retrieval_supported_claim" in paper_markdown
+    assert "evidence_retrieval_partial_claim" in paper_markdown
+    assert "missing_claim_evidence_retrieval_" in paper_markdown
+    assert "Current evidence does not permit a project-level paper claim." in paper_markdown
+    assert orchestration.project_paper_sources_manifest is not None
+    assert orchestration.project_paper_compile_report is not None
+    assert orchestration.project_paper_compile_report.source_package_complete is True
+    assert orchestration.project_paper_compile_report.entrypoint == "main.tex"
+    assert orchestration.project_paper_compile_report.bibliography == "references.bib"
+    assert orchestration.project_paper_latex_source is not None
+    assert "evidence\\_retrieval\\_supported\\_claim" in orchestration.project_paper_latex_source
+    assert orchestration.project_paper_revision_action_count >= 5
+    assert orchestration.project_paper_revision_pending_action_count >= 4
+    assert orchestration.project_paper_revision_completed_action_count == 1
+    assert orchestration.project_paper_claim_downgrade_action_count == 1
+    assert orchestration.project_paper_retrieval_repair_action_count == 1
+    action_ids = {action.action_id for action in orchestration.project_paper_revision_actions}
+    assert {
+        "project_literature_refresh_multi_source",
+        "project_benchmark_provenance_repair",
+        "project_benchmark_scale_repair",
+        "project_insufficient_statistics_repair",
+    }.issubset(action_ids)
+    repair_action = next(
+        action
+        for action in orchestration.project_paper_revision_actions
+        if action.action_id.startswith("project_retrieval_repair_")
+    )
+    assert repair_action.action_kind == "claim_downgrade"
+    assert repair_action.repair_kind == "repair_claim_evidence"
+    assert repair_action.status == "completed"
+    assert repair_action.completed_round == 2
+    assert repair_action.auto_applicable is True
+    assert "project_retrieval_evidence_ledger" in repair_action.expected_output_asset_ids
+    assert orchestration.project_paper_revision_action_index is not None
+    assert orchestration.project_paper_revision_action_index.pending_action_count >= 4
+    assert orchestration.project_paper_revision_action_index.completed_action_count == 1
+    assert orchestration.project_paper_revision_action_index.materialized_action_count == 1
+    assert Path(orchestration.project_paper_revision_action_index_path).is_file()
+    assert "Route missing retrieval evidence" in Path(
+        orchestration.project_paper_revision_actions_markdown_path
+    ).read_text(encoding="utf-8")
+    assert Path(orchestration.project_paper_revised_path).is_file()
+    revised_markdown = Path(orchestration.project_paper_revised_path).read_text(encoding="utf-8")
+    assert "## Revision Appendix" in revised_markdown
+    assert "do not promote missing evidence to supported evidence" in revised_markdown
+    assert Path(orchestration.project_paper_revision_application_path).is_file()
+    revision_application = json.loads(Path(orchestration.project_paper_revision_application_path).read_text(encoding="utf-8"))
+    assert revision_application["completed_action_count"] == 1
+    assert revision_application["pending_action_count"] >= 4
+    assert Path(orchestration.project_paper_rereview_report_path).is_file()
+    rereview_report = json.loads(Path(orchestration.project_paper_rereview_report_path).read_text(encoding="utf-8"))
+    assert rereview_report["rereview_complete"] is False
+    assert rereview_report["same_support_issue_recurs"] is True
+    assert rereview_report["action_reviews"]
+    completed_review = next(
+        item
+        for item in rereview_report["action_reviews"]
+        if item["action_id"] == repair_action.action_id
+    )
+    assert completed_review["claim_downgrade_status"] == "downgraded"
+    assert completed_review["recommendation"] == "accept_as_review_bundle"
+    assert completed_review["resolved_blockers"]
+    assert any(item["new_blockers"] for item in rereview_report["action_reviews"])
+    assert orchestration.project_paper_rereview_complete is False
+    assert orchestration.project_review_bundle_ready is True
+    assert orchestration.project_final_publish_ready is False
+    assert orchestration.project_submission_ready is False
+    assert orchestration.project_reviewer_response_complete is False
+    assert orchestration.project_claim_evidence_index_complete is True
+    assert any("Project publish gate has not passed" in item for item in orchestration.project_submission_blockers)
+    reviewer_response = Path(orchestration.project_reviewer_response_path).read_text(encoding="utf-8")
+    assert "Completed bounded revision actions" in reviewer_response
+    assert "Route missing retrieval evidence" in reviewer_response
+    assert "Recommendation" in reviewer_response
+    assert "Claim downgrade status" in reviewer_response
+    assert "Resolved blockers" in reviewer_response
+    assert "New blockers" in reviewer_response
+    lineage_payload = json.loads(Path(orchestration.project_lineage_archive_path).read_text(encoding="utf-8"))
+    assert repair_action.action_id in {
+        item["action_id"] for item in lineage_payload["revision_actions"]
+    }
+    assert lineage_payload["project_publish_gate_passed"] is False
+
+
+def test_operator_console_surfaces_offline_publication_case_status(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-console-offline-publication-case"
+    run = autoresearch_repository.create_run(
+        project_id,
+        "Console offline publication case",
+        request=AutoResearchRunConfig(task_family_hint="ir_reranking"),
+    )
+    autoresearch_repository.save_run(
+        run.model_copy(
+            update={
+                "status": "done",
+                "artifact": _stable_project_artifact(0.73),
+            }
+        )
+    )
+
+    console = autoresearch_console.build_operator_console(project_id)
+
+    assert console.publication_case is not None
+    publication_case = console.publication_case
+    assert publication_case.status == "review_ready"
+    assert publication_case.review_bundle_ready is True
+    assert publication_case.final_publish_ready is False
+    assert publication_case.submission_bundle_kind == "review_bundle"
+    assert publication_case.submission_asset_count >= 20
+    assert publication_case.missing_asset_roles == []
+    assert publication_case.blocked_asset_count > 0
+    assert publication_case.blocked_asset_roles
+    assert publication_case.final_publish_blocking_asset_roles == publication_case.blocked_asset_roles
+    roles = {item["role"] for item in publication_case.package_asset_statuses}
+    assert {
+        "project_offline_publication_case",
+        "project_offline_publication_audit",
+        "project_negative_evidence_report",
+        "project_retrieval_evidence_ledger",
+        "project_statistics_report",
+        "project_experiment_repair_index",
+    }.issubset(roles)
+    statuses_by_role = {item["role"]: item for item in publication_case.package_asset_statuses}
+    assert statuses_by_role["project_publication_readiness_report"]["blocked_status"] == (
+        "blocked_for_final_publish"
+    )
+    assert statuses_by_role["project_publication_readiness_report"]["final_publish_blocking"] is True
+    assert statuses_by_role["project_publication_readiness_report"]["blocking_check_ids"]
+    assert statuses_by_role["project_publication_readiness_report"]["blocking_reasons"]
+    assert publication_case.repair_action_status_counts
+    assert "blocked" in publication_case.repair_action_status_counts
+    assert publication_case.review_finding_count > 0
+    assert publication_case.review_findings_path is not None
+    assert Path(publication_case.review_findings_path).is_file()
+    assert publication_case.literature_source_counts == {}
+    assert publication_case.real_literature_count == 0
+    assert publication_case.benchmark_provenance_ready is False
+    assert publication_case.benchmark_publication_ready is False
+    assert publication_case.statistics_claim_ceiling in {
+        "workshop_case_study_claim",
+        "technical_report_only",
+    }
+    assert publication_case.negative_evidence_count > 0
+    assert publication_case.negative_evidence_blocking_count > 0
+    assert publication_case.rereview_complete is False
+    assert publication_case.publish_blockers
+    assert publication_case.required_followups
+    assert publication_case.kill_criteria
+    assert publication_case.offline_publication_case_path is not None
+    assert Path(publication_case.offline_publication_case_path).is_file()
+    assert publication_case.offline_publication_audit_path is not None
+    assert Path(publication_case.offline_publication_audit_path).is_file()
+
+
+def test_project_paper_revision_actions_route_unsupported_claim_and_retrieval_repair() -> None:
+    ledger = AutoResearchProjectConclusionLedgerRead(
+        project_id="project-paper-revision-actions",
+        stable_conclusions=[],
+        conditional_conclusions=[],
+        negative_findings=[],
+        failed_hypotheses=[],
+        limitations=[
+            AutoResearchProjectConclusionEntryRead(
+                conclusion_id="missing_claim_evidence_retrieval_run_1",
+                kind="limitation",
+                text="Run 1 has a missing retrieval evidence entry.",
+                supporting_run_ids=["run_1"],
+                evidence_refs=["run_1:evidence_ledger:evidence_retrieval_missing_claim"],
+                caveats=["Downgrade or repair before promotion."],
+                paper_claim_allowed=True,
+            )
+        ],
+        conclusion_count=1,
+        ledger_fingerprint="revision-action-ledger",
+    )
+    traces = [
+        AutoResearchProjectClaimTraceRead(
+            claim_id="project_claim_overbroad_result",
+            claim="The method eliminates unsupported claims across autonomous writing systems.",
+            source_conclusion_id="conditional_overbroad_result",
+            support_status="unsupported",
+            supporting_run_ids=["run_1"],
+            evidence_refs=[],
+            unsupported_reasons=["No run-level evidence refs are attached to the conclusion."],
+            strong_claim=True,
+        )
+    ]
+
+    actions = autoresearch_project_paper_orchestrator._build_project_revision_actions(
+        ledger=ledger,
+        traces=traces,
+    )
+    action_index = autoresearch_project_paper_orchestrator._build_project_revision_action_index(
+        actions,
+        markdown="# Draft\n\n## Results\n\nUnsupported strong claim.\n",
+    )
+
+    assert len(actions) == 2
+    downgrade = next(action for action in actions if action.action_id.startswith("project_claim_downgrade_"))
+    repair = next(action for action in actions if action.action_id.startswith("project_retrieval_repair_"))
+    assert downgrade.action_kind == "claim_downgrade"
+    assert downgrade.repair_kind == "repair_claim_evidence"
+    assert downgrade.priority == "high"
+    assert downgrade.auto_applicable is True
+    assert "no longer presents this unsupported or partial trace as a strong claim" in downgrade.terminal_condition
+    assert repair.action_kind == "claim_downgrade"
+    assert repair.repair_kind == "repair_claim_evidence"
+    assert "project_retrieval_evidence_ledger" in repair.expected_output_asset_ids
+    assert action_index.total_action_count == 2
+    assert action_index.pending_action_count == 2
+    assert {item.section_title for item in action_index.actions} == {"Results", "Limitations"}
+
+
+def test_project_paper_revision_actions_cover_literature_statistics_and_provenance_repairs() -> None:
+    ledger = AutoResearchProjectConclusionLedgerRead(
+        project_id="project-paper-revision-expanded-actions",
+        stable_conclusions=[],
+        conditional_conclusions=[],
+        negative_findings=[],
+        failed_hypotheses=[],
+        limitations=[],
+        conclusion_count=0,
+        ledger_fingerprint="expanded-revision-action-ledger",
+    )
+    evidence_profile = {
+        "literature_ready": False,
+        "benchmark_provenance_ready": False,
+        "benchmark_publication_ready": False,
+        "benchmark_scale_ready": False,
+    }
+    statistics_profiles = [
+        {
+            "run_id": "run_1",
+            "has_statistics": False,
+            "significance_test_count": 0,
+        }
+    ]
+
+    actions = autoresearch_project_paper_orchestrator._build_project_revision_actions(
+        ledger=ledger,
+        traces=[],
+        evidence_profile=evidence_profile,
+        statistics_profiles=statistics_profiles,
+    )
+    action_index = autoresearch_project_paper_orchestrator._build_project_revision_action_index(
+        actions,
+        markdown="# Draft\n\n## Related Work\n\n## Experimental Setup\n\n## Results\n",
+    )
+    actions_by_id = {action.action_id: action for action in actions}
+
+    assert {
+        "project_literature_refresh_multi_source",
+        "project_benchmark_provenance_repair",
+        "project_benchmark_scale_repair",
+        "project_insufficient_statistics_repair",
+    }.issubset(actions_by_id)
+    literature = actions_by_id["project_literature_refresh_multi_source"]
+    assert literature.action_kind == "literature_refresh"
+    assert literature.repair_kind == "refresh_literature"
+    assert literature.execution_route == "literature_refresh"
+    assert "project_literature_scout_json" in literature.expected_output_asset_ids
+    assert "at least two non-fixture sources" in literature.terminal_condition
+    provenance = actions_by_id["project_benchmark_provenance_repair"]
+    assert provenance.action_kind == "experiment_repair"
+    assert provenance.repair_kind == "update_benchmark_provenance"
+    assert "project_benchmark_provenance_manifest_json" in provenance.expected_output_asset_ids
+    scale = actions_by_id["project_benchmark_scale_repair"]
+    assert scale.repair_kind == "rerun_experiments"
+    assert scale.execution_route == "experiment_rerun"
+    statistics = actions_by_id["project_insufficient_statistics_repair"]
+    assert statistics.repair_kind == "rerun_experiments"
+    assert "project_statistics_report_json" in statistics.expected_output_asset_ids
+    assert "deterministic aggregate statistics" in statistics.terminal_condition
+    sections = {item.action_id: item.section_title for item in action_index.actions}
+    assert sections["project_literature_refresh_multi_source"] == "Related Work"
+    assert sections["project_benchmark_provenance_repair"] == "Experimental Setup"
+    assert sections["project_insufficient_statistics_repair"] == "Experimental Setup"
+
+
+def test_project_literature_refresh_repair_materializes_real_support_index(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-literature-repair-complete"
+    literature_action = next(
+        action
+        for action in autoresearch_project_paper_orchestrator._build_project_revision_actions(
+            ledger=AutoResearchProjectConclusionLedgerRead(
+                project_id=project_id,
+                stable_conclusions=[],
+                conditional_conclusions=[],
+                negative_findings=[],
+                failed_hypotheses=[],
+                limitations=[],
+                conclusion_count=0,
+                ledger_fingerprint="literature-repair-ledger",
+            ),
+            traces=[],
+            evidence_profile={"literature_ready": False},
+            statistics_profiles=[],
+        )
+        if action.action_id == "project_literature_refresh_multi_source"
+    )
+    scout = SimpleNamespace(
+        search_queries=["claim evidence retrieval autonomous research"],
+        source_counts={"arxiv": 1, "semantic_scholar": 1},
+        source_statuses=[],
+        methods=["claim-evidence ledger"],
+        datasets=["SciFact"],
+        metrics=["unsupported claim recall"],
+        known_sota=[
+            "FARS-style autonomous research systems require executable artifact lineage.",
+            "ARIS-style reviewer loops motivate bounded claim repair and rebuttal checks.",
+        ],
+        similar_papers=[
+            AutoResearchLiteratureScoutPaperRead(
+                paper_id="arxiv_real_claim_evidence",
+                title="Evidence-Grounded Scientific Writing With FARS-Style Lineage",
+                source="arxiv",
+                authors=["Ada Researcher"],
+                year=2024,
+                arxiv_id="2401.00001",
+                methods=["claim-evidence ledger"],
+                datasets=["SciFact"],
+                metrics=["unsupported claim recall"],
+                cache_status="cache_hit",
+                evidence="Cached arXiv metadata supports related-work coverage for claim-evidence retrieval.",
+                relevance_score=0.91,
+            ),
+            AutoResearchLiteratureScoutPaperRead(
+                paper_id="semanticscholar_real_repair",
+                title="Repairing Unsupported Claims in ARIS-Style Research Agents",
+                source="semantic_scholar",
+                authors=["Ben Scientist"],
+                year=2025,
+                doi="10.0000/repair",
+                methods=["retrieval repair"],
+                datasets=["BEIR"],
+                metrics=["Recall@10"],
+                cache_status="cache_hit",
+                evidence="Cached Semantic Scholar metadata supports novelty and repair framing.",
+                relevance_score=0.88,
+            ),
+        ],
+    )
+    brief = SimpleNamespace(brief_id="brief_literature_repair", literature_scout=scout)
+
+    _, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown="# Draft\n\n## Related Work\n\n## References\n",
+            actions=[literature_action],
+            latest_brief=brief,
+            traces=[],
+            evidence_profile={"literature_ready": False},
+        )
+    )
+
+    repaired = actions[0]
+    assert repaired.status == "completed"
+    assert repaired.completed_round == 2
+    assert repaired.completed_at_step == 3
+    assert repaired.failure_classification is None
+    assert "project_literature_scout_json" in repaired.output_artifact_refs
+    support_ref = next(ref for ref in repaired.output_artifact_refs if ref.startswith("project_literature_support_index:"))
+    support_path = Path(support_ref.split(":", 1)[1])
+    support_index = json.loads(support_path.read_text(encoding="utf-8"))
+    assert support_index["complete"] is True
+    assert support_index["real_literature_sources"] == ["arxiv", "semantic_scholar"]
+    assert support_index["source_class_counts"]["cached_real_connector"] == 2
+    assert support_index["related_system_coverage"]["covered_systems"] == ["FARS", "ARIS"]
+    assert support_index["related_system_coverage"]["complete"] is True
+    assert support_index["unsupported_or_weak_literature_claims"] == []
+    assert application_report["repair_execution_log"][0]["status"] == "completed"
+    assert rereview_report["rereview_complete"] is True
+    assert rereview_report["completed_action_ids"] == ["project_literature_refresh_multi_source"]
+    assert rereview_report["action_reviews"][0]["original_finding"] == repaired.detail
+    assert rereview_report["action_reviews"][0]["output_artifact_refs"]
+    assert rereview_report["action_reviews"][0]["repair_outputs_consumed"] is True
+    assert rereview_report["action_reviews"][0]["repair_outputs_complete"] is True
+    assert rereview_report["action_reviews"][0]["repair_output_audits"][0]["artifact_id"] == (
+        "project_literature_support_index_v1"
+    )
+    assert rereview_report["action_reviews"][0]["repair_output_audits"][0]["fingerprint"]
+    assert rereview_report["action_reviews"][0]["terminal_condition_met"] is True
+    assert rereview_report["action_reviews"][0]["resolved_blockers"]
+    assert rereview_report["action_reviews"][0]["new_blockers"] == []
+    assert rereview_report["action_reviews"][0]["recommendation"] == "accept_as_review_bundle"
+
+
+def test_project_literature_refresh_repair_blocks_fixture_only_support(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-literature-repair-blocked"
+    literature_action = next(
+        action
+        for action in autoresearch_project_paper_orchestrator._build_project_revision_actions(
+            ledger=AutoResearchProjectConclusionLedgerRead(
+                project_id=project_id,
+                stable_conclusions=[],
+                conditional_conclusions=[],
+                negative_findings=[],
+                failed_hypotheses=[],
+                limitations=[],
+                conclusion_count=0,
+                ledger_fingerprint="literature-repair-blocked-ledger",
+            ),
+            traces=[],
+            evidence_profile={"literature_ready": False},
+            statistics_profiles=[],
+        )
+        if action.action_id == "project_literature_refresh_multi_source"
+    )
+    scout = SimpleNamespace(
+        search_queries=["claim evidence retrieval autonomous research"],
+        source_counts={"fixture": 1},
+        source_statuses=[],
+        methods=[],
+        datasets=[],
+        metrics=[],
+        known_sota=[],
+        similar_papers=[
+            AutoResearchLiteratureScoutPaperRead(
+                paper_id="fixture_literature_only",
+                title="Fixture Context for Claim Evidence",
+                source="fixture",
+                cache_status="fixture",
+                evidence="Synthetic fixture context must not satisfy publication-grade literature repair.",
+            )
+        ],
+    )
+    brief = SimpleNamespace(brief_id="brief_literature_fixture_only", literature_scout=scout)
+
+    _, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown="# Draft\n\n## Related Work\n\n",
+            actions=[literature_action],
+            latest_brief=brief,
+            traces=[],
+            evidence_profile={"literature_ready": False},
+        )
+    )
+
+    blocked = actions[0]
+    assert blocked.status == "blocked"
+    assert blocked.failure_classification == "insufficient_real_literature_sources"
+    assert blocked.residual_blockers
+    support_ref = next(ref for ref in blocked.output_artifact_refs if ref.startswith("project_literature_support_index:"))
+    support_index = json.loads(Path(support_ref.split(":", 1)[1]).read_text(encoding="utf-8"))
+    assert support_index["complete"] is False
+    assert support_index["source_class_counts"]["fixture_or_offline_context"] == 1
+    assert support_index["related_system_coverage"]["missing_systems"] == ["FARS", "ARIS"]
+    assert support_index["related_system_coverage"]["complete"] is False
+    assert "at least two non-fixture sources" in " ".join(blocked.residual_blockers)
+    assert application_report["blocked_action_count"] == 1
+    assert application_report["repair_execution_log"][0]["status"] == "blocked"
+    assert rereview_report["rereview_complete"] is False
+    assert rereview_report["blocked_action_ids"] == ["project_literature_refresh_multi_source"]
+    assert rereview_report["action_reviews"][0]["terminal_condition_met"] is False
+    assert rereview_report["action_reviews"][0]["new_blockers"]
+    assert rereview_report["action_reviews"][0]["recommendation"] == "block_final_publish"
+
+
+def test_project_benchmark_provenance_repair_materializes_valid_snapshot_index(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-benchmark-provenance-repair-complete"
+    stale_actions = autoresearch_project_paper_orchestrator._build_project_revision_actions(
+        ledger=AutoResearchProjectConclusionLedgerRead(
+            project_id=project_id,
+            stable_conclusions=[],
+            conditional_conclusions=[],
+            negative_findings=[],
+            failed_hypotheses=[],
+            limitations=[],
+            conclusion_count=0,
+            ledger_fingerprint="benchmark-provenance-stale-ledger",
+        ),
+        traces=[],
+        evidence_profile={
+            "literature_ready": True,
+            "benchmark_provenance_ready": False,
+            "benchmark_publication_ready": False,
+            "benchmark_scale_ready": True,
+        },
+        statistics_profiles=[],
+    )
+    provenance_action = next(
+        action for action in stale_actions if action.action_id == "project_benchmark_provenance_repair"
+    )
+    repaired_profile = {
+        "run_profiles": [
+            {
+                "run_id": "run_valid_frozen",
+                "benchmark_name": "frozen_scifact_20",
+                "sample_count": 20,
+                "split_count": 2,
+                "supports_claim_verification": True,
+                "verification_label_space": ["supported", "refuted", "not_enough_info"],
+                "publication_grade": True,
+                "provenance_complete": True,
+                "source_kind": "local_json",
+                "source_class": "frozen_snapshot",
+                "source_url": "file:///repo/fixtures/scifact_20.json",
+                "source_dataset_id": "scifact",
+                "source_revision": "frozen-2026-06-03",
+                "source_license": "CC-BY-4.0",
+                "source_fingerprint": "sha256:valid-frozen-scifact",
+                "publication_grade_blockers": [],
+                "publication_grade_eligibility": {
+                    "publication_grade": True,
+                    "sample_count": 20,
+                    "split_count": 2,
+                    "checks": {
+                        "has_dataset_id": True,
+                        "has_revision": True,
+                        "has_license": True,
+                        "has_fingerprint": True,
+                        "meets_min_examples": True,
+                        "not_internal_fixture": True,
+                    },
+                },
+            }
+        ],
+        "snapshot_metadata": {
+            "selected_run_count": 1,
+            "total_sample_count": 20,
+            "min_split_count": 2,
+            "frozen_snapshot_run_count": 1,
+            "claim_verification_run_count": 1,
+            "verification_label_spaces": ["not_enough_info", "refuted", "supported"],
+        },
+        "benchmark_scale_ready": True,
+        "benchmark_provenance_ready": True,
+        "benchmark_publication_ready": True,
+        "blockers": [],
+    }
+
+    _, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown="# Draft\n\n## Experimental Setup\n\n",
+            actions=[provenance_action],
+            evidence_profile=repaired_profile,
+        )
+    )
+
+    repaired = actions[0]
+    assert repaired.status == "completed"
+    assert repaired.repair_kind == "update_benchmark_provenance"
+    assert repaired.completed_round == 2
+    assert "project_benchmark_provenance_manifest_json" in repaired.output_artifact_refs
+    support_ref = next(
+        ref
+        for ref in repaired.output_artifact_refs
+        if ref.startswith("project_benchmark_provenance_repair_index:")
+    )
+    repair_index = json.loads(Path(support_ref.split(":", 1)[1]).read_text(encoding="utf-8"))
+    assert repair_index["complete"] is True
+    assert repair_index["run_profiles"][0]["source_class"] == "frozen_snapshot"
+    assert repair_index["run_profiles"][0]["query_document_evidence_schema"]["schema_complete"] is True
+    assert repair_index["run_profiles"][0]["source_record_complete"] is True
+    assert repair_index["run_profiles"][0]["repair_status"] == "eligible"
+    assert repair_index["snapshot_metadata"]["frozen_snapshot_run_count"] == 1
+    assert application_report["repair_execution_log"][0]["status"] == "completed"
+    assert rereview_report["rereview_complete"] is True
+    assert rereview_report["completed_action_ids"] == ["project_benchmark_provenance_repair"]
+    assert rereview_report["action_reviews"][0]["repair_kind"] == "update_benchmark_provenance"
+    assert rereview_report["action_reviews"][0]["repair_outputs_consumed"] is True
+    assert rereview_report["action_reviews"][0]["repair_outputs_complete"] is True
+    assert rereview_report["action_reviews"][0]["repair_output_audits"][0]["artifact_id"] == (
+        "project_benchmark_provenance_repair_index_v1"
+    )
+    assert rereview_report["action_reviews"][0]["repair_output_audits"][0]["fingerprint"]
+    assert rereview_report["action_reviews"][0]["terminal_condition_met"] is True
+    assert rereview_report["action_reviews"][0]["recommendation"] == "accept_as_review_bundle"
+
+
+def test_project_benchmark_provenance_repair_blocks_fixture_source(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-benchmark-provenance-repair-blocked"
+    stale_actions = autoresearch_project_paper_orchestrator._build_project_revision_actions(
+        ledger=AutoResearchProjectConclusionLedgerRead(
+            project_id=project_id,
+            stable_conclusions=[],
+            conditional_conclusions=[],
+            negative_findings=[],
+            failed_hypotheses=[],
+            limitations=[],
+            conclusion_count=0,
+            ledger_fingerprint="benchmark-provenance-blocked-ledger",
+        ),
+        traces=[],
+        evidence_profile={
+            "literature_ready": True,
+            "benchmark_provenance_ready": False,
+            "benchmark_publication_ready": False,
+            "benchmark_scale_ready": False,
+        },
+        statistics_profiles=[],
+    )
+    provenance_action = next(
+        action for action in stale_actions if action.action_id == "project_benchmark_provenance_repair"
+    )
+    fixture_profile = {
+        "run_profiles": [
+            {
+                "run_id": "run_fixture",
+                "benchmark_name": "scholarflow_fixture",
+                "sample_count": 8,
+                "split_count": 1,
+                "supports_claim_verification": False,
+                "verification_label_space": [],
+                "publication_grade": False,
+                "provenance_complete": True,
+                "source_kind": "builtin",
+                "source_class": "cached_fixture",
+                "source_url": "file://scholarflow-fixtures/claim-evidence.json",
+                "source_dataset_id": "scholarflow:fixture",
+                "source_revision": "fixture-v1",
+                "source_license": "cached-fixture",
+                "source_fingerprint": "sha256:fixture",
+                "publication_grade_blockers": [
+                    "Internal ScholarFlow fixtures cannot be used as final-publish evidence.",
+                    "Benchmark has fewer than 20 normalized examples.",
+                ],
+                "publication_grade_eligibility": {
+                    "publication_grade": False,
+                    "sample_count": 8,
+                    "split_count": 1,
+                    "checks": {
+                        "not_internal_fixture": False,
+                        "meets_min_examples": False,
+                    },
+                },
+            }
+        ],
+        "snapshot_metadata": {
+            "selected_run_count": 1,
+            "total_sample_count": 8,
+            "min_split_count": 1,
+            "frozen_snapshot_run_count": 0,
+            "claim_verification_run_count": 0,
+            "verification_label_spaces": [],
+        },
+        "benchmark_scale_ready": False,
+        "benchmark_provenance_ready": True,
+        "benchmark_publication_ready": False,
+        "blockers": [
+            "Project benchmark evidence has fewer than 20 publication-grade examples in every selected run.",
+            "At least one selected run is not marked publication-grade by its benchmark card.",
+        ],
+    }
+
+    _, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown="# Draft\n\n## Experimental Setup\n\n",
+            actions=[provenance_action],
+            evidence_profile=fixture_profile,
+        )
+    )
+
+    blocked = actions[0]
+    assert blocked.status == "blocked"
+    assert blocked.failure_classification == "non_publication_benchmark_source"
+    assert blocked.residual_blockers
+    support_ref = next(
+        ref
+        for ref in blocked.output_artifact_refs
+        if ref.startswith("project_benchmark_provenance_repair_index:")
+    )
+    repair_index = json.loads(Path(support_ref.split(":", 1)[1]).read_text(encoding="utf-8"))
+    assert repair_index["complete"] is False
+    assert repair_index["run_profiles"][0]["repair_status"] == "blocked"
+    assert repair_index["run_profiles"][0]["source_class"] == "cached_fixture"
+    assert repair_index["run_profiles"][0]["query_document_evidence_schema"]["schema_complete"] is False
+    assert "claim_verification_support" in (
+        repair_index["run_profiles"][0]["query_document_evidence_schema"]["missing_schema_roles"]
+    )
+    assert repair_index["run_profiles"][0]["source_record_complete"] is False
+    assert any(
+        "query/document/evidence schema" in item
+        for item in repair_index["run_profiles"][0]["source_record_blockers"]
+    )
+    assert any("fixture" in item.lower() for item in repair_index["blockers"])
+    assert application_report["blocked_action_count"] == 1
+    assert application_report["repair_execution_log"][0]["status"] == "blocked"
+    assert rereview_report["rereview_complete"] is False
+    assert rereview_report["blocked_action_ids"] == ["project_benchmark_provenance_repair"]
+    assert rereview_report["action_reviews"][0]["new_blockers"]
+    assert rereview_report["action_reviews"][0]["recommendation"] == "block_final_publish"
+
+
+def test_project_experiment_repairs_materialize_scale_and_statistics_index(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-experiment-repair-complete"
+    repair_actions = [
+        action
+        for action in autoresearch_project_paper_orchestrator._build_project_revision_actions(
+            ledger=AutoResearchProjectConclusionLedgerRead(
+                project_id=project_id,
+                stable_conclusions=[],
+                conditional_conclusions=[],
+                negative_findings=[],
+                failed_hypotheses=[],
+                limitations=[],
+                conclusion_count=0,
+                ledger_fingerprint="experiment-repair-complete-ledger",
+            ),
+            traces=[],
+            evidence_profile={
+                "literature_ready": True,
+                "benchmark_provenance_ready": True,
+                "benchmark_publication_ready": True,
+                "benchmark_scale_ready": False,
+            },
+            statistics_profiles=[{"run_id": "run_scaled", "has_statistics": False, "significance_test_count": 0}],
+        )
+        if action.action_id in {"project_benchmark_scale_repair", "project_insufficient_statistics_repair"}
+    ]
+    evidence_profile = {
+        "run_profiles": [
+            {
+                "run_id": "run_scaled",
+                "benchmark_name": "frozen_beir_20",
+                "sample_count": 24,
+                "split_count": 2,
+                "publication_grade": True,
+                "provenance_complete": True,
+                "source_class": "frozen_snapshot",
+                "source_dataset_id": "real_claim_evidence_snapshot",
+                "source_revision": "2026-06-frozen",
+                "source_license": "CC-BY-4.0",
+                "source_url": "file://fixtures/claim-evidence-snapshot.jsonl",
+                "source_fingerprint": "claim-evidence-snapshot-fingerprint",
+                "verification_label_space": ["supports", "refutes", "not_enough_info"],
+            }
+        ],
+        "benchmark_scale_ready": True,
+        "benchmark_provenance_ready": True,
+        "benchmark_publication_ready": True,
+        "blockers": [],
+    }
+    statistics_profiles = [
+        {
+            "run_id": "run_scaled",
+            "has_statistics": True,
+            "aggregate_count": 6,
+            "significance_test_count": 1,
+            "negative_result_count": 2,
+            "failure_case_count": 1,
+            "metric_names": ["MRR", "Recall@10", "unsupported_claim_recall"],
+        }
+    ]
+    imported_artifact = _publication_artifact(include_ablation=True, seed_count=5).model_copy(
+        update={
+            "environment": {
+                "external_imported": True,
+                "factory_executor_mode": "external_import",
+                "executor_mode": "external_import",
+                "environment_manifest_id": "experiment_factory_environment_v1",
+                "environment_manifest_fingerprint": "env-imported-scaled",
+                "seed_count": 5,
+            },
+            "outputs": {
+                "metrics": "imported_metrics.json",
+                "evidence_ledger": "imported_evidence_ledger.json",
+                "environment_manifest": "experiment_factory_environment_manifest.json",
+                "materialized_jobs": "experiment_factory_materialized_jobs.json",
+            },
+        }
+    )
+    imported_run = autoresearch_repository.create_run(
+        project_id,
+        "Imported replay run for project experiment repair",
+        request=AutoResearchRunConfig(task_family_hint="ir_reranking", execution_profile="publication"),
+    ).model_copy(
+        update={
+            "id": "run_scaled",
+            "status": "done",
+            "artifact": imported_artifact,
+            "experiment_factory_materialized_jobs": [
+                AutoResearchExperimentFactoryMaterializedJobRead(
+                    job_id="job_imported_metrics",
+                    job_kind="candidate_method",
+                    executor_mode="external_import",
+                    backend="local",
+                    command="import imported_metrics.json",
+                    dependencies=["imported_metrics.json"],
+                    expected_outputs=["imported_metrics.json", "imported_evidence_ledger.json"],
+                    output_refs=["imported_metrics.json", "imported_evidence_ledger.json"],
+                    runtime_contract={
+                        "executor_mode": "external_import",
+                        "status": "done",
+                        "expected_outputs": ["imported_metrics.json", "imported_evidence_ledger.json"],
+                    },
+                    started_at_step=1,
+                    completed_at_step=1,
+                    environment_manifest_id="experiment_factory_environment_v1",
+                    status="done",
+                )
+            ],
+        }
+    )
+
+    _, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown="# Draft\n\n## Experimental Setup\n\n",
+            actions=repair_actions,
+            selected_runs=[imported_run],
+            evidence_profile=evidence_profile,
+            statistics_profiles=statistics_profiles,
+        )
+    )
+
+    assert {action.action_id: action.status for action in actions} == {
+        "project_benchmark_scale_repair": "completed",
+        "project_insufficient_statistics_repair": "completed",
+    }
+    assert all(action.completed_round == 2 for action in actions)
+    assert all("project_statistics_report_json" in action.output_artifact_refs for action in actions)
+    support_ref = next(
+        ref
+        for action in actions
+        for ref in action.output_artifact_refs
+        if ref.startswith("project_experiment_repair_index:")
+    )
+    repair_index = json.loads(Path(support_ref.split(":", 1)[1]).read_text(encoding="utf-8"))
+    assert repair_index["complete"] is True
+    assert repair_index["repair_routes"]["project_benchmark_scale_repair"]["complete"] is True
+    assert repair_index["repair_routes"]["project_insufficient_statistics_repair"]["complete"] is True
+    assert repair_index["scaled_publication_run_ids"] == ["run_scaled"]
+    assert repair_index["run_statistics_profiles"][0]["significance_test_count"] == 1
+    assert repair_index["execution_coverage_ready"] is True
+    assert repair_index["imported_result_replay_run_ids"] == ["run_scaled"]
+    assert repair_index["materialized_execution_run_ids"] == ["run_scaled"]
+    assert repair_index["execution_profiles"][0]["execution_source"] == "imported_result_replay"
+    assert repair_index["execution_profiles"][0]["completed_materialized_job_count"] == 1
+    assert "run_result_artifact_json" in repair_index["execution_output_artifact_refs"]
+    assert "imported_metrics.json" in repair_index["execution_output_artifact_refs"]
+    execution_ledger = repair_index["execution_evidence_ledger"]
+    assert execution_ledger["entry_count"] == 1
+    assert execution_ledger["complete_entry_count"] == 1
+    execution_evidence = execution_ledger["entries"][0]
+    assert execution_evidence["execution_source"] == "imported_result_replay"
+    assert execution_evidence["command_or_import_paths"] == [
+        "import imported_metrics.json",
+        "imported_metrics.json",
+        "imported_evidence_ledger.json",
+        "experiment_factory_environment_manifest.json",
+        "experiment_factory_materialized_jobs.json",
+    ]
+    assert execution_evidence["dependency_manifest"]["dependencies"] == ["imported_metrics.json"]
+    assert execution_evidence["runtime_contracts"][0]["runtime_contract"]["executor_mode"] == "external_import"
+    assert execution_evidence["environment_manifest"]["fingerprint"] == "env-imported-scaled"
+    assert execution_evidence["input_benchmark_artifact"]["dataset_id"] == "real_claim_evidence_snapshot"
+    assert execution_evidence["metrics_artifact_refs"] == ["imported_metrics.json", "run_result_artifact_json"]
+    assert execution_evidence["evidence_ledger_artifact_refs"] == ["imported_evidence_ledger.json"]
+    assert execution_evidence["repair_action_linkage"] == [
+        "project_benchmark_scale_repair",
+        "project_insufficient_statistics_repair",
+    ]
+    assert execution_evidence["deterministic_fingerprint"]
+    assert any("imported_metrics.json" in action.output_artifact_refs for action in actions)
+    assert application_report["completed_action_count"] == 2
+    assert rereview_report["rereview_complete"] is True
+    assert set(rereview_report["completed_action_ids"]) == {
+        "project_benchmark_scale_repair",
+        "project_insufficient_statistics_repair",
+    }
+    assert {item["action_id"] for item in rereview_report["action_reviews"]} == {
+        "project_benchmark_scale_repair",
+        "project_insufficient_statistics_repair",
+    }
+    assert all(item["terminal_condition_met"] is True for item in rereview_report["action_reviews"])
+    assert all(item["resolved_blockers"] for item in rereview_report["action_reviews"])
+    assert all(item["repair_outputs_consumed"] is True for item in rereview_report["action_reviews"])
+    assert all(item["repair_outputs_complete"] is True for item in rereview_report["action_reviews"])
+    assert all(
+        item["repair_output_audits"][0]["artifact_id"] == "project_experiment_repair_index_v1"
+        for item in rereview_report["action_reviews"]
+    )
+
+
+def test_project_experiment_repairs_block_missing_statistics(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-experiment-repair-blocked"
+    repair_action = next(
+        action
+        for action in autoresearch_project_paper_orchestrator._build_project_revision_actions(
+            ledger=AutoResearchProjectConclusionLedgerRead(
+                project_id=project_id,
+                stable_conclusions=[],
+                conditional_conclusions=[],
+                negative_findings=[],
+                failed_hypotheses=[],
+                limitations=[],
+                conclusion_count=0,
+                ledger_fingerprint="experiment-repair-blocked-ledger",
+            ),
+            traces=[],
+            evidence_profile={
+                "literature_ready": True,
+                "benchmark_provenance_ready": True,
+                "benchmark_publication_ready": True,
+                "benchmark_scale_ready": True,
+            },
+            statistics_profiles=[{"run_id": "run_no_stats", "has_statistics": False, "significance_test_count": 0}],
+        )
+        if action.action_id == "project_insufficient_statistics_repair"
+    )
+    evidence_profile = {
+        "run_profiles": [
+            {
+                "run_id": "run_no_stats",
+                "benchmark_name": "frozen_beir_20",
+                "sample_count": 24,
+                "split_count": 2,
+                "publication_grade": True,
+                "provenance_complete": True,
+                "source_class": "frozen_snapshot",
+            }
+        ],
+        "benchmark_scale_ready": True,
+        "benchmark_provenance_ready": True,
+        "benchmark_publication_ready": True,
+        "blockers": [],
+    }
+
+    _, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown="# Draft\n\n## Experimental Setup\n\n",
+            actions=[repair_action],
+            evidence_profile=evidence_profile,
+            statistics_profiles=[
+                {
+                    "run_id": "run_no_stats",
+                    "has_statistics": False,
+                    "aggregate_count": 0,
+                    "significance_test_count": 0,
+                }
+            ],
+        )
+    )
+
+    blocked = actions[0]
+    assert blocked.status == "blocked"
+    assert blocked.failure_classification == "insufficient_statistics_outputs"
+    assert blocked.residual_blockers
+    support_ref = next(
+        ref
+        for ref in blocked.output_artifact_refs
+        if ref.startswith("project_experiment_repair_index:")
+    )
+    repair_index = json.loads(Path(support_ref.split(":", 1)[1]).read_text(encoding="utf-8"))
+    assert repair_index["complete"] is False
+    assert repair_index["repair_routes"]["project_insufficient_statistics_repair"]["complete"] is False
+    assert "significance" in " ".join(repair_index["blockers"]).lower()
+    assert application_report["blocked_action_count"] == 1
+    assert rereview_report["rereview_complete"] is False
+    assert rereview_report["blocked_action_ids"] == ["project_insufficient_statistics_repair"]
+    assert rereview_report["action_reviews"][0]["terminal_condition_met"] is False
+    assert rereview_report["action_reviews"][0]["new_blockers"]
+    assert rereview_report["action_reviews"][0]["recommendation"] == "continue_repair"
+
+
+def test_project_experiment_repairs_block_runtime_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-experiment-repair-runtime-failure"
+    run = autoresearch_repository.create_run(
+        project_id,
+        "Runtime failure should block project experiment repair",
+        request=AutoResearchRunConfig(task_family_hint="ir_reranking"),
+    )
+    repair_action = next(
+        action
+        for action in autoresearch_project_paper_orchestrator._build_project_revision_actions(
+            ledger=AutoResearchProjectConclusionLedgerRead(
+                project_id=project_id,
+                stable_conclusions=[],
+                conditional_conclusions=[],
+                negative_findings=[],
+                failed_hypotheses=[],
+                limitations=[],
+                conclusion_count=0,
+                ledger_fingerprint="experiment-repair-runtime-failure-ledger",
+            ),
+            traces=[],
+            evidence_profile={
+                "literature_ready": True,
+                "benchmark_provenance_ready": True,
+                "benchmark_publication_ready": True,
+                "benchmark_scale_ready": False,
+            },
+            statistics_profiles=[{"run_id": run.id, "has_statistics": True, "significance_test_count": 1}],
+        )
+        if action.action_id == "project_benchmark_scale_repair"
+    )
+    failed_run = run.model_copy(
+        update={
+            "status": "done",
+            "artifact": _publication_artifact(include_ablation=True, seed_count=5),
+            "experiment_factory_materialized_jobs": [
+                AutoResearchExperimentFactoryMaterializedJobRead(
+                    job_id="job_runtime_failed",
+                    job_kind="candidate_method",
+                    executor_mode="local",
+                    backend="local",
+                    command="python run_failed_candidate.py",
+                    expected_outputs=["failed_metrics.json"],
+                    output_refs=[],
+                    runtime_contract={
+                        "executor_mode": "local",
+                        "status": "failed",
+                        "expected_outputs": ["failed_metrics.json"],
+                    },
+                    started_at_step=1,
+                    completed_at_step=2,
+                    failure_classification="runtime_failure",
+                    status="failed",
+                )
+            ],
+        }
+    )
+    evidence_profile = {
+        "run_profiles": [
+            {
+                "run_id": run.id,
+                "benchmark_name": "real_claim_evidence_snapshot",
+                "sample_count": 24,
+                "split_count": 2,
+                "publication_grade": True,
+                "provenance_complete": True,
+                "source_class": "frozen_snapshot",
+                "source_dataset_id": "real_claim_evidence_snapshot",
+                "source_revision": "2026-06-frozen",
+                "source_license": "CC-BY-4.0",
+                "source_fingerprint": "runtime-failure-snapshot-fingerprint",
+                "verification_label_space": ["supports", "refutes", "not_enough_info"],
+            }
+        ],
+        "benchmark_scale_ready": True,
+        "benchmark_provenance_ready": True,
+        "benchmark_publication_ready": True,
+        "blockers": [],
+    }
+    statistics_profiles = [
+        {
+            "run_id": run.id,
+            "has_statistics": True,
+            "aggregate_count": 1,
+            "significance_test_count": 1,
+        }
+    ]
+
+    _, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown="# Draft\n\n## Experimental Setup\n\n",
+            actions=[repair_action],
+            selected_runs=[failed_run],
+            evidence_profile=evidence_profile,
+            statistics_profiles=statistics_profiles,
+        )
+    )
+
+    blocked = actions[0]
+    assert blocked.status == "blocked"
+    assert blocked.failure_classification == "runtime_failure"
+    support_ref = next(
+        ref
+        for ref in blocked.output_artifact_refs
+        if ref.startswith("project_experiment_repair_index:")
+    )
+    repair_index = json.loads(Path(support_ref.split(":", 1)[1]).read_text(encoding="utf-8"))
+    assert repair_index["complete"] is False
+    assert repair_index["execution_coverage_ready"] is False
+    assert repair_index["execution_profiles"][0]["failed_materialized_job_count"] == 1
+    assert repair_index["execution_profiles"][0]["failure_classifications"] == ["runtime_failure"]
+    execution_entry = repair_index["execution_evidence_ledger"]["entries"][0]
+    assert execution_entry["failure_classifications"] == ["runtime_failure"]
+    assert any("runtime_failure" in item for item in repair_index["blockers"])
+    assert application_report["blocked_action_count"] == 1
+    assert rereview_report["rereview_complete"] is False
+    assert rereview_report["blocked_action_ids"] == ["project_benchmark_scale_repair"]
+    assert rereview_report["action_reviews"][0]["terminal_condition_met"] is False
+    assert rereview_report["action_reviews"][0]["recommendation"] == "continue_repair"
 
 
 def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
@@ -7209,6 +9362,75 @@ def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
     assert orchestration.core_claim_count >= 1
     assert orchestration.unsupported_core_claim_count == 0
     assert all(trace.evidence_refs for trace in orchestration.claim_traces)
+    assert orchestration.project_paper_ready is True
+    assert orchestration.project_paper_path is not None
+    assert Path(orchestration.project_paper_path).is_file()
+    assert orchestration.project_paper_missing_sections == []
+    assert "paper_decision=workshop_candidate" in orchestration.project_paper_markdown
+    assert orchestration.project_paper_sources_dir is not None
+    assert Path(orchestration.project_paper_sources_dir, "paper.md").is_file()
+    assert Path(orchestration.project_paper_sources_dir, "main.tex").is_file()
+    assert Path(orchestration.project_paper_sources_dir, "references.bib").is_file()
+    assert Path(orchestration.project_paper_sources_dir, "manifest.json").is_file()
+    assert Path(orchestration.project_paper_sources_dir, "project_revision_action_index.json").is_file()
+    assert orchestration.project_paper_compile_report is not None
+    assert orchestration.project_paper_compile_report.source_package_complete is True
+    assert orchestration.project_paper_revision_action_count >= 3
+    assert orchestration.project_paper_revision_pending_action_count >= 3
+    assert orchestration.project_paper_revision_completed_action_count == 0
+    assert {
+        "project_literature_refresh_multi_source",
+        "project_benchmark_provenance_repair",
+        "project_benchmark_scale_repair",
+    }.issubset({action.action_id for action in orchestration.project_paper_revision_actions})
+    assert orchestration.project_review_bundle_ready is True
+    assert orchestration.project_final_publish_ready is False
+    assert orchestration.project_submission_ready is False
+    assert orchestration.project_reviewer_response_complete is False
+    assert orchestration.project_claim_evidence_index_complete is True
+    assert orchestration.project_lineage_archive_complete is True
+    assert any("pending revision actions" in item.lower() for item in orchestration.project_submission_blockers)
+    assert any("pdflatex is not available" in item for item in orchestration.project_submission_blockers)
+    submission_manifest = json.loads(Path(orchestration.project_submission_manifest_path).read_text(encoding="utf-8"))
+    assert submission_manifest["bundle_kind"] == "review_bundle"
+    assert submission_manifest["review_bundle_ready"] is True
+    assert submission_manifest["final_publish_ready"] is False
+    assert {item["role"] for item in submission_manifest["generated_assets"]} == {
+        "project_reproducibility_checklist",
+        "project_reviewer_response",
+        "project_review_findings",
+        "project_repair_execution_log",
+        "project_claim_evidence_index",
+        "project_retrieval_evidence_ledger",
+        "project_lineage_archive",
+        "project_literature_support_index",
+        "project_paper_compiler_evidence",
+        "project_publication_evidence_index",
+        "project_publication_readiness_report",
+        "project_supplemental_artifacts",
+        "project_manuscript_markdown",
+        "project_paper_sources",
+        "project_revised_manuscript_markdown",
+        "project_revision_application",
+        "project_revision_rereview_report",
+        "project_code_package",
+        "project_benchmark_card",
+        "project_benchmark_provenance_manifest",
+        "project_benchmark_provenance_repair_index",
+        "project_statistics_report",
+        "project_experiment_repair_index",
+        "project_negative_evidence_report",
+        "project_offline_publication_case",
+        "project_offline_publication_audit",
+        "project_publication_manifest",
+    }
+    assert Path(orchestration.project_code_package_path).is_file()
+    assert Path(orchestration.project_benchmark_card_path).is_file()
+    assert Path(orchestration.project_paper_compiler_evidence_path).is_file()
+    assert Path(orchestration.project_publication_evidence_index_path).is_file()
+    assert Path(orchestration.project_benchmark_provenance_manifest_path).is_file()
+    assert Path(orchestration.project_statistics_report_path).is_file()
+    assert Path(orchestration.project_publication_manifest_path).is_file()
 
 
 def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
@@ -7230,6 +9452,7 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         "evidence_consistency",
         "reviewer_score_improvement",
         "final_publish_correctness",
+        "offline_end_to_end_submission_package",
     }
 
     assert suite.case_count == 6
@@ -7266,9 +9489,192 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     )
     assert claim_evidence_vertical.trace is not None
     assert claim_evidence_vertical.expected_paper_tier == "workshop_candidate"
+    assert "cached_benchmark_execution" in claim_evidence_vertical.trace.steps_completed
+    assert "project_paper_orchestration" in claim_evidence_vertical.trace.steps_completed
+    assert "project_revision_actions" in claim_evidence_vertical.trace.steps_completed
+    assert "project_submission_package" in claim_evidence_vertical.trace.steps_completed
+    assert "submission_package_v3_asset_manifest" in claim_evidence_vertical.trace.steps_completed
+    assert claim_evidence_vertical.trace.project_paper_path is not None
+    assert Path(claim_evidence_vertical.trace.project_paper_path).is_file()
+    assert claim_evidence_vertical.trace.project_submission_manifest_path is not None
+    assert Path(claim_evidence_vertical.trace.project_submission_manifest_path).is_file()
+    assert claim_evidence_vertical.trace.project_publication_manifest_path is not None
+    assert Path(claim_evidence_vertical.trace.project_publication_manifest_path).is_file()
+    assert claim_evidence_vertical.trace.project_publication_readiness_report_path is not None
+    assert Path(claim_evidence_vertical.trace.project_publication_readiness_report_path).is_file()
+    assert claim_evidence_vertical.trace.project_experiment_repair_index_path is not None
+    assert Path(claim_evidence_vertical.trace.project_experiment_repair_index_path).is_file()
+    assert claim_evidence_vertical.trace.project_statistics_report_path is not None
+    assert Path(claim_evidence_vertical.trace.project_statistics_report_path).is_file()
+    assert claim_evidence_vertical.trace.project_repair_execution_log_path is not None
+    assert Path(claim_evidence_vertical.trace.project_repair_execution_log_path).is_file()
+    assert claim_evidence_vertical.trace.project_review_findings_path is not None
+    assert Path(claim_evidence_vertical.trace.project_review_findings_path).is_file()
+    assert claim_evidence_vertical.trace.project_retrieval_evidence_ledger_path is not None
+    assert Path(claim_evidence_vertical.trace.project_retrieval_evidence_ledger_path).is_file()
+    assert claim_evidence_vertical.trace.project_negative_evidence_report_path is not None
+    assert Path(claim_evidence_vertical.trace.project_negative_evidence_report_path).is_file()
+    assert claim_evidence_vertical.trace.project_offline_publication_case_path is not None
+    assert Path(claim_evidence_vertical.trace.project_offline_publication_case_path).is_file()
+    assert claim_evidence_vertical.trace.project_offline_publication_audit_path is not None
+    assert Path(claim_evidence_vertical.trace.project_offline_publication_audit_path).is_file()
+    assert claim_evidence_vertical.trace.project_review_bundle_ready is True
+    assert claim_evidence_vertical.trace.project_final_publish_ready is False
+    assert claim_evidence_vertical.trace.project_review_finding_count == (
+        claim_evidence_vertical.trace.project_revision_action_count
+    )
+    assert claim_evidence_vertical.trace.project_review_findings_mapped_to_actions is True
+    assert claim_evidence_vertical.trace.project_submission_bundle_kind == "review_bundle"
+    assert claim_evidence_vertical.trace.project_submission_required_roles_present is True
+    assert claim_evidence_vertical.trace.project_submission_missing_asset_roles == []
+    assert {
+        "project_paper_compiler_evidence",
+        "project_publication_evidence_index",
+        "project_review_findings",
+        "project_repair_execution_log",
+        "project_retrieval_evidence_ledger",
+        "project_experiment_repair_index",
+        "project_negative_evidence_report",
+        "project_offline_publication_case",
+        "project_offline_publication_audit",
+        "project_publication_manifest",
+    }.issubset(set(claim_evidence_vertical.trace.project_submission_asset_roles))
+    assert claim_evidence_vertical.trace.project_experiment_execution_source_counts
+    assert claim_evidence_vertical.trace.project_materialized_execution_run_ids
+    assert claim_evidence_vertical.trace.project_paper_section_coverage_complete is True
+    assert claim_evidence_vertical.trace.project_paper_missing_sections == []
+    assert "Research Question" in claim_evidence_vertical.trace.project_paper_present_sections
+    assert "Benchmark And Data" in claim_evidence_vertical.trace.project_paper_present_sections
+    assert "Experimental Setup" in claim_evidence_vertical.trace.project_paper_present_sections
+    assert "Results" in claim_evidence_vertical.trace.project_paper_present_sections
+    assert "Negative Evidence" in claim_evidence_vertical.trace.project_paper_present_sections
+    assert "Limitations" in claim_evidence_vertical.trace.project_paper_present_sections
+    assert "Reproducibility" in claim_evidence_vertical.trace.project_paper_present_sections
+    assert claim_evidence_vertical.trace.project_supported_core_claim_count >= 1
+    assert claim_evidence_vertical.trace.project_claim_ceiling == "workshop_case_study_claim"
+    assert claim_evidence_vertical.trace.project_negative_evidence_coverage_complete is True
+    assert claim_evidence_vertical.trace.project_negative_evidence_count > 0
+    assert any("Do not submit as final publish" in item for item in claim_evidence_vertical.trace.project_kill_criteria)
+    assert claim_evidence_vertical.trace.project_required_followups
+    assert claim_evidence_vertical.trace.end_to_end_package_ready is True
+    assert claim_evidence_vertical.trace.literature_cache_hit_count >= 1
+    assert claim_evidence_vertical.trace.real_literature_count >= 3
+    assert claim_evidence_vertical.trace.literature_network_enabled is False
+    assert claim_evidence_vertical.trace.literature_source_counts["arxiv"] >= 1
+    assert claim_evidence_vertical.trace.literature_source_counts["semantic_scholar"] >= 1
+    assert claim_evidence_vertical.trace.literature_source_counts["crossref"] >= 1
     assert any(
-        "Frozen Claim Evidence Reranking" in material
-        for material in claim_evidence_vertical.trace.architecture_materials
+        "Project publish gate has not passed" in item
+        for item in claim_evidence_vertical.trace.project_submission_blockers
+    )
+    assert "Evidence Ledger Guided Claim Verification" in Path(
+        claim_evidence_vertical.trace.project_paper_path
+    ).read_text(encoding="utf-8")
+    submission_payload = json.loads(
+        Path(claim_evidence_vertical.trace.project_submission_manifest_path).read_text(encoding="utf-8")
+    )
+    assert submission_payload["review_bundle_ready"] is True
+    assert submission_payload["final_publish_ready"] is False
+    assert submission_payload["bundle_kind"] == claim_evidence_vertical.trace.project_submission_bundle_kind
+    submission_run_ids = submission_payload["selected_run_ids"]
+    assert {
+        item["role"]
+        for item in submission_payload["generated_assets"]
+    } >= set(claim_evidence_vertical.trace.project_submission_asset_roles)
+    assert all(item["source_action"] for item in submission_payload["generated_assets"])
+    assert all(item["readiness_contribution"] for item in submission_payload["generated_assets"])
+    assert all("source_evidence_refs" in item for item in submission_payload["generated_assets"])
+    assert all(item["missing_status"] == "present" for item in submission_payload["generated_assets"])
+    assert all(
+        set(item["source_run_ids"]) == set(submission_run_ids)
+        for item in submission_payload["generated_assets"]
+    )
+    readiness_report_path = (
+        Path(claim_evidence_vertical.trace.project_submission_manifest_path).parent
+        / "publication_readiness_report.json"
+    )
+    readiness_report = json.loads(readiness_report_path.read_text(encoding="utf-8"))
+    assert readiness_report["final_publish_ready"] is False
+    assert readiness_report["kill_criteria"] == claim_evidence_vertical.trace.project_kill_criteria
+    assert readiness_report["required_followups"] == claim_evidence_vertical.trace.project_required_followups
+    assert readiness_report["selected_run_count"] == 2
+    assert {
+        item["source_kind"]
+        for item in readiness_report["evidence_profile"]["run_profiles"]
+    } == {"scifact_json", "beir_json"}
+    assert readiness_report["evidence_profile"]["replication_ready"] is True
+    assert readiness_report["evidence_profile"]["benchmark_publication_ready"] is False
+    assert all(
+        item["publication_grade"] is False
+        for item in readiness_report["evidence_profile"]["run_profiles"]
+    )
+    assert readiness_report["evidence_profile"]["literature_ready"] is True
+    assert readiness_report["evidence_profile"]["real_literature_count"] >= 3
+    readiness_checks_by_id = {item["check_id"]: item for item in readiness_report["checks"]}
+    assert readiness_checks_by_id["execution_evidence"]["passed"] is True
+    assert readiness_checks_by_id["execution_evidence"]["execution_source_counts"] == (
+        claim_evidence_vertical.trace.project_experiment_execution_source_counts
+    )
+    assert set(readiness_report["evidence_profile"]["real_literature_sources"]) >= {
+        "arxiv",
+        "semantic_scholar",
+        "crossref",
+    }
+    experiment_repair_index = json.loads(
+        Path(claim_evidence_vertical.trace.project_experiment_repair_index_path).read_text(encoding="utf-8")
+    )
+    assert experiment_repair_index["execution_coverage_ready"] is True
+    assert experiment_repair_index["execution_source_counts"] == (
+        claim_evidence_vertical.trace.project_experiment_execution_source_counts
+    )
+    assert experiment_repair_index["materialized_execution_run_ids"] == (
+        claim_evidence_vertical.trace.project_materialized_execution_run_ids
+    )
+    statistics_report = json.loads(
+        Path(claim_evidence_vertical.trace.project_statistics_report_path).read_text(encoding="utf-8")
+    )
+    assert statistics_report["per_method_metric_table"]
+    assert statistics_report["aggregate_metric_table"]
+    assert statistics_report["paired_comparisons"]
+    assert statistics_report["confidence_intervals"]
+    assert statistics_report["execution_coverage"]["complete"] is True
+    assert statistics_report["execution_coverage"]["execution_source_counts"] == (
+        claim_evidence_vertical.trace.project_experiment_execution_source_counts
+    )
+    assert statistics_report["negative_evidence_summary"]
+    assert statistics_report["claim_ceiling_recommendation"] == (
+        claim_evidence_vertical.trace.project_claim_ceiling
+    )
+    assert any("scoped" in item.lower() for item in statistics_report["statistics_limitations"])
+    compiler_evidence = json.loads(
+        Path(claim_evidence_vertical.trace.project_submission_manifest_path).parent.joinpath(
+            "../paper_sources/paper_compiler_evidence.json"
+        ).resolve().read_text(encoding="utf-8")
+    )
+    assert compiler_evidence["section_coverage"]["complete"] is True
+    assert {
+        "Research Question",
+        "Benchmark And Data",
+        "Negative Evidence",
+        "Reproducibility",
+    }.issubset(set(compiler_evidence["section_coverage"]["present_sections"]))
+    assert compiler_evidence["claim_support_coverage"]["supported_core_claim_count"] == (
+        claim_evidence_vertical.trace.project_supported_core_claim_count
+    )
+    assert compiler_evidence["statistics_coverage"]["failure_case_count"] > 0
+    assert compiler_evidence["execution_coverage"]["complete"] is True
+    assert compiler_evidence["execution_coverage"]["execution_evidence_ledger"]["complete_entry_count"] == 2
+    assert any(
+        "Cached SciFact-style Claim Evidence Evaluation" in material
+        for material in claim_evidence_vertical.trace.case_study_materials
+    )
+    assert any(
+        "BEIR-style retrieval run" in material
+        for material in claim_evidence_vertical.trace.case_study_materials
+    )
+    assert any(
+        "project-level manuscript" in material
+        for material in claim_evidence_vertical.trace.case_study_materials
     )
     assert any(
         "unsupported-claim detection" in requirement.lower()

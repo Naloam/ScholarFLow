@@ -183,7 +183,7 @@ AutoResearchReviewStatus = Literal["ready", "needs_revision", "blocked"]
 AutoResearchUnsupportedClaimRisk = Literal["low", "medium", "high"]
 AutoResearchRevisionPriority = Literal["high", "medium", "low"]
 AutoResearchReviewLoopIssueStatus = Literal["open", "resolved"]
-AutoResearchReviewLoopActionStatus = Literal["pending", "completed"]
+AutoResearchReviewLoopActionStatus = Literal["pending", "running", "completed", "failed", "blocked"]
 AutoResearchRevisionDossierItemStatus = Literal["resolved", "action_required", "blocked"]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
@@ -916,8 +916,12 @@ class AutoResearchExperimentFactoryMaterializedJobRead(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     expected_outputs: list[str] = Field(default_factory=list)
     output_refs: list[str] = Field(default_factory=list)
+    runtime_contract: dict[str, Any] = Field(default_factory=dict)
+    started_at_step: int = 0
+    completed_at_step: int | None = None
     environment_manifest_id: str = "experiment_factory_environment_v1"
     repair_classification: AutoResearchExperimentFactoryRepairAction = "none"
+    failure_classification: str = "none"
     status: AutoResearchExperimentFactoryJobStatus = "planned"
 
 
@@ -1059,12 +1063,20 @@ class DatasetSpec(BaseModel):
     label_space: list[str] = Field(default_factory=list)
     query_fields: list[str] = Field(default_factory=list)
     candidate_count: int | None = None
+    sample_count: int = 0
+    split_count: int = 0
+    supports_claim_verification: bool = False
+    verification_label_space: list[str] = Field(default_factory=list)
     source_kind: BenchmarkKind | None = None
     source_url: str | None = None
     source_dataset_id: str | None = None
     source_revision: str | None = None
     source_license: str | None = None
     source_fingerprint: str | None = None
+    source_class: str | None = None
+    provenance_complete: bool = False
+    publication_grade_blockers: list[str] = Field(default_factory=list)
+    publication_grade_eligibility: dict[str, Any] = Field(default_factory=dict)
     publication_grade: bool = False
 
 
@@ -2411,6 +2423,10 @@ class AutoResearchBenchmarkCardRead(BaseModel):
     train_size: int = 0
     test_size: int = 0
     total_examples: int = 0
+    sample_count: int = 0
+    split_count: int = 0
+    supports_claim_verification: bool = False
+    verification_label_space: list[str] = Field(default_factory=list)
     label_space: list[str] = Field(default_factory=list)
     input_fields: list[str] = Field(default_factory=list)
     source_kind: BenchmarkKind | None = None
@@ -2419,6 +2435,9 @@ class AutoResearchBenchmarkCardRead(BaseModel):
     source_revision: str | None = None
     source_license: str | None = None
     source_fingerprint: str | None = None
+    source_class: str | None = None
+    publication_grade_eligibility: dict[str, Any] = Field(default_factory=dict)
+    publication_grade_blockers: list[str] = Field(default_factory=list)
     publication_grade: bool = False
     provenance_complete: bool = False
     checks: list[AutoResearchReadinessCheckRead] = Field(default_factory=list)
@@ -2643,6 +2662,92 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     paper_tier: AutoResearchPaperTier = "technical_report"
     source_strategy: AutoResearchProjectPaperSourceStrategy = "no_paper"
     project_publish_gate_passed: bool = False
+    project_paper_path: str | None = None
+    project_paper_markdown: str | None = None
+    project_paper_sections: list[str] = Field(default_factory=list)
+    project_paper_missing_sections: list[str] = Field(default_factory=list)
+    project_paper_ready: bool = False
+    project_paper_sources_dir: str | None = None
+    project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead | None = None
+    project_paper_sources_manifest_path: str | None = None
+    project_paper_compile_report: AutoResearchPaperCompileReportRead | None = None
+    project_paper_compile_report_path: str | None = None
+    project_paper_latex_path: str | None = None
+    project_paper_bibliography_path: str | None = None
+    project_paper_build_script_path: str | None = None
+    project_paper_latex_source: str | None = None
+    project_paper_bibliography_bib: str | None = None
+    project_paper_revision_actions: list[AutoResearchReviewLoopActionRead] = Field(default_factory=list)
+    project_paper_revision_action_count: int = 0
+    project_paper_revision_pending_action_count: int = 0
+    project_paper_revision_completed_action_count: int = 0
+    project_paper_claim_downgrade_action_count: int = 0
+    project_paper_retrieval_repair_action_count: int = 0
+    project_paper_revision_action_index: AutoResearchPaperRevisionActionIndexRead | None = None
+    project_paper_revision_action_index_path: str | None = None
+    project_paper_revision_actions_markdown_path: str | None = None
+    project_paper_revised_path: str | None = None
+    project_paper_revision_application_path: str | None = None
+    project_paper_rereview_report_path: str | None = None
+    project_paper_revision_application: dict[str, Any] | None = None
+    project_paper_rereview_report: dict[str, Any] | None = None
+    project_paper_rereview_complete: bool = False
+    project_review_findings: dict[str, Any] | None = None
+    project_submission_dir: str | None = None
+    project_submission_manifest: dict[str, Any] | None = None
+    project_submission_manifest_path: str | None = None
+    project_reproducibility_checklist_path: str | None = None
+    project_reviewer_response_path: str | None = None
+    project_review_findings_path: str | None = None
+    project_repair_execution_log_path: str | None = None
+    project_claim_evidence_index_path: str | None = None
+    project_retrieval_evidence_ledger_path: str | None = None
+    project_lineage_archive_path: str | None = None
+    project_literature_support_index_path: str | None = None
+    project_paper_compiler_evidence_path: str | None = None
+    project_publication_evidence_index_path: str | None = None
+    project_publication_readiness_report_path: str | None = None
+    project_supplemental_artifacts_path: str | None = None
+    project_revision_application_path: str | None = None
+    project_revision_rereview_path: str | None = None
+    project_code_package_path: str | None = None
+    project_benchmark_card_path: str | None = None
+    project_benchmark_provenance_manifest_path: str | None = None
+    project_benchmark_provenance_repair_index_path: str | None = None
+    project_statistics_report_path: str | None = None
+    project_experiment_repair_index_path: str | None = None
+    project_negative_evidence_report_path: str | None = None
+    project_offline_publication_case_path: str | None = None
+    project_offline_publication_audit_path: str | None = None
+    project_publication_manifest_path: str | None = None
+    project_review_bundle_ready: bool = False
+    project_final_publish_ready: bool = False
+    project_submission_ready: bool = False
+    project_submission_asset_count: int = 0
+    project_submission_blockers: list[str] = Field(default_factory=list)
+    project_reviewer_response_complete: bool = False
+    project_review_findings_complete: bool = False
+    project_repair_execution_log_complete: bool = False
+    project_claim_evidence_index_complete: bool = False
+    project_retrieval_evidence_ledger_complete: bool = False
+    project_lineage_archive_complete: bool = False
+    project_literature_support_index_complete: bool = False
+    project_paper_compiler_evidence_complete: bool = False
+    project_publication_evidence_index_complete: bool = False
+    project_publication_readiness_report_complete: bool = False
+    project_supplemental_artifacts_complete: bool = False
+    project_revision_application_complete: bool = False
+    project_revision_rereview_complete: bool = False
+    project_code_package_complete: bool = False
+    project_benchmark_card_complete: bool = False
+    project_benchmark_provenance_manifest_complete: bool = False
+    project_benchmark_provenance_repair_index_complete: bool = False
+    project_statistics_report_complete: bool = False
+    project_experiment_repair_index_complete: bool = False
+    project_negative_evidence_report_complete: bool = False
+    project_offline_publication_case_complete: bool = False
+    project_offline_publication_audit_complete: bool = False
+    project_publication_manifest_complete: bool = False
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
@@ -2686,8 +2791,49 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     experiment_job_count: int = 0
     evidence_entry_count: int = 0
     repair_action_count: int = 0
+    literature_cache_hit_count: int = 0
+    real_literature_count: int = 0
+    literature_source_counts: dict[str, int] = Field(default_factory=dict)
+    literature_network_enabled: bool = False
     evidence_complete: bool = False
     paper_review_package_ready: bool = False
+    project_paper_path: str | None = None
+    project_submission_manifest_path: str | None = None
+    project_publication_manifest_path: str | None = None
+    project_publication_readiness_report_path: str | None = None
+    project_experiment_repair_index_path: str | None = None
+    project_statistics_report_path: str | None = None
+    project_repair_execution_log_path: str | None = None
+    project_review_findings_path: str | None = None
+    project_retrieval_evidence_ledger_path: str | None = None
+    project_negative_evidence_report_path: str | None = None
+    project_offline_publication_case_path: str | None = None
+    project_offline_publication_audit_path: str | None = None
+    project_review_bundle_ready: bool = False
+    project_final_publish_ready: bool = False
+    project_revision_action_count: int = 0
+    project_review_finding_count: int = 0
+    project_review_findings_mapped_to_actions: bool = False
+    project_submission_blockers: list[str] = Field(default_factory=list)
+    project_submission_bundle_kind: str | None = None
+    project_submission_asset_roles: list[str] = Field(default_factory=list)
+    project_submission_missing_asset_roles: list[str] = Field(default_factory=list)
+    project_submission_required_roles_present: bool = False
+    project_experiment_execution_source_counts: dict[str, int] = Field(default_factory=dict)
+    project_imported_replay_run_ids: list[str] = Field(default_factory=list)
+    project_materialized_execution_run_ids: list[str] = Field(default_factory=list)
+    project_paper_section_coverage_complete: bool = False
+    project_paper_present_sections: list[str] = Field(default_factory=list)
+    project_paper_missing_sections: list[str] = Field(default_factory=list)
+    project_claim_support_complete: bool = False
+    project_supported_core_claim_count: int = 0
+    project_partial_or_unsupported_core_claim_count: int = 0
+    project_claim_ceiling: str | None = None
+    project_negative_evidence_coverage_complete: bool = False
+    project_negative_evidence_count: int = 0
+    project_kill_criteria: list[str] = Field(default_factory=list)
+    project_required_followups: list[str] = Field(default_factory=list)
+    end_to_end_package_ready: bool = False
     architecture_materials: list[str] = Field(default_factory=list)
     case_study_materials: list[str] = Field(default_factory=list)
     failure_analysis_materials: list[str] = Field(default_factory=list)
@@ -3181,6 +3327,13 @@ class AutoResearchReviewLoopActionRead(BaseModel):
     terminal_condition: str = "Re-review confirms that the underlying finding no longer recurs."
     requires_rereview: bool = True
     max_auto_rounds: int = 3
+    started_at_step: int | None = None
+    completed_at_step: int | None = None
+    input_artifact_refs: list[str] = Field(default_factory=list)
+    output_artifact_refs: list[str] = Field(default_factory=list)
+    failure_classification: str | None = None
+    rereview_result: dict[str, Any] | None = None
+    residual_blockers: list[str] = Field(default_factory=list)
 
 
 class AutoResearchReviewLoopRead(BaseModel):
@@ -3715,6 +3868,45 @@ class AutoResearchOperatorRunDetailRead(BaseModel):
     actions: AutoResearchOperatorRunActionsRead
 
 
+class AutoResearchOperatorPublicationCaseRead(BaseModel):
+    status: Literal["not_started", "review_ready", "final_publish_ready", "blocked"] = "not_started"
+    review_bundle_ready: bool = False
+    final_publish_ready: bool = False
+    submission_bundle_kind: str | None = None
+    submission_asset_count: int = 0
+    missing_asset_roles: list[str] = Field(default_factory=list)
+    blocked_asset_count: int = 0
+    blocked_asset_roles: list[str] = Field(default_factory=list)
+    final_publish_blocking_asset_roles: list[str] = Field(default_factory=list)
+    package_asset_statuses: list[dict[str, Any]] = Field(default_factory=list)
+    repair_action_status_counts: dict[str, int] = Field(default_factory=dict)
+    repair_action_recommendations: dict[str, str] = Field(default_factory=dict)
+    review_finding_count: int = 0
+    review_findings_path: str | None = None
+    execution_source_counts: dict[str, int] = Field(default_factory=dict)
+    imported_replay_run_ids: list[str] = Field(default_factory=list)
+    materialized_execution_run_ids: list[str] = Field(default_factory=list)
+    literature_source_counts: dict[str, int] = Field(default_factory=dict)
+    real_literature_count: int = 0
+    benchmark_provenance_ready: bool = False
+    benchmark_publication_ready: bool = False
+    statistics_claim_ceiling: str | None = None
+    statistics_complete: bool = False
+    negative_evidence_count: int = 0
+    negative_evidence_blocking_count: int = 0
+    rereview_complete: bool = False
+    rereview_recommendations: dict[str, str] = Field(default_factory=dict)
+    publish_blockers: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    kill_criteria: list[str] = Field(default_factory=list)
+    offline_publication_case_path: str | None = None
+    offline_publication_audit_path: str | None = None
+    submission_manifest_path: str | None = None
+    publication_readiness_report_path: str | None = None
+    statistics_report_path: str | None = None
+    negative_evidence_report_path: str | None = None
+
+
 class AutoResearchOperatorConsoleRead(BaseModel):
     project_id: str
     run_count: int = 0
@@ -3738,6 +3930,7 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     workers: list["AutoResearchWorkerState"] = Field(default_factory=list)
     meta_analysis: AutoResearchCrossRunMetaAnalysisRead | None = None
     system_evaluation: AutoResearchSystemEvaluationRead | None = None
+    publication_case: AutoResearchOperatorPublicationCaseRead | None = None
     runs: list[AutoResearchOperatorRunSummaryRead] = Field(default_factory=list)
     current_run: AutoResearchOperatorRunDetailRead | None = None
 

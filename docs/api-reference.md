@@ -96,6 +96,7 @@ This document focuses on the current auto-research API surface.
 
 - executes the deterministic toy factory backend for the run's factory plan
 - persists `experiment_factory_plan.json`, `experiment_factory_environment_manifest.json`, `experiment_factory_materialized_jobs.json`, `artifact.json`, `evidence_ledger.json`, and `experiment_factory_repair_plan.json`
+- each materialized job records a deterministic execution surrogate (`started_at_step`, `completed_at_step`), a `runtime_contract` with command/dependencies/expected outputs/retry and timeout requirements, output refs, and explicit `failure_classification`
 - marks the run `done` and returns the execution plan, environment manifest, materialized jobs, result artifact, evidence ledger, and repair plan
 - repair actions distinguish missing baseline evidence, missing ablation evidence, insufficient seed count, and failed rerun needs
 
@@ -103,14 +104,14 @@ This document focuses on the current auto-research API surface.
 
 - materializes local, Docker, or bridge job handoffs without claiming that experiments have completed
 - accepts `executor_mode` (`local`, `docker`, or `bridge`)
-- persists the execution plan, environment manifest, materialized planned jobs, and an incomplete evidence ledger
+- persists the execution plan, environment manifest, materialized planned jobs with runtime contracts and deterministic pending status, and an incomplete evidence ledger
 - leaves result claims blocked until outputs are imported or toy execution produces a completed result artifact
 
 ### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory/import`
 
 - imports an externally produced factory result without live benchmark, GPU, or Docker access
 - persists the same environment manifest, materialized jobs, result artifact, evidence ledger, and repair plan as toy execution
-- classifies missing imported baselines as `add_missing_baseline`, missing ablations as `add_missing_ablation`, and insufficient seed/statistical evidence as `increase_seed_count`
+- classifies missing imported baselines as `add_missing_baseline` / `missing_baseline_outputs`, missing ablations as `add_missing_ablation` / `missing_ablation_outputs`, insufficient seed/statistical evidence as `increase_seed_count` / `insufficient_statistics_outputs`, and candidate/runtime failures as rerun-required failures
 - keeps the run `failed` when no objective score is provided; otherwise marks the run `done` while preserving repair blockers for incomplete evidence
 
 ### `PATCH /api/projects/{project_id}/auto-research/{run_id}/controls`
@@ -134,6 +135,7 @@ This document focuses on the current auto-research API surface.
 - accepts optional `run_id` query param to focus the console on a specific run
 - also accepts optional `search`, `status`, `publish_status`, `review_risk`, `novelty_status`, `budget_status`, and `queue_priority` query params for run triage
 - returns both total run count and filtered run count, and each run summary now includes bridge posture, publish status, review risk, novelty posture, budget posture, and queue priority
+- includes `publication_case`, a project-level offline publication-case summary with review/final readiness, package asset statuses, blocked asset counts/roles, per-asset final-publish blocking checks/reasons, review finding count/path, repair action status counts, execution/import replay outputs, literature source coverage, benchmark provenance status, statistics claim ceiling, negative evidence counts, rereview recommendations, publish blockers, required follow-ups, kill criteria, and paths to `offline_publication_case.json` / `offline_publication_audit.json`
 - operators can inspect queue bottlenecks, stale-worker posture, and recent recoveries without reading `queue.json`
 
 ### `GET /api/projects/{project_id}/auto-research/project-paper`
@@ -144,13 +146,81 @@ This document focuses on the current auto-research API surface.
 - returns claim traces for every core project-level claim, with run IDs and evidence refs
 - decides whether the project should write no paper, a single-run technical report, a workshop candidate, or a conference candidate
 - prevents single-run evidence from being presented as a full project-level paper and blocks project-level publish readiness when strong claims lack run-level evidence
+- materializes an evidence-constrained project manuscript with required sections: abstract, introduction, research question, related work, method, benchmark and data, experiment setup, results, analysis, negative evidence, limitations, reproducibility, conclusion, and references; the reproducibility section includes an artifact evidence map for literature, benchmark provenance, execution/statistics, claim/retrieval evidence, negative evidence, review/repair/rereview, lineage, readiness, and publication-manifest files
+- materializes compile-oriented project paper sources:
+  - `paper.md`
+  - `paper_revised.md`
+  - `main.tex`
+  - `references.bib`
+  - `build.sh`
+  - `paper_compile_report.json`
+  - `project_revision_action_index.json`
+  - `revision_actions.md`
+  - `project_revision_application.json`
+  - `project_rereview_report.json`
+  - `manifest.json`
+- converts weak or unsupported project-paper claims into bounded revision actions; auto-applicable claim-evidence actions are materialized as claim downgrades or retrieval-repair routes and then re-reviewed without upgrading missing evidence to supported evidence
+- project-paper revision actions also route final-publish blockers into bounded repairs for weak/missing literature support, missing benchmark provenance, insufficient benchmark scale, and insufficient statistics; literature-refresh actions now materialize `literature_support_index.json` from structured cached/network scout evidence when at least two non-fixture sources are available, otherwise the action is marked `blocked` with residual blockers
+- benchmark-provenance repair actions now materialize `benchmark_provenance_repair_index.json`; they complete only when selected run benchmark profiles already carry complete publication-grade frozen/imported/real provenance, and they remain `blocked` for toy/fixture sources, missing provenance, insufficient scale, or failed eligibility checks
+- benchmark-scale and insufficient-statistics repair actions now materialize `experiment_repair_index.json`; they record selected-run execution coverage, imported-result replay runs, materialized-job output refs, environment manifest linkage, and deterministic statistics/significance evidence. The routes complete only when publication-eligible benchmark scale, deterministic aggregate/significance evidence, and linked execution/import replay outputs are available; otherwise they remain `blocked` with the required rerun/import follow-up
+- `project_rereview_report.json` now includes action-level re-review records with the original finding, repair route, input/output artifacts, repair-output artifact audits, terminal-condition status, reviewer residual concern, resolved blockers, new blockers, claim-downgrade status, and recommendation for each revision action
+- `statistics_report.json` now carries publication-case statistics evidence directly: per-method metric rows, aggregate metric rows, paired/significance comparisons, confidence intervals or deterministic equivalents, execution/import replay coverage, negative-evidence summaries, statistics limitations, and a claim-ceiling recommendation constrained by benchmark readiness and claim support
+- project submission packages now include a standalone `repair_execution_log.json` that records every repair action's status, input/output artifact refs, repair-output artifact audits, failure classification, residual blockers, and re-review result
+- materializes a project submission package:
+  - `submission_manifest.json`
+  - `reproducibility_checklist.md`
+  - `reviewer_response.md`
+  - `repair_execution_log.json`
+  - `claim_evidence_index.md`
+  - `retrieval_evidence_ledger.json`
+  - `lineage_archive.json`
+  - `literature_support_index.json`
+  - `paper_compiler_evidence.json`
+  - `publication_evidence_index.json`
+  - `publication_readiness_report.json`
+  - `supplemental_artifacts.json`
+  - `project_review_findings.json`
+  - `benchmark_card.json`
+  - `benchmark_provenance_manifest.json`
+  - `benchmark_provenance_repair_index.json`
+  - `statistics_report.json`
+  - `experiment_repair_index.json`
+  - `negative_evidence_report.json`
+  - `offline_publication_case.json`
+  - `offline_publication_audit.json`
+  - `code_package.zip`
+  - `publication_manifest.json`
+- every project submission `generated_assets` entry includes role, path, hash, source action, source run ids, source evidence refs, readiness contribution, explicit `missing_status`, `blocked_status`, `final_publish_blocking`, `blocking_check_ids`, and `blocking_reasons`; `publication_manifest.json` mirrors the same auditable asset list, with the manifest's own self-referential hash marked by an integrity note instead of embedding an impossible final self-hash
+- `publication_manifest.json` also mirrors the readiness decision trace from `publication_readiness_report.json`, including review/final readiness, failed checks, blockers, required follow-ups, kill criteria, claim ceiling, and evidence artifact refs explaining why a review bundle is not a final-publish bundle
+- returns project package readiness fields including `project_review_bundle_ready`, `project_final_publish_ready`, `project_submission_blockers`, `project_review_findings_path`, `project_repair_execution_log_path`, `project_retrieval_evidence_ledger_path`, `project_literature_support_index_path`, `project_paper_compiler_evidence_path`, `project_publication_evidence_index_path`, `project_code_package_path`, `project_benchmark_card_path`, `project_benchmark_provenance_manifest_path`, `project_benchmark_provenance_repair_index_path`, `project_statistics_report_path`, `project_experiment_repair_index_path`, `project_negative_evidence_report_path`, `project_offline_publication_case_path`, `project_offline_publication_audit_path`, `project_publication_manifest_path`, and `project_supplemental_artifacts_path`
+- `project_review_findings.json` records project-level reviewer-simulator findings mapped one-to-one to bounded revision actions, preserving finding ids, reviewer role, severity, required repair kind, execution route, expected outputs, terminal condition, and rereview requirement
+- `paper_compiler_evidence.json` now records review-findings coverage, execution/import replay coverage, and reproducibility coverage, including persisted finding/action mapping, source package readiness, selected-run artifact coverage, execution source counts, execution evidence ledger entries, and planned package asset roles
+- `publication_evidence_index.json` records both claim-level evidence traces and benchmark-level evidence items that point to `benchmark_provenance_manifest.json` and `benchmark_provenance_repair_index.json`, so benchmark repair/provenance outputs are part of the publication evidence graph
+- `project_final_publish_ready=false` is expected whenever evidence, revision, compile, or publish-gate blockers remain; clients must not treat a review bundle as a final publish bundle
+- `negative_evidence_report.json` retains run-level negative results, failed trials, retrieval misses, unsupported claim gaps, project negative findings, and blocked repair evidence as first-class package evidence; unresolved blocking entries continue to block final publish
+- `retrieval_evidence_ledger.json` aggregates selected-run retrieval evidence entries and artifact-output retrieval ledgers into a project-level ledger while preserving partial/missing support as blockers or limitations
+- `experiment_repair_index.json` includes a project `execution_evidence_ledger` with per-run execution/import capsules for executor mode, backend, command or import path, runtime contracts, environment manifest identity, dependency manifest, input benchmark provenance, method outputs, metrics refs, evidence-ledger refs, negative-evidence refs, repair action linkage, failure classifications, and deterministic fingerprints; compiler evidence and readiness reports repeat execution coverage checks so statistics cannot be marked complete without linked execution/import replay artifacts
+- `literature_support_index.json` records related-system coverage for FARS and ARIS from cached/imported literature metadata and known-SOTA fields; missing coverage is preserved as a limitation/follow-up rather than inferred
+- `offline_publication_case.json` records the deterministic fixed idea, research question, brief/hypothesis/benchmark/experiment chain, method ladder, expected metrics, repair triggers, paper package outputs, and explicit evidence classification for real/imported/frozen sources versus internal fixtures
+- `offline_publication_audit.json` records the Phase 1 capability/breakpoint audit for literature refresh, benchmark snapshot selection, execution/import replay, statistics strength, negative-evidence retention, repair-aware rereview, and submission-package completeness
+- benchmark provenance assets expose source class and eligibility fields such as `source_class`, `provenance_complete`, `publication_grade_eligibility`, and `publication_grade_blockers`
+- `benchmark_provenance_manifest.json` now includes per-run `benchmark_source_records` with dataset id, revision, license, source locator, fingerprint, sample/split counts, label space, source class, publication eligibility/blockers, and `query_document_evidence_schema`; its `schema_coverage` section preserves missing query/document/evidence/label roles as blockers
+- `benchmark_card.blockers` describes benchmark-card completeness blockers for the current run profile, while `publication_grade_blockers` separately describes why the source cannot be used as final-publish evidence
+- benchmark cards and dataset specs expose frozen snapshot metadata including `sample_count`, `split_count`, `supports_claim_verification`, and `verification_label_space`
+- project-level `benchmark_card.json`, `paper_compiler_evidence.json`, and `benchmark_provenance_manifest.json` carry the same snapshot metadata so submission-package readiness can be audited from project artifacts rather than only from run snapshots
+- final-publish benchmark eligibility requires a real or imported source class (`remote_real`, `frozen_snapshot`, or `imported_real`), non-empty train/test splits, at least 20 normalized examples, complete provenance fields (source locator, `dataset_id`, `revision`, `license`, and `source_fingerprint`), and a complete claim-evidence query/document/evidence/label schema
+- repository-local frozen snapshots loaded through `file_path` may satisfy `frozen_snapshot` eligibility when provenance and scale checks pass; miniature frozen snapshots remain useful adapter tests but must stay blocked by the sample-count gate
+- internal fixtures remain review/evaluation assets only: `toy_builtin`, `cached_fixture`, `scholarflow:` dataset ids, `file://scholarflow-fixtures` snapshots, and fixture/synthetic/toy provenance signals must remain blocked from final-publish eligibility
 
 ### `GET /api/projects/{project_id}/auto-research/evaluation-cases`
 
 - returns the internal evaluation-case suite for idea-to-paper validation
 - includes six deterministic cases: toy, medium benchmark, literature-heavy, claim-evidence vertical, ablation-heavy, and failed-hypothesis
 - the toy case runs end-to-end through brief, scout, hypothesis selection, experiment factory, evidence ledger, and paper/review package materialization
-- exposes the evaluation metrics used to judge idea-to-brief completeness, hypothesis selection, novelty risk detection, experiment executability, evidence consistency, reviewer readiness, and final publish correctness
+- the claim-evidence vertical case seeds offline cached arXiv / Semantic Scholar / Crossref literature connector responses, runs cached SciFact-style support/refute/not-enough-info verification and cached BEIR-style retrieval benchmark paths, records retrieval and verification metrics, persists retrieval evidence ledgers, builds a project paper, applies bounded project revision actions, and emits a review-ready project submission package
+- claim-evidence vertical traces expose V3 package proof fields: publication/readiness/statistics/experiment-repair/negative-evidence/offline-case/offline-audit/repair-log/review-findings paths, review finding count and action mapping, submission bundle kind, generated asset roles, missing required asset roles, execution source counts, imported replay run ids, materialized execution run ids, paper section coverage, claim-support counts, claim ceiling, negative-evidence coverage, kill criteria, required follow-ups, and negative-evidence counts
+- exposes the evaluation metrics used to judge idea-to-brief completeness, hypothesis selection, novelty risk detection, experiment executability, evidence consistency, reviewer readiness, final publish correctness, and offline end-to-end submission-package coverage
+- evaluation cases remain deterministic and do not require live network, paid LLM calls, GPUs, or external benchmark availability
 
 ### `GET /api/projects/{project_id}/auto-research/{run_id}/bridge`
 

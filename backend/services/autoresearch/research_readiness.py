@@ -101,6 +101,11 @@ def _publication_grade_benchmark(run: AutoResearchRunRead) -> tuple[bool, str]:
     spec = run.spec
     if spec is None:
         return False, "No experiment specification was persisted."
+    if not spec.dataset.publication_grade:
+        blockers = spec.dataset.publication_grade_blockers
+        if blockers:
+            return False, "Final publish benchmark eligibility failed: " + "; ".join(blockers)
+        return False, "Final publish requires benchmark publication-grade eligibility to pass."
     benchmark_kind = run.benchmark.kind if run.benchmark is not None else spec.dataset.source_kind
     dataset_name = spec.dataset.name or ""
     benchmark_name = spec.benchmark_name or ""

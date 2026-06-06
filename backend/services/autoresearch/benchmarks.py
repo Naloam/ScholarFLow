@@ -99,6 +99,103 @@ def _ir_benchmark(
     }
 
 
+def benchmark_source_publication_eligibility(
+    source: BenchmarkSource,
+    dataset_payload: dict[str, Any],
+) -> dict[str, Any]:
+    source_name = (source.name or "").lower()
+    source_url = (dataset_payload.get("source_url") or source.url or source.file_path or "").lower()
+    source_dataset_id = (source.dataset_id or "").lower()
+    source_license = (source.license or "").lower()
+    dataset_name = str(dataset_payload.get("name") or "").lower()
+    total_examples = len(dataset_payload.get("train", [])) + len(dataset_payload.get("test", []))
+    train_size = len(dataset_payload.get("train", []))
+    test_size = len(dataset_payload.get("test", []))
+    fingerprint = dataset_source_fingerprint(dataset_payload)
+    fixture_signals = (
+        "fixture",
+        "toy",
+        "scholarflow-fixtures",
+        "cached-fixture",
+        "synthetic",
+    )
+    source_class = "remote_real"
+    blockers: list[str] = []
+    if source.kind == "builtin":
+        source_class = "toy_builtin"
+        blockers.append("Built-in toy benchmarks cannot be publication-grade.")
+    if source_dataset_id.startswith("scholarflow:"):
+        source_class = "cached_fixture"
+        blockers.append("ScholarFlow internal benchmark fixtures cannot be publication-grade.")
+    if source_url.startswith("file://scholarflow-fixtures"):
+        source_class = "cached_fixture"
+        blockers.append("file://scholarflow-fixtures snapshots are deterministic fixtures, not publication-grade evidence.")
+    if any(signal in source_license for signal in fixture_signals):
+        source_class = "cached_fixture"
+        blockers.append("Benchmark license/provenance marks this source as fixture or synthetic.")
+    if "fixture" in source_name or dataset_name.startswith("toy "):
+        source_class = "cached_fixture"
+        blockers.append("Benchmark name identifies this source as fixture or toy.")
+    if source.file_path and source_class == "remote_real":
+        source_class = "frozen_snapshot"
+    if source.kind in {"remote_csv", "remote_json", "huggingface"} and source_class == "remote_real":
+        source_class = "imported_real" if source.file_path else "remote_real"
+    if total_examples < 20:
+        blockers.append("Benchmark has fewer than 20 normalized examples.")
+    if train_size <= 0 or test_size <= 0:
+        blockers.append("Benchmark must persist non-empty train and test splits.")
+    if not (source.url or source.file_path or dataset_payload.get("source_url")):
+        blockers.append("Benchmark provenance requires source URL or frozen local file path.")
+    if not source.dataset_id:
+        blockers.append("Benchmark provenance requires dataset_id.")
+    if not source.revision:
+        blockers.append("Benchmark provenance requires revision.")
+    if not source.license:
+        blockers.append("Benchmark provenance requires license.")
+    if not fingerprint:
+        blockers.append("Benchmark provenance requires source fingerprint.")
+    provenance_complete = not any(
+        item.startswith("Benchmark provenance requires")
+        for item in blockers
+    )
+    publication_grade = provenance_complete and source_class in {
+        "frozen_snapshot",
+        "imported_real",
+        "remote_real",
+    } and not blockers
+    deduped_blockers = []
+    for blocker in blockers:
+        if blocker not in deduped_blockers:
+            deduped_blockers.append(blocker)
+    return {
+        "source_class": source_class,
+        "publication_grade": publication_grade,
+        "provenance_complete": provenance_complete,
+        "blockers": deduped_blockers,
+        "checks": {
+            "has_source_locator": bool(source.url or source.file_path or dataset_payload.get("source_url")),
+            "has_dataset_id": bool(source.dataset_id),
+            "has_revision": bool(source.revision),
+            "has_license": bool(source.license),
+            "has_fingerprint": bool(fingerprint),
+            "has_train_test_split": train_size > 0 and test_size > 0,
+            "meets_min_examples": total_examples >= 20,
+            "not_internal_fixture": source_class not in {"toy_builtin", "cached_fixture"},
+        },
+        "sample_count": total_examples,
+        "train_size": train_size,
+        "test_size": test_size,
+        "source_fingerprint": fingerprint,
+    }
+
+
+def _dataset_split_count(dataset_payload: dict[str, Any]) -> int:
+    source_splits = dataset_payload.get("source_splits")
+    if isinstance(source_splits, list):
+        return len({str(item).strip().lower() for item in source_splits if str(item).strip()})
+    return int(bool(dataset_payload.get("train"))) + int(bool(dataset_payload.get("test")))
+
+
 def _tabular_benchmark(
     *,
     benchmark_name: str,
@@ -2226,6 +2323,8 @@ def build_experiment_spec(
         query_fields = []
         candidate_count = None
 
+    eligibility = benchmark_source_publication_eligibility(resolved.source, dataset_payload)
+    verification_label_space = list(dataset_payload.get("verification_label_space") or [])
     return ExperimentSpec(
         task_family=task_family,
         benchmark_name=resolved.benchmark_name,
@@ -2239,18 +2338,21 @@ def build_experiment_spec(
             label_space=label_space,
             query_fields=query_fields,
             candidate_count=candidate_count,
+            sample_count=len(dataset_payload["train"]) + len(dataset_payload["test"]),
+            split_count=_dataset_split_count(dataset_payload),
+            supports_claim_verification=bool(dataset_payload.get("supports_claim_verification")),
+            verification_label_space=verification_label_space,
             source_kind=resolved.source.kind,
             source_url=dataset_payload.get("source_url") or resolved.source.url,
             source_dataset_id=resolved.source.dataset_id,
             source_revision=resolved.source.revision,
             source_license=resolved.source.license,
-            source_fingerprint=dataset_source_fingerprint(dataset_payload),
-            publication_grade=(
-                resolved.source.kind != "builtin"
-                and not resolved.benchmark_name.startswith("toy_")
-                and not str(dataset_payload.get("name") or "").lower().startswith("toy ")
-                and len(dataset_payload["train"]) + len(dataset_payload["test"]) >= 20
-            ),
+            source_fingerprint=eligibility["source_fingerprint"],
+            source_class=eligibility["source_class"],
+            provenance_complete=eligibility["provenance_complete"],
+            publication_grade_blockers=eligibility["blockers"],
+            publication_grade_eligibility=eligibility,
+            publication_grade=eligibility["publication_grade"],
         ),
         baselines=baselines,
         metrics=metrics,

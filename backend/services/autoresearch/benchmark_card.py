@@ -71,11 +71,8 @@ def build_benchmark_card(run: AutoResearchRunRead) -> AutoResearchBenchmarkCardR
     total_examples = (dataset.train_size + dataset.test_size) if dataset is not None else 0
     publication_profile = run.request is not None and run.request.execution_profile == "publication"
     publication_grade = bool(dataset is not None and dataset.publication_grade)
-    provenance_complete = bool(
-        source_kind
-        and source_kind != "builtin"
-        and (source_url or source_dataset_id or (dataset.source_fingerprint if dataset is not None else None))
-    )
+    provenance_complete = bool(dataset is not None and dataset.provenance_complete)
+    eligibility_blockers = list(dataset.publication_grade_blockers) if dataset is not None else []
     checks: list[AutoResearchReadinessCheckRead] = []
     _add_check(
         checks,
@@ -94,6 +91,8 @@ def build_benchmark_card(run: AutoResearchRunRead) -> AutoResearchBenchmarkCardR
         summary="Benchmark card preserves source provenance.",
         detail=(
             f"source_url={source_url}; source_dataset_id={source_dataset_id}; "
+            f"source_revision={dataset.source_revision if dataset is not None else None}; "
+            f"source_license={dataset.source_license if dataset is not None else None}; "
             f"source_fingerprint={dataset.source_fingerprint if dataset is not None else None}."
         ),
         required_for_final_publish=publication_profile,
@@ -152,6 +151,14 @@ def build_benchmark_card(run: AutoResearchRunRead) -> AutoResearchBenchmarkCardR
         "train_size": dataset.train_size if dataset is not None else 0,
         "test_size": dataset.test_size if dataset is not None else 0,
         "total_examples": total_examples,
+        "sample_count": dataset.sample_count if dataset is not None else 0,
+        "split_count": dataset.split_count if dataset is not None else 0,
+        "supports_claim_verification": (
+            dataset.supports_claim_verification if dataset is not None else False
+        ),
+        "verification_label_space": (
+            dataset.verification_label_space if dataset is not None else []
+        ),
         "label_space": dataset.label_space if dataset is not None else [],
         "input_fields": dataset.input_fields if dataset is not None else [],
         "source_kind": source_kind,
@@ -160,6 +167,11 @@ def build_benchmark_card(run: AutoResearchRunRead) -> AutoResearchBenchmarkCardR
         "source_revision": dataset.source_revision if dataset is not None else None,
         "source_license": dataset.source_license if dataset is not None else None,
         "source_fingerprint": dataset.source_fingerprint if dataset is not None else None,
+        "source_class": dataset.source_class if dataset is not None else None,
+        "publication_grade_eligibility": (
+            dataset.publication_grade_eligibility if dataset is not None else {}
+        ),
+        "publication_grade_blockers": eligibility_blockers,
         "publication_grade": publication_grade,
         "provenance_complete": provenance_complete,
         "checks": [item.model_dump(mode="json") for item in checks],

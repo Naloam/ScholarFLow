@@ -3214,6 +3214,7 @@ def _build_claim_evidence_index_markdown(
     package: AutoResearchPublishPackageRead,
 ) -> tuple[str, bool]:
     matrix = run.claim_evidence_matrix
+    experiment_ledger = run.evidence_ledger
     evidence_index = review.publication_evidence_index
     lines = [
         "# Claim Evidence Index",
@@ -3221,6 +3222,7 @@ def _build_claim_evidence_index_markdown(
         f"- Run: `{package.run_id}`",
         f"- Publication evidence index: `{review.publication_evidence_index_path or 'missing'}`",
         f"- Claim-evidence matrix: `{run.claim_evidence_matrix_path or 'missing'}`",
+        f"- Experiment evidence ledger: `{run.evidence_ledger_path or 'missing'}`",
         "",
     ]
     if matrix is not None and matrix.entries:
@@ -3235,6 +3237,21 @@ def _build_claim_evidence_index_markdown(
         lines.append("")
     else:
         lines.extend(["## Claims", "- No claim-evidence matrix entries were available.", ""])
+    if experiment_ledger is not None and experiment_ledger.entries:
+        lines.append("## Experiment Evidence Ledger")
+        for entry in experiment_ledger.entries:
+            lines.append(
+                f"- `{entry.evidence_id}` [{entry.support_status}/{entry.evidence_kind}]: "
+                f"{entry.claim} ({entry.artifact_ref})"
+            )
+            if entry.metric:
+                metric_value = "n/a" if entry.value is None else f"{entry.value:.4f}"
+                lines.append(f"  - Metric: `{entry.metric}` = {metric_value}")
+            if entry.source_job_id:
+                lines.append(f"  - Source job: `{entry.source_job_id}`")
+        lines.append("")
+    else:
+        lines.extend(["## Experiment Evidence Ledger", "- No experiment evidence ledger entries were available.", ""])
     if evidence_index is not None and evidence_index.evidence_items:
         lines.append("## Publication Evidence")
         for item in evidence_index.evidence_items:
@@ -3246,7 +3263,11 @@ def _build_claim_evidence_index_markdown(
     if evidence_index is not None and evidence_index.blockers:
         lines.append("## Evidence Blockers")
         lines.extend(f"- {item}" for item in evidence_index.blockers)
-    complete = matrix is not None and bool(matrix.entries) and evidence_index is not None
+    has_claim_evidence = (
+        (matrix is not None and bool(matrix.entries))
+        or (experiment_ledger is not None and bool(experiment_ledger.entries))
+    )
+    complete = has_claim_evidence and evidence_index is not None
     return "\n".join(lines), complete
 
 

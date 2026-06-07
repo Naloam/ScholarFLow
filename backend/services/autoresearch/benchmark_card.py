@@ -167,6 +167,8 @@ def build_benchmark_card(run: AutoResearchRunRead) -> AutoResearchBenchmarkCardR
         "source_revision": dataset.source_revision if dataset is not None else None,
         "source_license": dataset.source_license if dataset is not None else None,
         "source_fingerprint": dataset.source_fingerprint if dataset is not None else None,
+        "source_content_origin": dataset.source_content_origin if dataset is not None else None,
+        "source_content_note": dataset.source_content_note if dataset is not None else None,
         "source_class": dataset.source_class if dataset is not None else None,
         "publication_grade_eligibility": (
             dataset.publication_grade_eligibility if dataset is not None else {}

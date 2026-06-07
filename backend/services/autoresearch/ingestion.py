@@ -422,7 +422,7 @@ def _normalize_pre_split_json(source: BenchmarkSource, payload: dict[str, Any], 
     test = payload.get("test")
     if not isinstance(train, list) or not isinstance(test, list):
         raise BenchmarkIngestionError("JSON benchmark must provide train/test arrays or raw rows")
-    return _normalize_pre_split_rows(
+    normalized = _normalize_pre_split_rows(
         source,
         [row for row in train if isinstance(row, dict)],
         [row for row in test if isinstance(row, dict)],
@@ -430,6 +430,38 @@ def _normalize_pre_split_json(source: BenchmarkSource, payload: dict[str, Any], 
         payload.get("name") or name,
         payload.get("description"),
     )
+    return _preserve_source_metadata(normalized, payload)
+
+
+def _preserve_source_metadata(normalized: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    for key in (
+        "dataset_id",
+        "revision",
+        "license",
+        "fingerprint",
+        "source_dataset_id",
+        "source_revision",
+        "source_license",
+        "source_fingerprint",
+        "source_url",
+        "source_locator",
+        "source_splits",
+        "source_class",
+        "source_content_origin",
+        "source_content_note",
+        "source_archive_sha256",
+        "supports_claim_verification",
+        "verification_label_space",
+        "query_document_evidence_schema",
+        "publication_grade_eligibility",
+        "publication_grade_blockers",
+        "publication_grade",
+        "final_publish_candidate_eligible",
+        "final_publish_candidate_blockers",
+    ):
+        if key in payload:
+            normalized[key] = payload[key]
+    return normalized
 
 
 def _normalize_dataset_payload(
@@ -484,7 +516,7 @@ def _normalize_beir_payload(source: BenchmarkSource, payload: dict[str, Any], na
         candidates = [{"id": doc_id, "text": corpus_map[doc_id]} for doc_id in candidate_ids if doc_id in corpus_map]
         if query_text and candidates and relevant_ids:
             rows.append({"query": query_text, "candidates": candidates, "relevant_ids": relevant_ids})
-    return _normalize_ir_dataset(source, rows, name)
+    return _preserve_source_metadata(_normalize_ir_dataset(source, rows, name), payload)
 
 
 def _scifact_doc_id(item: Any) -> str:
@@ -703,7 +735,7 @@ def _normalize_scifact_payload(source: BenchmarkSource, payload: dict[str, Any],
         }
     )
     normalized["supports_claim_verification"] = bool(normalized["verification_label_space"])
-    return normalized
+    return _preserve_source_metadata(normalized, payload)
 
 
 class BenchmarkAdapter(Protocol):

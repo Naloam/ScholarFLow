@@ -268,6 +268,8 @@ def test_claim_evidence_ir_routes_to_frozen_non_publication_fixture() -> None:
         "unsupported_claim_precision",
         "unsupported_claim_recall",
         "abstention_accuracy",
+        "repair_precision",
+        "repair_recall",
     ]
     assert spec.search_strategies[-1] == "ledger_aware_reranker_search"
     assert spec.sweeps[0].params["ledger_weight"] == 1.0
@@ -525,6 +527,12 @@ def test_scifact_json_adapter_records_frozen_snapshot_metadata_without_promoting
     payload = {
         "name": "SciFact Frozen Mini Snapshot",
         "description": "Repository-local SciFact-style snapshot with complete provenance but miniature scale.",
+        "dataset_id": "allenai/scifact-frozen-mini",
+        "revision": "2026-06-01",
+        "license": "cc-by-4.0",
+        "fingerprint": "sha256:payload-scifact-frozen-mini",
+        "source_content_origin": "original_benchmark_records",
+        "source_content_note": "Miniature adapter regression fixture with provenance stored in the JSON payload.",
         "corpus": [
             {
                 "doc_id": "doc_support_train",
@@ -575,9 +583,6 @@ def test_scifact_json_adapter_records_frozen_snapshot_metadata_without_promoting
         kind="scifact_json",
         name="SciFact frozen mini snapshot",
         file_path=str(snapshot_path),
-        dataset_id="allenai/scifact-frozen-mini",
-        revision="2026-06-01",
-        license="cc-by-4.0",
     )
     benchmark = autoresearch_ingestion.resolve_benchmark(
         topic="claim evidence verification for scientific writing agents",
@@ -592,10 +597,119 @@ def test_scifact_json_adapter_records_frozen_snapshot_metadata_without_promoting
     assert spec.dataset.split_count == 2
     assert spec.dataset.supports_claim_verification is True
     assert spec.dataset.verification_label_space == ["refuted", "supported"]
+    assert spec.dataset.source_dataset_id == payload["dataset_id"]
+    assert spec.dataset.source_revision == payload["revision"]
+    assert spec.dataset.source_license == payload["license"]
+    assert spec.dataset.source_fingerprint == payload["fingerprint"]
+    assert spec.dataset.source_content_origin == "original_benchmark_records"
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_dataset_id"] is True
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_revision"] is True
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_license"] is True
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_fingerprint"] is True
     assert spec.dataset.publication_grade is False
     assert "Benchmark has fewer than 20 normalized examples." in spec.dataset.publication_grade_blockers
     assert spec.dataset.publication_grade_eligibility["checks"]["not_internal_fixture"] is True
     assert spec.dataset.publication_grade_eligibility["checks"]["meets_min_examples"] is False
+
+
+def test_imported_scifact_vertical_snapshot_is_repository_local_and_adapter_readable(
+    monkeypatch,
+) -> None:
+    snapshot_path = autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_PATH
+    assert snapshot_path.is_file()
+    payload = autoresearch_evaluation_cases._load_imported_scifact_vertical_payload()
+    assert len(payload["train"]) == 72
+    assert len(payload["test"]) == 48
+    assert len(payload["train"]) + len(payload["test"]) >= (
+        autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_MIN_EXAMPLES
+    )
+    assert payload["dataset_id"] == "allenai/scifact"
+    assert payload["revision"] == autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_REVISION
+    assert payload["license"] == autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_LICENSE
+    assert payload["fingerprint"]
+    assert payload["source_dataset_id"] == "allenai/scifact"
+    assert payload["source_revision"] == payload["revision"]
+    assert payload["source_license"] == payload["license"]
+    assert payload["source_fingerprint"] == payload["fingerprint"]
+    assert payload["source_content_origin"] == "original_benchmark_records"
+    assert payload["source_archive_sha256"] == (
+        autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_SOURCE_SHA256
+    )
+    assert payload["source_class"] == "frozen_snapshot"
+    assert payload["provenance_complete"] is True
+    assert payload["sample_count"] == 120
+    assert payload["split_count"] == 2
+    assert payload["split_distribution"] == {"test": 48, "train": 72}
+    assert payload["label_distribution"] == {
+        "not_enough_info": 40,
+        "refuted": 40,
+        "supported": 40,
+    }
+    assert payload["query_count"] == 48
+    assert payload["document_count"] == 201
+    assert payload["evidence_annotation_count"] == 33
+    assert payload["retrieval_relevance_count"] == 27
+    assert payload["query_document_evidence_schema"]["schema_complete"] is True
+    assert payload["query_document_evidence_schema"]["supports_claim_verification"] is True
+    assert payload["publication_grade"] is True
+    assert payload["publication_grade_blockers"] == []
+    assert payload["publication_grade_eligibility"]["publication_grade"] is True
+    assert payload["publication_grade_eligibility"]["provenance_complete"] is True
+    assert payload["publication_grade_eligibility"]["checks"][
+        "meets_final_candidate_examples"
+    ] is True
+    assert payload["final_publish_candidate_eligible"] is True
+    assert payload["final_publish_candidate_blockers"] == []
+    assert payload["normalization"]["script"] == "scripts/build_scifact_frozen_snapshot.py"
+    assert payload["normalization"]["split_distribution"] == {"test": 48, "train": 72}
+    assert payload["normalization"]["label_distribution"] == {
+        "not_enough_info": 40,
+        "refuted": 40,
+        "supported": 40,
+    }
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"Imported SciFact snapshot should load from file, not network: {url}"),
+    )
+
+    benchmark = autoresearch_ingestion.resolve_benchmark(
+        topic="claim evidence verification for scientific writing agents",
+        task_family_hint="ir_reranking",
+        benchmark_source=autoresearch_evaluation_cases._IMPORTED_SCIFACT_VERTICAL_SOURCE,
+    )
+    spec = build_experiment_spec("ir_reranking", benchmark)
+
+    assert len(benchmark.payload["train"]) == len(payload["train"])
+    assert len(benchmark.payload["test"]) == len(payload["test"])
+    assert benchmark.payload["train"][0]["claim_id"] == payload["train"][0]["claim_id"]
+    assert benchmark.payload["test"][0]["claim_id"] == payload["test"][0]["claim_id"]
+    test_label_counts = {
+        label: sum(1 for item in benchmark.payload["test"] if item["claim_label"] == label)
+        for label in ("not_enough_info", "refuted", "supported")
+    }
+    assert test_label_counts == {"not_enough_info": 16, "refuted": 16, "supported": 16}
+    assert spec.dataset.source_class == "frozen_snapshot"
+    assert spec.dataset.sample_count == 120
+    assert spec.dataset.split_count == 2
+    assert benchmark.payload["source_splits"] == ["train", "test"]
+    assert spec.dataset.source_url == autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_SOURCE_URL
+    assert autoresearch_evaluation_cases._IMPORTED_SCIFACT_VERTICAL_SOURCE.file_path == str(snapshot_path)
+    assert spec.dataset.source_dataset_id == "allenai/scifact"
+    assert spec.dataset.source_revision == autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_REVISION
+    assert spec.dataset.source_license == autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_LICENSE
+    assert spec.dataset.source_content_origin == "original_benchmark_records"
+    assert spec.dataset.source_content_note
+    assert spec.dataset.verification_label_space == [
+        "not_enough_info",
+        "refuted",
+        "supported",
+    ]
+    assert spec.dataset.publication_grade is True
+    assert spec.dataset.publication_grade_blockers == []
+    assert spec.dataset.publication_grade_eligibility["checks"][
+        "content_imported_from_original_records"
+    ] is True
 
 
 def test_beir_json_adapter_accepts_publication_eligible_frozen_snapshot(
@@ -623,6 +737,12 @@ def test_beir_json_adapter_accepts_publication_eligible_frozen_snapshot(
     payload = {
         "name": "BEIR Claim Evidence Frozen Snapshot",
         "description": "Repository-local BEIR-style frozen snapshot with complete provenance and candidate pools.",
+        "dataset_id": "beir/claim-evidence-frozen-snapshot",
+        "revision": "2026-06-01",
+        "license": "cc-by-4.0",
+        "fingerprint": "sha256:payload-beir-frozen-snapshot",
+        "source_content_origin": "original_benchmark_records",
+        "source_content_note": "BEIR-style adapter regression fixture with provenance stored in the JSON payload.",
         "queries": queries,
         "corpus": corpus,
         "qrels": qrels,
@@ -639,9 +759,6 @@ def test_beir_json_adapter_accepts_publication_eligible_frozen_snapshot(
         kind="beir_json",
         name="BEIR claim evidence frozen snapshot",
         file_path=str(snapshot_path),
-        dataset_id="beir/claim-evidence-frozen-snapshot",
-        revision="2026-06-01",
-        license="cc-by-4.0",
     )
     benchmark = autoresearch_ingestion.resolve_benchmark(
         topic="claim evidence retrieval for scientific writing agents",
@@ -658,9 +775,17 @@ def test_beir_json_adapter_accepts_publication_eligible_frozen_snapshot(
     assert spec.dataset.sample_count == 20
     assert spec.dataset.split_count == 2
     assert spec.dataset.supports_claim_verification is False
+    assert spec.dataset.source_dataset_id == payload["dataset_id"]
+    assert spec.dataset.source_revision == payload["revision"]
+    assert spec.dataset.source_license == payload["license"]
+    assert spec.dataset.source_fingerprint == payload["fingerprint"]
+    assert spec.dataset.source_content_origin == "original_benchmark_records"
     assert spec.dataset.publication_grade_blockers == []
     assert spec.dataset.publication_grade is True
     assert spec.dataset.publication_grade_eligibility["sample_count"] == 20
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_dataset_id"] is True
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_revision"] is True
+    assert spec.dataset.publication_grade_eligibility["checks"]["has_license"] is True
     assert spec.dataset.publication_grade_eligibility["checks"]["has_fingerprint"] is True
 
 
@@ -7095,6 +7220,82 @@ def test_experiment_factory_executes_cached_scifact_claim_evidence_benchmark(
     assert execution.environment_manifest.executor_mode == "local"
     assert execution.result_artifact.environment["factory_executor_mode"] == "cached_claim_evidence_benchmark"
     assert execution.result_artifact.objective_system == "ledger_aware_ranker"
+    expected_ladder_systems = {
+        "random_ranker",
+        "overlap_ranker",
+        "bm25_ranker",
+        "bigram_ranker",
+        "ledger_aware_ranker",
+        "abstention_repair_router",
+        "no_ledger_ablation",
+        "retrieval_only_no_verification_ablation",
+        "repair_router_disabled_ablation",
+    }
+    assert {item.system for item in execution.result_artifact.system_results} == (
+        expected_ladder_systems
+    )
+    assert {item.system for item in execution.result_artifact.aggregate_system_results} == (
+        expected_ladder_systems
+    )
+    method_configs = execution.result_artifact.outputs["method_configs"]
+    method_outputs = execution.result_artifact.outputs["method_outputs"]
+    method_ladder = execution.result_artifact.outputs["method_ladder"]
+    assert set(method_configs) == expected_ladder_systems
+    assert set(method_outputs) == expected_ladder_systems
+    assert {item["system"] for item in method_ladder} == expected_ladder_systems
+    assert method_configs["bm25_ranker"]["ladder_role"] == "tfidf_bm25_style_retrieval"
+    assert method_configs["no_ledger_ablation"]["uses_ledger"] is False
+    assert method_configs["retrieval_only_no_verification_ablation"]["uses_verification"] is False
+    assert method_configs["repair_router_disabled_ablation"]["repair_router_enabled"] is False
+    metrics_by_system = {
+        item.system: item.metrics for item in execution.result_artifact.system_results
+    }
+    aggregate_metrics_by_system = {
+        item.system: item.mean_metrics
+        for item in execution.result_artifact.aggregate_system_results
+    }
+    retrieval_metric_names = {"mrr", "recall_at_1", "ndcg_at_10", "recall_at_10", "evidence_coverage"}
+    verification_metric_names = {
+        "verification_accuracy",
+        "unsupported_claim_precision",
+        "unsupported_claim_recall",
+        "abstention_accuracy",
+    }
+    repair_metric_names = {"repair_precision", "repair_recall"}
+    assert retrieval_metric_names.issubset(
+        set(metrics_by_system["retrieval_only_no_verification_ablation"])
+    )
+    assert verification_metric_names.isdisjoint(
+        set(metrics_by_system["retrieval_only_no_verification_ablation"])
+    )
+    assert repair_metric_names.isdisjoint(
+        set(metrics_by_system["retrieval_only_no_verification_ablation"])
+    )
+    assert repair_metric_names.isdisjoint(
+        set(metrics_by_system["repair_router_disabled_ablation"])
+    )
+    assert verification_metric_names.issubset(set(metrics_by_system["ledger_aware_ranker"]))
+    assert repair_metric_names.issubset(set(metrics_by_system["ledger_aware_ranker"]))
+    assert method_outputs["retrieval_only_no_verification_ablation"]["metrics"] == (
+        metrics_by_system["retrieval_only_no_verification_ablation"]
+    )
+    assert aggregate_metrics_by_system["retrieval_only_no_verification_ablation"] == (
+        metrics_by_system["retrieval_only_no_verification_ablation"]
+    )
+    assert all(
+        "output_artifact_ref" in item
+        and "metrics_artifact_ref" in item
+        and "negative_cases_artifact_ref" in item
+        and item["lineage_refs"]
+        for item in method_ladder
+    )
+    assert method_outputs["ledger_aware_ranker"]["metrics"]
+    assert method_outputs["ledger_aware_ranker"]["ranked_outputs"]
+    assert all("negative_case_ids" in item for item in method_outputs.values())
+    assert any(
+        "test_refute" in item["negative_case_ids"]
+        for item in method_outputs.values()
+    )
     objective_metrics = next(
         item.mean_metrics
         for item in execution.result_artifact.aggregate_system_results
@@ -7106,6 +7307,7 @@ def test_experiment_factory_executes_cached_scifact_claim_evidence_benchmark(
     assert {"verification_accuracy", "unsupported_claim_precision", "unsupported_claim_recall", "abstention_accuracy"}.issubset(
         objective_metrics
     )
+    assert {"repair_precision", "repair_recall"}.issubset(objective_metrics)
     objective_aggregate = next(
         item
         for item in execution.result_artifact.aggregate_system_results
@@ -7113,11 +7315,15 @@ def test_experiment_factory_executes_cached_scifact_claim_evidence_benchmark(
     )
     assert objective_aggregate.sample_count == 3
     assert "mrr" in objective_aggregate.confidence_intervals
+    assert "repair_precision" in objective_aggregate.confidence_intervals
+    assert "repair_recall" in objective_aggregate.confidence_intervals
     assert objective_aggregate.std_metrics["mrr"] >= 0.0
     assert execution.result_artifact.significance_tests
     significance = execution.result_artifact.significance_tests[0]
     assert significance.method == "paired_sign_flip_exact"
     assert significance.sample_count == 3
+    assert significance.comparator == "bm25_ranker"
+    assert significance.family_size == len(expected_ladder_systems) - 1
     assert "wins=" in significance.detail
     assert execution.result_artifact.outputs["paired_query_comparisons"]
     assert execution.result_artifact.outputs["paired_sign_test"]["sample_count"] == 3
@@ -7807,6 +8013,12 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert assets_by_role["project_retrieval_evidence_ledger"]["readiness_contribution"] == "retrieval_evidence"
     assert assets_by_role["project_offline_publication_case"]["readiness_contribution"] == "offline_publication_case"
     assert assets_by_role["project_offline_publication_audit"]["readiness_contribution"] == "capability_audit"
+    assert "benchmark_schema_coverage" in assets_by_role[
+        "project_benchmark_provenance_manifest"
+    ]["blocking_check_ids"]
+    assert "benchmark_schema_coverage" in assets_by_role[
+        "project_benchmark_provenance_repair_index"
+    ]["blocking_check_ids"]
     assert "selected_run_result_artifacts" in assets_by_role["project_statistics_report"]["source_evidence_refs"]
     assert "project_evidence_ledgers" in assets_by_role["project_negative_evidence_report"]["source_evidence_refs"]
     assert submission_manifest["code_package_path"] == orchestration.project_code_package_path
@@ -7852,6 +8064,7 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
         "project_publish_gate",
         "benchmark_scale",
         "benchmark_provenance",
+        "benchmark_final_publish_candidate_coverage",
     }
     assert readiness_decision["blockers"]
     assert readiness_decision["required_followups"]
@@ -7861,6 +8074,29 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
         "workshop_case_study_claim",
         "technical_report_only",
     }
+    assert readiness_decision["negative_evidence_report_ref"] == (
+        "submission_package/negative_evidence_report.json"
+    )
+    phase6_coverage = readiness_decision["phase6_negative_evidence_coverage"]
+    assert phase6_coverage["entry_count"] > 0
+    assert phase6_coverage["negative_evidence_report_ref"] == (
+        "submission_package/negative_evidence_report.json"
+    )
+    assert "failed_or_blocked_repair_attempt" in readiness_decision["negative_evidence_categories"]
+    assert "failed_or_blocked_repair_attempt" in phase6_coverage["categories"]
+    assert set(phase6_coverage["required_categories"]) >= set(
+        autoresearch_project_paper_orchestrator.PROJECT_NEGATIVE_EVIDENCE_REQUIRED_CATEGORIES
+    )
+    assert "runtime_failure" in phase6_coverage["conditional_categories"]
+    assert phase6_coverage["coverage_complete"] is False
+    assert phase6_coverage["missing_categories"]
+    single_run_missing_phase6_categories = set(
+        autoresearch_project_paper_orchestrator.PROJECT_NEGATIVE_EVIDENCE_REQUIRED_CATEGORIES
+    ) - {"failed_or_blocked_repair_attempt"}
+    assert single_run_missing_phase6_categories.issubset(
+        set(phase6_coverage["missing_categories"])
+    )
+    assert phase6_coverage["runtime_failure_observed"] is False
     assert publication_manifest["paper_compiler_evidence_sha256"] is not None
     assert publication_manifest["publication_evidence_index_sha256"] is not None
     assert publication_manifest["publication_readiness_report_sha256"] is not None
@@ -7872,6 +8108,13 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert publication_manifest["benchmark_provenance_manifest_sha256"] is not None
     assert publication_manifest["statistics_report_sha256"] is not None
     assert publication_manifest["negative_evidence_report_sha256"] is not None
+    assert publication_manifest["negative_evidence_report_ref"] == (
+        "submission_package/negative_evidence_report.json"
+    )
+    assert publication_manifest["phase6_negative_evidence_coverage"] == (
+        readiness_decision["phase6_negative_evidence_coverage"]
+    )
+    assert "failed_or_blocked_repair_attempt" in publication_manifest["negative_evidence_categories"]
     assert publication_manifest["offline_publication_case_sha256"] is not None
     assert publication_manifest["offline_publication_audit_sha256"] is not None
     assert publication_manifest["asset_count"] == len(submission_manifest["generated_assets"])
@@ -7897,6 +8140,12 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert publication_assets_by_role["project_benchmark_provenance_manifest"]["blocked_status"] == (
         "blocked_for_final_publish"
     )
+    assert "benchmark_schema_coverage" in publication_assets_by_role[
+        "project_benchmark_provenance_manifest"
+    ]["blocking_check_ids"]
+    assert "benchmark_schema_coverage" in publication_assets_by_role[
+        "project_benchmark_provenance_repair_index"
+    ]["blocking_check_ids"]
     assert all(item["source_run_ids"] == [run.id] for item in publication_manifest["generated_assets"])
     assert all(
         item["sha256"] is not None
@@ -7913,6 +8162,11 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     review_findings = json.loads(Path(orchestration.project_review_findings_path).read_text(encoding="utf-8"))
     assert review_findings["review_id"] == "project_reviewer_simulation_findings_v1"
     assert review_findings["finding_count"] == orchestration.project_paper_revision_action_count
+    assert review_findings["phase6_negative_evidence_audit"]["coverage_complete"] is False
+    assert single_run_missing_phase6_categories.issubset(
+        set(review_findings["phase6_negative_evidence_audit"]["missing_categories"])
+    )
+    assert review_findings["negative_evidence_category_summary"]["coverage_complete"] is False
     assert {
         item["mapped_revision_action_id"] for item in review_findings["findings"]
     } == {action.action_id for action in orchestration.project_paper_revision_actions}
@@ -7965,18 +8219,50 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert source_record["revision"] == run_card["source_revision"]
     assert source_record["license"] == run_card["source_license"]
     assert source_record["source_locator"] == run_card["source_url"]
+    assert "source_file_path" in source_record
+    assert "repository_local_snapshot_materialized" in source_record
     assert source_record["fingerprint"] == run_card["source_fingerprint"]
     assert source_record["sample_count"] == run_card["sample_count"]
     assert source_record["split_count"] == run_card["split_count"]
+    assert "split_distribution" in source_record
+    assert "label_distribution" in source_record
+    assert "query_count" in source_record
+    assert "document_count" in source_record
+    assert "evidence_annotation_count" in source_record
+    assert "retrieval_relevance_count" in source_record
+    assert "required_observation_roles" in source_record
     assert "query_document_evidence_schema" in source_record
     assert "label_space" in source_record
     assert "source_class" in source_record
     assert "publication_grade_eligibility" in source_record
     assert "publication_grade_blockers" in source_record
+    assert source_record["final_publish_candidate_min_sample_count"] == (
+        autoresearch_project_paper_orchestrator.FINAL_PUBLISH_CANDIDATE_MIN_DATASET_EXAMPLES
+    )
+    assert "final_publish_candidate_eligible" in source_record
+    assert "final_publish_candidate_blockers" in source_record
     schema_coverage = benchmark_provenance_manifest["schema_coverage"]
     assert schema_coverage["selected_run_count"] == 1
     assert "schema_coverage_complete" in schema_coverage
     assert "schema_blockers" in schema_coverage
+    observation_coverage = benchmark_provenance_manifest["source_observation_coverage"]
+    assert observation_coverage["selected_run_count"] == 1
+    assert "query_count_by_run" in observation_coverage
+    assert "document_count_by_run" in observation_coverage
+    assert "evidence_annotation_count_by_run" in observation_coverage
+    assert "retrieval_relevance_count_by_run" in observation_coverage
+    assert "required_observation_roles_by_run" in observation_coverage
+    assert "observation_coverage_complete" in observation_coverage
+    assert "observation_blockers" in observation_coverage
+    final_candidate_coverage = benchmark_provenance_manifest["final_publish_candidate_coverage"]
+    assert final_candidate_coverage["selected_run_count"] == 1
+    assert final_candidate_coverage["minimum_sample_count"] == (
+        autoresearch_project_paper_orchestrator.FINAL_PUBLISH_CANDIDATE_MIN_DATASET_EXAMPLES
+    )
+    assert "eligible_run_count" in final_candidate_coverage
+    assert "eligible_run_ids" in final_candidate_coverage
+    assert "complete" in final_candidate_coverage
+    assert "blockers" in final_candidate_coverage
     publication_evidence_index = json.loads(
         Path(orchestration.project_publication_evidence_index_path).read_text(encoding="utf-8")
     )
@@ -8008,6 +8294,10 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
         "workshop_case_study_claim",
         "technical_report_only",
     }
+    assert statistics_report["phase6_negative_evidence_summary"]["coverage_complete"] is False
+    assert single_run_missing_phase6_categories.issubset(
+        set(statistics_report["phase6_negative_evidence_summary"]["missing_categories"])
+    )
     assert statistics_report["statistics_limitations"]
     experiment_repair_index = json.loads(Path(orchestration.project_experiment_repair_index_path).read_text(encoding="utf-8"))
     execution_ledger = experiment_repair_index["execution_evidence_ledger"]
@@ -8025,6 +8315,27 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert negative_evidence_report["entry_count"] > 0
     assert negative_evidence_report["negative_evidence_retained"] is True
     assert "claim_ceiling_recommendation" in negative_evidence_report
+    assert negative_evidence_report["phase6_required_categories"] == (
+        phase6_coverage["required_categories"]
+    )
+    assert negative_evidence_report["phase6_conditional_categories"] == (
+        phase6_coverage["conditional_categories"]
+    )
+    assert negative_evidence_report["phase6_categories"] == phase6_coverage["categories"]
+    assert negative_evidence_report["phase6_category_counts"] == phase6_coverage["category_counts"]
+    assert negative_evidence_report["phase6_category_coverage"] == (
+        phase6_coverage["category_coverage"]
+    )
+    assert negative_evidence_report["phase6_missing_categories"] == (
+        phase6_coverage["missing_categories"]
+    )
+    assert negative_evidence_report["phase6_coverage_complete"] is False
+    assert negative_evidence_report["phase6_runtime_failure_observed"] is False
+    assert negative_evidence_report["blocks_final_publish"] is True
+    assert any(
+        "Phase 6 negative evidence category not covered" in blocker
+        for blocker in negative_evidence_report["blockers"]
+    )
     retrieval_ledger = json.loads(Path(orchestration.project_retrieval_evidence_ledger_path).read_text(encoding="utf-8"))
     assert retrieval_ledger["ledger_id"] == "project_retrieval_evidence_ledger_v1"
     assert "entries" in retrieval_ledger
@@ -8039,14 +8350,50 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
         "phrase_or_bigram_aware_retrieval",
         "ledger_aware_retrieval",
         "abstention_repair_router",
+        "no_ledger_ablation",
+        "retrieval_only_no_verification_ablation",
+        "repair_router_disabled_ablation",
     ]
     assert "project_negative_evidence_report" in offline_case["research_chain"]["paper_package_outputs"]
     assert offline_case["evidence_classification"]["internal_fixtures_policy"]
+    offline_case_run_records = {
+        item["run_id"]: item
+        for item in offline_case["evidence_classification"]["benchmarks_and_runs"]
+    }
+    offline_case_run_record = offline_case_run_records[run.id]
+    assert offline_case_run_record["publication_grade_eligible"] == (
+        source_record["publication_grade_eligible"]
+    )
+    assert offline_case_run_record["repository_local_snapshot_materialized"] == (
+        source_record["repository_local_snapshot_materialized"]
+    )
+    assert offline_case_run_record["final_publish_candidate_eligible"] == (
+        source_record["final_publish_candidate_eligible"]
+    )
+    assert offline_case_run_record["final_publish_candidate_blockers"] == (
+        source_record["final_publish_candidate_blockers"]
+    )
+    assert offline_case_run_record["final_publish_allowed"] == (
+        source_record["final_publish_candidate_eligible"]
+    )
+    assert offline_case_run_record["final_publish_allowed"] is False
+    assert offline_case_run_record["final_publish_policy"].startswith(
+        "final_publish_allowed mirrors benchmark_provenance_manifest"
+    )
     offline_audit = json.loads(Path(orchestration.project_offline_publication_audit_path).read_text(encoding="utf-8"))
     assert offline_audit["audit_id"] == "offline_publication_capability_audit_v1"
     assert offline_audit["checkpoint_count"] == 7
     assert offline_audit["review_ready"] is True
     assert offline_audit["final_publish_ready"] is False
+    assert offline_audit["final_publish_gap_audit"]["scientific_evidence_gap_count"] >= 1
+    assert offline_audit["final_publish_gap_audit"]["package_artifacts_complete"] is True
+    assert "classification_policy" in offline_audit["final_publish_gap_audit"]
+    assert offline_audit["final_publish_gap_audit"]["phase6_negative_evidence_coverage"][
+        "missing_categories"
+    ] == phase6_coverage["missing_categories"]
+    assert offline_audit["final_publish_gap_audit"]["phase6_negative_evidence_coverage"][
+        "coverage_complete"
+    ] is False
     assert {item["checkpoint_id"] for item in offline_audit["checkpoints"]} == {
         "literature_refresh",
         "benchmark_snapshot_selection",
@@ -8056,6 +8403,7 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
         "repair_aware_rereview",
         "submission_package_v3",
     }
+    assert all("blocker_classification" in item for item in offline_audit["checkpoints"])
     assert offline_audit["remaining_breakpoints"]
     repair_execution_log = json.loads(Path(orchestration.project_repair_execution_log_path).read_text(encoding="utf-8"))
     assert repair_execution_log["log_id"] == "project_repair_execution_log_v1"
@@ -8076,16 +8424,133 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     checks_by_id = {item["check_id"]: item for item in readiness_report["checks"]}
     assert checks_by_id["benchmark_scale"]["passed"] is False
     assert checks_by_id["benchmark_provenance"]["passed"] is False
+    assert checks_by_id["benchmark_schema_coverage"]["passed"] is False
+    assert checks_by_id["benchmark_schema_coverage"]["coverage"] == (
+        readiness_report["benchmark_schema_coverage"]
+    )
+    assert checks_by_id["benchmark_schema_coverage"]["coverage"][
+        "schema_coverage_complete"
+    ] is False
+    assert checks_by_id["benchmark_schema_coverage"]["blockers"]
+    assert any(
+        "benchmark schema missing split" in blocker
+        for blocker in checks_by_id["benchmark_schema_coverage"]["blockers"]
+    )
+    assert offline_audit["final_publish_gap_audit"]["benchmark_schema_coverage"] == (
+        readiness_report["benchmark_schema_coverage"]
+    )
+    assert offline_audit["final_publish_gap_audit"]["benchmark_schema_coverage_complete"] is False
+    assert offline_audit["final_publish_gap_audit"]["benchmark_schema_coverage_blockers"] == (
+        checks_by_id["benchmark_schema_coverage"]["blockers"]
+    )
+    assert checks_by_id["benchmark_source_observation_coverage"]["passed"] is False
+    assert checks_by_id["benchmark_source_observation_coverage"]["coverage"] == (
+        readiness_report["benchmark_source_observation_coverage"]
+    )
+    assert checks_by_id["benchmark_source_observation_coverage"]["coverage"][
+        "observation_coverage_complete"
+    ] is False
+    assert checks_by_id["benchmark_source_observation_coverage"]["blockers"]
+    assert offline_audit["final_publish_gap_audit"][
+        "benchmark_source_observation_coverage"
+    ] == readiness_report["benchmark_source_observation_coverage"]
+    assert offline_audit["final_publish_gap_audit"][
+        "benchmark_source_observation_coverage_complete"
+    ] is False
+    assert offline_audit["final_publish_gap_audit"][
+        "benchmark_source_observation_blockers"
+    ] == checks_by_id["benchmark_source_observation_coverage"]["blockers"]
+    single_run_phase1_by_id = offline_audit["final_publish_gap_audit"][
+        "phase1_requirements_by_id"
+    ]
+    assert single_run_phase1_by_id["benchmark_schema_coverage"]["status"] == "blocked"
+    assert single_run_phase1_by_id["benchmark_schema_coverage"]["details"][
+        "schema_coverage_complete"
+    ] is False
+    assert single_run_phase1_by_id["benchmark_schema_coverage"]["details"][
+        "schema_blockers"
+    ] == checks_by_id["benchmark_schema_coverage"]["blockers"]
+    assert single_run_phase1_by_id["benchmark_schema_coverage"][
+        "blocker_classification"
+    ]
+    assert all(
+        item["classification"] == "scientific_evidence_gap"
+        for item in single_run_phase1_by_id["benchmark_schema_coverage"][
+            "blocker_classification"
+        ]
+    )
+    assert single_run_phase1_by_id["benchmark_source_observation_coverage"]["status"] == (
+        "blocked"
+    )
+    assert single_run_phase1_by_id["benchmark_source_observation_coverage"]["details"][
+        "observation_coverage_complete"
+    ] is False
+    assert single_run_phase1_by_id["benchmark_source_observation_coverage"]["details"][
+        "observation_blockers"
+    ] == checks_by_id["benchmark_source_observation_coverage"]["blockers"]
+    assert single_run_phase1_by_id["benchmark_source_observation_coverage"][
+        "blocker_classification"
+    ]
+    assert all(
+        item["classification"] == "scientific_evidence_gap"
+        for item in single_run_phase1_by_id["benchmark_source_observation_coverage"][
+            "blocker_classification"
+        ]
+    )
+    assert checks_by_id["benchmark_final_publish_candidate_coverage"]["passed"] is False
+    assert checks_by_id["benchmark_final_publish_candidate_coverage"]["coverage"]["complete"] is False
+    assert checks_by_id["benchmark_final_publish_candidate_coverage"]["blockers"]
     assert checks_by_id["cross_run_replication"]["passed"] is False
     assert checks_by_id["real_literature_coverage"]["passed"] is False
     assert checks_by_id["execution_evidence"]["passed"] is True
     assert "run_result_artifact_json" in checks_by_id["execution_evidence"]["execution_output_artifact_refs"]
     assert checks_by_id["paper_compiler_evidence"]["passed"] is False
+    assert checks_by_id["phase6_negative_evidence_coverage"]["passed"] is False
+    assert checks_by_id["phase6_negative_evidence_coverage"]["coverage"] == phase6_coverage
+    assert checks_by_id["phase6_negative_evidence_coverage"]["missing_categories"] == (
+        phase6_coverage["missing_categories"]
+    )
+    assert any(
+        "Phase 6 category" in item
+        for item in readiness_report["required_followups"]
+    )
+    assert any(
+        "Phase 6 negative-evidence categories" in item
+        for item in readiness_report["kill_criteria"]
+    )
     assert readiness_report["paper_compiler_evidence"]["packet_id"] == "project_paper_compiler_evidence_v1"
     assert readiness_report["repair_execution_log"]["log_id"] == "project_repair_execution_log_v1"
     assert checks_by_id["repair_execution_log"]["passed"] is False
     assert readiness_report["evidence_profile"]["real_literature_count"] == 0
     assert any("benchmark" in item.lower() for item in readiness_report["required_followups"])
+    revision_application = json.loads(Path(orchestration.project_revision_application_path).read_text(encoding="utf-8"))
+    assert revision_application["phase6_negative_evidence_retained"] is True
+    assert set(phase6_coverage["missing_categories"]).issubset(
+        set(revision_application["phase6_negative_evidence_audit"]["missing_categories"])
+    )
+    assert revision_application["phase6_negative_evidence_audit"]["coverage_complete"] is False
+    assert single_run_missing_phase6_categories.issubset(
+        set(revision_application["phase6_negative_evidence_audit"]["missing_categories"])
+    )
+    assert revision_application["negative_evidence_report_ref"] == (
+        "submission_package/negative_evidence_report.json"
+    )
+    rereview_report = json.loads(Path(orchestration.project_revision_rereview_path).read_text(encoding="utf-8"))
+    assert rereview_report["phase6_negative_evidence_retained"] is True
+    assert set(phase6_coverage["missing_categories"]).issubset(
+        set(rereview_report["phase6_negative_evidence_audit"]["missing_categories"])
+    )
+    assert rereview_report["phase6_negative_evidence_audit"]["coverage_complete"] is False
+    assert single_run_missing_phase6_categories.issubset(
+        set(rereview_report["phase6_negative_evidence_audit"]["missing_categories"])
+    )
+    assert rereview_report["negative_evidence_report_ref"] == (
+        "submission_package/negative_evidence_report.json"
+    )
+    assert all(
+        item["phase6_negative_evidence_retained"] is True
+        for item in rereview_report["action_reviews"]
+    )
     supplemental_manifest = json.loads(Path(orchestration.project_supplemental_artifacts_path).read_text(encoding="utf-8"))
     assert supplemental_manifest["supplemental_id"] == "project_supplemental_artifacts_v1"
     assert supplemental_manifest["present_artifact_count"] == supplemental_manifest["artifact_count"]
@@ -8367,6 +8832,106 @@ def test_operator_console_surfaces_offline_publication_case_status(
     assert Path(publication_case.offline_publication_case_path).is_file()
     assert publication_case.offline_publication_audit_path is not None
     assert Path(publication_case.offline_publication_audit_path).is_file()
+    assert publication_case.negative_evidence_report_path is not None
+    assert Path(publication_case.negative_evidence_report_path).is_file()
+    negative_evidence_report = json.loads(
+        Path(publication_case.negative_evidence_report_path).read_text(encoding="utf-8")
+    )
+    offline_audit = json.loads(
+        Path(publication_case.offline_publication_audit_path).read_text(encoding="utf-8")
+    )
+    final_publish_gap_audit = offline_audit["final_publish_gap_audit"]
+    assert publication_case.phase6_negative_evidence_categories == (
+        negative_evidence_report["phase6_categories"]
+    )
+    assert "failed_or_blocked_repair_attempt" in (
+        publication_case.phase6_negative_evidence_categories
+    )
+    expected_missing_phase6 = set(
+        autoresearch_project_paper_orchestrator.PROJECT_NEGATIVE_EVIDENCE_REQUIRED_CATEGORIES
+    ) - {"failed_or_blocked_repair_attempt"}
+    assert expected_missing_phase6.issubset(
+        set(publication_case.phase6_negative_evidence_missing_categories)
+    )
+    assert set(publication_case.phase6_negative_evidence_required_categories) == (
+        set(autoresearch_project_paper_orchestrator.PROJECT_NEGATIVE_EVIDENCE_REQUIRED_CATEGORIES)
+    )
+    assert publication_case.phase6_negative_evidence_missing_categories == (
+        negative_evidence_report["phase6_missing_categories"]
+    )
+    assert publication_case.phase6_negative_evidence_coverage_complete is False
+    assert publication_case.phase6_negative_evidence_runtime_failure_observed is False
+    assert publication_case.final_publish_package_artifacts_complete is True
+    assert publication_case.final_publish_package_artifacts_complete == (
+        final_publish_gap_audit["package_artifacts_complete"]
+    )
+    assert publication_case.final_publish_engineering_gap_count == 0
+    assert publication_case.final_publish_engineering_gaps == []
+    assert publication_case.final_publish_scientific_evidence_gap_count >= 1
+    assert publication_case.final_publish_scientific_evidence_gap_count == (
+        final_publish_gap_audit["scientific_evidence_gap_count"]
+    )
+    assert publication_case.final_publish_scientific_evidence_gaps
+    assert publication_case.final_publish_blocker_classification
+    assert all(
+        item["classification"] == "scientific_evidence_gap"
+        for item in publication_case.final_publish_blocker_classification
+    )
+    assert set(publication_case.final_publish_phase1_blocked_requirement_ids) == {
+        "literature_related_work_and_novelty",
+        "benchmark_scale",
+        "benchmark_source_publication_grade",
+        "benchmark_source_independence",
+        "benchmark_schema_coverage",
+        "benchmark_source_observation_coverage",
+        "baseline_ladder",
+        "multi_seed_split_paired_statistics",
+    }
+    assert "blocker_classification" not in (
+        publication_case.final_publish_phase1_blocked_requirement_ids
+    )
+    assert publication_case.benchmark_schema_coverage_complete is False
+    assert publication_case.benchmark_schema_coverage_blockers
+    assert any(
+        "benchmark schema missing split" in blocker
+        for blocker in publication_case.benchmark_schema_coverage_blockers
+    )
+    assert publication_case.benchmark_source_observation_coverage_complete is False
+    assert publication_case.benchmark_source_observation_blockers
+    assert publication_case.benchmark_final_publish_candidate_coverage_complete is False
+    assert publication_case.benchmark_final_publish_candidate_blockers
+    assert any(
+        "Final-publish candidate benchmark has fewer than 100 normalized examples" in blocker
+        for blocker in publication_case.benchmark_final_publish_candidate_blockers
+    )
+    assert publication_case.benchmark_final_publish_candidate_blockers == (
+        final_publish_gap_audit["benchmark_final_publish_candidate_blockers"]
+    )
+    assert publication_case.benchmark_source_independence_ready == (
+        final_publish_gap_audit["benchmark_source_independence_ready"]
+    )
+    assert publication_case.benchmark_source_independence_ready is False
+    assert publication_case.benchmark_source_independence_blockers == (
+        final_publish_gap_audit["benchmark_source_independence_blockers"]
+    )
+    assert publication_case.benchmark_source_independence_blockers
+    assert publication_case.benchmark_snapshot_artifact_materialized == (
+        final_publish_gap_audit["benchmark_snapshot_artifact_materialized"]
+    )
+    assert publication_case.benchmark_snapshot_artifact_record_count == (
+        final_publish_gap_audit["benchmark_snapshot_artifact_record_count"]
+    )
+    assert publication_case.benchmark_snapshot_artifact_materialized_count == (
+        final_publish_gap_audit["benchmark_snapshot_artifact_materialized_count"]
+    )
+    assert publication_case.benchmark_snapshot_artifact_all_required_materialized == (
+        final_publish_gap_audit[
+            "benchmark_snapshot_artifact_all_required_materialized"
+        ]
+    )
+    assert publication_case.benchmark_snapshot_artifact_unmaterialized_run_ids == (
+        final_publish_gap_audit["benchmark_snapshot_artifact_unmaterialized_run_ids"]
+    )
 
 
 def test_project_paper_revision_actions_route_unsupported_claim_and_retrieval_repair() -> None:
@@ -8688,6 +9253,11 @@ def test_project_benchmark_provenance_repair_materializes_valid_snapshot_index(
 ) -> None:
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     project_id = "project-benchmark-provenance-repair-complete"
+    frozen_snapshot_path = tmp_path / "scifact_20.json"
+    frozen_snapshot_path.write_text(
+        json.dumps({"name": "Frozen SciFact 20", "train": [], "test": []}),
+        encoding="utf-8",
+    )
     stale_actions = autoresearch_project_paper_orchestrator._build_project_revision_actions(
         ledger=AutoResearchProjectConclusionLedgerRead(
             project_id=project_id,
@@ -8724,7 +9294,7 @@ def test_project_benchmark_provenance_repair_materializes_valid_snapshot_index(
                 "provenance_complete": True,
                 "source_kind": "local_json",
                 "source_class": "frozen_snapshot",
-                "source_url": "file:///repo/fixtures/scifact_20.json",
+                "source_file_path": str(frozen_snapshot_path),
                 "source_dataset_id": "scifact",
                 "source_revision": "frozen-2026-06-03",
                 "source_license": "CC-BY-4.0",
@@ -8781,8 +9351,15 @@ def test_project_benchmark_provenance_repair_materializes_valid_snapshot_index(
     repair_index = json.loads(Path(support_ref.split(":", 1)[1]).read_text(encoding="utf-8"))
     assert repair_index["complete"] is True
     assert repair_index["run_profiles"][0]["source_class"] == "frozen_snapshot"
+    assert repair_index["run_profiles"][0]["source_url"] is None
+    assert repair_index["run_profiles"][0]["source_locator"] == str(frozen_snapshot_path)
+    assert repair_index["run_profiles"][0]["source_file_path"] == str(frozen_snapshot_path)
+    assert repair_index["run_profiles"][0]["repository_local_snapshot_materialized"] is True
     assert repair_index["run_profiles"][0]["query_document_evidence_schema"]["schema_complete"] is True
     assert repair_index["run_profiles"][0]["source_record_complete"] is True
+    source_record = repair_index["source_records"][0]
+    assert source_record["source_locator"] == str(frozen_snapshot_path)
+    assert "Missing benchmark source locator." not in source_record["record_blockers"]
     assert repair_index["run_profiles"][0]["repair_status"] == "eligible"
     assert repair_index["snapshot_metadata"]["frozen_snapshot_run_count"] == 1
     assert application_report["repair_execution_log"][0]["status"] == "completed"
@@ -8797,6 +9374,199 @@ def test_project_benchmark_provenance_repair_materializes_valid_snapshot_index(
     assert rereview_report["action_reviews"][0]["repair_output_audits"][0]["fingerprint"]
     assert rereview_report["action_reviews"][0]["terminal_condition_met"] is True
     assert rereview_report["action_reviews"][0]["recommendation"] == "accept_as_review_bundle"
+
+
+def test_project_benchmark_provenance_repair_blocks_missing_frozen_snapshot_file(
+    tmp_path: Path,
+) -> None:
+    missing_snapshot_path = tmp_path / "missing_scifact_20.json"
+    repair_index = autoresearch_project_paper_orchestrator._build_project_benchmark_provenance_repair_index(
+        project_id="project-benchmark-provenance-missing-file",
+        evidence_profile={
+            "run_profiles": [
+                {
+                    "run_id": "run_missing_frozen_file",
+                    "benchmark_name": "frozen_scifact_20",
+                    "sample_count": 20,
+                    "split_count": 2,
+                    "supports_claim_verification": True,
+                    "verification_label_space": ["supported", "refuted", "not_enough_info"],
+                    "publication_grade": True,
+                    "provenance_complete": True,
+                    "source_kind": "local_json",
+                    "source_class": "frozen_snapshot",
+                    "source_url": f"file://{missing_snapshot_path}",
+                    "source_file_path": str(missing_snapshot_path),
+                    "source_dataset_id": "scifact",
+                    "source_revision": "frozen-2026-06-03",
+                    "source_license": "CC-BY-4.0",
+                    "source_fingerprint": "sha256:missing-frozen-scifact",
+                    "publication_grade_blockers": [],
+                    "publication_grade_eligibility": {
+                        "publication_grade": True,
+                        "sample_count": 20,
+                        "split_count": 2,
+                        "checks": {
+                            "has_dataset_id": True,
+                            "has_revision": True,
+                            "has_license": True,
+                            "has_fingerprint": True,
+                            "meets_min_examples": True,
+                            "not_internal_fixture": True,
+                        },
+                    },
+                }
+            ],
+            "benchmark_scale_ready": True,
+            "benchmark_provenance_ready": True,
+            "benchmark_publication_ready": True,
+            "blockers": [],
+        },
+    )
+
+    assert repair_index["complete"] is False
+    run_profile = repair_index["run_profiles"][0]
+    assert run_profile["source_class"] == "frozen_snapshot"
+    assert run_profile["repository_local_snapshot_materialized"] is False
+    assert run_profile["source_record_complete"] is False
+    assert run_profile["repair_status"] == "blocked"
+    assert "Missing materialized repository-local frozen benchmark file." in (
+        run_profile["source_record_blockers"]
+    )
+    assert any(
+        "Missing materialized repository-local frozen benchmark file." in blocker
+        for blocker in repair_index["blockers"]
+    )
+
+
+def test_offline_publication_audit_classifies_missing_frozen_snapshot_as_scientific_gap(
+    tmp_path: Path,
+) -> None:
+    missing_snapshot_path = tmp_path / "missing_scifact_final_candidate.json"
+    audit = autoresearch_project_paper_orchestrator._project_offline_publication_audit_payload(
+        project_id="project-offline-audit-missing-frozen-snapshot",
+        selected_runs=[SimpleNamespace(id="run_missing_frozen_file")],
+        evidence_profile={},
+        literature_support_index={"complete": True},
+        benchmark_provenance_manifest={
+            "complete": False,
+            "benchmark_publication_ready": False,
+            "blockers": [],
+            "benchmark_source_records": [
+                {
+                    "run_id": "run_missing_frozen_file",
+                    "dataset_id": "allenai/scifact",
+                    "revision": "frozen-2026-06-03",
+                    "license": "CC-BY-4.0",
+                    "source_class": "frozen_snapshot",
+                    "source_locator": "https://github.com/allenai/scifact",
+                    "source_file_path": str(missing_snapshot_path),
+                    "repository_local_snapshot_materialized": False,
+                    "fingerprint": "sha256:missing-scifact-final-candidate",
+                    "record_fingerprint": "record:frozen-missing",
+                    "sample_count": 120,
+                    "split_count": 2,
+                    "final_publish_candidate_eligible": False,
+                    "final_publish_candidate_blockers": [
+                        "Missing materialized repository-local frozen benchmark file."
+                    ],
+                }
+            ],
+            "schema_coverage": {
+                "schema_coverage_complete": True,
+                "schema_blockers": [],
+            },
+            "source_observation_coverage": {
+                "observation_coverage_complete": True,
+                "observation_blockers": [],
+            },
+            "final_publish_candidate_coverage": {
+                "complete": False,
+                "blockers": [
+                    "run_missing_frozen_file: Missing materialized repository-local frozen benchmark file."
+                ],
+            },
+        },
+        experiment_repair_index={"execution_coverage_ready": True, "blockers": []},
+        statistics_report={
+            "complete": True,
+            "claim_ceiling_recommendation": "workshop_case_study_claim",
+            "per_method_metric_table": [{"system": "random_ranker"}],
+            "statistics_limitations": ["Scoped single-source statistics remain below final publish."],
+        },
+        negative_evidence_report={
+            "negative_evidence_retained": True,
+            "entry_count": 1,
+            "categories": ["negative_result"],
+        },
+        rereview_report={"action_reviews": []},
+        submission_manifest={
+            "review_bundle_ready": True,
+            "final_publish_ready": False,
+            "generated_assets": [
+                {"role": "project_negative_evidence_report", "exists": True},
+                {"role": "project_submission_manifest", "exists": True},
+            ],
+        },
+        project_submission_blockers=[],
+    )
+
+    gap_audit = audit["final_publish_gap_audit"]
+    assert gap_audit["benchmark_snapshot_artifact_materialized"] is False
+    assert gap_audit["benchmark_snapshot_artifact_record_count"] == 1
+    assert gap_audit["benchmark_snapshot_artifact_materialized_count"] == 0
+    assert gap_audit["benchmark_snapshot_artifact_all_required_materialized"] is False
+    assert gap_audit["benchmark_snapshot_artifact_unmaterialized_run_ids"] == [
+        "run_missing_frozen_file"
+    ]
+    assert gap_audit["engineering_gap_count"] == 0
+    missing_snapshot_gaps = [
+        item
+        for item in gap_audit["scientific_evidence_gaps"]
+        if "Missing materialized repository-local frozen benchmark file" in item["blocker"]
+    ]
+    assert missing_snapshot_gaps
+    assert all(
+        item["classification"] == "scientific_evidence_gap"
+        for item in missing_snapshot_gaps
+    )
+    benchmark_checkpoint = next(
+        item
+        for item in audit["checkpoints"]
+        if item["checkpoint_id"] == "benchmark_snapshot_selection"
+    )
+    assert any(
+        "run_missing_frozen_file" in blocker
+        for blocker in benchmark_checkpoint["blockers"]
+    )
+    assert benchmark_checkpoint["unmaterialized_frozen_snapshot_run_ids"] == [
+        "run_missing_frozen_file"
+    ]
+    assert benchmark_checkpoint["materialized_imported_or_frozen_source_count"] == 0
+    assert benchmark_checkpoint["all_required_frozen_snapshots_materialized"] is False
+    assert all(
+        item["classification"] == "scientific_evidence_gap"
+        for item in benchmark_checkpoint["blocker_classification"]
+        if "Missing materialized repository-local frozen benchmark file" in item["blocker"]
+    )
+    benchmark_scale_requirement = gap_audit["phase1_requirements_by_id"]["benchmark_scale"]
+    assert benchmark_scale_requirement["status"] == "blocked"
+    assert benchmark_scale_requirement["details"][
+        "unmaterialized_frozen_snapshot_run_ids"
+    ] == ["run_missing_frozen_file"]
+    assert benchmark_scale_requirement["details"][
+        "materialized_imported_or_frozen_source_count"
+    ] == 0
+    assert (
+        benchmark_scale_requirement["details"][
+            "all_required_frozen_snapshots_materialized"
+        ]
+        is False
+    )
+    assert any(
+        item["classification"] == "scientific_evidence_gap"
+        for item in benchmark_scale_requirement["blocker_classification"]
+    )
 
 
 def test_project_benchmark_provenance_repair_blocks_fixture_source(
@@ -8901,7 +9671,7 @@ def test_project_benchmark_provenance_repair_blocks_fixture_source(
     assert repair_index["run_profiles"][0]["repair_status"] == "blocked"
     assert repair_index["run_profiles"][0]["source_class"] == "cached_fixture"
     assert repair_index["run_profiles"][0]["query_document_evidence_schema"]["schema_complete"] is False
-    assert "claim_verification_support" in (
+    assert "split" in (
         repair_index["run_profiles"][0]["query_document_evidence_schema"]["missing_schema_roles"]
     )
     assert repair_index["run_profiles"][0]["source_record_complete"] is False
@@ -9390,7 +10160,21 @@ def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
     assert orchestration.project_claim_evidence_index_complete is True
     assert orchestration.project_lineage_archive_complete is True
     assert any("pending revision actions" in item.lower() for item in orchestration.project_submission_blockers)
-    assert any("pdflatex is not available" in item for item in orchestration.project_submission_blockers)
+    assert not any("pdflatex is not available" in item for item in orchestration.project_submission_blockers)
+    stable_compiler_evidence = json.loads(
+        Path(orchestration.project_paper_compiler_evidence_path).read_text(encoding="utf-8")
+    )
+    assert stable_compiler_evidence["compile_readiness"]["pdf_blockers"] == (
+        stable_compiler_evidence["compile_environment_limitations"]
+    )
+    assert not any(
+        "pdflatex is not available" in item
+        for item in stable_compiler_evidence["blockers"]
+    )
+    if stable_compiler_evidence["compile_environment_limitations"]:
+        assert stable_compiler_evidence["compile_readiness"][
+            "source_package_auditable_without_pdf"
+        ] is True
     submission_manifest = json.loads(Path(orchestration.project_submission_manifest_path).read_text(encoding="utf-8"))
     assert submission_manifest["bundle_kind"] == "review_bundle"
     assert submission_manifest["review_bundle_ready"] is True
@@ -9489,7 +10273,7 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     )
     assert claim_evidence_vertical.trace is not None
     assert claim_evidence_vertical.expected_paper_tier == "workshop_candidate"
-    assert "cached_benchmark_execution" in claim_evidence_vertical.trace.steps_completed
+    assert "imported_frozen_benchmark_execution" in claim_evidence_vertical.trace.steps_completed
     assert "project_paper_orchestration" in claim_evidence_vertical.trace.steps_completed
     assert "project_revision_actions" in claim_evidence_vertical.trace.steps_completed
     assert "project_submission_package" in claim_evidence_vertical.trace.steps_completed
@@ -9518,6 +10302,416 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert Path(claim_evidence_vertical.trace.project_offline_publication_case_path).is_file()
     assert claim_evidence_vertical.trace.project_offline_publication_audit_path is not None
     assert Path(claim_evidence_vertical.trace.project_offline_publication_audit_path).is_file()
+    vertical_offline_audit = json.loads(
+        Path(claim_evidence_vertical.trace.project_offline_publication_audit_path).read_text(encoding="utf-8")
+    )
+    vertical_gap_audit = vertical_offline_audit["final_publish_gap_audit"]
+    goal1_audit_summary = vertical_gap_audit["goal1_current_audit_summary"]
+    expected_phase6_missing_categories: set[str] = set()
+    expected_phase6_required_categories = set(
+        autoresearch_project_paper_orchestrator.PROJECT_NEGATIVE_EVIDENCE_REQUIRED_CATEGORIES
+    )
+    expected_phase6_covered_categories = (
+        expected_phase6_required_categories - expected_phase6_missing_categories
+    )
+    assert goal1_audit_summary["goal"] == (
+        "Goal 1: First Final-Publish Candidate For Claim-Evidence Retrieval"
+    )
+    assert goal1_audit_summary["review_bundle_ready"] is True
+    assert goal1_audit_summary["final_publish_ready"] is False
+    assert goal1_audit_summary["final_publish_ready_false_reason"] == (
+        "scientific_evidence_gap"
+    )
+    assert goal1_audit_summary["package_plumbing_complete"] is True
+    assert goal1_audit_summary["engineering_gap_count"] == 0
+    assert goal1_audit_summary["phase6_negative_evidence_coverage_complete"] is True
+    assert goal1_audit_summary["phase6_missing_categories"] == []
+    assert (
+        goal1_audit_summary["benchmark_snapshot_artifact_materialized"]
+        is True
+    )
+    assert goal1_audit_summary["benchmark_snapshot_artifact_record_count"] == 2
+    assert goal1_audit_summary["benchmark_snapshot_artifact_materialized_count"] == 2
+    assert (
+        goal1_audit_summary["benchmark_final_publish_candidate_coverage_complete"]
+        is True
+    )
+    assert goal1_audit_summary["benchmark_final_publish_candidate_blockers"] == []
+    assert goal1_audit_summary["benchmark_source_independence_ready"] is False
+    assert goal1_audit_summary["benchmark_source_independence_blockers"]
+    assert goal1_audit_summary["benchmark_source_independence_audit"][
+        "independent_source_keys"
+    ] == ["allenai/scifact"]
+    fixed_goal_audit = vertical_offline_audit["fixed_goal_audit"]
+    assert vertical_gap_audit["fixed_goal_audit"] == fixed_goal_audit
+    assert fixed_goal_audit["audit_id"] == "goal1_fixed_file_audit_v1"
+    assert fixed_goal_audit["source_goal_document"] == "docs/goal.md"
+    assert fixed_goal_audit["required_commands"] == [
+        "git status --short --branch",
+        "git log --oneline -n 8",
+    ]
+    assert fixed_goal_audit["audited_file_count"] == len(
+        autoresearch_project_paper_orchestrator.GOAL1_FIXED_AUDIT_FILE_PATHS
+    )
+    assert {item["path"] for item in fixed_goal_audit["audited_files"]} == set(
+        autoresearch_project_paper_orchestrator.GOAL1_FIXED_AUDIT_FILE_PATHS
+    )
+    assert all(item["audit_scope"] for item in fixed_goal_audit["audited_files"])
+    assert all(
+        item["phase1_phase2_relevance"]
+        for item in fixed_goal_audit["audited_files"]
+    )
+    assert all(
+        "Goal 1 Phase 1/2" in item["audit_conclusion"]
+        for item in fixed_goal_audit["audited_files"]
+    )
+    assert set(fixed_goal_audit["required_artifact_destinations"]).issubset(
+        set(fixed_goal_audit["artifact_destinations_used"])
+    )
+    assert {
+        "offline_publication_audit.json",
+        "publication_readiness_report.json",
+        "evaluation_cases.py trace",
+        "backend/tests/test_autoresearch_regressions.py",
+        "docs/api-reference.md",
+        "docs/claim-evidence-vertical-loop.md",
+    }.issubset(set(fixed_goal_audit["artifact_destinations_used"]))
+    fixed_artifact_conclusion = fixed_goal_audit["artifact_conclusion"]
+    assert fixed_artifact_conclusion["review_bundle_ready"] is True
+    assert fixed_artifact_conclusion["final_publish_ready"] is False
+    assert fixed_artifact_conclusion["final_publish_ready_false_reason"] == (
+        "scientific_evidence_gap"
+    )
+    assert fixed_artifact_conclusion["package_plumbing_complete"] is True
+    assert fixed_artifact_conclusion["engineering_gap_count"] == 0
+    assert fixed_artifact_conclusion["scientific_evidence_gap_count"] >= 1
+    assert (
+        fixed_artifact_conclusion["benchmark_snapshot_artifact_materialized"]
+        is True
+    )
+    assert (
+        fixed_artifact_conclusion[
+            "benchmark_final_publish_candidate_coverage_complete"
+        ]
+        is True
+    )
+    assert fixed_artifact_conclusion["benchmark_source_independence_ready"] is False
+    assert fixed_artifact_conclusion["benchmark_source_independence_blockers"]
+    assert fixed_artifact_conclusion["benchmark_source_independence_audit"][
+        "independent_source_keys"
+    ] == ["allenai/scifact"]
+    assert fixed_artifact_conclusion["benchmark_source_independence_audit"] == (
+        vertical_gap_audit["benchmark_source_independence_audit"]
+    )
+    assert "does not weaken publish gates" in fixed_goal_audit["policy"]
+    assert claim_evidence_vertical.trace.project_final_publish_package_artifacts_complete == (
+        vertical_gap_audit["package_artifacts_complete"]
+    )
+    assert claim_evidence_vertical.trace.project_final_publish_engineering_gap_count == (
+        vertical_gap_audit["engineering_gap_count"]
+    )
+    assert claim_evidence_vertical.trace.project_final_publish_scientific_evidence_gap_count == (
+        vertical_gap_audit["scientific_evidence_gap_count"]
+    )
+    assert claim_evidence_vertical.trace.project_final_publish_engineering_gaps == (
+        vertical_gap_audit["engineering_gaps"]
+    )
+    assert claim_evidence_vertical.trace.project_final_publish_scientific_evidence_gaps == (
+        vertical_gap_audit["scientific_evidence_gaps"]
+    )
+    assert claim_evidence_vertical.trace.project_final_publish_blocker_classification == (
+        vertical_gap_audit["final_publish_blocker_classification"]
+    )
+    assert claim_evidence_vertical.trace.project_final_publish_phase1_blocked_requirement_ids == (
+        vertical_gap_audit["phase1_blocked_requirement_ids"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_final_publish_candidate_coverage_complete
+        == vertical_gap_audit["benchmark_final_publish_candidate_coverage_complete"]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_final_publish_candidate_blockers == (
+        vertical_gap_audit["benchmark_final_publish_candidate_blockers"]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_source_independence_ready == (
+        vertical_gap_audit["benchmark_source_independence_ready"]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_source_independence_blockers == (
+        vertical_gap_audit["benchmark_source_independence_blockers"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_schema_coverage_complete
+        == vertical_gap_audit["benchmark_schema_coverage_complete"]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_schema_coverage_blockers == (
+        vertical_gap_audit["benchmark_schema_coverage_blockers"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_source_observation_coverage_complete
+        == vertical_gap_audit["benchmark_source_observation_coverage_complete"]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_source_observation_blockers == (
+        vertical_gap_audit["benchmark_source_observation_blockers"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_snapshot_artifact_materialized
+        == vertical_gap_audit["benchmark_snapshot_artifact_materialized"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_snapshot_artifact_record_count
+        == vertical_gap_audit["benchmark_snapshot_artifact_record_count"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_snapshot_artifact_materialized_count
+        == vertical_gap_audit["benchmark_snapshot_artifact_materialized_count"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_snapshot_artifact_all_required_materialized
+        == vertical_gap_audit[
+            "benchmark_snapshot_artifact_all_required_materialized"
+        ]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_snapshot_artifact_unmaterialized_run_ids
+        == vertical_gap_audit["benchmark_snapshot_artifact_unmaterialized_run_ids"]
+    )
+    assert vertical_offline_audit["final_publish_gap_audit"]["engineering_gap_count"] == 0
+    assert vertical_offline_audit["final_publish_gap_audit"]["engineering_gaps"] == []
+    assert vertical_offline_audit["final_publish_gap_audit"]["package_artifacts_complete"] is True
+    assert vertical_offline_audit["final_publish_gap_audit"]["benchmark_scale_ready_for_final_candidate"] is True
+    assert vertical_offline_audit["final_publish_gap_audit"]["benchmark_schema_coverage_complete"] is True
+    assert vertical_offline_audit["final_publish_gap_audit"]["benchmark_schema_coverage_blockers"] == []
+    assert (
+        vertical_offline_audit["final_publish_gap_audit"][
+            "benchmark_source_observation_coverage_complete"
+        ]
+        is True
+    )
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "benchmark_source_observation_blockers"
+    ] == []
+    assert (
+        vertical_offline_audit["final_publish_gap_audit"][
+            "benchmark_final_publish_candidate_coverage_complete"
+        ]
+        is True
+    )
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "benchmark_final_publish_candidate_blockers"
+    ] == []
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "benchmark_source_independence_ready"
+    ] is False
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "benchmark_source_independence_blockers"
+    ]
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "benchmark_source_independence_audit"
+    ]["independent_source_keys"] == ["allenai/scifact"]
+    assert vertical_offline_audit["final_publish_gap_audit"]["benchmark_snapshot_artifact_materialized"] is True
+    assert (
+        vertical_offline_audit["final_publish_gap_audit"][
+            "benchmark_snapshot_artifact_record_count"
+        ]
+        == 2
+    )
+    assert (
+        vertical_offline_audit["final_publish_gap_audit"][
+            "benchmark_snapshot_artifact_materialized_count"
+        ]
+        == 2
+    )
+    assert (
+        vertical_offline_audit["final_publish_gap_audit"][
+            "benchmark_snapshot_artifact_all_required_materialized"
+        ]
+        is True
+    )
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "benchmark_snapshot_artifact_unmaterialized_run_ids"
+    ] == []
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "benchmark_snapshot_artifact_materialization_policy"
+    ]
+    assert any(
+        record["dataset_id"] == "allenai/scifact"
+        and record["source_file_path"] == str(autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_PATH)
+        and record["repository_local_snapshot_materialized"] is True
+        and record["source_content_origin"] == "original_benchmark_records"
+        and record["publication_grade_eligible"] is True
+        and record["final_publish_candidate_eligible"] is True
+        for record in vertical_offline_audit["final_publish_gap_audit"]["benchmark_snapshot_artifact_records"]
+    )
+    assert any(
+        record["dataset_id"] == "allenai/scifact-retrieval-view"
+        and record["source_file_path"] == str(autoresearch_evaluation_cases.SCIFACT_RETRIEVAL_FROZEN_SNAPSHOT_PATH)
+        and record["repository_local_snapshot_materialized"] is True
+        and record["source_content_origin"] == "original_benchmark_records"
+        and record["source_parent_dataset_id"] == "allenai/scifact"
+        and record["publication_grade_eligible"] is True
+        and record["final_publish_candidate_eligible"] is True
+        for record in vertical_offline_audit["final_publish_gap_audit"]["benchmark_snapshot_artifact_records"]
+    )
+    assert vertical_offline_audit["final_publish_gap_audit"]["scientific_evidence_gap_count"] >= 1
+    assert goal1_audit_summary["scientific_evidence_gap_count"] == (
+        vertical_gap_audit["scientific_evidence_gap_count"]
+    )
+    phase1_requirements = vertical_offline_audit["final_publish_gap_audit"]["phase1_requirements"]
+    phase1_by_id = vertical_offline_audit["final_publish_gap_audit"]["phase1_requirements_by_id"]
+    expected_phase1_requirement_ids = {
+        "literature_related_work_and_novelty",
+        "benchmark_scale",
+        "benchmark_source_publication_grade",
+        "benchmark_source_independence",
+        "benchmark_schema_coverage",
+        "benchmark_source_observation_coverage",
+        "baseline_ladder",
+        "method_ladder_reproducibility",
+        "multi_seed_split_paired_statistics",
+        "negative_evidence_claim_ceiling",
+        "package_artifact_completeness",
+        "blocker_classification",
+    }
+    assert vertical_offline_audit["final_publish_gap_audit"]["phase1_requirement_count"] == (
+        len(expected_phase1_requirement_ids)
+    )
+    assert {item["requirement_id"] for item in phase1_requirements} == (
+        expected_phase1_requirement_ids
+    )
+    assert set(phase1_by_id) == expected_phase1_requirement_ids
+    assert all(item["evidence_refs"] for item in phase1_requirements)
+    assert all(item["status"] in {"satisfied", "blocked"} for item in phase1_requirements)
+    assert all("blocker_classification" in item for item in phase1_requirements)
+    assert all(item["scope_limitation"] for item in phase1_requirements)
+    assert all(item["followups"] or item["kill_criteria"] for item in phase1_requirements)
+    assert goal1_audit_summary["phase1_blocked_requirement_ids"] == (
+        vertical_gap_audit["phase1_blocked_requirement_ids"]
+    )
+    assert set(goal1_audit_summary["remaining_scientific_blocker_requirement_ids"]).issubset(
+        set(vertical_gap_audit["phase1_blocked_requirement_ids"])
+    )
+    assert phase1_by_id["package_artifact_completeness"]["status"] == "satisfied"
+    assert phase1_by_id["package_artifact_completeness"]["details"]["auditable_package_ready"] is True
+    assert phase1_by_id["benchmark_scale"]["status"] == "satisfied"
+    assert phase1_by_id["benchmark_scale"]["details"]["largest_selected_sample_count"] >= (
+        autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_MIN_EXAMPLES
+    )
+    assert phase1_by_id["benchmark_scale"]["details"]["imported_or_frozen_source_count"] == 2
+    assert (
+        phase1_by_id["benchmark_scale"]["details"][
+            "materialized_imported_or_frozen_source_count"
+        ]
+        == 2
+    )
+    assert (
+        phase1_by_id["benchmark_scale"]["details"][
+            "all_required_frozen_snapshots_materialized"
+        ]
+        is True
+    )
+    assert phase1_by_id["benchmark_scale"]["details"][
+        "unmaterialized_frozen_snapshot_run_ids"
+    ] == []
+    assert phase1_by_id["benchmark_source_publication_grade"]["status"] == "satisfied"
+    assert phase1_by_id["benchmark_source_publication_grade"]["details"][
+        "final_publish_candidate_coverage"
+    ]["complete"] is True
+    assert phase1_by_id["benchmark_source_independence"]["status"] == "blocked"
+    assert phase1_by_id["benchmark_source_independence"]["details"][
+        "benchmark_source_independence_ready"
+    ] is False
+    assert phase1_by_id["benchmark_source_independence"]["details"][
+        "independent_source_keys"
+    ] == ["allenai/scifact"]
+    assert phase1_by_id["benchmark_source_independence"]["blockers"]
+    assert any(
+        item["classification"] == "scientific_evidence_gap"
+        for item in phase1_by_id["benchmark_source_independence"]["blocker_classification"]
+    )
+    assert phase1_by_id["benchmark_schema_coverage"]["status"] == "satisfied"
+    assert phase1_by_id["benchmark_schema_coverage"]["details"][
+        "schema_coverage_complete"
+    ] is True
+    assert phase1_by_id["benchmark_schema_coverage"]["details"]["schema_blockers"] == []
+    assert phase1_by_id["benchmark_source_observation_coverage"]["status"] == (
+        "satisfied"
+    )
+    assert phase1_by_id["benchmark_source_observation_coverage"]["details"][
+        "observation_coverage_complete"
+    ] is True
+    assert phase1_by_id["benchmark_source_observation_coverage"]["details"][
+        "observation_blockers"
+    ] == []
+    assert phase1_by_id["baseline_ladder"]["status"] == "satisfied"
+    assert phase1_by_id["baseline_ladder"]["details"]["missing_target_ladder"] == []
+    assert set(phase1_by_id["baseline_ladder"]["details"]["observed_target_ladder"]) == {
+        "random_ranker",
+        "lexical_overlap",
+        "tfidf_bm25_style_retrieval",
+        "phrase_or_bigram_aware_retrieval",
+        "ledger_aware_retrieval",
+        "abstention_or_repair_router",
+        "no_ledger_ablation",
+        "retrieval_only_no_verification_ablation",
+        "repair_router_disabled_ablation",
+    }
+    assert phase1_by_id["baseline_ladder"]["blocker_classification"] == []
+    assert phase1_by_id["method_ladder_reproducibility"]["status"] == "satisfied"
+    assert phase1_by_id["method_ladder_reproducibility"]["details"][
+        "execution_coverage_ready"
+    ] is True
+    assert phase1_by_id["multi_seed_split_paired_statistics"]["status"] == "blocked"
+    statistics_requirement = phase1_by_id["multi_seed_split_paired_statistics"]
+    statistics_requirement_details = statistics_requirement["details"]
+    assert statistics_requirement_details["claim_ceiling_recommendation"] == (
+        "workshop_case_study_claim"
+    )
+    assert statistics_requirement_details["replication_summary"][
+        "multi_split_ready"
+    ] is True
+    assert statistics_requirement_details["replication_summary"][
+        "final_publish_replication_ready"
+    ] is True
+    assert statistics_requirement_details["multi_split_ready"] is True
+    assert statistics_requirement_details["final_publish_replication_ready"] is True
+    assert statistics_requirement_details["split_evaluation_count"] >= 4
+    assert statistics_requirement_details["split_metric_table_count"] >= (
+        statistics_requirement_details["split_evaluation_count"]
+    )
+    assert statistics_requirement_details["split_labels"] == ["test", "train"]
+    assert not any(
+        "lack deterministic multi-seed or multi-split" in blocker.lower()
+        for blocker in statistics_requirement["blockers"]
+    )
+    assert any(
+        "independent source" in blocker.lower()
+        or "source datasets" in blocker.lower()
+        for blocker in statistics_requirement["blockers"]
+    )
+    assert any(
+        "negative" in blocker.lower()
+        for blocker in statistics_requirement["blockers"]
+    )
+    assert phase1_by_id["negative_evidence_claim_ceiling"]["status"] == "satisfied"
+    assert phase1_by_id["negative_evidence_claim_ceiling"]["details"]["entry_count"] > 0
+    assert phase1_by_id["blocker_classification"]["status"] == "satisfied"
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "baseline_ladder_final_candidate_ready"
+    ] is True
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "baseline_ladder_missing_final_candidate_methods"
+    ] == []
+    assert "baseline_ladder" not in vertical_offline_audit["final_publish_gap_audit"][
+        "phase1_blocked_requirement_ids"
+    ]
+    assert vertical_offline_audit["final_publish_gap_audit"][
+        "final_publish_blocker_classification"
+    ]
+    assert all(
+        item["classification"] == "scientific_evidence_gap"
+        for item in vertical_offline_audit["final_publish_gap_audit"][
+            "final_publish_blocker_classification"
+        ]
+    )
     assert claim_evidence_vertical.trace.project_review_bundle_ready is True
     assert claim_evidence_vertical.trace.project_final_publish_ready is False
     assert claim_evidence_vertical.trace.project_review_finding_count == (
@@ -9554,8 +10748,32 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert claim_evidence_vertical.trace.project_claim_ceiling == "workshop_case_study_claim"
     assert claim_evidence_vertical.trace.project_negative_evidence_coverage_complete is True
     assert claim_evidence_vertical.trace.project_negative_evidence_count > 0
+    assert expected_phase6_covered_categories.issubset(
+        set(claim_evidence_vertical.trace.project_phase6_negative_evidence_categories)
+    )
+    assert "failed_or_blocked_repair_attempt" in (
+        claim_evidence_vertical.trace.project_phase6_negative_evidence_categories
+    )
+    assert set(
+        claim_evidence_vertical.trace.project_phase6_negative_evidence_missing_categories
+    ) == expected_phase6_missing_categories
+    assert set(claim_evidence_vertical.trace.project_phase6_negative_evidence_required_categories) >= (
+        expected_phase6_required_categories
+    )
+    assert claim_evidence_vertical.trace.project_phase6_negative_evidence_category_counts[
+        "ledger_aware_non_improving_query"
+    ] > 0
+    assert (
+        claim_evidence_vertical.trace.project_phase6_negative_evidence_category_counts.get(
+            "failed_or_blocked_repair_attempt", 0
+        )
+        > 0
+    )
+    assert claim_evidence_vertical.trace.project_phase6_negative_evidence_coverage_complete is True
+    assert claim_evidence_vertical.trace.project_phase6_negative_evidence_runtime_failure_observed is False
     assert any("Do not submit as final publish" in item for item in claim_evidence_vertical.trace.project_kill_criteria)
     assert claim_evidence_vertical.trace.project_required_followups
+    assert not any("Phase 6 category" in item for item in claim_evidence_vertical.trace.project_required_followups)
     assert claim_evidence_vertical.trace.end_to_end_package_ready is True
     assert claim_evidence_vertical.trace.literature_cache_hit_count >= 1
     assert claim_evidence_vertical.trace.real_literature_count >= 3
@@ -9565,6 +10783,10 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert claim_evidence_vertical.trace.literature_source_counts["crossref"] >= 1
     assert any(
         "Project publish gate has not passed" in item
+        for item in claim_evidence_vertical.trace.project_submission_blockers
+    )
+    assert not any(
+        "pdflatex is not available" in item
         for item in claim_evidence_vertical.trace.project_submission_blockers
     )
     assert "Evidence Ledger Guided Claim Verification" in Path(
@@ -9595,6 +10817,14 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     )
     readiness_report = json.loads(readiness_report_path.read_text(encoding="utf-8"))
     assert readiness_report["final_publish_ready"] is False
+    assert not any("pdflatex is not available" in item for item in readiness_report["blockers"])
+    assert not any(
+        "pdflatex is not available" in item
+        for item in readiness_report["required_followups"]
+    )
+    assert "Complete paper compiler evidence coverage before final packaging." not in (
+        readiness_report["required_followups"]
+    )
     assert readiness_report["kill_criteria"] == claim_evidence_vertical.trace.project_kill_criteria
     assert readiness_report["required_followups"] == claim_evidence_vertical.trace.project_required_followups
     assert readiness_report["selected_run_count"] == 2
@@ -9602,15 +10832,129 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         item["source_kind"]
         for item in readiness_report["evidence_profile"]["run_profiles"]
     } == {"scifact_json", "beir_json"}
+    scifact_profile = next(
+        item
+        for item in readiness_report["evidence_profile"]["run_profiles"]
+        if item["source_kind"] == "scifact_json"
+    )
+    assert scifact_profile["source_dataset_id"] == "allenai/scifact"
+    assert scifact_profile["source_class"] == "frozen_snapshot"
+    assert scifact_profile["source_content_origin"] == "original_benchmark_records"
+    assert scifact_profile["source_content_note"]
+    assert scifact_profile["sample_count"] >= autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_MIN_EXAMPLES
+    assert scifact_profile["provenance_complete"] is True
+    assert scifact_profile["publication_grade"] is True
     assert readiness_report["evidence_profile"]["replication_ready"] is True
-    assert readiness_report["evidence_profile"]["benchmark_publication_ready"] is False
+    assert readiness_report["evidence_profile"]["benchmark_publication_ready"] is True
     assert all(
-        item["publication_grade"] is False
+        item["publication_grade"] is True
         for item in readiness_report["evidence_profile"]["run_profiles"]
     )
     assert readiness_report["evidence_profile"]["literature_ready"] is True
     assert readiness_report["evidence_profile"]["real_literature_count"] >= 3
     readiness_checks_by_id = {item["check_id"]: item for item in readiness_report["checks"]}
+    assert readiness_checks_by_id["paper_compiler_evidence"]["passed"] is True
+    assert readiness_report["paper_compiler_evidence"]["complete"] is True
+    compiler_revision_coverage = readiness_report["paper_compiler_evidence"][
+        "reviewer_revision_coverage"
+    ]
+    assert compiler_revision_coverage["complete"] is True
+    assert compiler_revision_coverage["pending_revision_action_count"] == 1
+    assert compiler_revision_coverage["compiler_unresolved_revision_action_count"] == 0
+    assert compiler_revision_coverage["compiler_unresolved_revision_action_ids"] == []
+    assert compiler_revision_coverage["audited_terminal_repair_action_ids"] == [
+        "project_benchmark_source_independence_repair"
+    ]
+    assert readiness_checks_by_id["revision_actions"]["passed"] is False
+    assert readiness_checks_by_id["repair_execution_log"]["passed"] is False
+    assert readiness_report["evidence_profile"]["benchmark_final_publish_candidate_ready"] is True
+    readiness_candidate_coverage = readiness_report["evidence_profile"][
+        "benchmark_final_publish_candidate_coverage"
+    ]
+    assert readiness_candidate_coverage["selected_run_count"] == 2
+    assert readiness_candidate_coverage["eligible_run_count"] == 2
+    assert len(readiness_candidate_coverage["eligible_run_ids"]) == 2
+    assert readiness_candidate_coverage["complete"] is True
+    assert readiness_candidate_coverage["blockers"] == []
+    assert readiness_checks_by_id["benchmark_final_publish_candidate_coverage"]["passed"] is True
+    assert readiness_checks_by_id["benchmark_final_publish_candidate_coverage"]["coverage"] == (
+        readiness_candidate_coverage
+    )
+    assert readiness_checks_by_id["benchmark_final_publish_candidate_coverage"]["blockers"] == (
+        readiness_candidate_coverage["blockers"]
+    )
+    source_independence_audit = readiness_report["benchmark_source_independence_audit"]
+    assert readiness_report["evidence_profile"]["benchmark_source_independence_ready"] is False
+    assert readiness_report["evidence_profile"]["benchmark_source_independence_audit"] == (
+        source_independence_audit
+    )
+    assert source_independence_audit["complete"] is False
+    assert source_independence_audit["independent_source_keys"] == ["allenai/scifact"]
+    assert source_independence_audit["blockers"]
+    assert readiness_checks_by_id["benchmark_source_independence"]["passed"] is False
+    assert readiness_checks_by_id["benchmark_source_independence"]["coverage"] == (
+        source_independence_audit
+    )
+    assert readiness_checks_by_id["benchmark_source_independence"]["blockers"] == (
+        source_independence_audit["blockers"]
+    )
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_source_independence_ready
+        == source_independence_audit["complete"]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_source_independence_blockers == (
+        source_independence_audit["blockers"]
+    )
+    schema_readiness_check = readiness_checks_by_id["benchmark_schema_coverage"]
+    assert schema_readiness_check["passed"] is True
+    assert schema_readiness_check["coverage"] == readiness_report["benchmark_schema_coverage"]
+    assert schema_readiness_check["coverage"]["schema_coverage_complete"] is True
+    assert schema_readiness_check["blockers"] == []
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_schema_coverage_complete
+        == readiness_report["benchmark_schema_coverage"]["schema_coverage_complete"]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_schema_coverage_blockers == (
+        readiness_report["benchmark_schema_coverage"]["schema_blockers"]
+    )
+    observation_readiness_check = readiness_checks_by_id[
+        "benchmark_source_observation_coverage"
+    ]
+    assert observation_readiness_check["passed"] is True
+    assert observation_readiness_check["coverage"] == (
+        readiness_report["benchmark_source_observation_coverage"]
+    )
+    assert observation_readiness_check["coverage"]["observation_coverage_complete"] is True
+    assert observation_readiness_check["blockers"] == []
+    assert (
+        claim_evidence_vertical.trace.project_benchmark_source_observation_coverage_complete
+        == readiness_report["benchmark_source_observation_coverage"][
+            "observation_coverage_complete"
+        ]
+    )
+    assert claim_evidence_vertical.trace.project_benchmark_source_observation_blockers == (
+        readiness_report["benchmark_source_observation_coverage"]["observation_blockers"]
+    )
+    phase6_readiness_check = readiness_checks_by_id["phase6_negative_evidence_coverage"]
+    assert phase6_readiness_check["passed"] is True
+    assert phase6_readiness_check["missing_categories"] == []
+    assert phase6_readiness_check["coverage"] == readiness_report["phase6_negative_evidence_audit"]
+    assert readiness_report["phase6_negative_evidence_audit"]["coverage_complete"] is True
+    assert readiness_report["phase6_negative_evidence_audit"]["runtime_failure_observed"] is False
+    assert expected_phase6_covered_categories.issubset(
+        set(readiness_report["phase6_negative_evidence_audit"]["categories"])
+    )
+    assert "failed_or_blocked_repair_attempt" in (
+        readiness_report["phase6_negative_evidence_audit"]["categories"]
+    )
+    assert set(readiness_report["phase6_negative_evidence_audit"]["missing_categories"]) == (
+        expected_phase6_missing_categories
+    )
+    assert not any("Phase 6 category" in item for item in readiness_report["required_followups"])
+    assert not any(
+        "Phase 6 negative-evidence categories" in item
+        for item in readiness_report["kill_criteria"]
+    )
     assert readiness_checks_by_id["execution_evidence"]["passed"] is True
     assert readiness_checks_by_id["execution_evidence"]["execution_source_counts"] == (
         claim_evidence_vertical.trace.project_experiment_execution_source_counts
@@ -9630,28 +10974,403 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert experiment_repair_index["materialized_execution_run_ids"] == (
         claim_evidence_vertical.trace.project_materialized_execution_run_ids
     )
+    expected_ladder_systems = {
+        "random_ranker",
+        "overlap_ranker",
+        "bm25_ranker",
+        "bigram_ranker",
+        "ledger_aware_ranker",
+        "abstention_repair_router",
+        "no_ledger_ablation",
+        "retrieval_only_no_verification_ablation",
+        "repair_router_disabled_ablation",
+    }
+    execution_entries = experiment_repair_index["execution_evidence_ledger"]["entries"]
+    assert execution_entries
+    for entry in execution_entries:
+        assert {item["system"] for item in entry["method_outputs"]} == expected_ladder_systems
+        assert set(entry["method_configs"]) == expected_ladder_systems
+        assert {item["system"] for item in entry["method_ladder"]} == expected_ladder_systems
+        assert len(entry["method_output_artifact_refs"]) == len(expected_ladder_systems)
+        assert entry["method_configs"]["bm25_ranker"]["ladder_role"] == "tfidf_bm25_style_retrieval"
+        assert entry["method_configs"]["no_ledger_ablation"]["uses_ledger"] is False
+        assert entry["method_configs"]["retrieval_only_no_verification_ablation"]["uses_verification"] is False
+        assert entry["method_configs"]["repair_router_disabled_ablation"]["repair_router_enabled"] is False
+        assert all(item["lineage_refs"] for item in entry["method_ladder"])
     statistics_report = json.loads(
         Path(claim_evidence_vertical.trace.project_statistics_report_path).read_text(encoding="utf-8")
     )
     assert statistics_report["per_method_metric_table"]
     assert statistics_report["aggregate_metric_table"]
+    assert statistics_report["per_query_diagnostic_table"]
+    assert any(
+        "repair_precision" in row["metric_values"]
+        and "repair_recall" in row["metric_values"]
+        for row in statistics_report["per_query_diagnostic_table"]
+    )
+    required_statistics_metrics = {
+        "mrr",
+        "recall_at_1",
+        "recall_at_10",
+        "ndcg_at_10",
+        "evidence_coverage",
+        "verification_accuracy",
+        "unsupported_claim_precision",
+        "unsupported_claim_recall",
+        "abstention_accuracy",
+        "repair_precision",
+        "repair_recall",
+    }
+    assert set(statistics_report["metric_coverage"]["required_metrics"]) >= (
+        required_statistics_metrics
+    )
+    assert statistics_report["metric_coverage"]["complete"] is True
+    metric_coverage_by_id = {
+        item["metric"]: item
+        for item in statistics_report["metric_coverage"]["metric_table"]
+    }
+    assert metric_coverage_by_id["repair_precision"]["covered"] is True
+    assert metric_coverage_by_id["repair_recall"]["covered"] is True
+    assert metric_coverage_by_id["verification_accuracy"]["covered"] is True
+    assert not any(
+        "retrieval_only_no_verification_ablation" in system
+        for item in metric_coverage_by_id.values()
+        for system in item["missing_systems"]
+    )
     assert statistics_report["paired_comparisons"]
     assert statistics_report["confidence_intervals"]
+    assert statistics_report["effect_size_table"]
+    assert statistics_report["multiple_comparison_correction"]["complete"] is True
+    assert "holm_bonferroni" in statistics_report["multiple_comparison_correction"]["corrections"]
+    assert statistics_report["replication_summary"]["deterministic_paired_query_comparison_ready"] is True
+    assert statistics_report["split_evaluations"]
+    assert statistics_report["split_metric_table"]
+    assert statistics_report["replication_summary"]["multi_split_ready"] is True
+    assert statistics_report["replication_summary"]["final_publish_replication_ready"] is True
+    assert statistics_report["replication_summary"]["max_completed_split_count"] >= 2
+    assert statistics_report["replication_summary"]["split_evaluation_count"] >= 4
+    assert statistics_report["replication_summary"]["split_labels"] == ["test", "train"]
+    assert statistics_report["final_publish_statistics_blockers"]
+    assert not any(
+        "lack deterministic multi-seed or multi-split" in blocker.lower()
+        for blocker in statistics_report["final_publish_statistics_blockers"]
+    )
+    assert any(
+        "negative" in blocker.lower()
+        for blocker in statistics_report["final_publish_statistics_blockers"]
+    )
+    assert any(
+        "independent source" in blocker.lower()
+        or "source datasets" in blocker.lower()
+        for blocker in statistics_report["final_publish_statistics_blockers"]
+    )
     assert statistics_report["execution_coverage"]["complete"] is True
     assert statistics_report["execution_coverage"]["execution_source_counts"] == (
         claim_evidence_vertical.trace.project_experiment_execution_source_counts
     )
     assert statistics_report["negative_evidence_summary"]
+    assert expected_phase6_covered_categories.issubset(
+        set(statistics_report["negative_evidence_categories"])
+    )
+    assert statistics_report["phase6_negative_evidence_entry_count"] > 0
+    assert statistics_report["phase6_negative_evidence_summary"]["coverage_complete"] is True
+    assert expected_phase6_covered_categories.issubset(
+        set(statistics_report["phase6_negative_evidence_summary"]["category_counts"])
+    )
+    assert statistics_report["phase6_negative_evidence_summary"]["category_counts"][
+        "failed_or_blocked_repair_attempt"
+    ] > 0
+    assert set(statistics_report["phase6_negative_evidence_summary"]["missing_categories"]) == (
+        expected_phase6_missing_categories
+    )
     assert statistics_report["claim_ceiling_recommendation"] == (
         claim_evidence_vertical.trace.project_claim_ceiling
     )
     assert any("scoped" in item.lower() for item in statistics_report["statistics_limitations"])
+    negative_evidence_report = json.loads(
+        Path(claim_evidence_vertical.trace.project_negative_evidence_report_path).read_text(encoding="utf-8")
+    )
+    assert negative_evidence_report["negative_evidence_retained"] is True
+    assert negative_evidence_report["entry_count"] > 0
+    assert "negative_result" in negative_evidence_report["categories"]
+    assert expected_phase6_covered_categories.issubset(
+        set(negative_evidence_report["phase6_categories"])
+    )
+    assert "failed_or_blocked_repair_attempt" in negative_evidence_report["phase6_categories"]
+    assert set(negative_evidence_report["phase6_missing_categories"]) == (
+        expected_phase6_missing_categories
+    )
+    assert negative_evidence_report["phase6_coverage_complete"] is True
+    assert negative_evidence_report["phase6_runtime_failure_observed"] is False
+    assert negative_evidence_report["blocks_final_publish"] is True
+    blocked_repair_entries = [
+        entry
+        for entry in negative_evidence_report["entries"]
+        if "failed_or_blocked_repair_attempt" in entry["phase6_categories"]
+    ]
+    assert blocked_repair_entries
+    assert any(
+        entry["entry_id"] == "phase6_repair_execution:project_benchmark_source_independence_repair"
+        and entry["status"] == "blocked"
+        and entry["failure_classification"] == "benchmark_source_independence_gap"
+        for entry in blocked_repair_entries
+    )
+    repair_execution_log = json.loads(
+        Path(claim_evidence_vertical.trace.project_repair_execution_log_path).read_text(
+            encoding="utf-8"
+        )
+    )
+    source_independence_repair_entry = next(
+        entry
+        for entry in repair_execution_log["entries"]
+        if entry["action_id"] == "project_benchmark_source_independence_repair"
+    )
+    assert source_independence_repair_entry["status"] == "blocked"
+    assert source_independence_repair_entry["failure_classification"] == (
+        "benchmark_source_independence_gap"
+    )
+    assert source_independence_repair_entry["terminal_condition_met"] is False
+    assert source_independence_repair_entry["residual_blockers"]
+    assert source_independence_repair_entry["repair_output_audits"][0]["artifact_id"] == (
+        "project_benchmark_source_independence_repair_v1"
+    )
+    source_independence_repair_path = (
+        Path(claim_evidence_vertical.trace.project_submission_manifest_path).parent
+        / "../paper_sources/benchmark_source_independence_repair.json"
+    ).resolve()
+    source_independence_repair = json.loads(
+        source_independence_repair_path.read_text(encoding="utf-8")
+    )
+    assert source_independence_repair["repair_id"] == (
+        "project_benchmark_source_independence_repair_v1"
+    )
+    assert source_independence_repair["attempted_action_id"] == (
+        "project_benchmark_source_independence_repair"
+    )
+    assert source_independence_repair["complete"] is False
+    assert source_independence_repair["independent_source_keys"] == ["allenai/scifact"]
+    assert source_independence_repair["blockers"]
+    assert "live benchmarks or fabricate a second source" in (
+        source_independence_repair["candidate_import_plan"]["deterministic_offline_policy"]
+    )
+    assert negative_evidence_report["phase6_category_counts"] == (
+        claim_evidence_vertical.trace.project_phase6_negative_evidence_category_counts
+    )
+    assert negative_evidence_report["phase6_missing_categories"] == (
+        claim_evidence_vertical.trace.project_phase6_negative_evidence_missing_categories
+    )
+    assert negative_evidence_report["phase6_required_categories"] == (
+        claim_evidence_vertical.trace.project_phase6_negative_evidence_required_categories
+    )
+    benchmark_provenance_manifest = json.loads(
+        Path(claim_evidence_vertical.trace.project_submission_manifest_path).parent.joinpath(
+            "benchmark_provenance_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    scifact_source_record = next(
+        record
+        for record in benchmark_provenance_manifest["benchmark_source_records"]
+        if record["dataset_id"] == "allenai/scifact"
+    )
+    audit_scifact_record = next(
+        record
+        for record in vertical_gap_audit["benchmark_snapshot_artifact_records"]
+        if record["run_id"] == scifact_source_record["run_id"]
+    )
+    assert audit_scifact_record["dataset_id"] == "allenai/scifact"
+    assert audit_scifact_record["revision"] == scifact_source_record["revision"]
+    assert audit_scifact_record["license"] == scifact_source_record["license"]
+    assert audit_scifact_record["source_class"] == scifact_source_record["source_class"]
+    assert audit_scifact_record["source_locator"] == scifact_source_record["source_locator"]
+    assert audit_scifact_record["source_file_path"] == scifact_source_record["source_file_path"]
+    assert audit_scifact_record["repository_local_snapshot_materialized"] is True
+    assert audit_scifact_record["fingerprint"] == scifact_source_record["fingerprint"]
+    assert audit_scifact_record["source_content_origin"] == "original_benchmark_records"
+    assert audit_scifact_record["source_content_origin"] == scifact_source_record["source_content_origin"]
+    assert audit_scifact_record["source_content_note"] == scifact_source_record["source_content_note"]
+    assert audit_scifact_record["record_fingerprint"] == scifact_source_record["record_fingerprint"]
+    assert audit_scifact_record["sample_count"] == scifact_source_record["sample_count"]
+    assert audit_scifact_record["split_count"] == scifact_source_record["split_count"]
+    assert audit_scifact_record["split_distribution"] == scifact_source_record["split_distribution"]
+    assert audit_scifact_record["label_distribution"] == scifact_source_record["label_distribution"]
+    assert audit_scifact_record["query_count"] == scifact_source_record["query_count"]
+    assert audit_scifact_record["document_count"] == scifact_source_record["document_count"]
+    assert audit_scifact_record["evidence_annotation_count"] == (
+        scifact_source_record["evidence_annotation_count"]
+    )
+    assert audit_scifact_record["retrieval_relevance_count"] == (
+        scifact_source_record["retrieval_relevance_count"]
+    )
+    assert audit_scifact_record["publication_grade_eligible"] is True
+    assert audit_scifact_record["publication_grade_blockers"] == (
+        scifact_source_record["publication_grade_blockers"]
+    )
+    assert audit_scifact_record["final_publish_candidate_eligible"] is True
+    assert audit_scifact_record["final_publish_candidate_blockers"] == (
+        scifact_source_record["final_publish_candidate_blockers"]
+    )
+    assert scifact_source_record["sample_count"] >= (
+        autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_MIN_EXAMPLES
+    )
+    assert scifact_source_record["source_file_path"] == str(
+        autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_PATH
+    )
+    assert scifact_source_record["repository_local_snapshot_materialized"] is True
+    assert scifact_source_record["source_content_origin"] == "original_benchmark_records"
+    assert scifact_source_record["source_content_note"]
+    assert scifact_source_record["publication_grade_eligible"] is True
+    assert scifact_source_record["publication_grade_blockers"] == []
+    assert scifact_source_record["final_publish_candidate_eligible"] is True
+    assert scifact_source_record["final_publish_candidate_blockers"] == []
+    assert scifact_source_record["split_distribution"] == {"test": 48, "train": 72}
+    assert scifact_source_record["label_distribution"] == {
+        "not_enough_info": 16,
+        "refuted": 16,
+        "supported": 16,
+    }
+    assert scifact_source_record["query_count"] == 48
+    assert scifact_source_record["document_count"] >= 48
+    assert scifact_source_record["evidence_annotation_count"] == 33
+    assert scifact_source_record["retrieval_relevance_count"] == 27
+    assert "evidence_annotation_count" in scifact_source_record["required_observation_roles"]
+    retrieval_source_record = next(
+        record
+        for record in benchmark_provenance_manifest["benchmark_source_records"]
+        if record["source_kind"] == "beir_json"
+    )
+    assert retrieval_source_record["dataset_id"] == "allenai/scifact-retrieval-view"
+    assert retrieval_source_record["source_file_path"] == str(
+        autoresearch_evaluation_cases.SCIFACT_RETRIEVAL_FROZEN_SNAPSHOT_PATH
+    )
+    assert retrieval_source_record["repository_local_snapshot_materialized"] is True
+    assert retrieval_source_record["source_content_origin"] == "original_benchmark_records"
+    assert retrieval_source_record["source_content_note"]
+    assert retrieval_source_record["source_parent_dataset_id"] == "allenai/scifact"
+    assert retrieval_source_record["source_parent_snapshot_fingerprint"]
+    assert retrieval_source_record["required_observation_roles"] == [
+        "query_count",
+        "document_count",
+        "retrieval_relevance_count",
+    ]
+    assert retrieval_source_record["query_document_evidence_schema"]["schema_source"] == (
+        "retrieval_relevance_profile"
+    )
+    assert retrieval_source_record["publication_grade_eligible"] is True
+    assert retrieval_source_record["publication_grade_blockers"] == []
+    assert retrieval_source_record["final_publish_candidate_eligible"] is True
+    assert retrieval_source_record["final_publish_candidate_blockers"] == []
+    assert retrieval_source_record["sample_count"] >= (
+        autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_MIN_EXAMPLES
+    )
+    assert retrieval_source_record["split_distribution"] == {"test": 48, "train": 72}
+    assert retrieval_source_record["label_distribution"] == {}
+    assert retrieval_source_record["query_count"] == 48
+    assert retrieval_source_record["document_count"] >= 48
+    assert retrieval_source_record["evidence_annotation_count"] == 0
+    assert retrieval_source_record["retrieval_relevance_count"] > 0
+    offline_case = json.loads(
+        Path(claim_evidence_vertical.trace.project_offline_publication_case_path).read_text(
+            encoding="utf-8"
+        )
+    )
+    offline_case_records_by_run = {
+        item["run_id"]: item
+        for item in offline_case["evidence_classification"]["benchmarks_and_runs"]
+    }
+    offline_scifact_record = offline_case_records_by_run[scifact_source_record["run_id"]]
+    offline_retrieval_record = offline_case_records_by_run[retrieval_source_record["run_id"]]
+    assert offline_scifact_record["source_content_origin"] == "original_benchmark_records"
+    assert offline_scifact_record["source_content_note"]
+    assert offline_scifact_record["evidence_class"] == "external_or_imported_evidence"
+    assert offline_scifact_record["final_publish_allowed"] is True
+    assert offline_scifact_record["final_publish_allowed"] == (
+        scifact_source_record["final_publish_candidate_eligible"]
+    )
+    assert offline_scifact_record["repository_local_snapshot_materialized"] is True
+    assert offline_scifact_record["final_publish_candidate_blockers"] == (
+        scifact_source_record["final_publish_candidate_blockers"]
+    )
+    assert offline_retrieval_record["final_publish_allowed"] is True
+    assert offline_retrieval_record["final_publish_allowed"] == (
+        retrieval_source_record["final_publish_candidate_eligible"]
+    )
+    assert offline_retrieval_record["final_publish_candidate_blockers"] == (
+        retrieval_source_record["final_publish_candidate_blockers"]
+    )
+    assert offline_retrieval_record["publication_grade_eligible"] is True
+    final_candidate_coverage = benchmark_provenance_manifest["final_publish_candidate_coverage"]
+    assert final_candidate_coverage["selected_run_count"] == 2
+    assert final_candidate_coverage["minimum_sample_count"] == (
+        autoresearch_project_paper_orchestrator.FINAL_PUBLISH_CANDIDATE_MIN_DATASET_EXAMPLES
+    )
+    assert final_candidate_coverage["eligible_run_count"] == 2
+    assert set(final_candidate_coverage["eligible_run_ids"]) == {
+        scifact_source_record["run_id"],
+        retrieval_source_record["run_id"],
+    }
+    assert final_candidate_coverage["complete"] is True
+    assert final_candidate_coverage["blockers"] == []
+    assert readiness_candidate_coverage == final_candidate_coverage
+    source_independence_manifest_audit = benchmark_provenance_manifest[
+        "benchmark_source_independence_audit"
+    ]
+    assert source_independence_manifest_audit == source_independence_audit
+    assert source_independence_manifest_audit == vertical_gap_audit[
+        "benchmark_source_independence_audit"
+    ]
+    observation_coverage = benchmark_provenance_manifest["source_observation_coverage"]
+    assert observation_coverage["required_observation_roles_by_run"][scifact_source_record["run_id"]] == (
+        scifact_source_record["required_observation_roles"]
+    )
+    assert observation_coverage["required_observation_roles_by_run"][retrieval_source_record["run_id"]] == (
+        retrieval_source_record["required_observation_roles"]
+    )
+    assert benchmark_provenance_manifest["source_observation_coverage"][
+        "observation_coverage_complete"
+    ] is True
+    assert readiness_report["benchmark_source_observation_coverage"] == (
+        benchmark_provenance_manifest["source_observation_coverage"]
+    )
+    assert vertical_gap_audit["benchmark_source_observation_coverage"] == (
+        benchmark_provenance_manifest["source_observation_coverage"]
+    )
+    assert benchmark_provenance_manifest["snapshot_metadata"]["total_query_count"] >= 48
+    assert benchmark_provenance_manifest["snapshot_metadata"]["total_evidence_annotation_count"] >= 32
+    assert benchmark_provenance_manifest["snapshot_metadata"]["total_retrieval_relevance_count"] >= 32
+    assert all(
+        record["query_document_evidence_schema"]["schema_complete"]
+        for record in benchmark_provenance_manifest["benchmark_source_records"]
+    )
+    assert benchmark_provenance_manifest["schema_coverage"]["schema_coverage_complete"] is True
+    assert benchmark_provenance_manifest["schema_coverage"]["schema_blockers"] == []
+    assert readiness_report["benchmark_schema_coverage"]["schema_complete_run_ids"] == (
+        benchmark_provenance_manifest["schema_coverage"]["schema_complete_run_ids"]
+    )
+    assert readiness_report["benchmark_schema_coverage"]["schema_coverage_complete"] == (
+        benchmark_provenance_manifest["schema_coverage"]["schema_coverage_complete"]
+    )
+    assert vertical_gap_audit["benchmark_schema_coverage"] == (
+        benchmark_provenance_manifest["schema_coverage"]
+    )
     compiler_evidence = json.loads(
         Path(claim_evidence_vertical.trace.project_submission_manifest_path).parent.joinpath(
             "../paper_sources/paper_compiler_evidence.json"
         ).resolve().read_text(encoding="utf-8")
     )
     assert compiler_evidence["section_coverage"]["complete"] is True
+    assert compiler_evidence["complete"] is True
+    assert compiler_evidence["blockers"] == []
+    assert compiler_evidence["compile_readiness"]["pdf_blockers"] == (
+        compiler_evidence["compile_environment_limitations"]
+    )
+    if compiler_evidence["compile_environment_limitations"]:
+        assert compiler_evidence["compile_readiness"][
+            "source_package_auditable_without_pdf"
+        ] is True
+    assert any(
+        "independent source datasets" in item
+        for item in compiler_evidence["scientific_evidence_limitations"]
+    )
     assert {
         "Research Question",
         "Benchmark And Data",
@@ -9662,14 +11381,60 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         claim_evidence_vertical.trace.project_supported_core_claim_count
     )
     assert compiler_evidence["statistics_coverage"]["failure_case_count"] > 0
+    assert compiler_evidence["benchmark_provenance_coverage"][
+        "benchmark_final_publish_candidate_ready"
+    ] is True
+    assert compiler_evidence["benchmark_provenance_coverage"][
+        "final_publish_candidate_coverage"
+    ] == final_candidate_coverage
+    assert compiler_evidence["benchmark_provenance_coverage"][
+        "benchmark_source_independence_ready"
+    ] is False
+    assert compiler_evidence["benchmark_provenance_coverage"][
+        "benchmark_source_independence_audit"
+    ] == source_independence_audit
     assert compiler_evidence["execution_coverage"]["complete"] is True
     assert compiler_evidence["execution_coverage"]["execution_evidence_ledger"]["complete_entry_count"] == 2
+    publication_manifest = json.loads(
+        Path(claim_evidence_vertical.trace.project_publication_manifest_path).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert publication_manifest["negative_evidence_report_ref"] == (
+        "submission_package/negative_evidence_report.json"
+    )
+    assert publication_manifest["phase6_negative_evidence_coverage"] == (
+        readiness_report["phase6_negative_evidence_audit"]
+    )
+    assert expected_phase6_covered_categories.issubset(
+        set(publication_manifest["negative_evidence_categories"])
+    )
+    assert "failed_or_blocked_repair_attempt" in publication_manifest["negative_evidence_categories"]
+    assert publication_manifest["readiness_decision"]["phase6_negative_evidence_coverage"] == (
+        readiness_report["phase6_negative_evidence_audit"]
+    )
+    assert publication_manifest["readiness_decision"]["negative_evidence_report_ref"] == (
+        "submission_package/negative_evidence_report.json"
+    )
+    assert publication_manifest["readiness_decision"]["negative_evidence_categories"] == (
+        publication_manifest["negative_evidence_categories"]
+    )
+    assert "## Negative Evidence" in Path(
+        claim_evidence_vertical.trace.project_paper_path
+    ).read_text(encoding="utf-8")
+    assert "Phase 6 negative evidence categories" in Path(
+        claim_evidence_vertical.trace.project_paper_path
+    ).read_text(encoding="utf-8")
     assert any(
-        "Cached SciFact-style Claim Evidence Evaluation" in material
+        "Phase 6 negative evidence categories" in material
+        for material in claim_evidence_vertical.trace.failure_analysis_materials
+    )
+    assert any(
+        "original benchmark records" in material
         for material in claim_evidence_vertical.trace.case_study_materials
     )
     assert any(
-        "BEIR-style retrieval run" in material
+        "repository-local SciFact retrieval-view run" in material
         for material in claim_evidence_vertical.trace.case_study_materials
     )
     assert any(

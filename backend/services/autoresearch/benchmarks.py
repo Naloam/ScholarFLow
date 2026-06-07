@@ -99,19 +99,81 @@ def _ir_benchmark(
     }
 
 
+def _source_metadata_value(
+    dataset_payload: dict[str, Any],
+    *,
+    source_key: str,
+    canonical_key: str,
+    fallback: Any = None,
+) -> Any:
+    value = dataset_payload.get(source_key)
+    if value is None or str(value).strip() == "":
+        value = dataset_payload.get(canonical_key)
+    if value is None or str(value).strip() == "":
+        value = fallback
+    return value
+
+
+def _source_locator(source: BenchmarkSource, dataset_payload: dict[str, Any]) -> str | None:
+    return (
+        dataset_payload.get("source_url")
+        or dataset_payload.get("source_locator")
+        or source.url
+        or source.file_path
+    )
+
+
+def _source_fingerprint(dataset_payload: dict[str, Any]) -> str:
+    return str(
+        dataset_payload.get("source_fingerprint")
+        or dataset_payload.get("fingerprint")
+        or dataset_source_fingerprint(dataset_payload)
+    )
+
+
 def benchmark_source_publication_eligibility(
     source: BenchmarkSource,
     dataset_payload: dict[str, Any],
 ) -> dict[str, Any]:
     source_name = (source.name or "").lower()
-    source_url = (dataset_payload.get("source_url") or source.url or source.file_path or "").lower()
-    source_dataset_id = (source.dataset_id or "").lower()
-    source_license = (source.license or "").lower()
+    source_locator = _source_locator(source, dataset_payload)
+    source_url = str(source_locator or "").lower()
+    source_dataset_id = str(
+        _source_metadata_value(
+            dataset_payload,
+            source_key="source_dataset_id",
+            canonical_key="dataset_id",
+            fallback=source.dataset_id,
+        )
+        or ""
+    )
+    source_revision = str(
+        _source_metadata_value(
+            dataset_payload,
+            source_key="source_revision",
+            canonical_key="revision",
+            fallback=source.revision,
+        )
+        or ""
+    )
+    source_license = str(
+        _source_metadata_value(
+            dataset_payload,
+            source_key="source_license",
+            canonical_key="license",
+            fallback=source.license,
+        )
+        or ""
+    )
+    source_dataset_id_lower = source_dataset_id.lower()
+    source_license_lower = source_license.lower()
     dataset_name = str(dataset_payload.get("name") or "").lower()
+    source_content_origin = str(dataset_payload.get("source_content_origin") or "").strip()
+    source_content_note = str(dataset_payload.get("source_content_note") or "").strip()
     total_examples = len(dataset_payload.get("train", [])) + len(dataset_payload.get("test", []))
     train_size = len(dataset_payload.get("train", []))
     test_size = len(dataset_payload.get("test", []))
-    fingerprint = dataset_source_fingerprint(dataset_payload)
+    fingerprint = _source_fingerprint(dataset_payload)
     fixture_signals = (
         "fixture",
         "toy",
@@ -119,18 +181,18 @@ def benchmark_source_publication_eligibility(
         "cached-fixture",
         "synthetic",
     )
-    source_class = "remote_real"
+    source_class = str(dataset_payload.get("source_class") or "remote_real").strip() or "remote_real"
     blockers: list[str] = []
     if source.kind == "builtin":
         source_class = "toy_builtin"
         blockers.append("Built-in toy benchmarks cannot be publication-grade.")
-    if source_dataset_id.startswith("scholarflow:"):
+    if source_dataset_id_lower.startswith("scholarflow:"):
         source_class = "cached_fixture"
         blockers.append("ScholarFlow internal benchmark fixtures cannot be publication-grade.")
     if source_url.startswith("file://scholarflow-fixtures"):
         source_class = "cached_fixture"
         blockers.append("file://scholarflow-fixtures snapshots are deterministic fixtures, not publication-grade evidence.")
-    if any(signal in source_license for signal in fixture_signals):
+    if any(signal in source_license_lower for signal in fixture_signals):
         source_class = "cached_fixture"
         blockers.append("Benchmark license/provenance marks this source as fixture or synthetic.")
     if "fixture" in source_name or dataset_name.startswith("toy "):
@@ -140,17 +202,25 @@ def benchmark_source_publication_eligibility(
         source_class = "frozen_snapshot"
     if source.kind in {"remote_csv", "remote_json", "huggingface"} and source_class == "remote_real":
         source_class = "imported_real" if source.file_path else "remote_real"
+    if source_content_origin in {
+        "schema_derived",
+        "schema_derived_template",
+        "template_generated",
+    }:
+        blockers.append(
+            "Benchmark content is schema-derived/template-generated and not imported from original benchmark records."
+        )
     if total_examples < 20:
         blockers.append("Benchmark has fewer than 20 normalized examples.")
     if train_size <= 0 or test_size <= 0:
         blockers.append("Benchmark must persist non-empty train and test splits.")
-    if not (source.url or source.file_path or dataset_payload.get("source_url")):
+    if not source_locator:
         blockers.append("Benchmark provenance requires source URL or frozen local file path.")
-    if not source.dataset_id:
+    if not source_dataset_id:
         blockers.append("Benchmark provenance requires dataset_id.")
-    if not source.revision:
+    if not source_revision:
         blockers.append("Benchmark provenance requires revision.")
-    if not source.license:
+    if not source_license:
         blockers.append("Benchmark provenance requires license.")
     if not fingerprint:
         blockers.append("Benchmark provenance requires source fingerprint.")
@@ -173,19 +243,31 @@ def benchmark_source_publication_eligibility(
         "provenance_complete": provenance_complete,
         "blockers": deduped_blockers,
         "checks": {
-            "has_source_locator": bool(source.url or source.file_path or dataset_payload.get("source_url")),
-            "has_dataset_id": bool(source.dataset_id),
-            "has_revision": bool(source.revision),
-            "has_license": bool(source.license),
+            "has_source_locator": bool(source_locator),
+            "has_dataset_id": bool(source_dataset_id),
+            "has_revision": bool(source_revision),
+            "has_license": bool(source_license),
             "has_fingerprint": bool(fingerprint),
             "has_train_test_split": train_size > 0 and test_size > 0,
             "meets_min_examples": total_examples >= 20,
             "not_internal_fixture": source_class not in {"toy_builtin", "cached_fixture"},
+            "content_imported_from_original_records": source_content_origin
+            not in {"schema_derived", "schema_derived_template", "template_generated"},
         },
         "sample_count": total_examples,
         "train_size": train_size,
         "test_size": test_size,
+        "source_locator": source_locator,
+        "source_dataset_id": source_dataset_id or None,
+        "source_revision": source_revision or None,
+        "source_license": source_license or None,
         "source_fingerprint": fingerprint,
+        "source_content_origin": source_content_origin,
+        "source_content_note": source_content_note,
+        "source_parent_dataset_id": dataset_payload.get("source_parent_dataset_id"),
+        "source_parent_snapshot_fingerprint": dataset_payload.get(
+            "source_parent_snapshot_fingerprint"
+        ),
     }
 
 
@@ -2176,6 +2258,16 @@ def build_experiment_spec(
                 goal="maximize",
                 description="Accuracy on not-enough-info claims.",
             ),
+            MetricSpec(
+                name="repair_precision",
+                goal="maximize",
+                description="Precision for routing claims or retrieval misses to repair actions when a repair router is active.",
+            ),
+            MetricSpec(
+                name="repair_recall",
+                goal="maximize",
+                description="Recall for routing claims or retrieval misses that require repair when a repair router is active.",
+            ),
         ]
         ablations = [
             AblationSpec(
@@ -2325,6 +2417,7 @@ def build_experiment_spec(
 
     eligibility = benchmark_source_publication_eligibility(resolved.source, dataset_payload)
     verification_label_space = list(dataset_payload.get("verification_label_space") or [])
+    source_locator = eligibility.get("source_locator")
     return ExperimentSpec(
         task_family=task_family,
         benchmark_name=resolved.benchmark_name,
@@ -2343,11 +2436,13 @@ def build_experiment_spec(
             supports_claim_verification=bool(dataset_payload.get("supports_claim_verification")),
             verification_label_space=verification_label_space,
             source_kind=resolved.source.kind,
-            source_url=dataset_payload.get("source_url") or resolved.source.url,
-            source_dataset_id=resolved.source.dataset_id,
-            source_revision=resolved.source.revision,
-            source_license=resolved.source.license,
+            source_url=str(source_locator) if source_locator else None,
+            source_dataset_id=eligibility.get("source_dataset_id"),
+            source_revision=eligibility.get("source_revision"),
+            source_license=eligibility.get("source_license"),
             source_fingerprint=eligibility["source_fingerprint"],
+            source_content_origin=eligibility.get("source_content_origin") or None,
+            source_content_note=eligibility.get("source_content_note") or None,
             source_class=eligibility["source_class"],
             provenance_complete=eligibility["provenance_complete"],
             publication_grade_blockers=eligibility["blockers"],

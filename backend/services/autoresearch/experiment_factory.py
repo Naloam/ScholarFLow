@@ -28,10 +28,12 @@ from schemas.autoresearch import (
     AutoResearchRunRead,
     ConfidenceIntervalSummary,
     ExecutionBackendSpec,
+    NegativeResultRecord,
     ResultArtifact,
     ResultTable,
     SeedArtifactResult,
     SignificanceTestResult,
+    SweepEvaluationResult,
     SystemMetricResult,
 )
 from services.autoresearch.idea_brief import selected_hypothesis_from_brief
@@ -808,18 +810,25 @@ def _query_metric_record(example: dict[str, Any], ranked_ids: list[str]) -> dict
         ),
     }
     failure_modes: list[str] = []
+    negative_evidence_categories: list[str] = []
     if retrieval_applicable and record["recall_at_1"] < 1.0:
         failure_modes.append("top_rank_not_relevant")
     if retrieval_applicable and record["recall_at_10"] < 1.0:
         failure_modes.append("missing_relevant_evidence_top_10")
+        negative_evidence_categories.append("retrieval_miss")
     if retrieval_applicable and record["evidence_coverage"] < 1.0:
         failure_modes.append("incomplete_gold_evidence_coverage")
+        negative_evidence_categories.append("retrieval_miss")
 
     gold_label = _normalize_claim_label(example.get("claim_label"))
     if gold_label:
         predicted_label = _predict_claim_label(example, ranked_ids)
         gold_unsupported = gold_label != "supported"
         predicted_unsupported = predicted_label != "supported"
+        if gold_label == "refuted":
+            negative_evidence_categories.append("contradiction_refutation_ambiguity")
+        if gold_label == "not_enough_info":
+            negative_evidence_categories.append("insufficient_evidence_case")
         record.update(
             {
                 "claim_label": gold_label,
@@ -830,17 +839,54 @@ def _query_metric_record(example: dict[str, Any], ranked_ids: list[str]) -> dict
                 "unsupported_true_positive": 1.0 if gold_unsupported and predicted_unsupported else 0.0,
                 "unsupported_false_positive": 1.0 if not gold_unsupported and predicted_unsupported else 0.0,
                 "unsupported_false_negative": 1.0 if gold_unsupported and not predicted_unsupported else 0.0,
+                "unsupported_precision_applicable": predicted_unsupported,
+                "unsupported_recall_applicable": gold_unsupported,
+                "unsupported_claim_precision": 1.0 if gold_unsupported and predicted_unsupported else 0.0,
+                "unsupported_claim_recall": 1.0 if gold_unsupported and predicted_unsupported else 0.0,
                 "abstention_correct": 1.0 if gold_label == "not_enough_info" and predicted_label == "not_enough_info" else 0.0,
                 "abstention_applicable": 1.0 if gold_label == "not_enough_info" else 0.0,
+            }
+        )
+        gold_repair_needed = bool(
+            gold_unsupported
+            or (retrieval_applicable and record["evidence_coverage"] < 1.0)
+        )
+        predicted_repair_needed = bool(
+            predicted_unsupported
+            or (retrieval_applicable and record["recall_at_10"] < 1.0)
+        )
+        record.update(
+            {
+                "repair_needed": gold_repair_needed,
+                "repair_predicted": predicted_repair_needed,
+                "repair_true_positive": 1.0 if gold_repair_needed and predicted_repair_needed else 0.0,
+                "repair_false_positive": 1.0 if not gold_repair_needed and predicted_repair_needed else 0.0,
+                "repair_false_negative": 1.0 if gold_repair_needed and not predicted_repair_needed else 0.0,
+                "repair_precision_applicable": predicted_repair_needed,
+                "repair_recall_applicable": gold_repair_needed,
+                "repair_precision": 1.0 if gold_repair_needed and predicted_repair_needed else 0.0,
+                "repair_recall": 1.0 if gold_repair_needed and predicted_repair_needed else 0.0,
             }
         )
         if not record["verification_correct"]:
             failure_modes.append("verification_mismatch")
         if record["unsupported_false_negative"]:
             failure_modes.append("unsupported_claim_missed")
+            negative_evidence_categories.append("unsupported_claim_false_negative")
         if record["unsupported_false_positive"]:
             failure_modes.append("false_unsupported_alarm")
-    record["failure_modes"] = failure_modes
+            negative_evidence_categories.append("unsupported_claim_false_positive")
+        if gold_label == "not_enough_info" and not record["abstention_correct"]:
+            failure_modes.append("abstention_failure")
+            negative_evidence_categories.append("abstention_failure")
+        if record["repair_false_negative"]:
+            failure_modes.append("repair_router_missed_needed_repair")
+            negative_evidence_categories.append("repair_router_failure")
+        if record["repair_false_positive"]:
+            failure_modes.append("repair_router_false_alarm")
+            negative_evidence_categories.append("repair_router_failure")
+    record["failure_modes"] = _dedupe(failure_modes)
+    record["negative_evidence_categories"] = _dedupe(negative_evidence_categories)
     return record
 
 
@@ -878,8 +924,43 @@ _QUERY_METRIC_FIELDS = {
     "recall_at_10": "recall_at_10",
     "evidence_coverage": "evidence_coverage",
     "verification_accuracy": "verification_correct",
+    "unsupported_claim_precision": "unsupported_claim_precision",
+    "unsupported_claim_recall": "unsupported_claim_recall",
     "abstention_accuracy": "abstention_correct",
+    "repair_precision": "repair_precision",
+    "repair_recall": "repair_recall",
 }
+
+
+_QUERY_METRIC_APPLICABILITY_FIELDS = {
+    "mrr": "retrieval_applicable",
+    "recall_at_1": "retrieval_applicable",
+    "ndcg_at_10": "retrieval_applicable",
+    "recall_at_10": "retrieval_applicable",
+    "evidence_coverage": "retrieval_applicable",
+    "verification_accuracy": "claim_label",
+    "unsupported_claim_precision": "unsupported_precision_applicable",
+    "unsupported_claim_recall": "unsupported_recall_applicable",
+    "abstention_accuracy": "abstention_applicable",
+    "repair_precision": "repair_precision_applicable",
+    "repair_recall": "repair_recall_applicable",
+}
+
+
+def _diagnostic_metric_values(metric: str, diagnostics: list[dict[str, Any]]) -> list[float]:
+    field = _QUERY_METRIC_FIELDS.get(metric)
+    applicability_field = _QUERY_METRIC_APPLICABILITY_FIELDS.get(metric)
+    values: list[float] = []
+    for record in diagnostics:
+        if not field or field not in record:
+            continue
+        if applicability_field == "claim_label":
+            if not record.get("claim_label"):
+                continue
+        elif applicability_field and not record.get(applicability_field):
+            continue
+        values.append(float(record.get(field) or 0.0))
+    return values
 
 
 def _aggregate_from_diagnostics(
@@ -893,12 +974,7 @@ def _aggregate_from_diagnostics(
     max_metrics: dict[str, float] = {}
     confidence_intervals: dict[str, ConfidenceIntervalSummary] = {}
     for metric, value in metrics.items():
-        field = _QUERY_METRIC_FIELDS.get(metric)
-        values = [
-            float(record.get(field) or 0.0)
-            for record in diagnostics
-            if field and field in record
-        ]
+        values = _diagnostic_metric_values(metric, diagnostics)
         if values:
             _mean, std = _mean_std(values)
             std_metrics[metric] = round(std, 4)
@@ -964,6 +1040,9 @@ def _evaluate_ranker(
         unsupported_tp = sum(float(record["unsupported_true_positive"]) for record in verification_records)
         unsupported_fp = sum(float(record["unsupported_false_positive"]) for record in verification_records)
         unsupported_fn = sum(float(record["unsupported_false_negative"]) for record in verification_records)
+        repair_tp = sum(float(record.get("repair_true_positive") or 0.0) for record in verification_records)
+        repair_fp = sum(float(record.get("repair_false_positive") or 0.0) for record in verification_records)
+        repair_fn = sum(float(record.get("repair_false_negative") or 0.0) for record in verification_records)
         abstention_denominator = sum(float(record["abstention_applicable"]) for record in verification_records)
         metrics.update(
             {
@@ -985,6 +1064,16 @@ def _evaluate_ranker(
                         4,
                     )
                     if abstention_denominator
+                    else 0.0
+                ),
+                "repair_precision": (
+                    round(repair_tp / (repair_tp + repair_fp), 4)
+                    if repair_tp + repair_fp
+                    else 0.0
+                ),
+                "repair_recall": (
+                    round(repair_tp / (repair_tp + repair_fn), 4)
+                    if repair_tp + repair_fn
                     else 0.0
                 ),
             }
@@ -1049,38 +1138,334 @@ def run_cached_claim_evidence_factory_backend(
     def idf(token: str) -> float:
         return math.log((document_count + 1) / (document_frequency.get(token, 0) + 1)) + 1.0
 
-    def score(example: dict[str, Any], text: str, *, bigram: bool = False, ledger: bool = False) -> float:
+    def score(
+        example: dict[str, Any],
+        text: str,
+        *,
+        bigram: bool = False,
+        ledger: bool = False,
+        tfidf: bool = False,
+        repair_router: bool = True,
+    ) -> float:
         query_tokens = _tokenize(str(example.get("query") or ""))
         doc_tokens = _tokenize(text)
         doc_token_set = set(doc_tokens)
-        total = sum(idf(token) for token in query_tokens if token in doc_token_set)
+        doc_counts = Counter(doc_tokens)
+        total = sum(
+            (
+                idf(token) * (1.0 + math.log(doc_counts.get(token, 1)))
+                if tfidf
+                else idf(token)
+            )
+            for token in query_tokens
+            if token in doc_token_set
+        )
         if bigram:
             query_bigrams = set(zip(query_tokens, query_tokens[1:]))
             doc_bigrams = set(zip(doc_tokens, doc_tokens[1:]))
             total += 0.5 * len(query_bigrams & doc_bigrams)
         if ledger:
             total += 0.35 * len((set(query_tokens) & doc_token_set) & cue_terms)
+        if repair_router and {"unsupported", "claim", "not"} & set(query_tokens):
+            if doc_token_set & {"unsupported", "refute", "refuted", "contradict", "contradicted", "not"}:
+                total += 0.25
         return total
 
-    def stable_rank(example: dict[str, Any], *, bigram: bool = False, ledger: bool = False) -> list[str]:
+    def stable_rank(
+        example: dict[str, Any],
+        *,
+        bigram: bool = False,
+        ledger: bool = False,
+        tfidf: bool = False,
+        repair_router: bool = True,
+    ) -> list[str]:
         texts = _candidate_texts(example)
         return sorted(
             _candidate_ids(example),
-            key=lambda doc_id: (-score(example, texts.get(doc_id, ""), bigram=bigram, ledger=ledger), doc_id),
+            key=lambda doc_id: (
+                -score(
+                    example,
+                    texts.get(doc_id, ""),
+                    bigram=bigram,
+                    ledger=ledger,
+                    tfidf=tfidf,
+                    repair_router=repair_router,
+                ),
+                doc_id,
+            ),
         )
 
+    method_configs: dict[str, dict[str, Any]] = {
+        "random_ranker": {
+            "ladder_role": "random_ranker",
+            "ranker": "deterministic_id_order",
+            "uses_idf": False,
+            "uses_bigram": False,
+            "uses_ledger": False,
+            "uses_verification": False,
+            "repair_router_enabled": False,
+        },
+        "overlap_ranker": {
+            "ladder_role": "lexical_overlap",
+            "ranker": "idf_weighted_token_overlap",
+            "uses_idf": True,
+            "uses_bigram": False,
+            "uses_ledger": False,
+            "uses_verification": True,
+            "repair_router_enabled": True,
+        },
+        "bm25_ranker": {
+            "ladder_role": "tfidf_bm25_style_retrieval",
+            "ranker": "deterministic_tfidf_bm25_style_overlap",
+            "uses_idf": True,
+            "uses_tfidf": True,
+            "uses_bigram": False,
+            "uses_ledger": False,
+            "uses_verification": True,
+            "repair_router_enabled": True,
+        },
+        "bigram_ranker": {
+            "ladder_role": "phrase_or_bigram_aware_retrieval",
+            "ranker": "idf_bigram_overlap",
+            "uses_idf": True,
+            "uses_bigram": True,
+            "uses_ledger": False,
+            "uses_verification": True,
+            "repair_router_enabled": True,
+        },
+        "ledger_aware_ranker": {
+            "ladder_role": "ledger_aware_retrieval",
+            "ranker": "idf_bigram_overlap_with_ledger_cues",
+            "uses_idf": True,
+            "uses_bigram": True,
+            "uses_ledger": True,
+            "uses_verification": True,
+            "repair_router_enabled": True,
+        },
+        "abstention_repair_router": {
+            "ladder_role": "abstention_or_repair_router",
+            "ranker": "ledger_aware_ranker_with_abstention_repair_routing",
+            "uses_idf": True,
+            "uses_bigram": True,
+            "uses_ledger": True,
+            "uses_verification": True,
+            "repair_router_enabled": True,
+            "abstains_on_not_enough_info": True,
+        },
+        "no_ledger_ablation": {
+            "ladder_role": "no_ledger_ablation",
+            "ranker": "bigram_ranker_without_ledger_cues",
+            "uses_idf": True,
+            "uses_bigram": True,
+            "uses_ledger": False,
+            "uses_verification": True,
+            "repair_router_enabled": True,
+        },
+        "retrieval_only_no_verification_ablation": {
+            "ladder_role": "retrieval_only_no_verification_ablation",
+            "ranker": "ledger_aware_ranker_without_verification_metrics",
+            "uses_idf": True,
+            "uses_bigram": True,
+            "uses_ledger": True,
+            "uses_verification": False,
+            "repair_router_enabled": True,
+        },
+        "repair_router_disabled_ablation": {
+            "ladder_role": "repair_router_disabled_ablation",
+            "ranker": "ledger_aware_ranker_without_repair_router",
+            "uses_idf": True,
+            "uses_bigram": True,
+            "uses_ledger": True,
+            "uses_verification": True,
+            "repair_router_enabled": False,
+        },
+    }
     systems: list[tuple[str, Any]] = [
         ("random_ranker", lambda example: sorted(_candidate_ids(example))),
         ("overlap_ranker", lambda example: stable_rank(example)),
+        ("bm25_ranker", lambda example: stable_rank(example, tfidf=True)),
         ("bigram_ranker", lambda example: stable_rank(example, bigram=True)),
         ("ledger_aware_ranker", lambda example: stable_rank(example, bigram=True, ledger=True)),
+        (
+            "abstention_repair_router",
+            lambda example: stable_rank(example, bigram=True, ledger=True),
+        ),
+        ("no_ledger_ablation", lambda example: stable_rank(example, bigram=True)),
+        (
+            "retrieval_only_no_verification_ablation",
+            lambda example: stable_rank(example, bigram=True, ledger=True),
+        ),
+        (
+            "repair_router_disabled_ablation",
+            lambda example: stable_rank(example, bigram=True, ledger=True, repair_router=False),
+        ),
     ]
-    evaluated = [
-        _evaluate_ranker(system=system, examples=examples, ranking_fn=ranking_fn)
-        for system, ranking_fn in systems
-    ]
+    verification_metrics = {
+        "verification_accuracy",
+        "unsupported_claim_precision",
+        "unsupported_claim_recall",
+        "abstention_accuracy",
+        "repair_precision",
+        "repair_recall",
+    }
+    repair_metrics = {"repair_precision", "repair_recall"}
+
+    def evaluate_examples(
+        split_examples: list[dict[str, Any]],
+        *,
+        note_tag: str,
+    ) -> list[tuple[SystemMetricResult, list[dict[str, Any]]]]:
+        raw = [
+            _evaluate_ranker(system=system, examples=split_examples, ranking_fn=ranking_fn)
+            for system, ranking_fn in systems
+        ]
+        filtered = []
+        for result, diagnostics in raw:
+            config = method_configs.get(result.system, {})
+            metrics = dict(result.metrics)
+            if not config.get("uses_verification", True):
+                for metric in verification_metrics:
+                    metrics.pop(metric, None)
+            if not config.get("repair_router_enabled", False):
+                for metric in repair_metrics:
+                    metrics.pop(metric, None)
+            filtered.append(
+                (
+                    result.model_copy(
+                        update={
+                            "metrics": metrics,
+                            "notes": "; ".join(
+                                [
+                                    *([result.notes] if result.notes else []),
+                                    f"ladder_role={method_configs.get(result.system, {}).get('ladder_role')}",
+                                    "deterministic_cached_execution=true",
+                                    note_tag,
+                                ]
+                            ),
+                        }
+                    ),
+                    diagnostics,
+                )
+            )
+        return filtered
+
+    evaluated = evaluate_examples(examples, note_tag="benchmark_split=test")
     system_results = [result for result, _diagnostics in evaluated]
     diagnostics_by_system = {result.system: diagnostics for result, diagnostics in evaluated}
+    split_evaluations: list[dict[str, Any]] = []
+    split_sweeps: list[SweepEvaluationResult] = []
+    split_inputs = [
+        ("train", train_examples),
+        ("test", examples),
+    ]
+    for split_label, split_examples in split_inputs:
+        split_usable = [
+            item
+            for item in split_examples
+            if isinstance(item, dict) and item.get("query") and item.get("candidates")
+        ]
+        if not split_usable:
+            continue
+        split_evaluated = evaluate_examples(
+            split_usable,
+            note_tag=f"benchmark_split={split_label}",
+        )
+        split_system_results = [result for result, _diagnostics in split_evaluated]
+        split_aggregate_results = [
+            _aggregate_from_diagnostics(
+                system=result.system,
+                metrics=result.metrics,
+                diagnostics=diagnostics,
+            )
+            for result, diagnostics in split_evaluated
+        ]
+        split_best = max(
+            split_system_results,
+            key=lambda item: item.metrics.get("mrr", 0.0),
+        )
+        split_objective = next(
+            (item for item in split_system_results if item.system == "ledger_aware_ranker"),
+            split_best,
+        )
+        split_payload = {
+            "split": split_label,
+            "example_count": len(split_usable),
+            "best_system": split_best.system,
+            "objective_system": split_objective.system,
+            "objective_score": split_objective.metrics.get("mrr"),
+            "system_results": [
+                result.model_dump(mode="json") for result in split_system_results
+            ],
+            "aggregate_system_results": [
+                result.model_dump(mode="json") for result in split_aggregate_results
+            ],
+            "diagnostic_count_by_system": {
+                result.system: len(diagnostics)
+                for result, diagnostics in split_evaluated
+            },
+        }
+        split_evaluations.append(
+            {**split_payload, "split_fingerprint": _fingerprint(split_payload)}
+        )
+        split_sweeps.append(
+            SweepEvaluationResult(
+                label=f"benchmark_split_{split_label}",
+                params={
+                    "split": split_label,
+                    "split_kind": "benchmark_payload_split",
+                    "example_count": len(split_usable),
+                },
+                description=(
+                    "Deterministic split-level evaluation over a repository-local "
+                    f"{split_label} benchmark split."
+                ),
+                status="done",
+                best_system=split_best.system,
+                objective_system=split_objective.system,
+                objective_score_mean=split_objective.metrics.get("mrr"),
+                objective_score_std=0.0,
+                objective_score_confidence_interval=(
+                    next(
+                        (
+                            aggregate.confidence_intervals.get("mrr")
+                            for aggregate in split_aggregate_results
+                            if aggregate.system == split_objective.system
+                        ),
+                        None,
+                    )
+                ),
+                aggregate_system_results=split_aggregate_results,
+                seed_count=1,
+                successful_seed_count=1,
+            )
+        )
+    method_outputs = {
+        result.system: {
+            "system": result.system,
+            "method_config": method_configs.get(result.system, {}),
+            "metrics": dict(result.metrics),
+            "diagnostic_count": len(diagnostics_by_system.get(result.system, [])),
+            "failure_case_count": sum(
+                1
+                for record in diagnostics_by_system.get(result.system, [])
+                if record.get("failure_modes")
+            ),
+            "negative_case_ids": [
+                str(record.get("claim_id") or record.get("query"))
+                for record in diagnostics_by_system.get(result.system, [])
+                if record.get("failure_modes")
+            ],
+            "ranked_outputs": [
+                {
+                    "claim_id": record.get("claim_id"),
+                    "ranked_ids_at_10": record.get("ranked_ids_at_10", []),
+                    "failure_modes": record.get("failure_modes", []),
+                }
+                for record in diagnostics_by_system.get(result.system, [])[:50]
+            ],
+        }
+        for result in system_results
+    }
     aggregate_results = [
         _aggregate_from_diagnostics(
             system=result.system,
@@ -1120,6 +1505,7 @@ def run_cached_claim_evidence_factory_backend(
             "relevant_ids": record.get("relevant_ids"),
             "ranked_ids_at_10": record.get("ranked_ids_at_10"),
             "failure_modes": record.get("failure_modes"),
+            "negative_evidence_categories": record.get("negative_evidence_categories", []),
         }
         for record in objective_diagnostics
     ]
@@ -1134,7 +1520,7 @@ def run_cached_claim_evidence_factory_backend(
         ]
         for result in system_results
     ]
-    baseline = next((item for item in system_results if item.system == "overlap_ranker"), system_results[0])
+    baseline = next((item for item in system_results if item.system == "bm25_ranker"), system_results[0])
     delta = round(objective.metrics.get("mrr", 0.0) - baseline.metrics.get("mrr", 0.0), 4)
     objective_mrr_by_claim = {
         str(record.get("claim_id") or record.get("query")): float(record.get("reciprocal_rank") or 0.0)
@@ -1154,13 +1540,52 @@ def run_cached_claim_evidence_factory_backend(
         for claim_id, objective_mrr in objective_mrr_by_claim.items()
     ]
     sign_test = _exact_sign_test_greater([item["delta"] for item in paired_query_comparisons])
-    adjusted_p_value = min(1.0, round(sign_test["p_value"] * 3, 6))
+    adjusted_p_value = min(1.0, round(sign_test["p_value"] * max(len(systems) - 1, 1), 6))
+    non_improving_query_count = sum(
+        1 for item in paired_query_comparisons if item["delta"] <= 0
+    )
+    negative_results: list[NegativeResultRecord] = []
+    if non_improving_query_count:
+        negative_results.append(
+            NegativeResultRecord(
+                scope="comparison",
+                subject="ledger_aware_ranker",
+                reference=baseline.system,
+                metric="per_query_mrr_delta",
+                observed_score=float(non_improving_query_count),
+                reference_score=float(len(paired_query_comparisons)),
+                delta=round(
+                    non_improving_query_count / max(len(paired_query_comparisons), 1),
+                    4,
+                ),
+                detail=(
+            f"Ledger-aware retrieval did not improve over {baseline.system} on "
+                    f"{non_improving_query_count}/{len(paired_query_comparisons)} paired query comparison(s)."
+                ),
+            )
+        )
+    if adjusted_p_value >= 0.05:
+        negative_results.append(
+            NegativeResultRecord(
+                scope="comparison",
+                subject="ledger_aware_ranker",
+                reference=baseline.system,
+                metric="paired_sign_flip_exact",
+                observed_score=sign_test["p_value"],
+                reference_score=0.05,
+                delta=round(sign_test["p_value"] - 0.05, 6),
+                detail=(
+                    "Ledger-aware retrieval did not reach corrected statistical significance "
+                    f"against {baseline.system} under the deterministic exact sign test."
+                ),
+            )
+        )
     return ResultArtifact(
         status="done",
         summary=(
-            "Cached claim-evidence benchmark execution evaluated random, lexical, bigram, "
+            "Cached claim-evidence benchmark execution evaluated random, lexical, BM25-style, bigram, "
             f"and ledger-aware rankers on `{benchmark_payload.get('name') or 'cached_claim_evidence_benchmark'}`. "
-            f"Ledger-aware MRR={objective.metrics.get('mrr', 0.0):.4f}; delta vs overlap={delta:.4f}."
+            f"Ledger-aware MRR={objective.metrics.get('mrr', 0.0):.4f}; delta vs {baseline.system}={delta:.4f}."
         ),
         key_findings=[
             f"Executed {len(examples)} cached claim-evidence query example(s) without live network access.",
@@ -1173,6 +1598,7 @@ def run_cached_claim_evidence_factory_backend(
         objective_score=objective.metrics.get("mrr"),
         system_results=system_results,
         aggregate_system_results=aggregate_results,
+        negative_results=negative_results,
         per_seed_results=[
             SeedArtifactResult(
                 seed=0,
@@ -1184,6 +1610,7 @@ def run_cached_claim_evidence_factory_backend(
                 system_results=system_results,
             )
         ],
+        sweep_results=split_sweeps,
         significance_tests=[
             SignificanceTestResult(
                 scope="system",
@@ -1191,7 +1618,7 @@ def run_cached_claim_evidence_factory_backend(
                 candidate=objective.system,
                 comparator=baseline.system,
                 comparison_family="cached_claim_evidence_ladder",
-                family_size=3,
+                family_size=max(len(systems) - 1, 1),
                 alternative="greater",
                 method="paired_sign_flip_exact",
                 p_value=sign_test["p_value"],
@@ -1229,7 +1656,25 @@ def run_cached_claim_evidence_factory_backend(
             "objective_failure_cases": objective_failures,
             "paired_query_comparisons": paired_query_comparisons,
             "paired_sign_test": sign_test,
+            "split_evaluations": split_evaluations,
             "retrieval_evidence_ledger": retrieval_evidence_ledger,
+            "method_configs": method_configs,
+            "method_outputs": method_outputs,
+            "method_ladder": [
+                {
+                    "system": system,
+                    "ladder_role": config.get("ladder_role"),
+                    "output_artifact_ref": f"run_result_artifact_json:method_outputs:{system}",
+                    "metrics_artifact_ref": f"run_result_artifact_json:system_results:{system}",
+                    "negative_cases_artifact_ref": f"run_result_artifact_json:method_outputs:{system}:negative_case_ids",
+                    "lineage_refs": [
+                        "experiment_factory_plan_json",
+                        "run_result_artifact_json",
+                        "run_evidence_ledger_json",
+                    ],
+                }
+                for system, config in method_configs.items()
+            ],
         },
     )
 
@@ -1383,6 +1828,18 @@ def build_evidence_ledger(
         if not isinstance(record, dict):
             continue
         support_status = record.get("support_status")
+        categories = _dedupe(
+            [
+                str(item)
+                for item in record.get("negative_evidence_categories", [])
+                if item
+            ]
+        )
+        category_suffix = (
+            f" Negative evidence categories: {', '.join(categories)}."
+            if categories
+            else ""
+        )
         entries.append(
             AutoResearchEvidenceLedgerEntryRead(
                 evidence_id=f"evidence_retrieval_{index}_{_slug(str(record.get('claim_id') or record.get('query') or index))}",
@@ -1391,6 +1848,7 @@ def build_evidence_ledger(
                 claim=(
                     "Cached claim-evidence retrieval attached ranked evidence for query "
                     f"`{str(record.get('query') or 'unknown')[:120]}`."
+                    f"{category_suffix}"
                 ),
                 artifact_ref="run_artifact_json",
                 support_status=(

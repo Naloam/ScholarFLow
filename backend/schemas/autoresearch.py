@@ -1073,6 +1073,8 @@ class DatasetSpec(BaseModel):
     source_revision: str | None = None
     source_license: str | None = None
     source_fingerprint: str | None = None
+    source_content_origin: str | None = None
+    source_content_note: str | None = None
     source_class: str | None = None
     provenance_complete: bool = False
     publication_grade_blockers: list[str] = Field(default_factory=list)
@@ -2435,6 +2437,8 @@ class AutoResearchBenchmarkCardRead(BaseModel):
     source_revision: str | None = None
     source_license: str | None = None
     source_fingerprint: str | None = None
+    source_content_origin: str | None = None
+    source_content_note: str | None = None
     source_class: str | None = None
     publication_grade_eligibility: dict[str, Any] = Field(default_factory=dict)
     publication_grade_blockers: list[str] = Field(default_factory=list)
@@ -2831,6 +2835,32 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     project_claim_ceiling: str | None = None
     project_negative_evidence_coverage_complete: bool = False
     project_negative_evidence_count: int = 0
+    project_phase6_negative_evidence_categories: list[str] = Field(default_factory=list)
+    project_phase6_negative_evidence_missing_categories: list[str] = Field(default_factory=list)
+    project_phase6_negative_evidence_required_categories: list[str] = Field(default_factory=list)
+    project_phase6_negative_evidence_category_counts: dict[str, int] = Field(default_factory=dict)
+    project_phase6_negative_evidence_coverage_complete: bool = False
+    project_phase6_negative_evidence_runtime_failure_observed: bool = False
+    project_final_publish_package_artifacts_complete: bool = False
+    project_final_publish_engineering_gap_count: int = 0
+    project_final_publish_scientific_evidence_gap_count: int = 0
+    project_final_publish_engineering_gaps: list[dict[str, Any]] = Field(default_factory=list)
+    project_final_publish_scientific_evidence_gaps: list[dict[str, Any]] = Field(default_factory=list)
+    project_final_publish_blocker_classification: list[dict[str, Any]] = Field(default_factory=list)
+    project_final_publish_phase1_blocked_requirement_ids: list[str] = Field(default_factory=list)
+    project_benchmark_schema_coverage_complete: bool = False
+    project_benchmark_schema_coverage_blockers: list[str] = Field(default_factory=list)
+    project_benchmark_source_observation_coverage_complete: bool = False
+    project_benchmark_source_observation_blockers: list[str] = Field(default_factory=list)
+    project_benchmark_final_publish_candidate_coverage_complete: bool = False
+    project_benchmark_final_publish_candidate_blockers: list[str] = Field(default_factory=list)
+    project_benchmark_source_independence_ready: bool = False
+    project_benchmark_source_independence_blockers: list[str] = Field(default_factory=list)
+    project_benchmark_snapshot_artifact_materialized: bool = False
+    project_benchmark_snapshot_artifact_record_count: int = 0
+    project_benchmark_snapshot_artifact_materialized_count: int = 0
+    project_benchmark_snapshot_artifact_all_required_materialized: bool = False
+    project_benchmark_snapshot_artifact_unmaterialized_run_ids: list[str] = Field(default_factory=list)
     project_kill_criteria: list[str] = Field(default_factory=list)
     project_required_followups: list[str] = Field(default_factory=list)
     end_to_end_package_ready: bool = False
@@ -3894,6 +3924,31 @@ class AutoResearchOperatorPublicationCaseRead(BaseModel):
     statistics_complete: bool = False
     negative_evidence_count: int = 0
     negative_evidence_blocking_count: int = 0
+    phase6_negative_evidence_categories: list[str] = Field(default_factory=list)
+    phase6_negative_evidence_missing_categories: list[str] = Field(default_factory=list)
+    phase6_negative_evidence_required_categories: list[str] = Field(default_factory=list)
+    phase6_negative_evidence_coverage_complete: bool = False
+    phase6_negative_evidence_runtime_failure_observed: bool = False
+    final_publish_package_artifacts_complete: bool = False
+    final_publish_engineering_gap_count: int = 0
+    final_publish_scientific_evidence_gap_count: int = 0
+    final_publish_engineering_gaps: list[dict[str, Any]] = Field(default_factory=list)
+    final_publish_scientific_evidence_gaps: list[dict[str, Any]] = Field(default_factory=list)
+    final_publish_blocker_classification: list[dict[str, Any]] = Field(default_factory=list)
+    final_publish_phase1_blocked_requirement_ids: list[str] = Field(default_factory=list)
+    benchmark_schema_coverage_complete: bool = False
+    benchmark_schema_coverage_blockers: list[str] = Field(default_factory=list)
+    benchmark_source_observation_coverage_complete: bool = False
+    benchmark_source_observation_blockers: list[str] = Field(default_factory=list)
+    benchmark_final_publish_candidate_coverage_complete: bool = False
+    benchmark_final_publish_candidate_blockers: list[str] = Field(default_factory=list)
+    benchmark_source_independence_ready: bool = False
+    benchmark_source_independence_blockers: list[str] = Field(default_factory=list)
+    benchmark_snapshot_artifact_materialized: bool = False
+    benchmark_snapshot_artifact_record_count: int = 0
+    benchmark_snapshot_artifact_materialized_count: int = 0
+    benchmark_snapshot_artifact_all_required_materialized: bool = False
+    benchmark_snapshot_artifact_unmaterialized_run_ids: list[str] = Field(default_factory=list)
     rereview_complete: bool = False
     rereview_recommendations: dict[str, str] = Field(default_factory=dict)
     publish_blockers: list[str] = Field(default_factory=list)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from schemas.autoresearch import (
     AutoResearchBudgetStatus,
@@ -54,6 +55,18 @@ def _read_json(path: str | None) -> dict:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _benchmark_name(run: AutoResearchRunRead) -> str | None:
@@ -553,6 +566,31 @@ def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicatio
     rereview_report = _read_json(project_paper.project_revision_rereview_path)
     offline_audit = _read_json(project_paper.project_offline_publication_audit_path)
     evidence_profile = readiness_report.get("evidence_profile", {})
+    final_publish_gap_audit = offline_audit.get("final_publish_gap_audit", {})
+    if not isinstance(final_publish_gap_audit, dict):
+        final_publish_gap_audit = {}
+    benchmark_schema_coverage = readiness_report.get("benchmark_schema_coverage", {})
+    if not isinstance(benchmark_schema_coverage, dict):
+        benchmark_schema_coverage = {}
+    benchmark_source_observation_coverage = readiness_report.get(
+        "benchmark_source_observation_coverage", {}
+    )
+    if not isinstance(benchmark_source_observation_coverage, dict):
+        benchmark_source_observation_coverage = {}
+    benchmark_source_independence_audit = readiness_report.get(
+        "benchmark_source_independence_audit", {}
+    )
+    if not isinstance(benchmark_source_independence_audit, dict):
+        benchmark_source_independence_audit = {}
+    if not benchmark_source_independence_audit:
+        fallback_source_independence_audit = final_publish_gap_audit.get(
+            "benchmark_source_independence_audit", {}
+        )
+        benchmark_source_independence_audit = (
+            fallback_source_independence_audit
+            if isinstance(fallback_source_independence_audit, dict)
+            else {}
+        )
     generated_assets = [
         item
         for item in submission_manifest.get("generated_assets", [])
@@ -638,6 +676,92 @@ def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicatio
         negative_evidence_count=int(negative_evidence_report.get("entry_count") or 0),
         negative_evidence_blocking_count=int(
             negative_evidence_report.get("blocking_entry_count") or 0
+        ),
+        phase6_negative_evidence_categories=_string_list(
+            negative_evidence_report.get("phase6_categories")
+        ),
+        phase6_negative_evidence_missing_categories=_string_list(
+            negative_evidence_report.get("phase6_missing_categories")
+        ),
+        phase6_negative_evidence_required_categories=_string_list(
+            negative_evidence_report.get("phase6_required_categories")
+        ),
+        phase6_negative_evidence_coverage_complete=bool(
+            negative_evidence_report.get("phase6_coverage_complete")
+        ),
+        phase6_negative_evidence_runtime_failure_observed=bool(
+            negative_evidence_report.get("phase6_runtime_failure_observed")
+        ),
+        final_publish_package_artifacts_complete=bool(
+            final_publish_gap_audit.get("package_artifacts_complete")
+        ),
+        final_publish_engineering_gap_count=int(
+            final_publish_gap_audit.get("engineering_gap_count") or 0
+        ),
+        final_publish_scientific_evidence_gap_count=int(
+            final_publish_gap_audit.get("scientific_evidence_gap_count") or 0
+        ),
+        final_publish_engineering_gaps=_dict_list(
+            final_publish_gap_audit.get("engineering_gaps")
+        ),
+        final_publish_scientific_evidence_gaps=_dict_list(
+            final_publish_gap_audit.get("scientific_evidence_gaps")
+        ),
+        final_publish_blocker_classification=_dict_list(
+            final_publish_gap_audit.get("final_publish_blocker_classification")
+        ),
+        final_publish_phase1_blocked_requirement_ids=_string_list(
+            final_publish_gap_audit.get("phase1_blocked_requirement_ids")
+        ),
+        benchmark_schema_coverage_complete=bool(
+            benchmark_schema_coverage.get("schema_coverage_complete")
+        ),
+        benchmark_schema_coverage_blockers=_string_list(
+            benchmark_schema_coverage.get("schema_blockers")
+        ),
+        benchmark_source_observation_coverage_complete=bool(
+            benchmark_source_observation_coverage.get("observation_coverage_complete")
+        ),
+        benchmark_source_observation_blockers=_string_list(
+            benchmark_source_observation_coverage.get("observation_blockers")
+        ),
+        benchmark_final_publish_candidate_coverage_complete=bool(
+            final_publish_gap_audit.get("benchmark_final_publish_candidate_coverage_complete")
+        ),
+        benchmark_final_publish_candidate_blockers=_string_list(
+            final_publish_gap_audit.get("benchmark_final_publish_candidate_blockers")
+        ),
+        benchmark_source_independence_ready=bool(
+            final_publish_gap_audit.get(
+                "benchmark_source_independence_ready",
+                benchmark_source_independence_audit.get("complete"),
+            )
+        ),
+        benchmark_source_independence_blockers=_string_list(
+            final_publish_gap_audit.get(
+                "benchmark_source_independence_blockers",
+                benchmark_source_independence_audit.get("blockers"),
+            )
+        ),
+        benchmark_snapshot_artifact_materialized=bool(
+            final_publish_gap_audit.get("benchmark_snapshot_artifact_materialized")
+        ),
+        benchmark_snapshot_artifact_record_count=int(
+            final_publish_gap_audit.get("benchmark_snapshot_artifact_record_count") or 0
+        ),
+        benchmark_snapshot_artifact_materialized_count=int(
+            final_publish_gap_audit.get("benchmark_snapshot_artifact_materialized_count")
+            or 0
+        ),
+        benchmark_snapshot_artifact_all_required_materialized=bool(
+            final_publish_gap_audit.get(
+                "benchmark_snapshot_artifact_all_required_materialized"
+            )
+        ),
+        benchmark_snapshot_artifact_unmaterialized_run_ids=_string_list(
+            final_publish_gap_audit.get(
+                "benchmark_snapshot_artifact_unmaterialized_run_ids"
+            )
         ),
         rereview_complete=bool(rereview_report.get("rereview_complete")),
         rereview_recommendations={

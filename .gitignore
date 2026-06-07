@@ -5,6 +5,12 @@ backend/dev.db
 .DS_Store
 *.log
 backend/data/
+!backend/data/
+backend/data/*
+!backend/data/frozen_benchmarks/
+backend/data/frozen_benchmarks/*
+!backend/data/frozen_benchmarks/scifact_claim_verification_frozen_snapshot_v1.json
+!backend/data/frozen_benchmarks/scifact_claim_retrieval_frozen_snapshot_v1.json
 backend/backend/
 .tmp/
 backend/*.egg-info/

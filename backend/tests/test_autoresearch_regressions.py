@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
+import services.autoresearch.domain_router as autoresearch_domain_router
 import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
 import services.autoresearch.bridge as autoresearch_bridge
 import services.autoresearch.evaluation_cases as autoresearch_evaluation_cases
@@ -6384,6 +6385,177 @@ def test_research_brief_builder_produces_multiple_executable_directions() -> Non
     assert run_request.candidate_execution_limit == payload.resource_budget.candidate_execution_limit
 
 
+def test_domain_router_routes_controlled_domains_and_blocks_unmatched() -> None:
+    supported_cases = [
+        (
+            "Use claim-evidence ledgers for retrieval and verification in scientific writing agents to reduce unsupported claims",
+            "claim_evidence_retrieval",
+            "claim_evidence_retrieval",
+        ),
+        (
+            "Evaluate RAG citation faithfulness for knowledge intensive QA with grounded source attributions",
+            "citation faithfulness",
+            "rag_citation_faithfulness",
+        ),
+        (
+            "Run a lightweight ML NLP benchmark comparing local text classifiers with macro F1",
+            "lightweight ml nlp benchmark",
+            "lightweight_ml_nlp_benchmark",
+        ),
+    ]
+    for idea, domain_hint, expected_domain in supported_cases:
+        decision = autoresearch_domain_router.route_domain(
+            AutoResearchIdeaRequest(
+                idea=idea,
+                domain=domain_hint,
+                allow_web=False,
+                allow_experiments=True,
+            )
+        )
+
+        assert decision.domain_id == expected_domain
+        assert decision.is_supported is True
+        assert decision.confidence > 0.5
+        assert decision.matched_signals
+        assert decision.evidence_policy
+        assert decision.publish_readiness_policy
+        assert decision.template_id is not None
+
+    unsupported = autoresearch_domain_router.route_domain(
+        AutoResearchIdeaRequest(
+            idea="Design a wet-lab CRISPR assay for cancer organoids requiring live lab equipment",
+            domain="wet lab biology",
+            allow_web=False,
+            allow_experiments=True,
+        )
+    )
+
+    assert unsupported.domain_id == "unsupported"
+    assert unsupported.is_supported is False
+    assert unsupported.unsupported_reason is not None
+    assert unsupported.default_blockers == [unsupported.unsupported_reason]
+    assert any("unrelated toy experiment" in item for item in unsupported.evidence_policy)
+
+
+def test_domain_template_registry_is_complete_and_blocks_incomplete_payloads() -> None:
+    templates = autoresearch_domain_router.list_domain_templates()
+    domain_ids = [template.domain_id for template in templates]
+
+    assert set(domain_ids) == {
+        "claim_evidence_retrieval",
+        "rag_citation_faithfulness",
+        "lightweight_ml_nlp_benchmark",
+    }
+    assert len(domain_ids) == len(set(domain_ids))
+    for template in templates:
+        assert template.template_id.endswith("_v1")
+        assert template.template_version == "v1"
+        assert template.template_complete is True
+        assert template.blockers == []
+        assert template.research_brief_template
+        assert template.literature_query_plan
+        assert template.benchmark_resolver_policy
+        assert template.method_baseline_ladder
+        assert template.metric_schema
+        assert template.experiment_factory_protocol
+        assert template.evidence_ledger_schema
+        assert template.paper_section_requirements
+        assert template.publish_readiness_constraints
+        assert template.negative_evidence_taxonomy
+        assert template.required_package_artifacts
+
+    claim_template = autoresearch_domain_router.get_domain_template("claim_evidence_retrieval")
+    assert claim_template is not None
+    assert claim_template.benchmark_name == "frozen_claim_evidence_reranking"
+    assert claim_template.task_family == "ir_reranking"
+
+    blockers = autoresearch_domain_router.validate_domain_template_payload(
+        {
+            "research_brief_template": "Scoped brief",
+            "literature_query_plan": ["query"],
+            "method_baseline_ladder": ["baseline"],
+            "experiment_factory_protocol": ["protocol"],
+            "evidence_ledger_schema": ["claim_id"],
+            "publish_readiness_constraints": ["constraint"],
+            "negative_evidence_taxonomy": ["failure"],
+            "required_package_artifacts": ["artifact.json"],
+        }
+    )
+
+    assert any("benchmark resolver" in item for item in blockers)
+    assert any("metric schema" in item for item in blockers)
+    assert any("paper section requirements" in item for item in blockers)
+
+
+def test_controlled_domain_briefs_create_selected_hypotheses_and_factory_plans() -> None:
+    cases = [
+        (
+            "project-domain-claim",
+            "Use claim-evidence ledgers for retrieval and verification in scientific writing agents to reduce unsupported claims",
+            "claim_evidence_retrieval",
+            "claim_evidence_retrieval",
+            "frozen_claim_evidence_reranking",
+        ),
+        (
+            "project-domain-rag",
+            "Evaluate RAG citation faithfulness for knowledge intensive QA with grounded source attributions",
+            "citation faithfulness",
+            "rag_citation_faithfulness",
+            "toy_paper_evidence_reranking",
+        ),
+        (
+            "project-domain-lightweight",
+            "Run a lightweight ML NLP benchmark comparing local text classifiers with macro F1",
+            "lightweight ml nlp benchmark",
+            "lightweight_ml_nlp_benchmark",
+            "toy_ml_nlp_robotics_topic",
+        ),
+    ]
+
+    for project_id, idea, domain_hint, expected_domain, benchmark_name in cases:
+        brief = autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=AutoResearchIdeaRequest(
+                idea=idea,
+                domain=domain_hint,
+                allow_web=False,
+                allow_experiments=True,
+            ),
+        )
+
+        assert brief.status == "ready_for_selection"
+        assert brief.next_action == "create_run"
+        assert brief.domain_decision is not None
+        assert brief.domain_decision.domain_id == expected_domain
+        assert brief.domain_decision.is_supported is True
+        assert brief.domain_template is not None
+        assert brief.domain_template.benchmark_name == benchmark_name
+        assert brief.domain_blockers == []
+        assert brief.direction_count == 3
+        assert brief.hypothesis_count == 3
+        assert brief.selected_direction_id is not None
+        assert brief.selected_hypothesis_id is not None
+        assert brief.selection_reason is not None
+        assert all(item.evidence_requirements for item in brief.hypothesis_bank)
+        assert any(
+            constraint in brief.kill_criteria
+            for constraint in brief.domain_template.publish_readiness_constraints
+        )
+
+        hypothesis = autoresearch_idea_brief.selected_hypothesis_from_brief(brief)
+        plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+            project_id=project_id,
+            brief=brief,
+            hypothesis=hypothesis,
+        )
+
+        assert plan.brief_id == brief.brief_id
+        assert plan.hypothesis_id == hypothesis.hypothesis_id
+        assert plan.job_count > 0
+        assert plan.toy_backend_supported is True
+        assert plan.blockers == []
+
+
 def test_research_brief_selected_hypothesis_creates_metadata_run(
     monkeypatch,
     tmp_path: Path,
@@ -7055,6 +7227,92 @@ def test_experiment_factory_builds_executable_plan_from_selected_hypothesis() ->
     assert candidate.dependencies
     assert all(dep.startswith("job_baseline_") for dep in candidate.dependencies)
     assert all(job.retry_policy.max_retries >= 1 for job in plan.jobs)
+
+
+def test_unsupported_domain_brief_blocks_factory_scout_console_and_project_readiness(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-unsupported-domain"
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=AutoResearchIdeaRequest(
+                idea="Design a wet-lab CRISPR assay for cancer organoids requiring live lab equipment",
+                domain="wet lab biology",
+                allow_web=False,
+                allow_experiments=True,
+            ),
+        )
+    )
+
+    assert brief.status == "blocked"
+    assert brief.next_action == "blocked"
+    assert brief.allow_experiments is False
+    assert brief.domain_decision is not None
+    assert brief.domain_decision.domain_id == "unsupported"
+    assert brief.domain_decision.is_supported is False
+    assert brief.domain_template is None
+    assert brief.domain_blockers
+    assert brief.direction_count == 0
+    assert brief.hypothesis_count == 0
+    assert brief.research_directions == []
+    assert brief.hypothesis_bank == []
+    assert brief.selected_direction_id is None
+    assert brief.selected_hypothesis_id is None
+    with pytest.raises(ValueError):
+        autoresearch_idea_brief.selected_hypothesis_from_brief(brief)
+
+    factory_plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=project_id,
+        brief=brief,
+    )
+    assert factory_plan.job_count == 0
+    assert factory_plan.jobs == []
+    assert factory_plan.toy_backend_supported is False
+    assert factory_plan.bridge_ready is False
+    assert factory_plan.blockers
+    assert any("domain routing" in item.lower() for item in factory_plan.blockers)
+    assert any("No toy/local experiment outputs" in item for item in factory_plan.warnings)
+
+    scouted = autoresearch_repository.save_research_brief(
+        autoresearch_literature_scout.scout_and_mine_gaps(brief)
+    )
+    assert scouted.status == "blocked"
+    assert scouted.next_action == "blocked"
+    assert scouted.domain_blockers == brief.domain_blockers
+
+    console = autoresearch_console.build_operator_console(project_id)
+    assert console.brief_count == 1
+    assert console.latest_brief_id == brief.brief_id
+    assert console.latest_brief_status == "blocked"
+    assert console.latest_brief_domain_id == "unsupported"
+    assert console.latest_brief_domain_supported is False
+    assert console.latest_brief_domain_blockers == brief.domain_blockers
+    assert console.latest_brief_hypothesis_count == 0
+    assert console.actions.create_run_from_brief is False
+
+    orchestration = autoresearch_project_paper_orchestrator.build_project_paper_orchestration(project_id)
+    assert orchestration.latest_brief_id == brief.brief_id
+    assert orchestration.latest_brief_domain_decision is not None
+    assert orchestration.latest_brief_domain_decision.domain_id == "unsupported"
+    assert orchestration.latest_brief_domain_template is None
+    assert orchestration.latest_brief_domain_blockers == brief.domain_blockers
+    assert any(blocker in orchestration.blockers for blocker in brief.domain_blockers)
+    assert any("domain-routing blockers" in item for item in orchestration.next_actions)
+    assert orchestration.project_publication_readiness_report_path is not None
+    assert Path(orchestration.project_publication_readiness_report_path).is_file()
+    readiness_report = json.loads(
+        Path(orchestration.project_publication_readiness_report_path).read_text(encoding="utf-8")
+    )
+    domain_check = next(
+        check for check in readiness_report["checks"] if check["check_id"] == "domain_routing"
+    )
+    assert domain_check["passed"] is False
+    assert domain_check["domain_decision"]["domain_id"] == "unsupported"
+    assert domain_check["blockers"] == brief.domain_blockers
+    assert readiness_report["domain_blockers"] == brief.domain_blockers
 
 
 def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:

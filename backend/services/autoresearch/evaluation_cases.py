@@ -1413,6 +1413,9 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
     return AutoResearchEvaluationCaseTraceRead(
         idea=scouted.original_idea,
         brief_id=scouted.brief_id,
+        domain_decision=scouted.domain_decision,
+        domain_template=scouted.domain_template,
+        domain_blockers=scouted.domain_blockers,
         selected_hypothesis_id=hypothesis.hypothesis_id,
         experiment_plan_id=plan.plan_id,
         evidence_ledger_id=execution.evidence_ledger.ledger_id,

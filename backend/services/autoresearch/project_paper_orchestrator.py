@@ -6636,6 +6636,19 @@ def _project_offline_publication_case_payload(
         "fixed_idea": fixed_idea,
         "brief_original_idea": latest_brief.original_idea if latest_brief is not None else None,
         "brief_id": latest_brief.brief_id if latest_brief is not None else None,
+        "domain_decision": (
+            latest_brief.domain_decision.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_decision is not None
+            else None
+        ),
+        "domain_template": (
+            latest_brief.domain_template.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_template is not None
+            else None
+        ),
+        "domain_blockers": (
+            list(latest_brief.domain_blockers) if latest_brief is not None else []
+        ),
         "research_question": research_question,
         "target_title": (
             "Evidence-Ledger-Guided Retrieval and Repair for Reducing Unsupported Claims "
@@ -6645,6 +6658,21 @@ def _project_offline_publication_case_payload(
         "research_chain": {
             "idea": fixed_idea,
             "research_brief": latest_brief.brief_id if latest_brief is not None else None,
+            "domain_routing": {
+                "decision": (
+                    latest_brief.domain_decision.model_dump(mode="json")
+                    if latest_brief is not None and latest_brief.domain_decision is not None
+                    else None
+                ),
+                "template_id": (
+                    latest_brief.domain_template.template_id
+                    if latest_brief is not None and latest_brief.domain_template is not None
+                    else None
+                ),
+                "blockers": (
+                    list(latest_brief.domain_blockers) if latest_brief is not None else []
+                ),
+            },
             "literature_scout_inputs": {
                 "queries": (
                     list(latest_brief.literature_scout.search_queries)
@@ -8277,6 +8305,17 @@ def _project_publication_readiness_report_payload(
     claim_index_complete: bool,
     negative_evidence_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    domain_decision = (
+        latest_brief.domain_decision.model_dump(mode="json")
+        if latest_brief is not None and latest_brief.domain_decision is not None
+        else None
+    )
+    domain_template = (
+        latest_brief.domain_template.model_dump(mode="json")
+        if latest_brief is not None and latest_brief.domain_template is not None
+        else None
+    )
+    domain_blockers = list(latest_brief.domain_blockers) if latest_brief is not None else []
     execution_coverage = paper_compiler_evidence.get("execution_coverage", {})
     phase6_negative_evidence_audit = _phase6_negative_evidence_report_audit(
         negative_evidence_report
@@ -8360,6 +8399,7 @@ def _project_publication_readiness_report_payload(
     limitations = _dedupe(
         [
             *warnings,
+            *domain_blockers,
             *[item.text for item in ledger.limitations],
             *[
                 reason
@@ -8371,6 +8411,11 @@ def _project_publication_readiness_report_payload(
     )
     kill_criteria = _dedupe(
         [
+            *(
+                ["Do not create experiment outputs while domain routing is blocked."]
+                if domain_blockers
+                else []
+            ),
             *(
                 ["Do not claim publication-grade contribution until project publish gate passes."]
                 if not project_publish_gate_passed
@@ -8424,6 +8469,7 @@ def _project_publication_readiness_report_payload(
     )
     required_followups = _dedupe(
         [
+            *domain_blockers,
             *project_submission_blockers,
             *evidence_profile.get("blockers", []),
             *(
@@ -8519,6 +8565,26 @@ def _project_publication_readiness_report_payload(
         ]
     )
     readiness_checks = [
+        {
+            "check_id": "domain_routing",
+            "passed": bool(
+                latest_brief is not None
+                and latest_brief.domain_decision is not None
+                and latest_brief.domain_decision.is_supported
+                and not domain_blockers
+            ),
+            "detail": (
+                "Latest project brief must route to a supported domain template before "
+                "hypotheses, experiments, or publication claims can proceed."
+            ),
+            "domain_decision": domain_decision,
+            "domain_template_id": (
+                latest_brief.domain_template.template_id
+                if latest_brief is not None and latest_brief.domain_template is not None
+                else None
+            ),
+            "blockers": domain_blockers,
+        },
         {
             "check_id": "project_publish_gate",
             "passed": project_publish_gate_passed,
@@ -8661,6 +8727,9 @@ def _project_publication_readiness_report_payload(
         "final_publish_ready": project_final_publish_ready,
         "selected_run_ids": [run.id for run in selected_runs],
         "selected_run_count": len(selected_runs),
+        "domain_decision": domain_decision,
+        "domain_template": domain_template,
+        "domain_blockers": domain_blockers,
         "supported_claim_trace_count": sum(1 for trace in traces if trace.support_status == "supported"),
         "partial_or_unsupported_claim_trace_count": sum(
             1 for trace in traces if trace.support_status != "supported"
@@ -9792,6 +9861,9 @@ def _decision(
 def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPaperOrchestrationRead:
     briefs = list_research_briefs(project_id)
     latest_brief: AutoResearchResearchBriefRead | None = briefs[0] if briefs else None
+    latest_brief_domain_blockers = (
+        list(latest_brief.domain_blockers) if latest_brief is not None else []
+    )
     runs = list_runs(project_id)
     meta = build_cross_run_meta_analysis(project_id)
     selected_runs = _selected_runs(runs=runs, meta_analysis=meta)
@@ -9815,6 +9887,8 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         traces=traces,
         reviewer_average_score=reviewer_average,
     )
+    if latest_brief_domain_blockers:
+        blockers = _dedupe([*blockers, *latest_brief_domain_blockers])
     warnings = _dedupe(meta.warnings + decision_warnings)
     if meta.blockers and len(selected_runs) < 2:
         warnings.extend(meta.blockers)
@@ -9823,6 +9897,10 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
     next_actions = []
     if not project_level_allowed and len(selected_runs) < 2:
         next_actions.append("Run at least one additional selected hypothesis before claiming a project-level paper.")
+    if latest_brief_domain_blockers:
+        next_actions.append(
+            "Resolve the latest idea brief's domain-routing blockers before creating hypotheses or experiment outputs."
+        )
     if unsupported:
         next_actions.append("Downgrade or remove unsupported project-level claims.")
     if not any(run.reviewer_simulation is not None for run in selected_runs):
@@ -9939,6 +10017,19 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         "project_id": project_id,
         "brief_count": len(briefs),
         "latest_brief_id": latest_brief.brief_id if latest_brief is not None else None,
+        "latest_brief_domain_decision": (
+            latest_brief.domain_decision.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_decision is not None
+            else None
+        ),
+        "latest_brief_domain_template": (
+            latest_brief.domain_template.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_template is not None
+            else None
+        ),
+        "latest_brief_domain_blockers": (
+            list(latest_brief.domain_blockers) if latest_brief is not None else []
+        ),
         "latest_brief_selected_hypothesis_id": (
             latest_brief.selected_hypothesis_id if latest_brief is not None else None
         ),

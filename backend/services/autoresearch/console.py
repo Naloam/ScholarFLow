@@ -880,6 +880,9 @@ def build_operator_console(
     meta_analysis = build_cross_run_meta_analysis(project_id)
     system_evaluation = build_system_evaluation(project_id)
     publication_case = _publication_case_summary(project_id) if runs else None
+    latest_domain_decision = (
+        latest_brief.domain_decision if latest_brief is not None else None
+    )
     return AutoResearchOperatorConsoleRead(
         project_id=project_id,
         run_count=len(runs),
@@ -887,6 +890,21 @@ def build_operator_console(
         latest_brief_id=latest_brief.brief_id if latest_brief is not None else None,
         latest_brief_status=latest_brief.status if latest_brief is not None else None,
         latest_brief_original_idea=latest_brief.original_idea if latest_brief is not None else None,
+        latest_brief_domain_id=(
+            latest_domain_decision.domain_id if latest_domain_decision is not None else None
+        ),
+        latest_brief_domain_label=(
+            latest_domain_decision.domain_label if latest_domain_decision is not None else None
+        ),
+        latest_brief_domain_confidence=(
+            latest_domain_decision.confidence if latest_domain_decision is not None else 0.0
+        ),
+        latest_brief_domain_supported=bool(
+            latest_domain_decision is not None and latest_domain_decision.is_supported
+        ),
+        latest_brief_domain_blockers=(
+            latest_brief.domain_blockers if latest_brief is not None else []
+        ),
         latest_brief_hypothesis_count=(
             latest_brief.hypothesis_count if latest_brief is not None else 0
         ),
@@ -917,7 +935,12 @@ def build_operator_console(
         actions=AutoResearchOperatorProjectActionsRead(
             start_run=True,
             create_idea_brief=True,
-            create_run_from_brief=True,
+            create_run_from_brief=bool(
+                latest_brief is not None
+                and latest_brief.next_action == "create_run"
+                and latest_brief.allow_experiments
+                and latest_brief.selected_hypothesis_id
+            ),
             build_meta_analysis=True,
             build_system_evaluation=True,
         ),

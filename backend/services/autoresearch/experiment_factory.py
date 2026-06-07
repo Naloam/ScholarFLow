@@ -132,6 +132,48 @@ def build_experiment_factory_plan(
     run: AutoResearchRunRead | None = None,
     experiment_design: AutoResearchExperimentDesignRead | None = None,
 ) -> AutoResearchExperimentFactoryPlanRead:
+    if brief is not None and (
+        brief.status == "blocked"
+        or brief.next_action == "blocked"
+        or brief.domain_blockers
+    ):
+        backend = _backend_from_run_or_brief(run=run)
+        blockers = _dedupe(
+            [
+                *brief.domain_blockers,
+                *brief.feasibility_assessment.blockers,
+                "Experiment factory blocked: domain routing did not produce an executable supported-domain hypothesis.",
+            ]
+        )
+        payload = {
+            "plan_id": "experiment_factory_v1",
+            "project_id": project_id,
+            "brief_id": brief.brief_id,
+            "hypothesis_id": None,
+            "run_id": run.id if run is not None else None,
+            "execution_backend": backend.model_dump(mode="json"),
+            "selected_direction_id": None,
+            "selected_hypothesis": None,
+            "jobs": [],
+            "job_count": 0,
+            "baseline_job_count": 0,
+            "candidate_job_count": 0,
+            "ablation_job_count": 0,
+            "seed_job_count": 0,
+            "sweep_job_count": 0,
+            "expected_artifacts": [],
+            "bridge_ready": False,
+            "toy_backend_supported": False,
+            "blockers": blockers,
+            "warnings": [
+                "No toy/local experiment outputs were generated for this unsupported-domain brief."
+            ],
+        }
+        return AutoResearchExperimentFactoryPlanRead(
+            generated_at=_utcnow(),
+            factory_fingerprint=_fingerprint(payload),
+            **payload,
+        )
     selected = hypothesis
     if selected is None and brief is not None:
         selected = selected_hypothesis_from_brief(brief)

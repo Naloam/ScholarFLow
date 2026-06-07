@@ -424,12 +424,19 @@ def scout_and_mine_gaps(
         network_enabled=network_enabled,
     )
     miner = build_gap_miner(brief, literature_scout=scout)
+    next_action = (
+        "blocked"
+        if brief.status == "blocked" or brief.next_action == "blocked" or brief.domain_blockers
+        else "create_run"
+        if brief.allow_experiments and not miner.blockers
+        else "select_direction"
+    )
     return brief.model_copy(
         update={
             "literature_scout": scout,
             "gap_miner": miner,
             "novelty_search_plan": _dedupe([*brief.novelty_search_plan, *scout.search_queries]),
             "updated_at": _utcnow(),
-            "next_action": "create_run" if brief.allow_experiments and not miner.blockers else "select_direction",
+            "next_action": next_action,
         }
     )

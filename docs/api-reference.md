@@ -8,7 +8,9 @@ This document focuses on the current auto-research API surface.
 
 - converts a user idea into a persisted research brief instead of creating a run
 - accepts `idea`, optional `domain`, optional `resource_budget`, optional `target_tier`, and flags for `allow_web` / `allow_experiments`
-- returns a structured brief with multiple research directions, selection reasoning, feasibility assessment, and kill criteria
+- routes the idea through controlled domain templates for `claim_evidence_retrieval`, `rag_citation_faithfulness`, and `lightweight_ml_nlp_benchmark`
+- returns `domain_decision`, `domain_template`, and `domain_blockers` alongside multiple research directions, selection reasoning, feasibility assessment, and kill criteria
+- unsupported domains are persisted as auditable blocked briefs with `status=blocked`, `next_action=blocked`, `allow_experiments=false`, zero generated hypotheses/directions, and explicit blockers; unsupported ideas are not downgraded into unrelated toy outputs
 
 ### `GET /api/projects/{project_id}/auto-research/ideas`
 
@@ -30,6 +32,7 @@ This document focuses on the current auto-research API surface.
 - accepts optional `sources` (`fixture`, `arxiv`, `semantic_scholar`, `crossref`), `limit_per_source`, `cache_enabled`, and `allow_network`
 - never enables network access unless the brief was created with `allow_web=true`; `allow_network=false` forces cache/offline-only behavior
 - persists `literature_scout` and `gap_miner` back into the brief snapshot
+- preserves `next_action=blocked` for domain-blocked briefs instead of unlocking run creation
 - returns search queries, structured paper metadata, source/cache statuses, extraction level (`metadata`, `abstract`, or cached `full_text`), similar-paper risk signals, known baseline/SOTA notes, experimentally testable gap candidates, and whether the idea needs a changed research question or experiment design
 - cached connector payloads may include `full_text`, `full_text_by_paper`, or `full_text_by_title` to enrich method/dataset/metric/result extraction without enabling live network access
 
@@ -38,6 +41,7 @@ This document focuses on the current auto-research API surface.
 - builds a deterministic experiment-factory plan from the selected hypothesis, or from an explicit `hypothesis_id` query param
 - returns baseline, candidate-method, ablation, seed, and sweep jobs with commands/configs, inputs, outputs, dependencies, retry policy, resource estimates, and failure-handling guidance
 - does not execute jobs or require GPU/network access
+- returns HTTP 409 for blocked/domain-blocked briefs; service-level factory planning for such briefs produces zero jobs, `toy_backend_supported=false`, and blockers rather than fake experiment outputs
 
 ### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/run`
 
@@ -45,6 +49,7 @@ This document focuses on the current auto-research API surface.
 - preserves `brief_id`, `hypothesis_id`, and `direction_selection_reason` on the run snapshot
 - accepts optional run budget overrides for `max_rounds`, `candidate_execution_limit`, `queue_priority`, and `execution_profile`
 - returns `{ "id": "<run_id>" }`
+- returns HTTP 409 for blocked/domain-blocked briefs with the domain decision and blockers in the error detail
 
 ### `POST /api/projects/{project_id}/auto-research/run`
 
@@ -135,6 +140,8 @@ This document focuses on the current auto-research API surface.
 - accepts optional `run_id` query param to focus the console on a specific run
 - also accepts optional `search`, `status`, `publish_status`, `review_risk`, `novelty_status`, `budget_status`, and `queue_priority` query params for run triage
 - returns both total run count and filtered run count, and each run summary now includes bridge posture, publish status, review risk, novelty posture, budget posture, and queue priority
+- surfaces latest idea-brief domain routing fields: `latest_brief_domain_id`, `latest_brief_domain_label`, `latest_brief_domain_confidence`, `latest_brief_domain_supported`, and `latest_brief_domain_blockers`
+- exposes `actions.create_run_from_brief=false` when the latest brief is blocked, lacks a selected hypothesis, or cannot create experiments under its routed domain policy
 - includes `publication_case`, a project-level offline publication-case summary with review/final readiness, package asset statuses, blocked asset counts/roles, per-asset final-publish blocking checks/reasons, review finding count/path, repair action status counts, execution/import replay outputs, literature source coverage, benchmark provenance status, benchmark schema coverage/blockers, benchmark source-observation coverage/blockers, benchmark final-publish-candidate coverage/blockers, benchmark source-independence readiness/blockers, benchmark snapshot materialization status/counts/unmaterialized run ids, statistics claim ceiling, negative evidence counts, Goal 1 Phase 6 covered/missing/required negative-evidence categories, blocked source-independence repair-attempt evidence, final-publish package completeness, engineering-vs-scientific gap counts/classification, rereview recommendations, publish blockers, required follow-ups, kill criteria, and paths to `offline_publication_case.json` / `offline_publication_audit.json`
 - operators can inspect queue bottlenecks, stale-worker posture, and recent recoveries without reading `queue.json`
 
@@ -142,6 +149,9 @@ This document focuses on the current auto-research API surface.
 
 - builds a deterministic project-level paper orchestration snapshot
 - reads idea briefs, selected runs, cross-run meta-analysis, run-level evidence ledgers, claim ledgers, and reviewer simulations when present
+- returns latest-brief domain routing fields (`latest_brief_domain_decision`, `latest_brief_domain_template`, `latest_brief_domain_blockers`)
+- writes domain routing information into `offline_publication_case.json`, `publication_readiness_report.json`, and the readiness `checks` entry `domain_routing`
+- keeps domain blockers in project blockers, limitations, required follow-ups, and kill criteria so unsupported ideas cannot progress into paper claims
 - returns a project conclusion ledger split into stable conclusions, conditional conclusions, negative findings, failed hypotheses, and limitations
 - returns claim traces for every core project-level claim, with run IDs and evidence refs
 - decides whether the project should write no paper, a single-run technical report, a workshop candidate, or a conference candidate
@@ -222,6 +232,7 @@ This document focuses on the current auto-research API surface.
 - includes six deterministic cases: toy, medium benchmark, literature-heavy, claim-evidence vertical, ablation-heavy, and failed-hypothesis
 - the toy case runs end-to-end through brief, scout, hypothesis selection, experiment factory, evidence ledger, and paper/review package materialization
 - the claim-evidence vertical case seeds offline cached arXiv / Semantic Scholar / Crossref literature connector responses, runs repository-local SciFact frozen snapshots for support/refute/not-enough-info verification and retrieval-only evidence (`scifact_claim_verification_frozen_snapshot_v1.json` plus `scifact_claim_retrieval_frozen_snapshot_v1.json`), records retrieval and verification metrics, persists retrieval evidence ledgers, builds a project paper, applies bounded project revision actions, and emits a review-ready project submission package
+- evaluation traces include `domain_decision`, `domain_template`, and `domain_blockers` so route decisions are auditable from the evaluation artifact
 - claim-evidence vertical traces expose V3 package proof fields: publication/readiness/statistics/experiment-repair/negative-evidence/offline-case/offline-audit/repair-log/review-findings paths, review finding count and action mapping, submission bundle kind, generated asset roles, missing required asset roles, execution source counts, imported replay run ids, materialized execution run ids, paper section coverage, claim-support counts, claim ceiling, negative-evidence coverage, Phase 6 covered/missing/required category fields, blocked repair-attempt evidence, final-publish package completeness, engineering-vs-scientific gap counts/classification, Phase 1 blocked requirement ids, benchmark schema coverage/blockers, benchmark source-observation coverage/blockers, benchmark final-publish-candidate coverage/blockers, benchmark source-independence readiness/blockers, kill criteria, required follow-ups, and negative-evidence counts
 - exposes the evaluation metrics used to judge idea-to-brief completeness, hypothesis selection, novelty risk detection, experiment executability, evidence consistency, reviewer readiness, final publish correctness, and offline end-to-end submission-package coverage
 - evaluation cases remain deterministic and do not require live network, paid LLM calls, GPUs, or external benchmark availability

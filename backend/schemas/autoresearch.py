@@ -308,6 +308,12 @@ AutoResearchEvaluationTaskKind = Literal[
     "ablation_heavy_task",
     "failed_hypothesis_task",
 ]
+AutoResearchDomainId = Literal[
+    "claim_evidence_retrieval",
+    "rag_citation_faithfulness",
+    "lightweight_ml_nlp_benchmark",
+    "unsupported",
+]
 AutoResearchResearchActionRecommendation = Literal[
     "refresh_review",
     "repair_experiment_design",
@@ -584,6 +590,43 @@ class AutoResearchIdeaFeasibilityAssessmentRead(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class AutoResearchDomainDecisionRead(BaseModel):
+    domain_id: AutoResearchDomainId = "unsupported"
+    domain_label: str = "Unsupported Domain"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    matched_signals: list[str] = Field(default_factory=list)
+    unsupported_reason: str | None = None
+    required_capabilities: list[str] = Field(default_factory=list)
+    evidence_policy: list[str] = Field(default_factory=list)
+    publish_readiness_policy: list[str] = Field(default_factory=list)
+    default_blockers: list[str] = Field(default_factory=list)
+    template_id: str | None = None
+    template_version: str | None = None
+    is_supported: bool = False
+
+
+class AutoResearchDomainTemplateRead(BaseModel):
+    domain_id: AutoResearchDomainId
+    domain_label: str
+    template_id: str
+    template_version: str
+    research_brief_template: str
+    literature_query_plan: list[str] = Field(default_factory=list)
+    benchmark_resolver_policy: list[str] = Field(default_factory=list)
+    method_baseline_ladder: list[str] = Field(default_factory=list)
+    metric_schema: list[str] = Field(default_factory=list)
+    experiment_factory_protocol: list[str] = Field(default_factory=list)
+    evidence_ledger_schema: list[str] = Field(default_factory=list)
+    paper_section_requirements: list[str] = Field(default_factory=list)
+    publish_readiness_constraints: list[str] = Field(default_factory=list)
+    negative_evidence_taxonomy: list[str] = Field(default_factory=list)
+    required_package_artifacts: list[str] = Field(default_factory=list)
+    task_family: TaskFamily
+    benchmark_name: str
+    template_complete: bool = True
+    blockers: list[str] = Field(default_factory=list)
+
+
 class AutoResearchResearchDirectionRead(BaseModel):
     direction_id: str
     title: str
@@ -740,10 +783,13 @@ class AutoResearchResearchBriefRead(BaseModel):
     project_id: str
     generated_at: datetime
     updated_at: datetime
-    status: Literal["drafted", "ready_for_selection"] = "ready_for_selection"
+    status: Literal["drafted", "ready_for_selection", "blocked"] = "ready_for_selection"
     original_idea: str
     polished_idea: str
     domain: str | None = None
+    domain_decision: AutoResearchDomainDecisionRead | None = None
+    domain_template: AutoResearchDomainTemplateRead | None = None
+    domain_blockers: list[str] = Field(default_factory=list)
     idea_too_generic: bool = False
     specificity_assessment: Literal["too_generic", "broad_but_actionable", "scoped"] = "scoped"
     scope_narrowing_recommendation: str
@@ -769,7 +815,7 @@ class AutoResearchResearchBriefRead(BaseModel):
     selected_hypothesis_id: str | None = None
     selection_reason: str | None = None
     direction_selection: AutoResearchDirectionSelectionRead | None = None
-    next_action: Literal["build_hypothesis_bank", "select_direction", "create_run"] = "build_hypothesis_bank"
+    next_action: Literal["build_hypothesis_bank", "select_direction", "create_run", "blocked"] = "build_hypothesis_bank"
     allow_web: bool = False
     allow_experiments: bool = True
     target_tier: AutoResearchPaperTier = "workshop_candidate"
@@ -2648,6 +2694,9 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     project_id: str
     brief_count: int = 0
     latest_brief_id: str | None = None
+    latest_brief_domain_decision: AutoResearchDomainDecisionRead | None = None
+    latest_brief_domain_template: AutoResearchDomainTemplateRead | None = None
+    latest_brief_domain_blockers: list[str] = Field(default_factory=list)
     latest_brief_selected_hypothesis_id: str | None = None
     candidate_run_count: int = 0
     selected_run_ids: list[str] = Field(default_factory=list)
@@ -2782,6 +2831,9 @@ class AutoResearchSystemEvaluationMetricRead(BaseModel):
 class AutoResearchEvaluationCaseTraceRead(BaseModel):
     idea: str
     brief_id: str | None = None
+    domain_decision: AutoResearchDomainDecisionRead | None = None
+    domain_template: AutoResearchDomainTemplateRead | None = None
+    domain_blockers: list[str] = Field(default_factory=list)
     selected_hypothesis_id: str | None = None
     experiment_plan_id: str | None = None
     evidence_ledger_id: str | None = None
@@ -3969,6 +4021,11 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     latest_brief_id: str | None = None
     latest_brief_status: str | None = None
     latest_brief_original_idea: str | None = None
+    latest_brief_domain_id: str | None = None
+    latest_brief_domain_label: str | None = None
+    latest_brief_domain_confidence: float = 0.0
+    latest_brief_domain_supported: bool = False
+    latest_brief_domain_blockers: list[str] = Field(default_factory=list)
     latest_brief_hypothesis_count: int = 0
     latest_brief_selected_direction_id: str | None = None
     latest_brief_selected_hypothesis_id: str | None = None

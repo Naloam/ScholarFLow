@@ -20,6 +20,11 @@ from schemas.autoresearch import (
     TaskFamily,
 )
 from services.autoresearch.benchmarks import build_experiment_spec, builtin_benchmark, infer_task_family
+from services.autoresearch.domain_router import (
+    benchmark_source_for_template,
+    get_domain_template,
+    route_domain,
+)
 
 
 _GENERIC_IDEA_TERMS = {
@@ -596,12 +601,127 @@ def build_research_brief(
 ) -> AutoResearchResearchBriefRead:
     original_idea = _normalize_text(payload.idea)
     domain = payload.domain
+    domain_decision = route_domain(payload)
+    domain_template = get_domain_template(domain_decision.domain_id)
     idea_too_generic = _is_generic_idea(original_idea)
-    family_source = payload.benchmark if payload.benchmark is not None else None
-    task_families = _preferred_task_families(
-        idea=f"{original_idea} {domain or ''}",
-        task_family_hint=payload.task_family_hint,
+    domain_supported = (
+        domain_decision.is_supported
+        and domain_template is not None
+        and domain_template.template_complete
     )
+    domain_blockers = (
+        []
+        if domain_supported
+        else _dedupe(
+            [
+                *domain_decision.default_blockers,
+                *(domain_template.blockers if domain_template is not None else []),
+            ]
+        )
+    )
+    now = _utcnow()
+    if not domain_supported:
+        payload_for_fingerprint = {
+            "project_id": project_id,
+            "original_idea": original_idea,
+            "domain": domain,
+            "domain_decision": domain_decision.model_dump(mode="json"),
+            "domain_template": (
+                domain_template.model_dump(mode="json")
+                if domain_template is not None
+                else None
+            ),
+            "resource_budget": payload.resource_budget.model_dump(mode="json"),
+            "target_tier": payload.target_tier,
+            "allow_web": payload.allow_web,
+            "allow_experiments": payload.allow_experiments,
+        }
+        brief_id = f"brief_{_slug(original_idea, fallback='idea')}_{_fingerprint(payload_for_fingerprint)[:10]}"
+        blocker = (
+            domain_decision.unsupported_reason
+            or "Domain template is incomplete; no executable benchmark resolver can be selected."
+        )
+        feasibility = AutoResearchIdeaFeasibilityAssessmentRead(
+            score=0.0,
+            level="low",
+            summary=(
+                "The idea was preserved as an auditable unsupported-domain record; "
+                "no hypothesis bank or experiment protocol was generated."
+            ),
+            blockers=_dedupe([blocker, *domain_blockers]),
+            warnings=[
+                "Unsupported domains must not be downgraded to unrelated toy experiments.",
+            ],
+        )
+        return AutoResearchResearchBriefRead(
+            brief_id=brief_id,
+            project_id=project_id,
+            generated_at=now,
+            updated_at=now,
+            status="blocked",
+            original_idea=original_idea,
+            polished_idea=_title_case(original_idea),
+            domain=domain,
+            domain_decision=domain_decision,
+            domain_template=domain_template,
+            domain_blockers=feasibility.blockers,
+            idea_too_generic=idea_too_generic,
+            specificity_assessment="too_generic" if idea_too_generic else "broad_but_actionable",
+            scope_narrowing_recommendation=(
+                "Define or select a supported ScholarFlow domain template with a deterministic "
+                "benchmark resolver before creating hypotheses or experiment outputs."
+            ),
+            research_questions=[],
+            candidate_hypotheses=[],
+            expected_contribution_types=[],
+            target_tasks=[],
+            candidate_datasets=[],
+            candidate_metrics=[],
+            candidate_baselines=[],
+            novelty_search_plan=[
+                f"Route audit for unsupported idea: {original_idea}.",
+                "Do not run literature or experiment generation until a supported domain template exists.",
+            ],
+            feasibility_assessment=feasibility,
+            resource_assumptions=[
+                f"Budget label: {payload.resource_budget.budget_label}.",
+                "No execution budget was consumed because domain routing blocked the idea.",
+            ],
+            kill_criteria=[
+                "Kill execution until the idea matches a supported domain template and benchmark resolver.",
+                "Kill publication claims until real evidence exists for the requested domain.",
+            ],
+            publish_potential="technical_report",
+            research_directions=[],
+            direction_count=0,
+            hypothesis_bank=[],
+            hypothesis_count=0,
+            selected_direction_id=None,
+            selected_hypothesis_id=None,
+            selection_reason=None,
+            direction_selection=AutoResearchDirectionSelectionRead(
+                selection_score=0.0,
+                selection_reason=(
+                    "No direction selected because domain routing produced an auditable blocker."
+                ),
+                criteria_weights=_DIRECTION_SELECTOR_WEIGHTS,
+                rejected_directions=[],
+            ),
+            next_action="blocked",
+            allow_web=payload.allow_web,
+            allow_experiments=False,
+            target_tier=payload.target_tier,
+            resource_budget=payload.resource_budget,
+            brief_fingerprint=_fingerprint(payload_for_fingerprint),
+        )
+
+    assert domain_template is not None
+    family_source = (
+        payload.benchmark
+        if payload.benchmark is not None
+        else benchmark_source_for_template(domain_template)
+    )
+    task_families = [domain_template.task_family] * 3
     directions = [
         _direction_from_family(
             project_id=project_id,
@@ -614,7 +734,7 @@ def build_research_brief(
             domain=domain,
             family=family,
             index=index,
-            source=family_source,
+            source=family_source if family == domain_template.task_family else payload.benchmark,
             target_tier=payload.target_tier,
             allow_web=payload.allow_web,
             allow_experiments=payload.allow_experiments,
@@ -622,7 +742,7 @@ def build_research_brief(
             idea_too_generic=idea_too_generic,
         )
         for index, family in enumerate(task_families, start=1)
-    ][:5]
+    ][:3]
     if len(directions) < 2:
         for family in _TASK_FAMILY_ORDER:
             if any(item.task_family == family for item in directions):
@@ -694,11 +814,12 @@ def build_research_brief(
         else "technical_report"
     )
     selection_reason = direction_selection.selection_reason
-    now = _utcnow()
     payload_for_fingerprint = {
         "project_id": project_id,
         "original_idea": original_idea,
         "domain": domain,
+        "domain_decision": domain_decision.model_dump(mode="json"),
+        "domain_template": domain_template.model_dump(mode="json"),
         "allow_web": payload.allow_web,
         "allow_experiments": payload.allow_experiments,
         "target_tier": payload.target_tier,
@@ -716,6 +837,9 @@ def build_research_brief(
         original_idea=original_idea,
         polished_idea=polished_idea,
         domain=domain,
+        domain_decision=domain_decision,
+        domain_template=domain_template,
+        domain_blockers=domain_blockers,
         idea_too_generic=idea_too_generic,
         specificity_assessment=(
             "too_generic"
@@ -740,8 +864,15 @@ def build_research_brief(
             f"Candidate execution limit: {payload.resource_budget.candidate_execution_limit or 'not fixed'}.",
             "No GPU is assumed unless explicitly enabled." if not payload.resource_budget.allow_gpu else "GPU may be used if the later run requests it.",
             "Literature scouting may use network search." if payload.allow_web else "Literature scouting must use offline/project context until network is allowed.",
+            f"Domain template: {domain_template.template_id}.",
+            *domain_decision.default_blockers,
         ],
-        kill_criteria=_dedupe([criterion for item in directions for criterion in item.kill_criteria]),
+        kill_criteria=_dedupe(
+            [
+                *[criterion for item in directions for criterion in item.kill_criteria],
+                *domain_template.publish_readiness_constraints,
+            ]
+        ),
         publish_potential=publish_potential,
         research_directions=directions,
         direction_count=len(directions),

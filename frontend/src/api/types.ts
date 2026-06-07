@@ -274,6 +274,12 @@ export type AutoResearchTaskFamily =
   | "ir_reranking"
   | "llm_evaluation";
 
+export type AutoResearchDomainId =
+  | "claim_evidence_retrieval"
+  | "rag_citation_faithfulness"
+  | "lightweight_ml_nlp_benchmark"
+  | "unsupported";
+
 export type AutoResearchBenchmarkKind =
   | "builtin"
   | "remote_csv"
@@ -2669,6 +2675,43 @@ export type AutoResearchIdeaFeasibilityAssessment = {
   warnings: string[];
 };
 
+export type AutoResearchDomainDecision = {
+  domain_id: AutoResearchDomainId;
+  domain_label: string;
+  confidence: number;
+  matched_signals: string[];
+  unsupported_reason?: string | null;
+  required_capabilities: string[];
+  evidence_policy: string[];
+  publish_readiness_policy: string[];
+  default_blockers: string[];
+  template_id?: string | null;
+  template_version?: string | null;
+  is_supported: boolean;
+};
+
+export type AutoResearchDomainTemplate = {
+  domain_id: AutoResearchDomainId;
+  domain_label: string;
+  template_id: string;
+  template_version: string;
+  research_brief_template: string;
+  literature_query_plan: string[];
+  benchmark_resolver_policy: string[];
+  method_baseline_ladder: string[];
+  metric_schema: string[];
+  experiment_factory_protocol: string[];
+  evidence_ledger_schema: string[];
+  paper_section_requirements: string[];
+  publish_readiness_constraints: string[];
+  negative_evidence_taxonomy: string[];
+  required_package_artifacts: string[];
+  task_family: AutoResearchTaskFamily;
+  benchmark_name: string;
+  template_complete: boolean;
+  blockers: string[];
+};
+
 export type AutoResearchResearchDirection = {
   direction_id: string;
   title: string;
@@ -2825,10 +2868,13 @@ export type AutoResearchResearchBrief = {
   project_id: string;
   generated_at: string;
   updated_at: string;
-  status: "drafted" | "ready_for_selection";
+  status: "drafted" | "ready_for_selection" | "blocked";
   original_idea: string;
   polished_idea: string;
   domain?: string | null;
+  domain_decision?: AutoResearchDomainDecision | null;
+  domain_template?: AutoResearchDomainTemplate | null;
+  domain_blockers: string[];
   idea_too_generic: boolean;
   specificity_assessment: "too_generic" | "broad_but_actionable" | "scoped";
   scope_narrowing_recommendation: string;
@@ -2854,7 +2900,7 @@ export type AutoResearchResearchBrief = {
   selected_hypothesis_id?: string | null;
   selection_reason?: string | null;
   direction_selection?: AutoResearchDirectionSelection | null;
-  next_action: "build_hypothesis_bank" | "select_direction" | "create_run";
+  next_action: "build_hypothesis_bank" | "select_direction" | "create_run" | "blocked";
   allow_web: boolean;
   allow_experiments: boolean;
   target_tier: AutoResearchPaperTier;
@@ -3340,6 +3386,11 @@ export type AutoResearchOperatorConsole = {
   latest_brief_id?: string | null;
   latest_brief_status?: string | null;
   latest_brief_original_idea?: string | null;
+  latest_brief_domain_id?: string | null;
+  latest_brief_domain_label?: string | null;
+  latest_brief_domain_confidence: number;
+  latest_brief_domain_supported: boolean;
+  latest_brief_domain_blockers: string[];
   latest_brief_hypothesis_count: number;
   latest_brief_selected_direction_id?: string | null;
   latest_brief_selected_hypothesis_id?: string | null;
@@ -3478,6 +3529,9 @@ export type AutoResearchProjectPaperOrchestration = {
   project_id: string;
   brief_count: number;
   latest_brief_id?: string | null;
+  latest_brief_domain_decision?: AutoResearchDomainDecision | null;
+  latest_brief_domain_template?: AutoResearchDomainTemplate | null;
+  latest_brief_domain_blockers: string[];
   latest_brief_selected_hypothesis_id?: string | null;
   candidate_run_count: number;
   selected_run_ids: string[];
@@ -3612,6 +3666,9 @@ export type AutoResearchSystemEvaluationMetric = {
 export type AutoResearchEvaluationCaseTrace = {
   idea: string;
   brief_id?: string | null;
+  domain_decision?: AutoResearchDomainDecision | null;
+  domain_template?: AutoResearchDomainTemplate | null;
+  domain_blockers: string[];
   selected_hypothesis_id?: string | null;
   experiment_plan_id?: string | null;
   evidence_ledger_id?: string | null;

@@ -170,7 +170,11 @@ def create_auto_research_idea_brief(
         action="brief_created",
         status_code=200,
         user_id=identity.user_id if identity else None,
-        detail=f"brief_id={brief.brief_id} directions={brief.direction_count}",
+        detail=(
+            f"brief_id={brief.brief_id} directions={brief.direction_count} "
+            f"domain={brief.domain_decision.domain_id if brief.domain_decision is not None else 'unknown'} "
+            f"status={brief.status}"
+        ),
     )
     return brief
 
@@ -264,6 +268,19 @@ def create_auto_research_run_from_idea_brief(
     brief = load_research_brief(project_id, brief_id)
     if brief is None:
         raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    if brief.next_action == "blocked" or brief.status == "blocked" or brief.domain_blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This idea brief is blocked by domain routing and cannot create a run.",
+                "domain_decision": (
+                    brief.domain_decision.model_dump(mode="json")
+                    if brief.domain_decision is not None
+                    else None
+                ),
+                "blockers": brief.domain_blockers or brief.feasibility_assessment.blockers,
+            },
+        )
     if not brief.allow_experiments:
         raise HTTPException(
             status_code=409,
@@ -337,6 +354,19 @@ def build_auto_research_idea_experiment_factory(
     brief = load_research_brief(project_id, brief_id)
     if brief is None:
         raise HTTPException(status_code=404, detail="Auto research idea brief not found")
+    if brief.next_action == "blocked" or brief.status == "blocked" or brief.domain_blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This idea brief is blocked by domain routing and cannot create an experiment plan.",
+                "domain_decision": (
+                    brief.domain_decision.model_dump(mode="json")
+                    if brief.domain_decision is not None
+                    else None
+                ),
+                "blockers": brief.domain_blockers or brief.feasibility_assessment.blockers,
+            },
+        )
     try:
         hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=hypothesis_id)
     except ValueError as exc:

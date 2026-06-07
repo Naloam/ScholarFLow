@@ -23,6 +23,9 @@ backend/migrations/
 
 # Docs — internal project documents
 docs/
+!docs/
+docs/*
+!docs/goal.md
 
 # AI config and prompt files
 AGENTS.md

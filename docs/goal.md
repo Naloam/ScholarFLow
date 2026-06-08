@@ -49,11 +49,10 @@ user idea
 
 - 已经完成从固定 claim-evidence case 到受控 domain idea-to-review-package loop 的工程骨架。
 - 现在处在“能生成 review-ready package 或可审计 blocker”的阶段。
-- 离“真实自动科研 + 写论文 + submission package”还差 4 个大能力层：
-  1. real execution backend；
-  2. real literature/benchmark provenance expansion；
-  3. autonomous revision and submission packaging；
-  4. real end-to-end evaluation and operator productionization。
+- 离“真实自动科研 + 写论文 + submission package”还差 3 个大能力层：
+  1. real literature/benchmark provenance expansion；
+  2. autonomous revision and submission packaging；
+  3. real end-to-end evaluation and operator productionization。
 - 离“可靠 final-publish-ready autonomous scientist”还远，因为 final publish 需要真实、多源、可复现、统计充分、负证据完整的 evidence chain。
 
 更具体地说：
@@ -63,9 +62,9 @@ user idea
 - Per-domain evidence package loop：第一版完成。
 - Literature/gap validation：已有策略、fixture blocker、readiness propagation；还缺 P15 级真实 cached connector coverage、dedupe、metadata extraction、known methods/datasets/metrics/SOTA extraction。
 - Benchmark resolver：已有 structured resolver；还缺更多真实/imported benchmark provenance、source independence、scale/statistics support。
-- Experiment protocol：已有 per-domain protocol 和 deterministic replay/import validation；还缺 production-grade local/Docker/bridge execution runtime。
-- Execution/repair：现在主要是 toy/materialized/replay style；还缺真实 job materialization、runtime validation、environment manifest、failure classifier、bounded replanning。
-- Evidence ledger/readiness：已有 domain propagation；还缺从真实 execution result 自动映射到 run/project/package-level evidence。
+- Experiment protocol：已有 per-domain protocol、typed execution job materialization、deterministic replay/local/import runtime、Docker/bridge structured blockers。
+- Execution/repair：已有 typed runtime validation、environment manifest、failure classifier、repair recommendation 和 bounded blocker 分类；后续真实外部执行能力仍需由具体 bridge/Docker 环境接入。
+- Evidence ledger/readiness：已有 typed execution result 到 run/project/package-level evidence、negative evidence、readiness/package manifest 的映射；后续要扩展真实 literature/benchmark provenance。
 - Paper/reviewer/revision：已有 project orchestrator 和 reviewer/publish gate 基础；还缺 submission-ready compiler V2、autonomous revision loop、finding-by-finding reviewer response。
 - Submission/final publish：还没有完整 final submission archive；`final_publish_ready=true` 只能在后续真实 evidence 满足 publish policy 后出现。
 
@@ -100,7 +99,7 @@ user idea
    - Unsupported domain 全链路 blocked/auditable，不生成 fake experiment outputs。
 
 5. Goal 3: Real Experiment Backend And Repair Productionization
-   - 完成提交：本轮 scoped commit `Implement typed experiment execution backend`
+   - 完成提交：`a0024a4 Implement typed experiment execution backend`
    - 已实现 typed experiment execution plan/job/result/blocker/runtime-contract/output-validation/environment-manifest schema。
    - 已新增 `backend/services/autoresearch/experiment_execution.py`，将 domain protocol/factory plan materialize 为 deterministic replay、repository-local command、Docker-blocked、external/bridge import jobs。
    - 已明确 `AutoResearchExecutionPlane` 是整条 auto-research run 的 queue/worker plane；Goal 3 runtime 是 experiment-job runtime，不替代 queue。
@@ -156,7 +155,7 @@ user idea
 Goal 3: Real Experiment Backend And Repair Productionization
 ============================================================
 
-Goal 3 是下一轮默认目标。
+Goal 3 已完成稳定的 typed experiment execution backend；除非测试回归，下一轮不要重复实现 execution backend。
 
 目标
 ----

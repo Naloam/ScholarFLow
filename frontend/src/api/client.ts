@@ -12,6 +12,10 @@ import type {
   AutoResearchExecutionCommandResponse,
   AutoResearchEvaluationCaseSuite,
   AutoResearchExperimentBridge,
+  AutoResearchExperimentExecutionImportRequest,
+  AutoResearchExperimentExecutionPlan,
+  AutoResearchExperimentExecutionPlanRequest,
+  AutoResearchExperimentExecutionResult,
   AutoResearchExperimentFactoryExecution,
   AutoResearchExperimentFactoryImportRequest,
   AutoResearchExperimentFactoryMaterializeRequest,
@@ -449,6 +453,48 @@ export const api = {
     return request(
       `/api/projects/${projectId}/auto-research/${runId}/experiment-factory`,
       { method: "POST" },
+    );
+  },
+
+  buildAutoResearchRunExperimentExecutionPlan(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchExperimentExecutionPlanRequest,
+  ): Promise<AutoResearchExperimentExecutionPlan> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-execution/plan`,
+      {
+        method: "POST",
+        body: payload ? JSON.stringify(payload) : undefined,
+      },
+    );
+  },
+
+  executeAutoResearchRunExperimentExecution(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchExperimentExecutionPlanRequest,
+  ): Promise<AutoResearchExperimentExecutionResult> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-execution/execute`,
+      {
+        method: "POST",
+        body: payload ? JSON.stringify(payload) : undefined,
+      },
+    );
+  },
+
+  importAutoResearchRunExperimentExecutionResult(
+    projectId: string,
+    runId: string,
+    payload: AutoResearchExperimentExecutionImportRequest,
+  ): Promise<AutoResearchExperimentExecutionResult> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/experiment-execution/import`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
     );
   },
 

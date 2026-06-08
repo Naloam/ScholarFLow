@@ -18,6 +18,10 @@ from schemas.autoresearch import (
     AutoResearchExecutionCommandResponse,
     AutoResearchEvaluationCaseSuiteRead,
     AutoResearchExperimentBridgeRead,
+    AutoResearchExperimentExecutionImportRequest,
+    AutoResearchExperimentExecutionPlanRead,
+    AutoResearchExperimentExecutionPlanRequest,
+    AutoResearchExperimentExecutionResultRead,
     AutoResearchExperimentFactoryExecutionRead,
     AutoResearchExperimentFactoryImportRequest,
     AutoResearchExperimentFactoryMaterializeRequest,
@@ -73,6 +77,11 @@ from services.autoresearch.experiment_factory import (
     execute_imported_experiment_factory,
     execute_toy_experiment_factory,
     materialize_factory_execution,
+)
+from services.autoresearch.experiment_execution import (
+    build_experiment_execution_plan,
+    execute_experiment_execution_plan,
+    merge_execution_evidence_ledger,
 )
 from services.autoresearch.idea_brief import (
     build_research_brief,
@@ -478,6 +487,29 @@ def get_auto_research_run(
     return run
 
 
+def _experiment_factory_plan_for_run(
+    project_id: str,
+    run: AutoResearchRunRead,
+) -> tuple[AutoResearchExperimentFactoryPlanRead, AutoResearchResearchBriefRead | None]:
+    brief = load_research_brief(project_id, run.brief_id) if run.brief_id else None
+    hypothesis = None
+    if brief is not None:
+        try:
+            hypothesis = selected_hypothesis_from_brief(brief, hypothesis_id=run.hypothesis_id)
+        except ValueError:
+            hypothesis = None
+    return (
+        build_experiment_factory_plan(
+            project_id=project_id,
+            brief=brief,
+            hypothesis=hypothesis,
+            run=run,
+            experiment_design=getattr(run, "experiment_design", None),
+        ),
+        brief,
+    )
+
+
 @router.post("/{run_id}/experiment-factory", response_model=AutoResearchExperimentFactoryPlanRead)
 def build_auto_research_run_experiment_factory(
     project_id: str,
@@ -502,6 +534,132 @@ def build_auto_research_run_experiment_factory(
         run=run,
         experiment_design=getattr(run, "experiment_design", None),
     )
+
+
+@router.post("/{run_id}/experiment-execution/plan", response_model=AutoResearchExperimentExecutionPlanRead)
+def build_auto_research_run_experiment_execution_plan(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchExperimentExecutionPlanRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentExecutionPlanRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    factory_plan, brief = _experiment_factory_plan_for_run(project_id, run)
+    plan = build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=payload or AutoResearchExperimentExecutionPlanRequest(),
+    )
+    save_run(
+        run.model_copy(
+            update={
+                "experiment_factory_plan": factory_plan,
+                "experiment_execution_plan": plan,
+            }
+        )
+    )
+    return plan
+
+
+@router.post("/{run_id}/experiment-execution/execute", response_model=AutoResearchExperimentExecutionResultRead)
+def execute_auto_research_run_experiment_execution(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchExperimentExecutionPlanRequest | None = Body(default=None),
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentExecutionResultRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    factory_plan, brief = _experiment_factory_plan_for_run(project_id, run)
+    plan = build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=payload or AutoResearchExperimentExecutionPlanRequest(),
+    )
+    result = execute_experiment_execution_plan(plan)
+    merged_ledger = merge_execution_evidence_ledger(run.evidence_ledger, result.evidence_ledger)
+    save_run(
+        run.model_copy(
+            update={
+                "status": "done" if result.status == "succeeded" else "failed",
+                "error": None if result.status == "succeeded" else "; ".join(result.repair_reasons[:3]) or result.failure_classification,
+                "experiment_factory_plan": factory_plan,
+                "experiment_execution_plan": plan,
+                "experiment_execution_result": result,
+                "artifact": result.result_artifact or run.artifact,
+                "evidence_ledger": merged_ledger,
+            }
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.experiment_execution",
+        project_id=project_id,
+        action="executed",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"run_id={run.id} status={result.status} "
+            f"failure={result.failure_classification} jobs={plan.job_count}"
+        ),
+    )
+    return result
+
+
+@router.post("/{run_id}/experiment-execution/import", response_model=AutoResearchExperimentExecutionResultRead)
+def import_auto_research_run_experiment_execution_result(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchExperimentExecutionImportRequest,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchExperimentExecutionResultRead:
+    del db
+    run = load_run(project_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    factory_plan, brief = _experiment_factory_plan_for_run(project_id, run)
+    plan = build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(execution_route="external_import"),
+    )
+    result = execute_experiment_execution_plan(plan, import_request=payload)
+    merged_ledger = merge_execution_evidence_ledger(run.evidence_ledger, result.evidence_ledger)
+    save_run(
+        run.model_copy(
+            update={
+                "status": "done" if result.status == "succeeded" else "failed",
+                "error": None if result.status == "succeeded" else "; ".join(result.repair_reasons[:3]) or result.failure_classification,
+                "experiment_factory_plan": factory_plan,
+                "experiment_execution_plan": plan,
+                "experiment_execution_result": result,
+                "artifact": result.result_artifact or run.artifact,
+                "evidence_ledger": merged_ledger,
+            }
+        )
+    )
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=run.id,
+        task_name="autoresearch.experiment_execution",
+        project_id=project_id,
+        action="external_imported",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"run_id={run.id} status={result.status} "
+            f"failure={result.failure_classification} jobs={plan.job_count}"
+        ),
+    )
+    return result
 
 
 @router.post("/{run_id}/experiment-factory/toy-execute", response_model=AutoResearchExperimentFactoryExecutionRead)

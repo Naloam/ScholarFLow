@@ -76,6 +76,8 @@ AutoResearchBundleAssetRole = Literal[
     "run_experiment_factory_plan_json",
     "run_experiment_factory_environment_manifest_json",
     "run_experiment_factory_materialized_jobs_json",
+    "run_experiment_execution_plan_json",
+    "run_experiment_execution_result_json",
     "run_evidence_ledger_json",
     "run_experiment_factory_repair_plan_json",
     "run_paper_plan_json",
@@ -141,6 +143,8 @@ AutoResearchLineageNodeKind = Literal[
     "experiment_factory_plan",
     "experiment_factory_environment_manifest",
     "experiment_factory_materialized_jobs",
+    "experiment_execution_plan",
+    "experiment_execution_result",
     "evidence_ledger",
     "experiment_factory_repair_plan",
     "paper_plan",
@@ -335,6 +339,65 @@ AutoResearchExperimentFactoryRepairAction = Literal[
     "add_missing_ablation",
     "increase_seed_count",
     "rerun_failed_job",
+]
+AutoResearchExperimentExecutionRoute = Literal[
+    "deterministic_replay",
+    "local_command",
+    "docker",
+    "external_import",
+    "bridge_import",
+]
+AutoResearchExperimentExecutionApprovalState = Literal[
+    "not_required",
+    "needs_approval",
+    "approved",
+    "rejected",
+]
+AutoResearchExperimentExecutionJobStatus = Literal[
+    "planned",
+    "needs_approval",
+    "blocked",
+    "running",
+    "succeeded",
+    "failed",
+    "imported",
+]
+AutoResearchExperimentExecutionPlanStatus = Literal[
+    "planned",
+    "blocked",
+    "needs_approval",
+    "ready",
+]
+AutoResearchExperimentExecutionResultStatus = Literal[
+    "succeeded",
+    "failed",
+    "blocked",
+    "needs_approval",
+]
+AutoResearchExperimentExecutionFailureClass = Literal[
+    "none",
+    "missing_baseline",
+    "missing_ablation",
+    "insufficient_statistics",
+    "runtime_failure",
+    "missing_output",
+    "bad_json",
+    "bad_metric_schema",
+    "benchmark_mismatch",
+    "environment_mismatch",
+    "budget_approval_required",
+    "unsupported_execution_backend",
+    "external_import_required",
+]
+AutoResearchExperimentExecutionRepairAction = Literal[
+    "none",
+    "execute_now",
+    "requires_approval",
+    "requires_imported_artifact",
+    "requires_benchmark_or_protocol_change",
+    "blocked_by_deterministic_offline_policy",
+    "downgrade_claim",
+    "terminal_blocker",
 ]
 HypothesisCandidateStatus = Literal["planned", "selected", "running", "done", "failed", "deferred"]
 PortfolioStatus = Literal["planned", "running", "done", "failed"]
@@ -1166,6 +1229,16 @@ class AutoResearchEvidenceLedgerEntryRead(BaseModel):
     metric: str | None = None
     value: float | None = None
     support_status: Literal["supported", "partial", "missing"] = "supported"
+    evidence_type: str | None = None
+    metric_values: dict[str, float] = Field(default_factory=dict)
+    sample_counts: dict[str, int] = Field(default_factory=dict)
+    baseline_comparisons: dict[str, Any] = Field(default_factory=dict)
+    ablation_status: str | None = None
+    statistical_sufficiency: str | None = None
+    failure_classifications: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    claim_ceiling: str | None = None
+    lineage_parent_refs: list[str] = Field(default_factory=list)
 
 
 class AutoResearchEvidenceLedgerRead(BaseModel):
@@ -1209,6 +1282,167 @@ class AutoResearchExperimentFactoryExecutionRead(BaseModel):
     result_artifact: ResultArtifact
     evidence_ledger: AutoResearchEvidenceLedgerRead
     repair_plan: AutoResearchExperimentFactoryRepairPlanRead | None = None
+
+
+class AutoResearchExperimentExecutionBlockerRead(BaseModel):
+    blocker_id: str
+    scope: str = "job"
+    reason: str
+    failure_classification: AutoResearchExperimentExecutionFailureClass = "none"
+    required_action: AutoResearchExperimentExecutionRepairAction = "terminal_blocker"
+    evidence_refs: list[str] = Field(default_factory=list)
+    prevents_execution: bool = True
+    terminal: bool = False
+
+
+class AutoResearchExperimentRuntimeContractRead(BaseModel):
+    contract_id: str
+    execution_route: AutoResearchExperimentExecutionRoute
+    deterministic: bool = True
+    allowed_command: bool = True
+    required_inputs: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    metric_schema: list[str] = Field(default_factory=list)
+    benchmark_resolver_ref: str | None = None
+    domain_id: AutoResearchDomainId | None = None
+    timeout_seconds: int = 60
+    requires_live_network: bool = False
+    requires_paid_llm: bool = False
+    requires_gpu: bool = False
+    requires_docker_daemon: bool = False
+    environment_requirements: dict[str, Any] = Field(default_factory=dict)
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchExperimentOutputValidationRead(BaseModel):
+    output_ref: str
+    exists: bool = False
+    content_type: str | None = None
+    sha256: str | None = None
+    schema_version: str | None = None
+    metric_names: list[str] = Field(default_factory=list)
+    metric_value_types: dict[str, str] = Field(default_factory=dict)
+    sample_counts: dict[str, int] = Field(default_factory=dict)
+    split_counts: dict[str, int] = Field(default_factory=dict)
+    baseline_references: list[str] = Field(default_factory=list)
+    ablation_references: list[str] = Field(default_factory=list)
+    validation_status: Literal["passed", "failed", "blocked"] = "failed"
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchExperimentEnvironmentManifestRead(BaseModel):
+    manifest_id: str = "experiment_execution_environment_v1"
+    generated_at: datetime
+    execution_route: AutoResearchExperimentExecutionRoute
+    backend: ExecutionBackendKind = "auto"
+    command: str | None = None
+    cwd: str | None = None
+    timeout_seconds: int = 60
+    python_version: str | None = None
+    platform: str | None = None
+    environment: dict[str, Any] = Field(default_factory=dict)
+    requirements_recorded: bool = True
+    manifest_fingerprint: str
+
+
+class AutoResearchExperimentExecutionJobRead(BaseModel):
+    job_id: str
+    project_id: str
+    run_id: str | None = None
+    brief_id: str | None = None
+    domain_id: AutoResearchDomainId
+    protocol_id: str
+    benchmark_resolver_ref: str | None = None
+    method_ref: str | None = None
+    baseline_ref: str | None = None
+    job_kind: AutoResearchExperimentFactoryJobKind
+    execution_route: AutoResearchExperimentExecutionRoute
+    command: list[str] = Field(default_factory=list)
+    import_spec: dict[str, Any] | None = None
+    replay_spec: dict[str, Any] | None = None
+    expected_input_artifacts: list[str] = Field(default_factory=list)
+    expected_output_artifacts: list[str] = Field(default_factory=list)
+    metric_schema: list[str] = Field(default_factory=list)
+    runtime_contract: AutoResearchExperimentRuntimeContractRead
+    environment_requirements: dict[str, Any] = Field(default_factory=dict)
+    budget_class: Literal["free", "bounded", "approval_required"] = "free"
+    approval_required: bool = False
+    approval_state: AutoResearchExperimentExecutionApprovalState = "not_required"
+    lineage_parent_refs: list[str] = Field(default_factory=list)
+    claim_ceiling: str | None = None
+    blockers: list[AutoResearchExperimentExecutionBlockerRead] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    status: AutoResearchExperimentExecutionJobStatus = "planned"
+
+
+class AutoResearchExperimentExecutionPlanRequest(BaseModel):
+    execution_route: AutoResearchExperimentExecutionRoute | None = None
+    budget_class: Literal["free", "bounded", "approval_required"] = "free"
+    approval_state: AutoResearchExperimentExecutionApprovalState = "not_required"
+    docker_available: bool = False
+    bridge_available: bool = False
+
+
+class AutoResearchExperimentExecutionPlanRead(BaseModel):
+    plan_id: str = "experiment_execution_plan_v1"
+    project_id: str
+    run_id: str | None = None
+    brief_id: str | None = None
+    hypothesis_id: str | None = None
+    generated_at: datetime
+    status: AutoResearchExperimentExecutionPlanStatus = "planned"
+    domain_id: AutoResearchDomainId | None = None
+    protocol_id: str | None = None
+    benchmark_resolver_ref: str | None = None
+    source_factory_plan_id: str | None = None
+    queue_worker_boundary: str = (
+        "Goal 3 experiment execution runtime executes typed domain protocol jobs; "
+        "it does not replace the auto-research queue/worker execution plane."
+    )
+    jobs: list[AutoResearchExperimentExecutionJobRead] = Field(default_factory=list)
+    job_count: int = 0
+    blockers: list[AutoResearchExperimentExecutionBlockerRead] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    claim_ceiling: str | None = None
+    plan_fingerprint: str
+
+
+class AutoResearchExperimentExecutionImportRequest(BaseModel):
+    summary: str = "Imported experiment execution result."
+    artifact_package: dict[str, Any] = Field(default_factory=dict)
+    source_package_ref: str | None = None
+    schema_version: str = "experiment_execution_result_v1"
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoResearchExperimentExecutionResultRead(BaseModel):
+    result_id: str = "experiment_execution_result_v1"
+    project_id: str
+    run_id: str | None = None
+    brief_id: str | None = None
+    hypothesis_id: str | None = None
+    generated_at: datetime
+    plan_id: str
+    status: AutoResearchExperimentExecutionResultStatus
+    job_results: list[AutoResearchExperimentExecutionJobRead] = Field(default_factory=list)
+    execution_profile: dict[str, Any] = Field(default_factory=dict)
+    environment_manifest: AutoResearchExperimentEnvironmentManifestRead | None = None
+    runtime_contract_results: list[AutoResearchExperimentRuntimeContractRead] = Field(default_factory=list)
+    output_validation: list[AutoResearchExperimentOutputValidationRead] = Field(default_factory=list)
+    failure_classification: AutoResearchExperimentExecutionFailureClass = "none"
+    repair_recommendation: AutoResearchExperimentExecutionRepairAction = "none"
+    repair_reasons: list[str] = Field(default_factory=list)
+    lineage_refs: list[str] = Field(default_factory=list)
+    output_artifact_refs: list[str] = Field(default_factory=list)
+    negative_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    result_artifact: ResultArtifact | None = None
+    evidence_ledger: AutoResearchEvidenceLedgerRead | None = None
+    package_manifest_fragment: dict[str, Any] = Field(default_factory=dict)
+    claim_ceiling: str | None = None
+    blockers: list[AutoResearchExperimentExecutionBlockerRead] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    deterministic_fingerprint: str | None = None
+    result_fingerprint: str
 
 
 class AutoResearchRunControlPatch(BaseModel):
@@ -2054,6 +2288,10 @@ class AutoResearchRunRead(BaseModel):
     experiment_factory_environment_manifest_path: str | None = None
     experiment_factory_materialized_jobs: list[AutoResearchExperimentFactoryMaterializedJobRead] = Field(default_factory=list)
     experiment_factory_materialized_jobs_path: str | None = None
+    experiment_execution_plan: AutoResearchExperimentExecutionPlanRead | None = None
+    experiment_execution_plan_path: str | None = None
+    experiment_execution_result: AutoResearchExperimentExecutionResultRead | None = None
+    experiment_execution_result_path: str | None = None
     evidence_ledger: AutoResearchEvidenceLedgerRead | None = None
     evidence_ledger_path: str | None = None
     experiment_factory_repair_plan: AutoResearchExperimentFactoryRepairPlanRead | None = None
@@ -2137,6 +2375,8 @@ class AutoResearchRunRegistryFiles(BaseModel):
     experiment_factory_plan_json: AutoResearchRegistryAssetRef | None = None
     experiment_factory_environment_manifest_json: AutoResearchRegistryAssetRef | None = None
     experiment_factory_materialized_jobs_json: AutoResearchRegistryAssetRef | None = None
+    experiment_execution_plan_json: AutoResearchRegistryAssetRef | None = None
+    experiment_execution_result_json: AutoResearchRegistryAssetRef | None = None
     evidence_ledger_json: AutoResearchRegistryAssetRef | None = None
     experiment_factory_repair_plan_json: AutoResearchRegistryAssetRef | None = None
     paper_plan_json: AutoResearchRegistryAssetRef | None = None
@@ -2981,6 +3221,18 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     domain_claim_ceiling: str | None = None
     selected_hypothesis_id: str | None = None
     experiment_plan_id: str | None = None
+    experiment_execution_plan_id: str | None = None
+    experiment_execution_job_count: int = 0
+    experiment_execution_routes: list[AutoResearchExperimentExecutionRoute] = Field(default_factory=list)
+    experiment_execution_status: AutoResearchExperimentExecutionResultStatus | None = None
+    experiment_execution_budget_class: str | None = None
+    experiment_execution_approval_states: list[AutoResearchExperimentExecutionApprovalState] = Field(default_factory=list)
+    experiment_execution_output_validation: list[AutoResearchExperimentOutputValidationRead] = Field(default_factory=list)
+    experiment_execution_failure_classification: AutoResearchExperimentExecutionFailureClass | None = None
+    experiment_execution_repair_recommendation: AutoResearchExperimentExecutionRepairAction | None = None
+    experiment_execution_blockers: list[str] = Field(default_factory=list)
+    experiment_execution_claim_ceiling: str | None = None
+    experiment_execution_package_manifest_fragment: dict[str, Any] = Field(default_factory=dict)
     evidence_ledger_id: str | None = None
     result_artifact_status: str | None = None
     primary_metric: str | None = None

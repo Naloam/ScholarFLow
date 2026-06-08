@@ -282,6 +282,65 @@ export type AutoResearchDomainId =
 
 export type AutoResearchDomainEvidenceStatus = "blocked" | "limited" | "ready";
 
+export type AutoResearchExperimentExecutionRoute =
+  | "deterministic_replay"
+  | "local_command"
+  | "docker"
+  | "external_import"
+  | "bridge_import";
+
+export type AutoResearchExperimentExecutionApprovalState =
+  | "not_required"
+  | "needs_approval"
+  | "approved"
+  | "rejected";
+
+export type AutoResearchExperimentExecutionJobStatus =
+  | "planned"
+  | "needs_approval"
+  | "blocked"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "imported";
+
+export type AutoResearchExperimentExecutionPlanStatus =
+  | "planned"
+  | "blocked"
+  | "needs_approval"
+  | "ready";
+
+export type AutoResearchExperimentExecutionResultStatus =
+  | "succeeded"
+  | "failed"
+  | "blocked"
+  | "needs_approval";
+
+export type AutoResearchExperimentExecutionFailureClass =
+  | "none"
+  | "missing_baseline"
+  | "missing_ablation"
+  | "insufficient_statistics"
+  | "runtime_failure"
+  | "missing_output"
+  | "bad_json"
+  | "bad_metric_schema"
+  | "benchmark_mismatch"
+  | "environment_mismatch"
+  | "budget_approval_required"
+  | "unsupported_execution_backend"
+  | "external_import_required";
+
+export type AutoResearchExperimentExecutionRepairAction =
+  | "none"
+  | "execute_now"
+  | "requires_approval"
+  | "requires_imported_artifact"
+  | "requires_benchmark_or_protocol_change"
+  | "blocked_by_deterministic_offline_policy"
+  | "downgrade_claim"
+  | "terminal_blocker";
+
 export type AutoResearchBenchmarkKind =
   | "builtin"
   | "remote_csv"
@@ -660,6 +719,10 @@ export type AutoResearchRun = {
   experiment_factory_environment_manifest_path?: string | null;
   experiment_factory_materialized_jobs: AutoResearchExperimentFactoryMaterializedJob[];
   experiment_factory_materialized_jobs_path?: string | null;
+  experiment_execution_plan?: AutoResearchExperimentExecutionPlan | null;
+  experiment_execution_plan_path?: string | null;
+  experiment_execution_result?: AutoResearchExperimentExecutionResult | null;
+  experiment_execution_result_path?: string | null;
   evidence_ledger?: AutoResearchEvidenceLedger | null;
   evidence_ledger_path?: string | null;
   experiment_factory_repair_plan?: AutoResearchExperimentFactoryRepairPlan | null;
@@ -811,6 +874,10 @@ export type AutoResearchLineageEdge = {
     | "publication_repair_execution"
     | "reviewer_simulation"
     | "experiment_factory_plan"
+    | "experiment_factory_environment_manifest"
+    | "experiment_factory_materialized_jobs"
+    | "experiment_execution_plan"
+    | "experiment_execution_result"
     | "evidence_ledger"
     | "experiment_factory_repair_plan"
     | "paper_plan"
@@ -924,6 +991,8 @@ export type AutoResearchRunRegistryFiles = {
   experiment_factory_plan_json?: AutoResearchRegistryAssetRef | null;
   experiment_factory_environment_manifest_json?: AutoResearchRegistryAssetRef | null;
   experiment_factory_materialized_jobs_json?: AutoResearchRegistryAssetRef | null;
+  experiment_execution_plan_json?: AutoResearchRegistryAssetRef | null;
+  experiment_execution_result_json?: AutoResearchRegistryAssetRef | null;
   evidence_ledger_json?: AutoResearchRegistryAssetRef | null;
   experiment_factory_repair_plan_json?: AutoResearchRegistryAssetRef | null;
   paper_plan_json?: AutoResearchRegistryAssetRef | null;
@@ -1084,6 +1153,8 @@ export type AutoResearchBundleAssetRead = {
     | "run_experiment_factory_plan_json"
     | "run_experiment_factory_environment_manifest_json"
     | "run_experiment_factory_materialized_jobs_json"
+    | "run_experiment_execution_plan_json"
+    | "run_experiment_execution_result_json"
     | "run_evidence_ledger_json"
     | "run_experiment_factory_repair_plan_json"
     | "run_paper_plan_json"
@@ -3204,6 +3275,16 @@ export type AutoResearchEvidenceLedgerEntry = {
   metric?: string | null;
   value?: number | null;
   support_status: "supported" | "partial" | "missing";
+  evidence_type?: string | null;
+  metric_values: Record<string, number>;
+  sample_counts: Record<string, number>;
+  baseline_comparisons: Record<string, unknown>;
+  ablation_status?: string | null;
+  statistical_sufficiency?: string | null;
+  failure_classifications: string[];
+  limitations: string[];
+  claim_ceiling?: string | null;
+  lineage_parent_refs: string[];
 };
 
 export type AutoResearchEvidenceLedger = {
@@ -3268,6 +3349,164 @@ export type AutoResearchExperimentFactoryExecution = {
   result_artifact: AutoResearchResultArtifact;
   evidence_ledger: AutoResearchEvidenceLedger;
   repair_plan?: AutoResearchExperimentFactoryRepairPlan | null;
+};
+
+export type AutoResearchExperimentExecutionBlocker = {
+  blocker_id: string;
+  scope: string;
+  reason: string;
+  failure_classification: AutoResearchExperimentExecutionFailureClass;
+  required_action: AutoResearchExperimentExecutionRepairAction;
+  evidence_refs: string[];
+  prevents_execution: boolean;
+  terminal: boolean;
+};
+
+export type AutoResearchExperimentRuntimeContract = {
+  contract_id: string;
+  execution_route: AutoResearchExperimentExecutionRoute;
+  deterministic: boolean;
+  allowed_command: boolean;
+  required_inputs: string[];
+  expected_outputs: string[];
+  metric_schema: string[];
+  benchmark_resolver_ref?: string | null;
+  domain_id?: AutoResearchDomainId | null;
+  timeout_seconds: number;
+  requires_live_network: boolean;
+  requires_paid_llm: boolean;
+  requires_gpu: boolean;
+  requires_docker_daemon: boolean;
+  environment_requirements: Record<string, unknown>;
+  blockers: string[];
+};
+
+export type AutoResearchExperimentOutputValidation = {
+  output_ref: string;
+  exists: boolean;
+  content_type?: string | null;
+  sha256?: string | null;
+  schema_version?: string | null;
+  metric_names: string[];
+  metric_value_types: Record<string, string>;
+  sample_counts: Record<string, number>;
+  split_counts: Record<string, number>;
+  baseline_references: string[];
+  ablation_references: string[];
+  validation_status: "passed" | "failed" | "blocked";
+  blockers: string[];
+};
+
+export type AutoResearchExperimentEnvironmentManifest = {
+  manifest_id: string;
+  generated_at: string;
+  execution_route: AutoResearchExperimentExecutionRoute;
+  backend: "auto" | "local" | "docker" | "docker_gpu" | "command";
+  command?: string | null;
+  cwd?: string | null;
+  timeout_seconds: number;
+  python_version?: string | null;
+  platform?: string | null;
+  environment: Record<string, unknown>;
+  requirements_recorded: boolean;
+  manifest_fingerprint: string;
+};
+
+export type AutoResearchExperimentExecutionJob = {
+  job_id: string;
+  project_id: string;
+  run_id?: string | null;
+  brief_id?: string | null;
+  domain_id: AutoResearchDomainId;
+  protocol_id: string;
+  benchmark_resolver_ref?: string | null;
+  method_ref?: string | null;
+  baseline_ref?: string | null;
+  job_kind: AutoResearchExperimentFactoryJobKind;
+  execution_route: AutoResearchExperimentExecutionRoute;
+  command: string[];
+  import_spec?: Record<string, unknown> | null;
+  replay_spec?: Record<string, unknown> | null;
+  expected_input_artifacts: string[];
+  expected_output_artifacts: string[];
+  metric_schema: string[];
+  runtime_contract: AutoResearchExperimentRuntimeContract;
+  environment_requirements: Record<string, unknown>;
+  budget_class: "free" | "bounded" | "approval_required";
+  approval_required: boolean;
+  approval_state: AutoResearchExperimentExecutionApprovalState;
+  lineage_parent_refs: string[];
+  claim_ceiling?: string | null;
+  blockers: AutoResearchExperimentExecutionBlocker[];
+  warnings: string[];
+  status: AutoResearchExperimentExecutionJobStatus;
+};
+
+export type AutoResearchExperimentExecutionPlanRequest = {
+  execution_route?: AutoResearchExperimentExecutionRoute | null;
+  budget_class?: "free" | "bounded" | "approval_required";
+  approval_state?: AutoResearchExperimentExecutionApprovalState;
+  docker_available?: boolean;
+  bridge_available?: boolean;
+};
+
+export type AutoResearchExperimentExecutionPlan = {
+  plan_id: string;
+  project_id: string;
+  run_id?: string | null;
+  brief_id?: string | null;
+  hypothesis_id?: string | null;
+  generated_at: string;
+  status: AutoResearchExperimentExecutionPlanStatus;
+  domain_id?: AutoResearchDomainId | null;
+  protocol_id?: string | null;
+  benchmark_resolver_ref?: string | null;
+  source_factory_plan_id?: string | null;
+  queue_worker_boundary: string;
+  jobs: AutoResearchExperimentExecutionJob[];
+  job_count: number;
+  blockers: AutoResearchExperimentExecutionBlocker[];
+  warnings: string[];
+  claim_ceiling?: string | null;
+  plan_fingerprint: string;
+};
+
+export type AutoResearchExperimentExecutionImportRequest = {
+  summary?: string;
+  artifact_package?: Record<string, unknown>;
+  source_package_ref?: string | null;
+  schema_version?: string;
+  provenance?: Record<string, unknown>;
+};
+
+export type AutoResearchExperimentExecutionResult = {
+  result_id: string;
+  project_id: string;
+  run_id?: string | null;
+  brief_id?: string | null;
+  hypothesis_id?: string | null;
+  generated_at: string;
+  plan_id: string;
+  status: AutoResearchExperimentExecutionResultStatus;
+  job_results: AutoResearchExperimentExecutionJob[];
+  execution_profile: Record<string, unknown>;
+  environment_manifest?: AutoResearchExperimentEnvironmentManifest | null;
+  runtime_contract_results: AutoResearchExperimentRuntimeContract[];
+  output_validation: AutoResearchExperimentOutputValidation[];
+  failure_classification: AutoResearchExperimentExecutionFailureClass;
+  repair_recommendation: AutoResearchExperimentExecutionRepairAction;
+  repair_reasons: string[];
+  lineage_refs: string[];
+  output_artifact_refs: string[];
+  negative_evidence: Record<string, unknown>[];
+  result_artifact?: AutoResearchResultArtifact | null;
+  evidence_ledger?: AutoResearchEvidenceLedger | null;
+  package_manifest_fragment: Record<string, unknown>;
+  claim_ceiling?: string | null;
+  blockers: AutoResearchExperimentExecutionBlocker[];
+  warnings: string[];
+  deterministic_fingerprint?: string | null;
+  result_fingerprint: string;
 };
 
 export type AutoResearchOperatorConsoleFilters = {
@@ -3831,6 +4070,18 @@ export type AutoResearchEvaluationCaseTrace = {
   domain_claim_ceiling?: string | null;
   selected_hypothesis_id?: string | null;
   experiment_plan_id?: string | null;
+  experiment_execution_plan_id?: string | null;
+  experiment_execution_job_count: number;
+  experiment_execution_routes: AutoResearchExperimentExecutionRoute[];
+  experiment_execution_status?: AutoResearchExperimentExecutionResultStatus | null;
+  experiment_execution_budget_class?: string | null;
+  experiment_execution_approval_states: AutoResearchExperimentExecutionApprovalState[];
+  experiment_execution_output_validation: AutoResearchExperimentOutputValidation[];
+  experiment_execution_failure_classification?: AutoResearchExperimentExecutionFailureClass | null;
+  experiment_execution_repair_recommendation?: AutoResearchExperimentExecutionRepairAction | null;
+  experiment_execution_blockers: string[];
+  experiment_execution_claim_ceiling?: string | null;
+  experiment_execution_package_manifest_fragment: Record<string, unknown>;
   evidence_ledger_id?: string | null;
   result_artifact_status?: string | null;
   primary_metric?: string | null;

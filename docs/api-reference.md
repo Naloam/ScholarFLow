@@ -94,6 +94,7 @@ This document focuses on the current auto-research API surface.
 - `paper_section_rewrite_index` now materializes section-level rewrite packets so revision work can resume from per-section drafting inputs instead of only global issue lists
 - `paper_sources_manifest` now also declares `expected_outputs` so downstream compile/export steps can consume an explicit output contract instead of inferring it from commands alone
 - `paper_compile_report` now snapshots compile readiness, compile-critical source-file coverage, expected outputs, and currently materialized outputs for the persisted paper workspace
+- Goal 3 typed experiment-runtime artifacts are returned when present as `experiment_execution_plan`, `experiment_execution_plan_path`, `experiment_execution_result`, and `experiment_execution_result_path`
 - today this is still the main read surface for completed runs
 
 ### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-factory`
@@ -124,6 +125,31 @@ This document focuses on the current auto-research API surface.
 - classifies missing imported baselines as `add_missing_baseline` / `missing_baseline_outputs`, missing ablations as `add_missing_ablation` / `missing_ablation_outputs`, insufficient seed/statistical evidence as `increase_seed_count` / `insufficient_statistics_outputs`, and candidate/runtime failures as rerun-required failures
 - keeps the run `failed` when no objective score is provided; otherwise marks the run `done` while preserving repair blockers for incomplete evidence
 
+### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-execution/plan`
+
+- builds the Goal 3 typed experiment-job execution plan from the run's domain experiment protocol and experiment-factory plan
+- this is the experiment-job runtime contract, not the auto-research queue/worker execution plane
+- accepts optional `execution_route` (`deterministic_replay`, `local_command`, `docker`, `external_import`, or `bridge_import`), `budget_class`, `approval_state`, `docker_available`, and `bridge_available`
+- returns `AutoResearchExperimentExecutionPlanRead` with typed jobs, route-specific `command` / `replay_spec` / `import_spec`, expected inputs/outputs, metric schema, runtime contract, environment requirements, approval state, lineage refs, claim ceiling, blockers, and warnings
+- unsupported domains, missing protocol, missing benchmark, Docker unavailable, bridge unavailable, and unapproved budget routes produce structured blockers; blocked plans do not generate fake output refs
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-execution/execute`
+
+- executes the typed experiment plan through deterministic replay or repository-approved local-command runtime
+- local command runtime is restricted to the internal approved command spec and records command, cwd, environment, timeout, stdout/stderr refs, exit code, runtime contracts, environment manifest, output validation, deterministic fingerprint, failure classification, repair recommendation, lineage refs, result artifact, and evidence ledger mapping
+- replay runtime records replay source package refs/hashes and produces a stable deterministic fingerprint
+- Docker and bridge routes are blocked unless their availability/approval is explicitly represented; there is no silent fallback to local success
+- validation failures such as missing output, bad JSON, bad metric schema, benchmark mismatch, environment mismatch, runtime failure, and approval-required state are returned as failed/blocked results with negative evidence and repair recommendations
+- persists `experiment_execution_plan.json`, `experiment_execution_result.json`, `artifact.json`, and an appended/merged `evidence_ledger.json` through repository helpers
+- fixture/local smoke evidence preserves claim ceilings such as `review_only_engineering_validation_claim` and never upgrades final-publish readiness
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/experiment-execution/import`
+
+- imports an externally produced typed experiment artifact package through the Goal 3 runtime contract
+- validates the imported package's schema version, provenance, metric schema, benchmark resolver ref, environment requirements, expected outputs, output hashes, sample/split counts, baseline refs, ablation refs, and output validation blockers
+- incomplete or schema-mismatched imports fail validation; imported packages are not auto-filled with synthetic output refs
+- persists the same typed plan/result/evidence artifacts as local/replay execution while retaining source package, hash, import timestamp, and provenance in the result payload
+
 ### `PATCH /api/projects/{project_id}/auto-research/{run_id}/controls`
 
 - patches the persisted run request snapshot for future scheduling/budget changes
@@ -133,6 +159,7 @@ This document focuses on the current auto-research API surface.
 ### `GET /api/projects/{project_id}/auto-research/{run_id}/execution`
 
 - returns execution-plane state for the run
+- this endpoint is the auto-research queue/worker plane for scheduling whole research runs; it is not the Goal 3 experiment-job runtime
 - includes job history, active job information, cancel flag, queue telemetry, a primary worker snapshot, and the current worker fleet
 - job entries now expose `priority`, `lease_id`, `recovery_count`, and `last_recovered_at`
 - worker state now also exposes `lease_expires_at`, recent lifecycle timestamps, and a `stale` flag

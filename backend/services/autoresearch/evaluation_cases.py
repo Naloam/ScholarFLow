@@ -23,6 +23,10 @@ from services.autoresearch.experiment_factory import (
     execute_cached_claim_evidence_experiment_factory,
     execute_toy_experiment_factory,
 )
+from services.autoresearch.experiment_execution import (
+    build_experiment_execution_plan,
+    execute_experiment_execution_plan,
+)
 from services.autoresearch.idea_brief import build_research_brief, selected_hypothesis_from_brief
 from services.autoresearch.literature_scout import (
     literature_insights_from_scout,
@@ -1148,6 +1152,17 @@ def _blocked_domain_trace(
     )
     save_research_brief(scouted)
     project_paper = build_project_paper_orchestration(project_id)
+    factory_plan = build_experiment_factory_plan(
+        project_id=project_id,
+        brief=scouted,
+    )
+    experiment_execution_plan = build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=scouted,
+    )
+    experiment_execution_result = execute_experiment_execution_plan(
+        experiment_execution_plan
+    )
     literature_scout = scouted.literature_scout
     domain_benchmark_blockers = (
         scouted.domain_benchmark_resolver.blockers
@@ -1182,6 +1197,25 @@ def _blocked_domain_trace(
         domain_experiment_protocol=scouted.domain_experiment_protocol,
         domain_readiness_status=scouted.domain_readiness_status,
         domain_claim_ceiling=scouted.domain_claim_ceiling,
+        experiment_execution_plan_id=experiment_execution_plan.plan_id,
+        experiment_execution_job_count=experiment_execution_plan.job_count,
+        experiment_execution_routes=[
+            job.execution_route for job in experiment_execution_plan.jobs
+        ],
+        experiment_execution_status=experiment_execution_result.status,
+        experiment_execution_approval_states=[
+            job.approval_state for job in experiment_execution_plan.jobs
+        ],
+        experiment_execution_output_validation=experiment_execution_result.output_validation,
+        experiment_execution_failure_classification=experiment_execution_result.failure_classification,
+        experiment_execution_repair_recommendation=experiment_execution_result.repair_recommendation,
+        experiment_execution_blockers=[
+            blocker.reason for blocker in experiment_execution_result.blockers
+        ],
+        experiment_execution_claim_ceiling=experiment_execution_result.claim_ceiling,
+        experiment_execution_package_manifest_fragment=(
+            experiment_execution_result.package_manifest_fragment
+        ),
         paper_decision=project_paper.paper_decision,
         steps_completed=[
             "idea",
@@ -1311,6 +1345,13 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
     else:
         execution = execute_toy_experiment_factory(plan)
         execution_step = "toy_execution"
+    experiment_execution_plan = build_experiment_execution_plan(
+        factory_plan=plan,
+        brief=scouted,
+    )
+    experiment_execution_result = execute_experiment_execution_plan(
+        experiment_execution_plan
+    )
 
     scientific_evidence_blockers = list(execution.evidence_ledger.blockers)
     blockers = _dedupe(
@@ -1453,6 +1494,8 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
             experiment_factory_plan=plan,
             experiment_factory_environment_manifest=execution.environment_manifest,
             experiment_factory_materialized_jobs=execution.materialized_jobs,
+            experiment_execution_plan=experiment_execution_plan,
+            experiment_execution_result=experiment_execution_result,
             evidence_ledger=execution.evidence_ledger,
             experiment_factory_repair_plan=execution.repair_plan,
             created_at=_utcnow(),
@@ -2011,6 +2054,30 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         domain_claim_ceiling=scouted.domain_claim_ceiling,
         selected_hypothesis_id=hypothesis.hypothesis_id,
         experiment_plan_id=plan.plan_id,
+        experiment_execution_plan_id=experiment_execution_plan.plan_id,
+        experiment_execution_job_count=experiment_execution_plan.job_count,
+        experiment_execution_routes=[
+            job.execution_route for job in experiment_execution_plan.jobs
+        ],
+        experiment_execution_status=experiment_execution_result.status,
+        experiment_execution_budget_class=(
+            experiment_execution_plan.jobs[0].budget_class
+            if experiment_execution_plan.jobs
+            else None
+        ),
+        experiment_execution_approval_states=[
+            job.approval_state for job in experiment_execution_plan.jobs
+        ],
+        experiment_execution_output_validation=experiment_execution_result.output_validation,
+        experiment_execution_failure_classification=experiment_execution_result.failure_classification,
+        experiment_execution_repair_recommendation=experiment_execution_result.repair_recommendation,
+        experiment_execution_blockers=[
+            blocker.reason for blocker in experiment_execution_result.blockers
+        ],
+        experiment_execution_claim_ceiling=experiment_execution_result.claim_ceiling,
+        experiment_execution_package_manifest_fragment=(
+            experiment_execution_result.package_manifest_fragment
+        ),
         evidence_ledger_id=execution.evidence_ledger.ledger_id,
         result_artifact_status=execution.result_artifact.status,
         primary_metric=execution.result_artifact.primary_metric,

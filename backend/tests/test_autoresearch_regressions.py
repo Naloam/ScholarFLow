@@ -18,6 +18,7 @@ import services.autoresearch.domain_router as autoresearch_domain_router
 import services.autoresearch.artifact_integrity_audit as artifact_integrity_audit
 import services.autoresearch.bridge as autoresearch_bridge
 import services.autoresearch.evaluation_cases as autoresearch_evaluation_cases
+import services.autoresearch.experiment_execution as autoresearch_experiment_execution
 import services.autoresearch.experiment_factory as autoresearch_experiment_factory
 import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.ingestion as autoresearch_ingestion
@@ -44,6 +45,8 @@ from schemas.autoresearch import (
     AutoResearchEvidenceLedgerEntryRead,
     AutoResearchEvidenceLedgerRead,
     AutoResearchExperimentBridgeConfig,
+    AutoResearchExperimentExecutionImportRequest,
+    AutoResearchExperimentExecutionPlanRequest,
     AutoResearchExperimentFactoryMaterializedJobRead,
     AutoResearchLineageEdgeRead,
     AutoResearchNoveltyAssessmentRead,
@@ -12120,3 +12123,421 @@ def test_llm_client_enables_deepseek_v4_thinking_defaults(monkeypatch) -> None:
     assert "reasoning_effort" in captured["allowed_openai_params"]
     assert "temperature" not in captured
     assert "top_p" not in captured
+
+
+def _goal3_factory_plan(
+    *,
+    project_id: str = "project-goal3-execution",
+    idea: str | None = None,
+    domain: str | None = None,
+) -> tuple[object, object]:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id=project_id,
+        payload=AutoResearchIdeaRequest(
+            idea=idea
+            or "Use claim-evidence ledgers for retrieval and verification in scientific writing agents to reduce unsupported claims",
+            domain=domain or "claim_evidence_retrieval",
+            allow_web=False,
+            allow_experiments=True,
+        ),
+    )
+    hypothesis = (
+        autoresearch_idea_brief.selected_hypothesis_from_brief(brief)
+        if brief.selected_hypothesis_id is not None
+        else None
+    )
+    return (
+        brief,
+        autoresearch_experiment_factory.build_experiment_factory_plan(
+            project_id=project_id,
+            brief=brief,
+            hypothesis=hypothesis,
+        ),
+    )
+
+
+def test_goal3_typed_execution_materializes_replay_jobs_and_maps_evidence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    brief, factory_plan = _goal3_factory_plan(project_id="project-goal3-replay")
+    run = autoresearch_repository.create_run(
+        brief.project_id,
+        brief.polished_idea,
+        brief_id=brief.brief_id,
+        hypothesis_id=brief.selected_hypothesis_id,
+    )
+    factory_plan = factory_plan.model_copy(update={"run_id": run.id})
+
+    execution_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+    )
+    result = autoresearch_experiment_execution.execute_experiment_execution_plan(execution_plan)
+    rerun_result = autoresearch_experiment_execution.execute_experiment_execution_plan(execution_plan)
+    saved = autoresearch_repository.save_run(
+        run.model_copy(
+            update={
+                "experiment_factory_plan": factory_plan,
+                "experiment_execution_plan": execution_plan,
+                "experiment_execution_result": result,
+                "artifact": result.result_artifact,
+                "evidence_ledger": result.evidence_ledger,
+            }
+        )
+    )
+    loaded = autoresearch_repository.load_run(brief.project_id, run.id)
+
+    assert execution_plan.status == "ready"
+    assert execution_plan.queue_worker_boundary.startswith("Goal 3 experiment execution runtime")
+    assert execution_plan.job_count == factory_plan.job_count
+    assert all(job.execution_route == "deterministic_replay" for job in execution_plan.jobs)
+    assert all(job.benchmark_resolver_ref for job in execution_plan.jobs)
+    assert all(job.protocol_id == brief.domain_experiment_protocol.protocol_id for job in execution_plan.jobs)
+    assert all(job.lineage_parent_refs for job in execution_plan.jobs)
+    assert result.status == "succeeded"
+    assert result.failure_classification == "none"
+    assert result.repair_recommendation == "none"
+    assert rerun_result.deterministic_fingerprint == result.deterministic_fingerprint
+    assert result.environment_manifest is not None
+    assert result.environment_manifest.execution_route == "deterministic_replay"
+    assert result.output_validation
+    assert all(item.validation_status == "passed" for item in result.output_validation)
+    assert result.evidence_ledger is not None
+    assert result.evidence_ledger.entry_count > 0
+    assert any(
+        entry.evidence_type == "experiment_execution_metric"
+        and entry.source_job_id == execution_plan.jobs[0].job_id
+        and entry.lineage_parent_refs
+        for entry in result.evidence_ledger.entries
+    )
+    assert result.package_manifest_fragment["experiment_execution_result_path"] == (
+        "experiment_execution_result.json"
+    )
+    assert saved.experiment_execution_plan_path is not None
+    assert saved.experiment_execution_result_path is not None
+    assert loaded is not None
+    assert loaded.experiment_execution_plan is not None
+    assert loaded.experiment_execution_result is not None
+    assert loaded.experiment_execution_result.deterministic_fingerprint == result.deterministic_fingerprint
+    profile = autoresearch_project_paper_orchestrator._run_experiment_execution_profile(
+        loaded,
+        benchmark_profile={},
+        statistics_profile={"has_statistics": True},
+    )
+    assert profile["execution_source"] == "typed_experiment_execution"
+    assert profile["typed_experiment_execution"] is True
+    assert "run_experiment_execution_result_json" in profile["output_artifact_refs"]
+    assert profile["execution_evidence"]["typed_experiment_execution"]["status"] == "succeeded"
+    assert profile["execution_evidence"]["typed_experiment_execution"]["output_validation"]
+
+
+def test_goal3_local_and_import_runtime_success_preserves_review_claim_ceiling() -> None:
+    brief, factory_plan = _goal3_factory_plan(
+        project_id="project-goal3-local",
+        idea="Evaluate RAG citation faithfulness for knowledge intensive QA with grounded source attributions",
+        domain="citation faithfulness",
+    )
+    local_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(execution_route="local_command"),
+    )
+    local_result = autoresearch_experiment_execution.execute_experiment_execution_plan(local_plan)
+
+    assert local_plan.status == "ready"
+    assert all(job.execution_route == "local_command" for job in local_plan.jobs)
+    assert all(job.command[:3] == ["scholarflow", "experiment-execution", "local-fixture"] for job in local_plan.jobs)
+    assert local_result.status == "succeeded"
+    assert local_result.claim_ceiling == "review_only_engineering_validation_claim"
+    assert local_result.evidence_ledger is not None
+    assert any(
+        "review-only engineering validation" in blocker
+        for blocker in local_result.evidence_ledger.blockers
+    )
+
+    import_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(execution_route="external_import"),
+    )
+    incomplete_import = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        import_plan,
+        import_request=AutoResearchExperimentExecutionImportRequest(
+            summary="Incomplete imported artifact package.",
+            artifact_package={
+                "metrics": {
+                    metric: 0.7 for metric in brief.domain_experiment_protocol.metric_schema
+                },
+                "benchmark_resolver_ref": brief.domain_benchmark_resolver.resolver_id,
+                "environment_manifest": {
+                    "requires_live_network": False,
+                    "requires_paid_llm": False,
+                    "requires_gpu": False,
+                    "requires_docker_daemon": False,
+                },
+            },
+        ),
+    )
+    assert incomplete_import.status == "failed"
+    assert incomplete_import.failure_classification in {
+        "missing_baseline",
+        "missing_ablation",
+        "insufficient_statistics",
+        "missing_output",
+    }
+
+    imported_package = autoresearch_experiment_execution._base_output_package(import_plan)
+    import_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        import_plan,
+        import_request=AutoResearchExperimentExecutionImportRequest(
+            summary="Imported deterministic citation-faithfulness artifact.",
+            artifact_package=imported_package,
+            source_package_ref="offline-fixture://citation-faithfulness",
+        ),
+    )
+
+    assert import_result.status == "succeeded"
+    assert all(job.status == "imported" for job in import_result.job_results)
+    assert import_result.output_validation
+    assert import_result.result_artifact is not None
+    assert import_result.result_artifact.outputs["import_provenance"]["source_package_ref"] == (
+        "offline-fixture://citation-faithfulness"
+    )
+
+
+def test_goal3_execution_blockers_for_unsupported_docker_and_approval() -> None:
+    unsupported_brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-goal3-unsupported",
+        payload=AutoResearchIdeaRequest(
+            idea="Design a wet-lab CRISPR assay for cancer organoids requiring live lab equipment",
+            domain="wet lab biology",
+            allow_web=False,
+            allow_experiments=True,
+        ),
+    )
+    unsupported_plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=unsupported_brief.project_id,
+        brief=unsupported_brief,
+    )
+    execution_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=unsupported_plan,
+        brief=unsupported_brief,
+    )
+    result = autoresearch_experiment_execution.execute_experiment_execution_plan(execution_plan)
+
+    assert execution_plan.status == "blocked"
+    assert execution_plan.job_count == 0
+    assert result.status == "blocked"
+    assert result.failure_classification in {"unsupported_execution_backend", "benchmark_mismatch"}
+    assert result.result_artifact is None
+
+    brief, factory_plan = _goal3_factory_plan(project_id="project-goal3-blockers")
+    docker_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(
+            execution_route="docker",
+            docker_available=False,
+        ),
+    )
+    docker_result = autoresearch_experiment_execution.execute_experiment_execution_plan(docker_plan)
+
+    assert docker_plan.status == "blocked"
+    assert docker_result.status == "blocked"
+    assert docker_result.failure_classification == "unsupported_execution_backend"
+    assert any("Docker" in blocker.reason for blocker in docker_result.blockers)
+    assert docker_result.result_artifact is None
+
+    approval_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(
+            execution_route="local_command",
+            budget_class="approval_required",
+        ),
+    )
+    approval_result = autoresearch_experiment_execution.execute_experiment_execution_plan(approval_plan)
+
+    assert approval_plan.status == "needs_approval"
+    assert all(job.status == "needs_approval" for job in approval_plan.jobs)
+    assert approval_result.status == "needs_approval"
+    assert approval_result.failure_classification == "budget_approval_required"
+    assert approval_result.repair_recommendation == "requires_approval"
+    assert approval_result.result_artifact is None
+
+    rejected_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(
+            execution_route="local_command",
+            budget_class="approval_required",
+            approval_state="rejected",
+        ),
+    )
+    rejected_result = autoresearch_experiment_execution.execute_experiment_execution_plan(rejected_plan)
+    assert rejected_plan.status == "blocked"
+    assert rejected_result.status == "blocked"
+    assert rejected_result.failure_classification == "budget_approval_required"
+
+    bridge_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(
+            execution_route="bridge_import",
+            bridge_available=False,
+        ),
+    )
+    bridge_result = autoresearch_experiment_execution.execute_experiment_execution_plan(bridge_plan)
+    assert bridge_plan.status == "blocked"
+    assert bridge_result.status == "blocked"
+    assert bridge_result.failure_classification == "external_import_required"
+
+    missing_protocol_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan.model_copy(update={"domain_experiment_protocol": None}),
+        brief=brief,
+    )
+    missing_protocol_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        missing_protocol_plan
+    )
+    assert missing_protocol_plan.status == "blocked"
+    assert missing_protocol_plan.job_count == 0
+    assert missing_protocol_result.failure_classification == "unsupported_execution_backend"
+
+    missing_benchmark_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan.model_copy(update={"domain_benchmark_resolver": None}),
+        brief=brief,
+    )
+    missing_benchmark_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        missing_benchmark_plan
+    )
+    assert missing_benchmark_plan.status == "blocked"
+    assert missing_benchmark_plan.job_count == 0
+    assert missing_benchmark_result.failure_classification == "benchmark_mismatch"
+
+
+def test_goal3_runtime_contract_validation_failure_classes() -> None:
+    brief, factory_plan = _goal3_factory_plan(project_id="project-goal3-validation")
+    plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(execution_route="local_command"),
+    )
+    base_package = autoresearch_experiment_execution._base_output_package(plan)
+    expected_output = plan.jobs[0].expected_output_artifacts[0]
+    missing_package = dict(base_package)
+    missing_package.pop(Path(expected_output).stem, None)
+    missing_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=missing_package,
+    )
+    assert missing_result.status == "failed"
+    assert missing_result.failure_classification in {
+        "missing_baseline",
+        "missing_output",
+        "insufficient_statistics",
+    }
+    assert missing_result.negative_evidence
+
+    ablation_output = next(
+        output
+        for job in plan.jobs
+        if job.job_kind == "ablation"
+        for output in job.expected_output_artifacts
+        if "ablation" in output.lower()
+    )
+    ablation_package = dict(base_package)
+    ablation_package.pop(Path(ablation_output).stem, None)
+    ablation_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=ablation_package,
+    )
+    assert ablation_result.failure_classification == "missing_ablation"
+
+    seed_output = next(
+        output
+        for job in plan.jobs
+        if job.job_kind == "seed"
+        for output in job.expected_output_artifacts
+        if "seed" in output.lower()
+    )
+    seed_package = dict(base_package)
+    seed_package.pop(Path(seed_output).stem, None)
+    seed_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=seed_package,
+    )
+    assert seed_result.failure_classification == "insufficient_statistics"
+
+    bad_json_package = dict(base_package)
+    bad_json_package["metrics"] = "{not json"
+    bad_json_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=bad_json_package,
+    )
+    assert bad_json_result.failure_classification == "bad_json"
+
+    bad_metric_package = dict(base_package)
+    bad_metric_package["metrics"] = {"unexpected_metric": 1.0}
+    bad_metric_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=bad_metric_package,
+    )
+    assert bad_metric_result.failure_classification == "bad_metric_schema"
+
+    benchmark_package = dict(base_package)
+    benchmark_package["benchmark_resolver_ref"] = "wrong_resolver"
+    benchmark_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=benchmark_package,
+    )
+    assert benchmark_result.failure_classification == "benchmark_mismatch"
+
+    environment_package = dict(base_package)
+    environment_package["environment_manifest"] = {
+        "requires_live_network": True,
+        "requires_paid_llm": False,
+        "requires_gpu": False,
+        "requires_docker_daemon": False,
+    }
+    environment_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=environment_package,
+    )
+    assert environment_result.failure_classification == "environment_mismatch"
+
+    runtime_package = dict(base_package)
+    runtime_package["execution_profile"] = {
+        **runtime_package["execution_profile"],
+        "exit_code": 2,
+    }
+    runtime_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        plan,
+        output_override=runtime_package,
+    )
+    assert runtime_result.failure_classification == "runtime_failure"
+
+
+def test_goal3_old_toy_materialized_path_remains_non_publication_grade() -> None:
+    brief, factory_plan = _goal3_factory_plan(
+        project_id="project-goal3-toy-ceiling",
+        idea="Run a lightweight ML NLP benchmark comparing local text classifiers with macro F1",
+        domain="lightweight ml nlp benchmark",
+    )
+    toy_execution = autoresearch_experiment_factory.execute_toy_experiment_factory(factory_plan)
+    typed_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+    )
+    typed_result = autoresearch_experiment_execution.execute_experiment_execution_plan(typed_plan)
+
+    assert toy_execution.environment_manifest.executor_mode == "toy"
+    assert toy_execution.result_artifact.environment["domain_review_only"] is True
+    assert toy_execution.evidence_ledger.complete is False
+    assert any(
+        "review-only engineering validation" in blocker
+        for blocker in toy_execution.evidence_ledger.blockers
+    )
+    assert typed_result.claim_ceiling == "review_only_engineering_validation_claim"
+    assert typed_result.package_manifest_fragment["final_publish_ready"] is False

@@ -1915,6 +1915,10 @@ def _run_experiment_execution_profile(
     environment = dict(artifact.environment) if artifact is not None else {}
     outputs = dict(artifact.outputs) if artifact is not None else {}
     materialized_jobs = list(getattr(run, "experiment_factory_materialized_jobs", []) or [])
+    typed_result = getattr(run, "experiment_execution_result", None)
+    typed_plan = getattr(run, "experiment_execution_plan", None)
+    typed_output_refs = list(getattr(typed_result, "output_artifact_refs", []) or [])
+    typed_failure = getattr(typed_result, "failure_classification", "none") if typed_result is not None else "none"
     completed_jobs = [job for job in materialized_jobs if job.status == "done" and job.output_refs]
     failed_jobs = [job for job in materialized_jobs if job.status == "failed"]
     output_refs = _dedupe(
@@ -1935,6 +1939,17 @@ def _run_experiment_execution_profile(
                 or environment.get("environment_manifest_id")
                 else []
             ),
+            *(
+                ["run_experiment_execution_plan_json"]
+                if typed_plan is not None
+                else []
+            ),
+            *(
+                ["run_experiment_execution_result_json"]
+                if typed_result is not None
+                else []
+            ),
+            *typed_output_refs,
             *[
                 str(value)
                 for value in outputs.values()
@@ -1971,6 +1986,8 @@ def _run_experiment_execution_profile(
     )
     if imported:
         execution_source = "imported_result_replay"
+    elif typed_result is not None and typed_result.status == "succeeded":
+        execution_source = "typed_experiment_execution"
     elif completed_jobs:
         execution_source = "materialized_execution"
     elif has_multi_seed_or_split:
@@ -2000,6 +2017,21 @@ def _run_experiment_execution_profile(
                 f"Materialized job {job.job_id} failed with classification {job.failure_classification}."
                 for job in failed_jobs
             ],
+            *(
+                [
+                    f"Typed experiment execution failed with classification {typed_failure}."
+                ]
+                if typed_result is not None and typed_result.status != "succeeded"
+                else []
+            ),
+            *(
+                [
+                    blocker.reason
+                    for blocker in typed_result.blockers
+                ]
+                if typed_result is not None
+                else []
+            ),
         ]
     )
     command_or_import_paths = _dedupe(
@@ -2007,6 +2039,11 @@ def _run_experiment_execution_profile(
             *[
                 job.command
                 for job in materialized_jobs
+                if job.command
+            ],
+            *[
+                " ".join(job.command)
+                for job in (typed_result.job_results if typed_result is not None else [])
                 if job.command
             ],
             *[
@@ -2042,6 +2079,11 @@ def _run_experiment_execution_profile(
         }
         for job in materialized_jobs
     ]
+    typed_runtime_contracts = [
+        contract.model_dump(mode="json")
+        for contract in (typed_result.runtime_contract_results if typed_result is not None else [])
+    ]
+    runtime_contracts.extend(typed_runtime_contracts)
     metrics_artifact_refs = _dedupe(
         [
             *[
@@ -2053,6 +2095,11 @@ def _run_experiment_execution_profile(
             *(
                 ["run_result_artifact_json"]
                 if artifact is not None and artifact.status == "done"
+                else []
+            ),
+            *(
+                ["run_experiment_execution_result_json:output_validation"]
+                if typed_result is not None and typed_result.output_validation
                 else []
             ),
         ]
@@ -2068,6 +2115,11 @@ def _run_experiment_execution_profile(
             *(
                 ["run_evidence_ledger_json"]
                 if getattr(run, "evidence_ledger", None) is not None
+                else []
+            ),
+            *(
+                ["run_experiment_execution_result_json:evidence_ledger"]
+                if typed_result is not None and typed_result.evidence_ledger is not None
                 else []
             ),
         ]
@@ -2094,6 +2146,11 @@ def _run_experiment_execution_profile(
                 ["run_result_artifact_json:objective_query_diagnostics"]
                 if isinstance(outputs.get("objective_query_diagnostics"), list)
                 and outputs.get("objective_query_diagnostics")
+                else []
+            ),
+            *(
+                ["run_experiment_execution_result_json:negative_evidence"]
+                if typed_result is not None and typed_result.negative_evidence
                 else []
             ),
         ]
@@ -2177,16 +2234,46 @@ def _run_experiment_execution_profile(
         "backend": environment.get("backend"),
         "command_or_import_paths": command_or_import_paths,
         "runtime_contracts": runtime_contracts,
+        "typed_experiment_execution": (
+            {
+                "plan_id": typed_result.plan_id,
+                "status": typed_result.status,
+                "failure_classification": typed_result.failure_classification,
+                "repair_recommendation": typed_result.repair_recommendation,
+                "output_validation": [
+                    item.model_dump(mode="json") for item in typed_result.output_validation
+                ],
+                "package_manifest_fragment": typed_result.package_manifest_fragment,
+                "deterministic_fingerprint": typed_result.deterministic_fingerprint,
+            }
+            if typed_result is not None
+            else None
+        ),
         "environment_manifest": {
             "artifact_ref": (
+                "run_experiment_execution_result_json:environment_manifest"
+                if typed_result is not None and typed_result.environment_manifest is not None
+                else
                 "run_experiment_factory_environment_manifest_json"
                 if getattr(run, "experiment_factory_environment_manifest", None) is not None
                 or environment.get("environment_manifest_id")
                 else None
             ),
-            "manifest_id": environment.get("environment_manifest_id"),
-            "fingerprint": environment.get("environment_manifest_fingerprint"),
-            "executor_mode": environment.get("factory_executor_mode") or environment.get("executor_mode"),
+            "manifest_id": (
+                typed_result.environment_manifest.manifest_id
+                if typed_result is not None and typed_result.environment_manifest is not None
+                else environment.get("environment_manifest_id")
+            ),
+            "fingerprint": (
+                typed_result.environment_manifest.manifest_fingerprint
+                if typed_result is not None and typed_result.environment_manifest is not None
+                else environment.get("environment_manifest_fingerprint")
+            ),
+            "executor_mode": (
+                typed_result.environment_manifest.execution_route
+                if typed_result is not None and typed_result.environment_manifest is not None
+                else environment.get("factory_executor_mode") or environment.get("executor_mode")
+            ),
             "backend": environment.get("backend"),
         },
         "dependency_manifest": dependency_manifest,
@@ -2209,9 +2296,11 @@ def _run_experiment_execution_profile(
                 for job in failed_jobs
                 if job.failure_classification and job.failure_classification != "none"
             ]
+            + ([typed_failure] if typed_result is not None and typed_failure != "none" else [])
         ),
         "statistics_profile": statistics_profile or {},
-        "complete": bool(artifact is not None and artifact.status == "done" and output_refs and not failed_jobs),
+        "complete": bool(artifact is not None and artifact.status == "done" and output_refs and not failed_jobs)
+        and (typed_result is None or typed_result.status == "succeeded"),
         "blockers": blockers,
     }
     execution_evidence = {
@@ -2224,6 +2313,9 @@ def _run_experiment_execution_profile(
         "executor_mode": environment.get("factory_executor_mode") or environment.get("executor_mode"),
         "backend": environment.get("backend"),
         "imported_result_replay": imported,
+        "typed_experiment_execution": bool(
+            typed_result is not None and typed_result.status == "succeeded"
+        ),
         "materialized_job_count": len(materialized_jobs),
         "completed_materialized_job_count": len(completed_jobs),
         "failed_materialized_job_count": len(failed_jobs),
@@ -2241,9 +2333,11 @@ def _run_experiment_execution_profile(
                 for job in failed_jobs
                 if job.failure_classification and job.failure_classification != "none"
             ]
+            + ([typed_failure] if typed_result is not None and typed_failure != "none" else [])
         ),
         "execution_evidence": execution_evidence,
-        "complete": bool(artifact is not None and artifact.status == "done" and output_refs and not failed_jobs),
+        "complete": bool(artifact is not None and artifact.status == "done" and output_refs and not failed_jobs)
+        and (typed_result is None or typed_result.status == "succeeded"),
         "blockers": blockers,
     }
 
@@ -2271,6 +2365,7 @@ def _build_project_experiment_repair_index(
     ]
     runs_with_execution_outputs = [item for item in execution_profiles if item["complete"]]
     imported_replay_runs = [item for item in execution_profiles if item["imported_result_replay"]]
+    typed_execution_runs = [item for item in execution_profiles if item.get("typed_experiment_execution")]
     materialized_runs = [
         item
         for item in execution_profiles
@@ -2334,6 +2429,7 @@ def _build_project_experiment_repair_index(
             for source in sorted({item["execution_source"] for item in execution_profiles})
         },
         "imported_result_replay_run_ids": [item["run_id"] for item in imported_replay_runs],
+        "typed_experiment_execution_run_ids": [item["run_id"] for item in typed_execution_runs],
         "materialized_execution_run_ids": [item["run_id"] for item in materialized_runs],
         "execution_evidence_ledger": {
             "ledger_id": "project_experiment_execution_evidence_ledger_v1",
@@ -2472,6 +2568,9 @@ def _project_execution_coverage(
         "execution_source_counts": source_counts,
         "imported_result_replay_run_ids": [
             item["run_id"] for item in execution_profiles if item.get("imported_result_replay")
+        ],
+        "typed_experiment_execution_run_ids": [
+            item["run_id"] for item in execution_profiles if item.get("typed_experiment_execution")
         ],
         "materialized_execution_run_ids": [
             item["run_id"]

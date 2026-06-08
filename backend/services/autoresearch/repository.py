@@ -17,6 +17,8 @@ from schemas.autoresearch import (
     AutoResearchCandidateRegistryFiles,
     AutoResearchCandidateRegistryRead,
     AutoResearchEvidenceLedgerRead,
+    AutoResearchExperimentExecutionPlanRead,
+    AutoResearchExperimentExecutionResultRead,
     AutoResearchExperimentFactoryEnvironmentManifestRead,
     AutoResearchExperimentFactoryMaterializedJobRead,
     AutoResearchExperimentFactoryPlanRead,
@@ -81,6 +83,8 @@ FIGURE_PLAN_FILENAME = "figure_plan.json"
 EXPERIMENT_FACTORY_PLAN_FILENAME = "experiment_factory_plan.json"
 EXPERIMENT_FACTORY_ENVIRONMENT_MANIFEST_FILENAME = "experiment_factory_environment_manifest.json"
 EXPERIMENT_FACTORY_MATERIALIZED_JOBS_FILENAME = "experiment_factory_materialized_jobs.json"
+EXPERIMENT_EXECUTION_PLAN_FILENAME = "experiment_execution_plan.json"
+EXPERIMENT_EXECUTION_RESULT_FILENAME = "experiment_execution_result.json"
 EVIDENCE_LEDGER_FILENAME = "evidence_ledger.json"
 EXPERIMENT_FACTORY_REPAIR_PLAN_FILENAME = "experiment_factory_repair_plan.json"
 PAPER_SECTION_REWRITE_INDEX_FILENAME = "paper_section_rewrite_index.json"
@@ -1687,6 +1691,30 @@ def _run_bundle_assets(
         ),
         (
             _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_execution_plan_json",
+                label="Selected run typed experiment execution plan",
+                role="run_experiment_execution_plan_json",
+                ref=files.experiment_execution_plan_json,
+                required=False,
+            )
+            if files.experiment_execution_plan_json is not None
+            and files.experiment_execution_plan_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
+                asset_id=f"{run_registry.run_id}:run_experiment_execution_result_json",
+                label="Selected run typed experiment execution result",
+                role="run_experiment_execution_result_json",
+                ref=files.experiment_execution_result_json,
+                required=False,
+            )
+            if files.experiment_execution_result_json is not None
+            and files.experiment_execution_result_json.exists
+            else None
+        ),
+        (
+            _bundle_asset(
                 asset_id=f"{run_registry.run_id}:run_evidence_ledger_json",
                 label="Selected run evidence ledger",
                 role="run_evidence_ledger_json",
@@ -2136,6 +2164,26 @@ def _load_experiment_factory_artifacts(payload: AutoResearchRunRead, *, base: Pa
                     updates["experiment_factory_materialized_jobs_path"] = str(path)
             except Exception:
                 pass
+    if payload.experiment_execution_plan is None:
+        path = base / EXPERIMENT_EXECUTION_PLAN_FILENAME
+        if path.is_file():
+            try:
+                updates["experiment_execution_plan"] = AutoResearchExperimentExecutionPlanRead.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                updates["experiment_execution_plan_path"] = str(path)
+            except Exception:
+                pass
+    if payload.experiment_execution_result is None:
+        path = base / EXPERIMENT_EXECUTION_RESULT_FILENAME
+        if path.is_file():
+            try:
+                updates["experiment_execution_result"] = AutoResearchExperimentExecutionResultRead.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+                updates["experiment_execution_result_path"] = str(path)
+            except Exception:
+                pass
     if payload.evidence_ledger is None:
         path = base / EVIDENCE_LEDGER_FILENAME
         if path.is_file():
@@ -2312,6 +2360,16 @@ def save_run(
             base / EXPERIMENT_FACTORY_MATERIALIZED_JOBS_FILENAME,
             [item.model_dump(mode="json") for item in payload.experiment_factory_materialized_jobs],
         )
+    if payload.experiment_execution_plan is not None:
+        _write_json(
+            base / EXPERIMENT_EXECUTION_PLAN_FILENAME,
+            payload.experiment_execution_plan.model_dump(mode="json"),
+        )
+    if payload.experiment_execution_result is not None:
+        _write_json(
+            base / EXPERIMENT_EXECUTION_RESULT_FILENAME,
+            payload.experiment_execution_result.model_dump(mode="json"),
+        )
     if payload.evidence_ledger is not None:
         _write_json(base / EVIDENCE_LEDGER_FILENAME, payload.evidence_ledger.model_dump(mode="json"))
     if payload.experiment_factory_repair_plan is not None:
@@ -2350,6 +2408,14 @@ def save_run(
     if payload.experiment_factory_materialized_jobs:
         path_updates["experiment_factory_materialized_jobs_path"] = str(
             base / EXPERIMENT_FACTORY_MATERIALIZED_JOBS_FILENAME
+        )
+    if payload.experiment_execution_plan is not None:
+        path_updates["experiment_execution_plan_path"] = str(
+            base / EXPERIMENT_EXECUTION_PLAN_FILENAME
+        )
+    if payload.experiment_execution_result is not None:
+        path_updates["experiment_execution_result_path"] = str(
+            base / EXPERIMENT_EXECUTION_RESULT_FILENAME
         )
     if payload.evidence_ledger is not None:
         path_updates["evidence_ledger_path"] = str(base / EVIDENCE_LEDGER_FILENAME)
@@ -2773,6 +2839,14 @@ def load_candidate_registry(
             current_run.experiment_factory_materialized_jobs_path
             or (run_base / EXPERIMENT_FACTORY_MATERIALIZED_JOBS_FILENAME)
         ),
+        experiment_execution_plan_json=_asset_ref(
+            current_run.experiment_execution_plan_path
+            or (run_base / EXPERIMENT_EXECUTION_PLAN_FILENAME)
+        ),
+        experiment_execution_result_json=_asset_ref(
+            current_run.experiment_execution_result_path
+            or (run_base / EXPERIMENT_EXECUTION_RESULT_FILENAME)
+        ),
         evidence_ledger_json=_asset_ref(
             current_run.evidence_ledger_path or (run_base / EVIDENCE_LEDGER_FILENAME)
         ),
@@ -2958,6 +3032,14 @@ def load_run_registry(project_id: str, run_id: str) -> AutoResearchRunRegistryRe
         experiment_factory_materialized_jobs_json=_asset_ref(
             run.experiment_factory_materialized_jobs_path
             or (base / EXPERIMENT_FACTORY_MATERIALIZED_JOBS_FILENAME)
+        ),
+        experiment_execution_plan_json=_asset_ref(
+            run.experiment_execution_plan_path
+            or (base / EXPERIMENT_EXECUTION_PLAN_FILENAME)
+        ),
+        experiment_execution_result_json=_asset_ref(
+            run.experiment_execution_result_path
+            or (base / EXPERIMENT_EXECUTION_RESULT_FILENAME)
         ),
         evidence_ledger_json=_asset_ref(
             run.evidence_ledger_path or (base / EVIDENCE_LEDGER_FILENAME)

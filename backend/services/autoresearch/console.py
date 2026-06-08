@@ -634,6 +634,14 @@ def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicatio
     )
     return AutoResearchOperatorPublicationCaseRead(
         status=status,
+        domain_decision=project_paper.latest_brief_domain_decision,
+        domain_template=project_paper.latest_brief_domain_template,
+        domain_literature_strategy=project_paper.latest_brief_domain_literature_strategy,
+        domain_literature_result=project_paper.latest_brief_domain_literature_result,
+        domain_benchmark_resolver=project_paper.latest_brief_domain_benchmark_resolver,
+        domain_experiment_protocol=project_paper.latest_brief_domain_experiment_protocol,
+        domain_readiness_status=project_paper.latest_brief_domain_readiness_status,
+        domain_claim_ceiling=project_paper.latest_brief_domain_claim_ceiling,
         review_bundle_ready=review_bundle_ready,
         final_publish_ready=final_publish_ready,
         submission_bundle_kind=project_paper.project_submission_manifest.get("bundle_kind")
@@ -904,6 +912,30 @@ def build_operator_console(
         ),
         latest_brief_domain_blockers=(
             latest_brief.domain_blockers if latest_brief is not None else []
+        ),
+        latest_brief_domain_literature_status=(
+            latest_brief.domain_literature_result.status
+            if latest_brief is not None and latest_brief.domain_literature_result is not None
+            else "blocked"
+        ),
+        latest_brief_domain_benchmark_status=(
+            latest_brief.domain_benchmark_resolver.status
+            if latest_brief is not None and latest_brief.domain_benchmark_resolver is not None
+            else "blocked"
+        ),
+        latest_brief_domain_protocol_status=(
+            latest_brief.domain_experiment_protocol.status
+            if latest_brief is not None and latest_brief.domain_experiment_protocol is not None
+            else "blocked"
+        ),
+        latest_brief_domain_claim_ceiling=(
+            latest_brief.domain_claim_ceiling if latest_brief is not None else None
+        ),
+        latest_brief_domain_required_followups=(
+            list(latest_brief.domain_required_followups) if latest_brief is not None else []
+        ),
+        latest_brief_domain_kill_criteria=(
+            list(latest_brief.domain_kill_criteria) if latest_brief is not None else []
         ),
         latest_brief_hypothesis_count=(
             latest_brief.hypothesis_count if latest_brief is not None else 0

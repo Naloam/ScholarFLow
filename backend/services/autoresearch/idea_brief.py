@@ -25,6 +25,13 @@ from services.autoresearch.domain_router import (
     get_domain_template,
     route_domain,
 )
+from services.autoresearch.domain_evidence import (
+    build_domain_experiment_protocol,
+    build_domain_literature_strategy,
+    domain_claim_ceiling,
+    domain_readiness_status,
+    resolve_domain_benchmark,
+)
 
 
 _GENERIC_IDEA_TERMS = {
@@ -594,6 +601,62 @@ def _build_hypothesis_bank_and_selection(
     return bank, selection
 
 
+def _attach_domain_evidence_context(
+    brief: AutoResearchResearchBriefRead,
+) -> AutoResearchResearchBriefRead:
+    strategy = build_domain_literature_strategy(brief)
+    benchmark_resolver = resolve_domain_benchmark(brief)
+    protocol = build_domain_experiment_protocol(
+        brief,
+        benchmark_resolver=benchmark_resolver,
+    )
+    readiness_status = domain_readiness_status(
+        literature_result=brief.domain_literature_result,
+        benchmark_resolver=benchmark_resolver,
+        protocol=protocol,
+    )
+    claim_ceiling = domain_claim_ceiling(
+        literature_result=brief.domain_literature_result,
+        benchmark_resolver=benchmark_resolver,
+        protocol=protocol,
+    )
+    return brief.model_copy(
+        update={
+            "domain_literature_strategy": strategy,
+            "domain_benchmark_resolver": benchmark_resolver,
+            "domain_experiment_protocol": protocol,
+            "domain_readiness_status": readiness_status,
+            "domain_required_followups": _dedupe(
+                [
+                    *(
+                        strategy.required_followups
+                        if strategy is not None
+                        else []
+                    ),
+                    *(
+                        benchmark_resolver.required_followups
+                        if benchmark_resolver is not None
+                        else []
+                    ),
+                    *(protocol.required_followups if protocol is not None else []),
+                ]
+            ),
+            "domain_kill_criteria": _dedupe(
+                [
+                    *(strategy.kill_criteria if strategy is not None else []),
+                    *(
+                        benchmark_resolver.kill_criteria
+                        if benchmark_resolver is not None
+                        else []
+                    ),
+                    *(protocol.kill_criteria if protocol is not None else []),
+                ]
+            ),
+            "domain_claim_ceiling": claim_ceiling,
+        }
+    )
+
+
 def build_research_brief(
     *,
     project_id: str,
@@ -653,7 +716,7 @@ def build_research_brief(
                 "Unsupported domains must not be downgraded to unrelated toy experiments.",
             ],
         )
-        return AutoResearchResearchBriefRead(
+        brief = AutoResearchResearchBriefRead(
             brief_id=brief_id,
             project_id=project_id,
             generated_at=now,
@@ -714,6 +777,7 @@ def build_research_brief(
             resource_budget=payload.resource_budget,
             brief_fingerprint=_fingerprint(payload_for_fingerprint),
         )
+        return _attach_domain_evidence_context(brief)
 
     assert domain_template is not None
     family_source = (
@@ -889,7 +953,7 @@ def build_research_brief(
         resource_budget=payload.resource_budget,
         brief_fingerprint=_fingerprint(payload_for_fingerprint),
     )
-    return brief
+    return _attach_domain_evidence_context(brief)
 
 
 def hypothesis_bank_from_brief(

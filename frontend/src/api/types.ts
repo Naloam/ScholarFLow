@@ -280,6 +280,8 @@ export type AutoResearchDomainId =
   | "lightweight_ml_nlp_benchmark"
   | "unsupported";
 
+export type AutoResearchDomainEvidenceStatus = "blocked" | "limited" | "ready";
+
 export type AutoResearchBenchmarkKind =
   | "builtin"
   | "remote_csv"
@@ -2712,6 +2714,121 @@ export type AutoResearchDomainTemplate = {
   blockers: string[];
 };
 
+export type AutoResearchDomainLiteratureStrategy = {
+  strategy_id: string;
+  domain_id: AutoResearchDomainId;
+  template_id?: string | null;
+  template_version?: string | null;
+  query_strings: string[];
+  required_source_classes: string[];
+  minimum_real_source_count: number;
+  related_system_coverage_expectations: string[];
+  novelty_risk_extraction: string[];
+  known_method_extraction: string[];
+  known_dataset_extraction: string[];
+  known_metric_extraction: string[];
+  known_sota_extraction: string[];
+  fixture_only_limitation_policy: string;
+  final_publish_literature_blockers: string[];
+  required_followups: string[];
+  kill_criteria: string[];
+  strategy_fingerprint: string;
+};
+
+export type AutoResearchDomainRelatedSystemCoverage = {
+  expectation: string;
+  matched_paper_ids: string[];
+  matched_terms: string[];
+  covered: boolean;
+  limitation?: string | null;
+};
+
+export type AutoResearchDomainLiteratureResult = {
+  result_id: string;
+  strategy_id: string;
+  domain_id: AutoResearchDomainId;
+  status: AutoResearchDomainEvidenceStatus;
+  source_counts: Record<string, number>;
+  source_class_counts: Record<string, number>;
+  real_source_count: number;
+  real_source_types: string[];
+  required_source_classes: string[];
+  required_source_classes_present: string[];
+  fixture_only: boolean;
+  related_system_coverage: AutoResearchDomainRelatedSystemCoverage[];
+  related_system_coverage_complete: boolean;
+  known_methods: string[];
+  known_datasets: string[];
+  known_metrics: string[];
+  known_sota: string[];
+  novelty_risks: string[];
+  limitations: string[];
+  final_publish_blockers: string[];
+  blockers: string[];
+  required_followups: string[];
+  kill_criteria: string[];
+  evidence_refs: string[];
+  result_fingerprint: string;
+};
+
+export type AutoResearchDomainBenchmarkResolver = {
+  resolver_id: string;
+  domain_id: AutoResearchDomainId;
+  status: AutoResearchDomainEvidenceStatus;
+  benchmark_name?: string | null;
+  task_family?: AutoResearchTaskFamily | null;
+  source_kind?: AutoResearchBenchmarkKind | null;
+  source_class?: string | null;
+  source_locator?: string | null;
+  dataset_id?: string | null;
+  revision?: string | null;
+  license?: string | null;
+  source_fingerprint?: string | null;
+  sample_count: number;
+  train_split_count: number;
+  test_split_count: number;
+  label_schema_coverage: Record<string, unknown>;
+  query_document_evidence_schema_coverage: Record<string, unknown>;
+  source_observation_coverage: Record<string, unknown>;
+  benchmark_provenance_complete: boolean;
+  publication_grade_eligible: boolean;
+  final_candidate_eligible: boolean;
+  source_independence_audit: Record<string, unknown>;
+  benchmark_payload_ref?: string | null;
+  blockers: string[];
+  limitations: string[];
+  required_followups: string[];
+  kill_criteria: string[];
+  evidence_refs: string[];
+  resolver_fingerprint: string;
+};
+
+export type AutoResearchDomainExperimentProtocol = {
+  protocol_id: string;
+  domain_id: AutoResearchDomainId;
+  status: AutoResearchDomainEvidenceStatus;
+  method_baseline_ladder: string[];
+  metric_schema: string[];
+  expected_outputs: string[];
+  runtime_contract: Record<string, unknown>;
+  deterministic_execution_route: string;
+  import_replay_route: string;
+  evidence_ledger_schema: string[];
+  negative_evidence_categories: string[];
+  repair_routing_policy: Record<string, string>;
+  readiness_blockers: string[];
+  final_publish_limitations: string[];
+  benchmark_resolver_id?: string | null;
+  benchmark_resolver_status: AutoResearchDomainEvidenceStatus;
+  protocol_complete: boolean;
+  blockers: string[];
+  limitations: string[];
+  required_followups: string[];
+  kill_criteria: string[];
+  evidence_refs: string[];
+  protocol_fingerprint: string;
+};
+
 export type AutoResearchResearchDirection = {
   direction_id: string;
   title: string;
@@ -2833,6 +2950,8 @@ export type AutoResearchLiteratureScout = {
   project_id: string;
   brief_id: string;
   generated_at: string;
+  domain_literature_strategy?: AutoResearchDomainLiteratureStrategy | null;
+  domain_literature_result?: AutoResearchDomainLiteratureResult | null;
   search_queries: string[];
   similar_papers: AutoResearchLiteratureScoutPaper[];
   source_statuses: AutoResearchLiteratureScoutSourceStatus[];
@@ -2875,6 +2994,14 @@ export type AutoResearchResearchBrief = {
   domain_decision?: AutoResearchDomainDecision | null;
   domain_template?: AutoResearchDomainTemplate | null;
   domain_blockers: string[];
+  domain_literature_strategy?: AutoResearchDomainLiteratureStrategy | null;
+  domain_literature_result?: AutoResearchDomainLiteratureResult | null;
+  domain_benchmark_resolver?: AutoResearchDomainBenchmarkResolver | null;
+  domain_experiment_protocol?: AutoResearchDomainExperimentProtocol | null;
+  domain_readiness_status: AutoResearchDomainEvidenceStatus;
+  domain_required_followups: string[];
+  domain_kill_criteria: string[];
+  domain_claim_ceiling?: string | null;
   idea_too_generic: boolean;
   specificity_assessment: "too_generic" | "broad_but_actionable" | "scoped";
   scope_narrowing_recommendation: string;
@@ -2998,6 +3125,9 @@ export type AutoResearchExperimentFactoryPlan = {
   run_id?: string | null;
   generated_at: string;
   execution_backend: Record<string, unknown>;
+  domain_decision?: AutoResearchDomainDecision | null;
+  domain_benchmark_resolver?: AutoResearchDomainBenchmarkResolver | null;
+  domain_experiment_protocol?: AutoResearchDomainExperimentProtocol | null;
   selected_direction_id?: string | null;
   selected_hypothesis?: string | null;
   jobs: AutoResearchExperimentFactoryJob[];
@@ -3131,6 +3261,8 @@ export type AutoResearchExperimentFactoryExecution = {
   hypothesis_id?: string | null;
   generated_at: string;
   execution_plan: AutoResearchExperimentFactoryPlan;
+  domain_benchmark_resolver?: AutoResearchDomainBenchmarkResolver | null;
+  domain_experiment_protocol?: AutoResearchDomainExperimentProtocol | null;
   environment_manifest?: AutoResearchExperimentFactoryEnvironmentManifest | null;
   materialized_jobs: AutoResearchExperimentFactoryMaterializedJob[];
   result_artifact: AutoResearchResultArtifact;
@@ -3317,6 +3449,14 @@ export type AutoResearchRunControlUpdate = {
 
 export type AutoResearchOperatorPublicationCase = {
   status: "not_started" | "review_ready" | "final_publish_ready" | "blocked";
+  domain_decision?: AutoResearchDomainDecision | null;
+  domain_template?: AutoResearchDomainTemplate | null;
+  domain_literature_strategy?: AutoResearchDomainLiteratureStrategy | null;
+  domain_literature_result?: AutoResearchDomainLiteratureResult | null;
+  domain_benchmark_resolver?: AutoResearchDomainBenchmarkResolver | null;
+  domain_experiment_protocol?: AutoResearchDomainExperimentProtocol | null;
+  domain_readiness_status: AutoResearchDomainEvidenceStatus;
+  domain_claim_ceiling?: string | null;
   review_bundle_ready: boolean;
   final_publish_ready: boolean;
   submission_bundle_kind?: string | null;
@@ -3391,6 +3531,12 @@ export type AutoResearchOperatorConsole = {
   latest_brief_domain_confidence: number;
   latest_brief_domain_supported: boolean;
   latest_brief_domain_blockers: string[];
+  latest_brief_domain_literature_status: AutoResearchDomainEvidenceStatus;
+  latest_brief_domain_benchmark_status: AutoResearchDomainEvidenceStatus;
+  latest_brief_domain_protocol_status: AutoResearchDomainEvidenceStatus;
+  latest_brief_domain_claim_ceiling?: string | null;
+  latest_brief_domain_required_followups: string[];
+  latest_brief_domain_kill_criteria: string[];
   latest_brief_hypothesis_count: number;
   latest_brief_selected_direction_id?: string | null;
   latest_brief_selected_hypothesis_id?: string | null;
@@ -3532,6 +3678,14 @@ export type AutoResearchProjectPaperOrchestration = {
   latest_brief_domain_decision?: AutoResearchDomainDecision | null;
   latest_brief_domain_template?: AutoResearchDomainTemplate | null;
   latest_brief_domain_blockers: string[];
+  latest_brief_domain_literature_strategy?: AutoResearchDomainLiteratureStrategy | null;
+  latest_brief_domain_literature_result?: AutoResearchDomainLiteratureResult | null;
+  latest_brief_domain_benchmark_resolver?: AutoResearchDomainBenchmarkResolver | null;
+  latest_brief_domain_experiment_protocol?: AutoResearchDomainExperimentProtocol | null;
+  latest_brief_domain_readiness_status: AutoResearchDomainEvidenceStatus;
+  latest_brief_domain_claim_ceiling?: string | null;
+  latest_brief_domain_required_followups: string[];
+  latest_brief_domain_kill_criteria: string[];
   latest_brief_selected_hypothesis_id?: string | null;
   candidate_run_count: number;
   selected_run_ids: string[];
@@ -3669,6 +3823,12 @@ export type AutoResearchEvaluationCaseTrace = {
   domain_decision?: AutoResearchDomainDecision | null;
   domain_template?: AutoResearchDomainTemplate | null;
   domain_blockers: string[];
+  domain_literature_strategy?: AutoResearchDomainLiteratureStrategy | null;
+  domain_literature_result?: AutoResearchDomainLiteratureResult | null;
+  domain_benchmark_resolver?: AutoResearchDomainBenchmarkResolver | null;
+  domain_experiment_protocol?: AutoResearchDomainExperimentProtocol | null;
+  domain_readiness_status: AutoResearchDomainEvidenceStatus;
+  domain_claim_ceiling?: string | null;
   selected_hypothesis_id?: string | null;
   experiment_plan_id?: string | null;
   evidence_ledger_id?: string | null;

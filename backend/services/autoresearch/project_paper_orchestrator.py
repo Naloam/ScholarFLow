@@ -1174,7 +1174,17 @@ def _build_project_literature_support_index(
     traces: list[AutoResearchProjectClaimTraceRead],
     evidence_profile: dict[str, Any],
 ) -> dict[str, Any]:
-    scout = latest_brief.literature_scout if latest_brief is not None else None
+    scout = getattr(latest_brief, "literature_scout", None) if latest_brief is not None else None
+    domain_literature_strategy = (
+        getattr(latest_brief, "domain_literature_strategy", None)
+        if latest_brief is not None
+        else None
+    )
+    domain_literature_result = (
+        getattr(latest_brief, "domain_literature_result", None)
+        if latest_brief is not None
+        else None
+    ) or (getattr(scout, "domain_literature_result", None) if scout is not None else None)
     papers = list(scout.similar_papers) if scout is not None else []
     real_papers = [paper for paper in papers if _is_real_literature_paper(paper)]
     real_sources = sorted({paper.source for paper in real_papers})
@@ -1238,12 +1248,28 @@ def _build_project_literature_support_index(
                 if not real_papers
                 else []
             ),
+            *(
+                domain_literature_result.blockers
+                if domain_literature_result is not None
+                and domain_literature_result.status == "blocked"
+                else []
+            ),
         ]
     )
     return {
         "index_id": "project_literature_support_index_v1",
         "project_id": project_id,
-        "brief_id": latest_brief.brief_id if latest_brief is not None else None,
+        "brief_id": getattr(latest_brief, "brief_id", None) if latest_brief is not None else None,
+        "domain_literature_strategy": (
+            domain_literature_strategy.model_dump(mode="json")
+            if domain_literature_strategy is not None
+            else None
+        ),
+        "domain_literature_result": (
+            domain_literature_result.model_dump(mode="json")
+            if domain_literature_result is not None
+            else None
+        ),
         "generated_at": _utcnow().isoformat(),
         "search_queries": list(scout.search_queries) if scout is not None else [],
         "paper_count": len(papers),
@@ -1260,6 +1286,29 @@ def _build_project_literature_support_index(
         "metrics": list(scout.metrics) if scout is not None else [],
         "known_sota": known_sota,
         "related_system_coverage": related_system_coverage,
+        "domain_related_system_coverage": (
+            [
+                item.model_dump(mode="json")
+                for item in domain_literature_result.related_system_coverage
+            ]
+            if domain_literature_result is not None
+            else []
+        ),
+        "domain_final_publish_literature_blockers": (
+            list(domain_literature_result.final_publish_blockers)
+            if domain_literature_result is not None
+            else []
+        ),
+        "domain_required_followups": (
+            list(domain_literature_result.required_followups)
+            if domain_literature_result is not None
+            else []
+        ),
+        "domain_kill_criteria": (
+            list(domain_literature_result.kill_criteria)
+            if domain_literature_result is not None
+            else []
+        ),
         "papers": [
             {
                 "paper_id": paper.paper_id,
@@ -1294,7 +1343,7 @@ def _build_project_literature_support_index(
         "blockers": blockers,
         "fingerprint": _fingerprint(
             {
-                "brief_id": latest_brief.brief_id if latest_brief is not None else None,
+                "brief_id": getattr(latest_brief, "brief_id", None) if latest_brief is not None else None,
                 "real_sources": real_sources,
                 "paper_ids": [paper.paper_id for paper in real_papers],
                 "claim_ids": [trace.claim_id for trace in traces],
@@ -6649,6 +6698,54 @@ def _project_offline_publication_case_payload(
         "domain_blockers": (
             list(latest_brief.domain_blockers) if latest_brief is not None else []
         ),
+        "domain_package_context": {
+            "domain_decision": (
+                latest_brief.domain_decision.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_decision is not None
+                else None
+            ),
+            "domain_template": (
+                latest_brief.domain_template.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_template is not None
+                else None
+            ),
+            "literature_strategy": (
+                latest_brief.domain_literature_strategy.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_literature_strategy is not None
+                else None
+            ),
+            "literature_result": (
+                latest_brief.domain_literature_result.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_literature_result is not None
+                else None
+            ),
+            "benchmark_resolver": (
+                latest_brief.domain_benchmark_resolver.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_benchmark_resolver is not None
+                else None
+            ),
+            "experiment_protocol": (
+                latest_brief.domain_experiment_protocol.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_experiment_protocol is not None
+                else None
+            ),
+            "domain_readiness_status": (
+                latest_brief.domain_readiness_status if latest_brief is not None else "blocked"
+            ),
+            "claim_ceiling": (
+                latest_brief.domain_claim_ceiling if latest_brief is not None else None
+            ),
+            "required_followups": (
+                list(latest_brief.domain_required_followups) if latest_brief is not None else []
+            ),
+            "kill_criteria": (
+                list(latest_brief.domain_kill_criteria) if latest_brief is not None else []
+            ),
+            "policy": (
+                "Domain package context is evidence-constrained. Fixture or local smoke "
+                "evidence may support review-only engineering validation but never final-publish claims."
+            ),
+        },
         "research_question": research_question,
         "target_title": (
             "Evidence-Ledger-Guided Retrieval and Repair for Reducing Unsupported Claims "
@@ -6672,6 +6769,12 @@ def _project_offline_publication_case_payload(
                 "blockers": (
                     list(latest_brief.domain_blockers) if latest_brief is not None else []
                 ),
+                "readiness_status": (
+                    latest_brief.domain_readiness_status if latest_brief is not None else "blocked"
+                ),
+                "claim_ceiling": (
+                    latest_brief.domain_claim_ceiling if latest_brief is not None else None
+                ),
             },
             "literature_scout_inputs": {
                 "queries": (
@@ -6680,6 +6783,16 @@ def _project_offline_publication_case_payload(
                     else []
                 ),
                 "allow_live_network": bool(latest_brief.allow_web) if latest_brief is not None else False,
+                "strategy": (
+                    latest_brief.domain_literature_strategy.model_dump(mode="json")
+                    if latest_brief is not None and latest_brief.domain_literature_strategy is not None
+                    else None
+                ),
+                "result": (
+                    latest_brief.domain_literature_result.model_dump(mode="json")
+                    if latest_brief is not None and latest_brief.domain_literature_result is not None
+                    else None
+                ),
             },
             "gap_validation": (
                 latest_brief.gap_miner.model_dump(mode="json")
@@ -6698,9 +6811,19 @@ def _project_offline_publication_case_payload(
                 "benchmark_card_id": benchmark_card.get("card_id"),
                 "provenance_manifest_id": benchmark_provenance_manifest.get("manifest_id"),
                 "snapshot_metadata": benchmark_provenance_manifest.get("snapshot_metadata", {}),
+                "domain_benchmark_resolver": (
+                    latest_brief.domain_benchmark_resolver.model_dump(mode="json")
+                    if latest_brief is not None and latest_brief.domain_benchmark_resolver is not None
+                    else None
+                ),
             },
             "experiment_protocol": {
                 "task_family": "ir_reranking",
+                "domain_protocol": (
+                    latest_brief.domain_experiment_protocol.model_dump(mode="json")
+                    if latest_brief is not None and latest_brief.domain_experiment_protocol is not None
+                    else None
+                ),
                 "execution_paths": sorted(
                     {
                         str(profile.get("execution_source"))
@@ -8316,6 +8439,63 @@ def _project_publication_readiness_report_payload(
         else None
     )
     domain_blockers = list(latest_brief.domain_blockers) if latest_brief is not None else []
+    domain_literature_result = (
+        latest_brief.domain_literature_result
+        if latest_brief is not None
+        else None
+    )
+    domain_benchmark_resolver = (
+        latest_brief.domain_benchmark_resolver
+        if latest_brief is not None
+        else None
+    )
+    domain_experiment_protocol = (
+        latest_brief.domain_experiment_protocol
+        if latest_brief is not None
+        else None
+    )
+    domain_evidence_blockers = _dedupe(
+        [
+            *domain_blockers,
+            *(
+                domain_literature_result.blockers
+                if domain_literature_result is not None
+                and domain_literature_result.status == "blocked"
+                else []
+            ),
+            *(
+                domain_benchmark_resolver.blockers
+                if domain_benchmark_resolver is not None
+                and domain_benchmark_resolver.status == "blocked"
+                else []
+            ),
+            *(
+                domain_experiment_protocol.blockers
+                if domain_experiment_protocol is not None
+                and domain_experiment_protocol.status == "blocked"
+                else []
+            ),
+        ]
+    )
+    domain_evidence_limitations = _dedupe(
+        [
+            *(
+                domain_literature_result.limitations
+                if domain_literature_result is not None
+                else []
+            ),
+            *(
+                domain_benchmark_resolver.limitations
+                if domain_benchmark_resolver is not None
+                else []
+            ),
+            *(
+                domain_experiment_protocol.limitations
+                if domain_experiment_protocol is not None
+                else []
+            ),
+        ]
+    )
     execution_coverage = paper_compiler_evidence.get("execution_coverage", {})
     phase6_negative_evidence_audit = _phase6_negative_evidence_report_audit(
         negative_evidence_report
@@ -8399,7 +8579,8 @@ def _project_publication_readiness_report_payload(
     limitations = _dedupe(
         [
             *warnings,
-            *domain_blockers,
+            *domain_evidence_blockers,
+            *domain_evidence_limitations,
             *[item.text for item in ledger.limitations],
             *[
                 reason
@@ -8413,7 +8594,12 @@ def _project_publication_readiness_report_payload(
         [
             *(
                 ["Do not create experiment outputs while domain routing is blocked."]
-                if domain_blockers
+                if domain_evidence_blockers
+                else []
+            ),
+            *(
+                list(latest_brief.domain_kill_criteria)
+                if latest_brief is not None
                 else []
             ),
             *(
@@ -8469,7 +8655,12 @@ def _project_publication_readiness_report_payload(
     )
     required_followups = _dedupe(
         [
-            *domain_blockers,
+            *domain_evidence_blockers,
+            *(
+                list(latest_brief.domain_required_followups)
+                if latest_brief is not None
+                else []
+            ),
             *project_submission_blockers,
             *evidence_profile.get("blockers", []),
             *(
@@ -8584,6 +8775,74 @@ def _project_publication_readiness_report_payload(
                 else None
             ),
             "blockers": domain_blockers,
+        },
+        {
+            "check_id": "domain_literature_strategy",
+            "passed": bool(
+                domain_literature_result is not None
+                and domain_literature_result.status != "blocked"
+            ),
+            "detail": (
+                "Latest project brief must carry a domain literature strategy/result; "
+                "fixture-only or missing related-system coverage remains a final-publish blocker."
+            ),
+            "strategy": (
+                latest_brief.domain_literature_strategy.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_literature_strategy is not None
+                else None
+            ),
+            "result": (
+                domain_literature_result.model_dump(mode="json")
+                if domain_literature_result is not None
+                else None
+            ),
+            "blockers": (
+                domain_literature_result.blockers
+                if domain_literature_result is not None
+                else ["Missing domain literature result."]
+            ),
+        },
+        {
+            "check_id": "domain_benchmark_resolver",
+            "passed": bool(
+                domain_benchmark_resolver is not None
+                and domain_benchmark_resolver.status != "blocked"
+            ),
+            "detail": (
+                "Latest project brief must resolve a domain benchmark with provenance, "
+                "schema coverage, source observations, and explicit publication-grade eligibility."
+            ),
+            "resolver": (
+                domain_benchmark_resolver.model_dump(mode="json")
+                if domain_benchmark_resolver is not None
+                else None
+            ),
+            "blockers": (
+                domain_benchmark_resolver.blockers
+                if domain_benchmark_resolver is not None
+                else ["Missing domain benchmark resolver result."]
+            ),
+        },
+        {
+            "check_id": "domain_experiment_protocol",
+            "passed": bool(
+                domain_experiment_protocol is not None
+                and domain_experiment_protocol.status != "blocked"
+            ),
+            "detail": (
+                "Latest project brief must carry a domain experiment protocol with expected outputs, "
+                "metric schema, runtime contract, negative evidence taxonomy, and repair routing."
+            ),
+            "protocol": (
+                domain_experiment_protocol.model_dump(mode="json")
+                if domain_experiment_protocol is not None
+                else None
+            ),
+            "blockers": (
+                domain_experiment_protocol.blockers
+                if domain_experiment_protocol is not None
+                else ["Missing domain experiment protocol."]
+            ),
         },
         {
             "check_id": "project_publish_gate",
@@ -8730,6 +8989,42 @@ def _project_publication_readiness_report_payload(
         "domain_decision": domain_decision,
         "domain_template": domain_template,
         "domain_blockers": domain_blockers,
+        "domain_package_context": {
+            "literature_strategy": (
+                latest_brief.domain_literature_strategy.model_dump(mode="json")
+                if latest_brief is not None and latest_brief.domain_literature_strategy is not None
+                else None
+            ),
+            "literature_result": (
+                domain_literature_result.model_dump(mode="json")
+                if domain_literature_result is not None
+                else None
+            ),
+            "benchmark_resolver": (
+                domain_benchmark_resolver.model_dump(mode="json")
+                if domain_benchmark_resolver is not None
+                else None
+            ),
+            "experiment_protocol": (
+                domain_experiment_protocol.model_dump(mode="json")
+                if domain_experiment_protocol is not None
+                else None
+            ),
+            "readiness_status": (
+                latest_brief.domain_readiness_status if latest_brief is not None else "blocked"
+            ),
+            "claim_ceiling": (
+                latest_brief.domain_claim_ceiling if latest_brief is not None else None
+            ),
+            "blockers": domain_evidence_blockers,
+            "limitations": domain_evidence_limitations,
+            "required_followups": (
+                list(latest_brief.domain_required_followups) if latest_brief is not None else []
+            ),
+            "kill_criteria": (
+                list(latest_brief.domain_kill_criteria) if latest_brief is not None else []
+            ),
+        },
         "supported_claim_trace_count": sum(1 for trace in traces if trace.support_status == "supported"),
         "partial_or_unsupported_claim_trace_count": sum(
             1 for trace in traces if trace.support_status != "supported"
@@ -10029,6 +10324,38 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         ),
         "latest_brief_domain_blockers": (
             list(latest_brief.domain_blockers) if latest_brief is not None else []
+        ),
+        "latest_brief_domain_literature_strategy": (
+            latest_brief.domain_literature_strategy.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_literature_strategy is not None
+            else None
+        ),
+        "latest_brief_domain_literature_result": (
+            latest_brief.domain_literature_result.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_literature_result is not None
+            else None
+        ),
+        "latest_brief_domain_benchmark_resolver": (
+            latest_brief.domain_benchmark_resolver.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_benchmark_resolver is not None
+            else None
+        ),
+        "latest_brief_domain_experiment_protocol": (
+            latest_brief.domain_experiment_protocol.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_experiment_protocol is not None
+            else None
+        ),
+        "latest_brief_domain_readiness_status": (
+            latest_brief.domain_readiness_status if latest_brief is not None else "blocked"
+        ),
+        "latest_brief_domain_claim_ceiling": (
+            latest_brief.domain_claim_ceiling if latest_brief is not None else None
+        ),
+        "latest_brief_domain_required_followups": (
+            list(latest_brief.domain_required_followups) if latest_brief is not None else []
+        ),
+        "latest_brief_domain_kill_criteria": (
+            list(latest_brief.domain_kill_criteria) if latest_brief is not None else []
         ),
         "latest_brief_selected_hypothesis_id": (
             latest_brief.selected_hypothesis_id if latest_brief is not None else None

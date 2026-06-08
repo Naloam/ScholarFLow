@@ -18,6 +18,13 @@ from services.autoresearch.literature_connectors import (
     deduplicate_literature_papers,
     search_literature_connectors,
 )
+from services.autoresearch.domain_evidence import (
+    build_domain_experiment_protocol,
+    build_domain_literature_result,
+    build_domain_literature_strategy,
+    domain_claim_ceiling,
+    domain_readiness_status,
+)
 
 
 _STOPWORDS = {
@@ -116,7 +123,10 @@ def _search_queries(brief: AutoResearchResearchBriefRead) -> list[str]:
         )
         if selected is not None:
             queries.append(f"{selected.research_question} {selected.required_metrics[0] if selected.required_metrics else ''}")
-    return _dedupe(queries)[: max(3, min(8, len(queries)))]
+    domain_strategy = brief.domain_literature_strategy or build_domain_literature_strategy(brief)
+    if domain_strategy is not None:
+        queries.extend(domain_strategy.query_strings)
+    return _dedupe(queries)[: max(3, min(10, len(queries)))]
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -203,6 +213,7 @@ def build_literature_scout_with_options(
     cache_enabled: bool = True,
     network_enabled: bool | None = None,
 ) -> AutoResearchLiteratureScoutRead:
+    domain_strategy = brief.domain_literature_strategy or build_domain_literature_strategy(brief)
     search_queries = _search_queries(brief)
     effective_network_enabled = brief.allow_web if network_enabled is None else bool(
         network_enabled and brief.allow_web
@@ -227,6 +238,11 @@ def build_literature_scout_with_options(
         "scout_id": "literature_scout_v1",
         "project_id": brief.project_id,
         "brief_id": brief.brief_id,
+        "domain_literature_strategy": (
+            domain_strategy.model_dump(mode="json")
+            if domain_strategy is not None
+            else None
+        ),
         "search_queries": search_queries,
         "similar_papers": [item.model_dump(mode="json") for item in papers],
         "source_statuses": [item.model_dump(mode="json") for item in source_statuses],
@@ -245,6 +261,18 @@ def build_literature_scout_with_options(
         "metrics": _dedupe([metric for item in papers for metric in item.metrics]),
         "known_sota": _dedupe([item.known_sota or "" for item in papers]),
     }
+    scout = AutoResearchLiteratureScoutRead(
+        generated_at=_utcnow(),
+        scout_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+    domain_result = build_domain_literature_result(
+        strategy=domain_strategy,
+        scout=scout,
+    )
+    if domain_result is None:
+        return scout
+    payload["domain_literature_result"] = domain_result.model_dump(mode="json")
     return AutoResearchLiteratureScoutRead(
         generated_at=_utcnow(),
         scout_fingerprint=_fingerprint(payload),
@@ -424,6 +452,21 @@ def scout_and_mine_gaps(
         network_enabled=network_enabled,
     )
     miner = build_gap_miner(brief, literature_scout=scout)
+    domain_literature_result = scout.domain_literature_result
+    domain_protocol = build_domain_experiment_protocol(
+        brief,
+        benchmark_resolver=brief.domain_benchmark_resolver,
+    )
+    domain_status = domain_readiness_status(
+        literature_result=domain_literature_result,
+        benchmark_resolver=brief.domain_benchmark_resolver,
+        protocol=domain_protocol,
+    )
+    claim_ceiling = domain_claim_ceiling(
+        literature_result=domain_literature_result,
+        benchmark_resolver=brief.domain_benchmark_resolver,
+        protocol=domain_protocol,
+    )
     next_action = (
         "blocked"
         if brief.status == "blocked" or brief.next_action == "blocked" or brief.domain_blockers
@@ -435,6 +478,33 @@ def scout_and_mine_gaps(
         update={
             "literature_scout": scout,
             "gap_miner": miner,
+            "domain_literature_strategy": scout.domain_literature_strategy or brief.domain_literature_strategy,
+            "domain_literature_result": domain_literature_result,
+            "domain_experiment_protocol": domain_protocol,
+            "domain_readiness_status": domain_status,
+            "domain_claim_ceiling": claim_ceiling,
+            "domain_required_followups": _dedupe(
+                [
+                    *brief.domain_required_followups,
+                    *(
+                        domain_literature_result.required_followups
+                        if domain_literature_result is not None
+                        else []
+                    ),
+                    *(domain_protocol.required_followups if domain_protocol is not None else []),
+                ]
+            ),
+            "domain_kill_criteria": _dedupe(
+                [
+                    *brief.domain_kill_criteria,
+                    *(
+                        domain_literature_result.kill_criteria
+                        if domain_literature_result is not None
+                        else []
+                    ),
+                    *(domain_protocol.kill_criteria if domain_protocol is not None else []),
+                ]
+            ),
             "novelty_search_plan": _dedupe([*brief.novelty_search_plan, *scout.search_queries]),
             "updated_at": _utcnow(),
             "next_action": next_action,

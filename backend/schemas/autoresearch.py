@@ -314,6 +314,7 @@ AutoResearchDomainId = Literal[
     "lightweight_ml_nlp_benchmark",
     "unsupported",
 ]
+AutoResearchDomainEvidenceStatus = Literal["blocked", "limited", "ready"]
 AutoResearchResearchActionRecommendation = Literal[
     "refresh_review",
     "repair_experiment_design",
@@ -627,6 +628,121 @@ class AutoResearchDomainTemplateRead(BaseModel):
     blockers: list[str] = Field(default_factory=list)
 
 
+class AutoResearchDomainLiteratureStrategyRead(BaseModel):
+    strategy_id: str
+    domain_id: AutoResearchDomainId
+    template_id: str | None = None
+    template_version: str | None = None
+    query_strings: list[str] = Field(default_factory=list)
+    required_source_classes: list[str] = Field(default_factory=list)
+    minimum_real_source_count: int = 0
+    related_system_coverage_expectations: list[str] = Field(default_factory=list)
+    novelty_risk_extraction: list[str] = Field(default_factory=list)
+    known_method_extraction: list[str] = Field(default_factory=list)
+    known_dataset_extraction: list[str] = Field(default_factory=list)
+    known_metric_extraction: list[str] = Field(default_factory=list)
+    known_sota_extraction: list[str] = Field(default_factory=list)
+    fixture_only_limitation_policy: str
+    final_publish_literature_blockers: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    kill_criteria: list[str] = Field(default_factory=list)
+    strategy_fingerprint: str
+
+
+class AutoResearchDomainRelatedSystemCoverageRead(BaseModel):
+    expectation: str
+    matched_paper_ids: list[str] = Field(default_factory=list)
+    matched_terms: list[str] = Field(default_factory=list)
+    covered: bool = False
+    limitation: str | None = None
+
+
+class AutoResearchDomainLiteratureResultRead(BaseModel):
+    result_id: str
+    strategy_id: str
+    domain_id: AutoResearchDomainId
+    status: AutoResearchDomainEvidenceStatus = "blocked"
+    source_counts: dict[str, int] = Field(default_factory=dict)
+    source_class_counts: dict[str, int] = Field(default_factory=dict)
+    real_source_count: int = 0
+    real_source_types: list[str] = Field(default_factory=list)
+    required_source_classes: list[str] = Field(default_factory=list)
+    required_source_classes_present: list[str] = Field(default_factory=list)
+    fixture_only: bool = False
+    related_system_coverage: list[AutoResearchDomainRelatedSystemCoverageRead] = Field(default_factory=list)
+    related_system_coverage_complete: bool = False
+    known_methods: list[str] = Field(default_factory=list)
+    known_datasets: list[str] = Field(default_factory=list)
+    known_metrics: list[str] = Field(default_factory=list)
+    known_sota: list[str] = Field(default_factory=list)
+    novelty_risks: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    final_publish_blockers: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    kill_criteria: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    result_fingerprint: str
+
+
+class AutoResearchDomainBenchmarkResolverRead(BaseModel):
+    resolver_id: str
+    domain_id: AutoResearchDomainId
+    status: AutoResearchDomainEvidenceStatus = "blocked"
+    benchmark_name: str | None = None
+    task_family: TaskFamily | None = None
+    source_kind: BenchmarkKind | None = None
+    source_class: str | None = None
+    source_locator: str | None = None
+    dataset_id: str | None = None
+    revision: str | None = None
+    license: str | None = None
+    source_fingerprint: str | None = None
+    sample_count: int = 0
+    train_split_count: int = 0
+    test_split_count: int = 0
+    label_schema_coverage: dict[str, Any] = Field(default_factory=dict)
+    query_document_evidence_schema_coverage: dict[str, Any] = Field(default_factory=dict)
+    source_observation_coverage: dict[str, Any] = Field(default_factory=dict)
+    benchmark_provenance_complete: bool = False
+    publication_grade_eligible: bool = False
+    final_candidate_eligible: bool = False
+    source_independence_audit: dict[str, Any] = Field(default_factory=dict)
+    benchmark_payload_ref: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    kill_criteria: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    resolver_fingerprint: str
+
+
+class AutoResearchDomainExperimentProtocolRead(BaseModel):
+    protocol_id: str
+    domain_id: AutoResearchDomainId
+    status: AutoResearchDomainEvidenceStatus = "blocked"
+    method_baseline_ladder: list[str] = Field(default_factory=list)
+    metric_schema: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    runtime_contract: dict[str, Any] = Field(default_factory=dict)
+    deterministic_execution_route: str
+    import_replay_route: str
+    evidence_ledger_schema: list[str] = Field(default_factory=list)
+    negative_evidence_categories: list[str] = Field(default_factory=list)
+    repair_routing_policy: dict[str, str] = Field(default_factory=dict)
+    readiness_blockers: list[str] = Field(default_factory=list)
+    final_publish_limitations: list[str] = Field(default_factory=list)
+    benchmark_resolver_id: str | None = None
+    benchmark_resolver_status: AutoResearchDomainEvidenceStatus = "blocked"
+    protocol_complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    kill_criteria: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    protocol_fingerprint: str
+
+
 class AutoResearchResearchDirectionRead(BaseModel):
     direction_id: str
     title: str
@@ -748,6 +864,8 @@ class AutoResearchLiteratureScoutRead(BaseModel):
     project_id: str
     brief_id: str
     generated_at: datetime
+    domain_literature_strategy: AutoResearchDomainLiteratureStrategyRead | None = None
+    domain_literature_result: AutoResearchDomainLiteratureResultRead | None = None
     search_queries: list[str] = Field(default_factory=list)
     similar_papers: list[AutoResearchLiteratureScoutPaperRead] = Field(default_factory=list)
     source_statuses: list[AutoResearchLiteratureScoutSourceStatusRead] = Field(default_factory=list)
@@ -790,6 +908,14 @@ class AutoResearchResearchBriefRead(BaseModel):
     domain_decision: AutoResearchDomainDecisionRead | None = None
     domain_template: AutoResearchDomainTemplateRead | None = None
     domain_blockers: list[str] = Field(default_factory=list)
+    domain_literature_strategy: AutoResearchDomainLiteratureStrategyRead | None = None
+    domain_literature_result: AutoResearchDomainLiteratureResultRead | None = None
+    domain_benchmark_resolver: AutoResearchDomainBenchmarkResolverRead | None = None
+    domain_experiment_protocol: AutoResearchDomainExperimentProtocolRead | None = None
+    domain_readiness_status: AutoResearchDomainEvidenceStatus = "blocked"
+    domain_required_followups: list[str] = Field(default_factory=list)
+    domain_kill_criteria: list[str] = Field(default_factory=list)
+    domain_claim_ceiling: str | None = None
     idea_too_generic: bool = False
     specificity_assessment: Literal["too_generic", "broad_but_actionable", "scoped"] = "scoped"
     scope_narrowing_recommendation: str
@@ -925,6 +1051,9 @@ class AutoResearchExperimentFactoryPlanRead(BaseModel):
     run_id: str | None = None
     generated_at: datetime
     execution_backend: ExecutionBackendSpec = Field(default_factory=ExecutionBackendSpec)
+    domain_decision: AutoResearchDomainDecisionRead | None = None
+    domain_benchmark_resolver: AutoResearchDomainBenchmarkResolverRead | None = None
+    domain_experiment_protocol: AutoResearchDomainExperimentProtocolRead | None = None
     selected_direction_id: str | None = None
     selected_hypothesis: str | None = None
     jobs: list[AutoResearchExperimentFactoryJobRead] = Field(default_factory=list)
@@ -1073,6 +1202,8 @@ class AutoResearchExperimentFactoryExecutionRead(BaseModel):
     hypothesis_id: str | None = None
     generated_at: datetime
     execution_plan: AutoResearchExperimentFactoryPlanRead
+    domain_benchmark_resolver: AutoResearchDomainBenchmarkResolverRead | None = None
+    domain_experiment_protocol: AutoResearchDomainExperimentProtocolRead | None = None
     environment_manifest: AutoResearchExperimentFactoryEnvironmentManifestRead | None = None
     materialized_jobs: list[AutoResearchExperimentFactoryMaterializedJobRead] = Field(default_factory=list)
     result_artifact: ResultArtifact
@@ -2697,6 +2828,14 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     latest_brief_domain_decision: AutoResearchDomainDecisionRead | None = None
     latest_brief_domain_template: AutoResearchDomainTemplateRead | None = None
     latest_brief_domain_blockers: list[str] = Field(default_factory=list)
+    latest_brief_domain_literature_strategy: AutoResearchDomainLiteratureStrategyRead | None = None
+    latest_brief_domain_literature_result: AutoResearchDomainLiteratureResultRead | None = None
+    latest_brief_domain_benchmark_resolver: AutoResearchDomainBenchmarkResolverRead | None = None
+    latest_brief_domain_experiment_protocol: AutoResearchDomainExperimentProtocolRead | None = None
+    latest_brief_domain_readiness_status: AutoResearchDomainEvidenceStatus = "blocked"
+    latest_brief_domain_claim_ceiling: str | None = None
+    latest_brief_domain_required_followups: list[str] = Field(default_factory=list)
+    latest_brief_domain_kill_criteria: list[str] = Field(default_factory=list)
     latest_brief_selected_hypothesis_id: str | None = None
     candidate_run_count: int = 0
     selected_run_ids: list[str] = Field(default_factory=list)
@@ -2834,6 +2973,12 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     domain_decision: AutoResearchDomainDecisionRead | None = None
     domain_template: AutoResearchDomainTemplateRead | None = None
     domain_blockers: list[str] = Field(default_factory=list)
+    domain_literature_strategy: AutoResearchDomainLiteratureStrategyRead | None = None
+    domain_literature_result: AutoResearchDomainLiteratureResultRead | None = None
+    domain_benchmark_resolver: AutoResearchDomainBenchmarkResolverRead | None = None
+    domain_experiment_protocol: AutoResearchDomainExperimentProtocolRead | None = None
+    domain_readiness_status: AutoResearchDomainEvidenceStatus = "blocked"
+    domain_claim_ceiling: str | None = None
     selected_hypothesis_id: str | None = None
     experiment_plan_id: str | None = None
     evidence_ledger_id: str | None = None
@@ -3952,6 +4097,14 @@ class AutoResearchOperatorRunDetailRead(BaseModel):
 
 class AutoResearchOperatorPublicationCaseRead(BaseModel):
     status: Literal["not_started", "review_ready", "final_publish_ready", "blocked"] = "not_started"
+    domain_decision: AutoResearchDomainDecisionRead | None = None
+    domain_template: AutoResearchDomainTemplateRead | None = None
+    domain_literature_strategy: AutoResearchDomainLiteratureStrategyRead | None = None
+    domain_literature_result: AutoResearchDomainLiteratureResultRead | None = None
+    domain_benchmark_resolver: AutoResearchDomainBenchmarkResolverRead | None = None
+    domain_experiment_protocol: AutoResearchDomainExperimentProtocolRead | None = None
+    domain_readiness_status: AutoResearchDomainEvidenceStatus = "blocked"
+    domain_claim_ceiling: str | None = None
     review_bundle_ready: bool = False
     final_publish_ready: bool = False
     submission_bundle_kind: str | None = None
@@ -4026,6 +4179,12 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     latest_brief_domain_confidence: float = 0.0
     latest_brief_domain_supported: bool = False
     latest_brief_domain_blockers: list[str] = Field(default_factory=list)
+    latest_brief_domain_literature_status: AutoResearchDomainEvidenceStatus = "blocked"
+    latest_brief_domain_benchmark_status: AutoResearchDomainEvidenceStatus = "blocked"
+    latest_brief_domain_protocol_status: AutoResearchDomainEvidenceStatus = "blocked"
+    latest_brief_domain_claim_ceiling: str | None = None
+    latest_brief_domain_required_followups: list[str] = Field(default_factory=list)
+    latest_brief_domain_kill_criteria: list[str] = Field(default_factory=list)
     latest_brief_hypothesis_count: int = 0
     latest_brief_selected_direction_id: str | None = None
     latest_brief_selected_hypothesis_id: str | None = None

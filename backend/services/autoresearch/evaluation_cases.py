@@ -17,7 +17,7 @@ from schemas.autoresearch import (
     AutoResearchSystemEvaluationMetricRead,
     BenchmarkSource,
 )
-from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec
+from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
 from services.autoresearch.experiment_factory import (
     build_experiment_factory_plan,
     execute_cached_claim_evidence_experiment_factory,
@@ -154,6 +154,138 @@ _CASE_DEFINITIONS: list[dict[str, Any]] = [
         "expected_paper_tier": "workshop_candidate",
     },
     {
+        "case_id": "claim_evidence_generalized_idea",
+        "task_kind": "claim_evidence_vertical_task",
+        "idea": (
+            "Evaluate whether claim-evidence ledgers can route scientific writing claims "
+            "through retrieval, verification, abstention, and repair without inflating "
+            "unsupported manuscript claims."
+        ),
+        "domain": "claim_evidence_retrieval",
+        "budget_label": "standard",
+        "max_rounds": 3,
+        "candidate_execution_limit": 3,
+        "target_tier": "workshop_candidate",
+        "task_family_hint": "ir_reranking",
+        "expected_brief_quality": (
+            "Brief should select a claim-evidence retrieval direction that remains compatible "
+            "with the repository-local SciFact frozen benchmark path and reviewer repair loop."
+        ),
+        "expected_novelty_risks": [
+            "Scientific claim verification and retrieval have existing baselines.",
+            "A ledger interface is not a paper claim unless linked to evidence retrieval, abstention, and repair outcomes.",
+        ],
+        "expected_experiment_design_requirements": [
+            "Resolve the SciFact frozen snapshot metadata and preserve source lineage.",
+            "Execute or replay claim retrieval/verification metrics with evidence-ledger entries.",
+            "Keep source-independence and negative-evidence blockers visible in package readiness.",
+        ],
+        "expected_failure_replan_behavior": (
+            "Missing support evidence should route to claim downgrades, retrieval repair, or "
+            "literature refresh rather than promoted manuscript claims."
+        ),
+        "expected_paper_tier": "workshop_candidate",
+    },
+    {
+        "case_id": "rag_citation_faithfulness_review_case",
+        "task_kind": "literature_heavy_task",
+        "idea": (
+            "Measure citation faithfulness in retrieval augmented generation by scoring whether "
+            "answer claims are supported by retrieved citation passages and abstaining when "
+            "support is missing."
+        ),
+        "domain": "citation faithfulness",
+        "budget_label": "standard",
+        "max_rounds": 3,
+        "candidate_execution_limit": 2,
+        "target_tier": "workshop_candidate",
+        "task_family_hint": "ir_reranking",
+        "seed_cached_literature": True,
+        "build_project_package": True,
+        "expected_brief_quality": (
+            "Brief should bind RAG citation faithfulness to citation-support scoring, unsupported "
+            "citation evidence, abstention, and review-only fixture limits."
+        ),
+        "expected_novelty_risks": [
+            "Citation-faithfulness evaluation overlaps active RAG attribution work.",
+            "Repository-local citation fixtures cannot establish final-publish novelty.",
+        ],
+        "expected_experiment_design_requirements": [
+            "Resolve a citation-faithfulness benchmark fixture with explicit non-final blockers.",
+            "Record citation support scores, unsupported citations, abstentions, and evidence ledger entries.",
+            "Propagate fixture-only benchmark limitations into package readiness and claim ceiling.",
+        ],
+        "expected_failure_replan_behavior": (
+            "Unsupported citations should remain negative evidence and route to citation-support "
+            "repair or benchmark import follow-up before final-publish claims."
+        ),
+        "expected_paper_tier": "workshop_candidate",
+    },
+    {
+        "case_id": "lightweight_ml_nlp_review_case",
+        "task_kind": "medium_benchmark_task",
+        "idea": (
+            "Compare deterministic local text classifiers for lightweight ML/NLP benchmarking "
+            "with accuracy, macro F1, baseline comparison, and explicit fixture-only claim limits."
+        ),
+        "domain": "lightweight ml nlp benchmark",
+        "budget_label": "standard",
+        "max_rounds": 3,
+        "candidate_execution_limit": 2,
+        "target_tier": "technical_report",
+        "task_family_hint": "text_classification",
+        "seed_cached_literature": True,
+        "build_project_package": True,
+        "expected_brief_quality": (
+            "Brief should bind the lightweight ML/NLP idea to deterministic local text classification, "
+            "macro F1, baseline comparison, and publication-grade provenance blockers."
+        ),
+        "expected_novelty_risks": [
+            "Small text-classification benchmarks are unlikely to be novel without real benchmark provenance.",
+            "Fixture-only local metrics can validate engineering but cannot support publication-grade benchmark claims.",
+        ],
+        "expected_experiment_design_requirements": [
+            "Resolve the local fixture benchmark as review-only evidence.",
+            "Record accuracy, macro F1, predictions, baseline comparison, and evidence ledger entries.",
+            "Propagate missing real benchmark provenance to package/readiness blockers.",
+        ],
+        "expected_failure_replan_behavior": (
+            "Missing real benchmark scale or statistics should remain required follow-up rather "
+            "than being repaired by synthetic benchmark claims."
+        ),
+        "expected_paper_tier": "technical_report",
+    },
+    {
+        "case_id": "unsupported_domain_case",
+        "task_kind": "failed_hypothesis_task",
+        "idea": "Design a wet-lab CRISPR assay for cancer organoids requiring live lab equipment",
+        "domain": "wet lab biology",
+        "budget_label": "toy",
+        "max_rounds": 2,
+        "candidate_execution_limit": 1,
+        "target_tier": "technical_report",
+        "task_family_hint": "text_classification",
+        "expected_blocked": True,
+        "expected_brief_quality": (
+            "Brief should produce an auditable unsupported-domain blocker with no selected "
+            "hypothesis, no experiment plan, and no toy outputs."
+        ),
+        "expected_novelty_risks": [
+            "Unsupported wet-lab work has no deterministic ScholarFlow domain template.",
+            "Any toy/software output would be unrelated evidence and must be blocked.",
+        ],
+        "expected_experiment_design_requirements": [
+            "Do not generate factory jobs for unsupported domains.",
+            "Return structured benchmark resolver and experiment protocol blockers.",
+            "Propagate blockers to project readiness and evaluation trace.",
+        ],
+        "expected_failure_replan_behavior": (
+            "The run should stop at domain routing and require a new supported-domain template "
+            "instead of attempting fake execution."
+        ),
+        "expected_paper_tier": "technical_report",
+    },
+    {
         "case_id": "eval_case_ablation_heavy_task",
         "task_kind": "ablation_heavy_task",
         "idea": "Identify which planning memory component improves multi-step LLM evaluation reliability",
@@ -256,6 +388,71 @@ def _read_json_file(path: str | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _submission_trace_fields(project_paper: Any) -> dict[str, Any]:
+    manifest = getattr(project_paper, "project_submission_manifest", None)
+    if not isinstance(manifest, dict):
+        manifest = _read_json_file(getattr(project_paper, "project_submission_manifest_path", None))
+    assets = [
+        item
+        for item in manifest.get("generated_assets", [])
+        if isinstance(item, dict)
+    ]
+    roles = sorted(
+        {
+            str(item.get("role"))
+            for item in assets
+            if item.get("role")
+        }
+    )
+    explicit_missing_roles = {
+        str(item.get("role"))
+        for item in assets
+        if item.get("role")
+        and (
+            item.get("missing_status") != "present"
+            or item.get("exists") is False
+        )
+    }
+    missing_roles = sorted(
+        (_OFFLINE_PUBLICATION_CASE_REQUIRED_PACKAGE_ROLES - set(roles))
+        | explicit_missing_roles
+    )
+    review_findings = getattr(project_paper, "project_review_findings", None)
+    if not isinstance(review_findings, dict):
+        review_findings = _read_json_file(getattr(project_paper, "project_review_findings_path", None))
+    finding_records = review_findings.get("findings", [])
+    if isinstance(finding_records, list):
+        project_review_finding_count = len(
+            [item for item in finding_records if isinstance(item, dict)]
+        )
+        mapped_action_ids = {
+            str(item.get("mapped_revision_action_id"))
+            for item in finding_records
+            if isinstance(item, dict) and item.get("mapped_revision_action_id")
+        }
+    else:
+        project_review_finding_count = int(review_findings.get("finding_count") or 0)
+        mapped_action_ids = set()
+    action_ids = {
+        action.action_id
+        for action in getattr(project_paper, "project_paper_revision_actions", [])
+        if getattr(action, "action_id", None)
+    }
+    return {
+        "project_review_finding_count": project_review_finding_count,
+        "project_review_findings_mapped_to_actions": bool(action_ids)
+        and mapped_action_ids == action_ids,
+        "project_submission_bundle_kind": (
+            str(manifest.get("bundle_kind"))
+            if manifest.get("bundle_kind") is not None
+            else None
+        ),
+        "project_submission_asset_roles": roles,
+        "project_submission_missing_asset_roles": missing_roles,
+        "project_submission_required_roles_present": bool(roles) and not missing_roles,
+    }
 
 
 def _artifact_negative_evidence_count(artifact: Any) -> int:
@@ -606,6 +803,118 @@ _CACHED_REAL_CROSSREF_PAYLOAD: dict[str, Any] = {
 }
 
 
+_CACHED_RAG_SEMANTIC_PAYLOAD: dict[str, Any] = {
+    "data": [
+        {
+            "paperId": "semantic-scholar-rag-citation-faithfulness",
+            "title": "Citation Faithfulness Evaluation for Retrieval Augmented Generation",
+            "abstract": (
+                "Retrieval augmented generation systems can be evaluated with attribution, citation "
+                "support scoring, grounding metrics, unsupported citation detection, and abstention "
+                "on knowledge intensive QA benchmarks."
+            ),
+            "year": 2026,
+            "venue": "Cached Semantic Scholar Fixture",
+            "url": "https://example.test/rag-citation-faithfulness",
+            "externalIds": {"DOI": "10.0000/scholarflow.cached.rag", "ArXiv": "2602.00001"},
+            "authors": [{"name": "Cached RAG Fixture"}],
+            "fieldsOfStudy": ["Computer Science", "Natural Language Processing"],
+        }
+    ]
+}
+
+
+_CACHED_RAG_ARXIV_PAYLOAD = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2602.00002</id>
+    <title>RAG Attribution and Citation Grounding Metrics for Knowledge Intensive QA</title>
+    <summary>Cached arXiv fixture describing retrieval augmented generation attribution, citation faithfulness, grounding, citation support coverage, precision, recall, and abstention metrics for knowledge intensive QA.</summary>
+    <published>2026-02-03T00:00:00Z</published>
+    <author><name>Cached RAG ArXiv Fixture</name></author>
+    <arxiv:doi>10.0000/scholarflow.cached.rag.arxiv</arxiv:doi>
+  </entry>
+</feed>
+"""
+
+
+_CACHED_RAG_CROSSREF_PAYLOAD: dict[str, Any] = {
+    "message": {
+        "items": [
+            {
+                "DOI": "10.0000/scholarflow.cached.rag.crossref",
+                "title": ["Related Systems for RAG Citation Support and Attribution"],
+                "container-title": ["Cached Crossref Fixture"],
+                "abstract": (
+                    "<p>Cached Crossref fixture covering RAG attribution, citation support "
+                    "benchmarks, faithful grounding, unsupported citations, abstention, precision, "
+                    "and recall for knowledge-intensive QA.</p>"
+                ),
+                "issued": {"date-parts": [[2026, 2, 4]]},
+                "author": [{"given": "Cached", "family": "RAG Fixture"}],
+                "URL": "https://example.test/rag-citation-support",
+            }
+        ]
+    }
+}
+
+
+_CACHED_LIGHTWEIGHT_SEMANTIC_PAYLOAD: dict[str, Any] = {
+    "data": [
+        {
+            "paperId": "semantic-scholar-lightweight-ml-nlp",
+            "title": "Lightweight Text Classification Benchmarks with Local Baselines",
+            "abstract": (
+                "Lightweight NLP benchmark comparisons should report deterministic local baselines, "
+                "text classification accuracy, macro F1, reproducibility limits, and fixture-only "
+                "claim ceilings before publication-grade claims."
+            ),
+            "year": 2026,
+            "venue": "Cached Semantic Scholar Fixture",
+            "url": "https://example.test/lightweight-ml-nlp",
+            "externalIds": {"DOI": "10.0000/scholarflow.cached.lightweight", "ArXiv": "2603.00001"},
+            "authors": [{"name": "Cached Lightweight Fixture"}],
+            "fieldsOfStudy": ["Computer Science", "Machine Learning"],
+        }
+    ]
+}
+
+
+_CACHED_LIGHTWEIGHT_ARXIV_PAYLOAD = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2603.00002</id>
+    <title>Deterministic Local Text Classification Baselines for Lightweight NLP Benchmarks</title>
+    <summary>Cached arXiv fixture describing lightweight benchmark reproducibility, text classification, local baseline comparison, accuracy, macro F1, and small benchmark limitations.</summary>
+    <published>2026-03-03T00:00:00Z</published>
+    <author><name>Cached Lightweight ArXiv Fixture</name></author>
+    <arxiv:doi>10.0000/scholarflow.cached.lightweight.arxiv</arxiv:doi>
+  </entry>
+</feed>
+"""
+
+
+_CACHED_LIGHTWEIGHT_CROSSREF_PAYLOAD: dict[str, Any] = {
+    "message": {
+        "items": [
+            {
+                "DOI": "10.0000/scholarflow.cached.lightweight.crossref",
+                "title": ["Reproducible Small Benchmark Reporting for Local NLP Classifiers"],
+                "container-title": ["Cached Crossref Fixture"],
+                "abstract": (
+                    "<p>Cached Crossref fixture covering lightweight benchmark reporting, "
+                    "machine learning reproducibility, text classification baselines, accuracy, "
+                    "macro F1, and local deterministic metric limits.</p>"
+                ),
+                "issued": {"date-parts": [[2026, 3, 4]]},
+                "author": [{"given": "Cached", "family": "Lightweight Fixture"}],
+                "URL": "https://example.test/lightweight-text-classification",
+            }
+        ]
+    }
+}
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -648,6 +957,9 @@ def _literature_cache_queries(brief) -> list[str]:
         if selected is not None:
             metric = selected.required_metrics[0] if selected.required_metrics else ""
             queries.append(f"{selected.research_question} {metric}")
+    domain_strategy = getattr(brief, "domain_literature_strategy", None)
+    if domain_strategy is not None:
+        queries.extend(domain_strategy.query_strings)
     return _dedupe(queries)[: max(3, min(8, len(queries)))]
 
 
@@ -675,12 +987,33 @@ def _metric(
     )
 
 
-def _seed_claim_evidence_cached_literature(brief) -> None:
-    payloads = {
+def _domain_cached_literature_payloads(brief) -> dict[str, Any]:
+    domain_id = (
+        brief.domain_decision.domain_id
+        if brief.domain_decision is not None
+        else "unsupported"
+    )
+    if domain_id == "rag_citation_faithfulness":
+        return {
+            "arxiv": _CACHED_RAG_ARXIV_PAYLOAD,
+            "semantic_scholar": _CACHED_RAG_SEMANTIC_PAYLOAD,
+            "crossref": _CACHED_RAG_CROSSREF_PAYLOAD,
+        }
+    if domain_id == "lightweight_ml_nlp_benchmark":
+        return {
+            "arxiv": _CACHED_LIGHTWEIGHT_ARXIV_PAYLOAD,
+            "semantic_scholar": _CACHED_LIGHTWEIGHT_SEMANTIC_PAYLOAD,
+            "crossref": _CACHED_LIGHTWEIGHT_CROSSREF_PAYLOAD,
+        }
+    return {
         "arxiv": _CACHED_REAL_ARXIV_PAYLOAD,
         "semantic_scholar": _CACHED_REAL_LITERATURE_PAYLOAD,
         "crossref": _CACHED_REAL_CROSSREF_PAYLOAD,
     }
+
+
+def _seed_domain_cached_literature(brief) -> None:
+    payloads = _domain_cached_literature_payloads(brief)
     for query in _literature_cache_queries(brief):
         for source, raw in payloads.items():
             save_literature_scout_cache(
@@ -693,6 +1026,10 @@ def _seed_claim_evidence_cached_literature(brief) -> None:
                     "raw": raw,
                 },
             )
+
+
+def _seed_claim_evidence_cached_literature(brief) -> None:
+    _seed_domain_cached_literature(brief)
 
 
 def _payload_for_case(case: dict[str, Any]) -> AutoResearchIdeaRequest:
@@ -794,13 +1131,162 @@ def _trace_materials(
     return architecture_materials, case_study_materials, failure_analysis_materials
 
 
+def _blocked_domain_trace(
+    *,
+    project_id: str,
+    case: dict[str, Any],
+) -> AutoResearchEvaluationCaseTraceRead:
+    brief = build_research_brief(
+        project_id=project_id,
+        payload=_payload_for_case(case),
+    )
+    scouted = scout_and_mine_gaps(
+        brief,
+        sources=[],
+        cache_enabled=False,
+        network_enabled=False,
+    )
+    save_research_brief(scouted)
+    project_paper = build_project_paper_orchestration(project_id)
+    literature_scout = scouted.literature_scout
+    domain_benchmark_blockers = (
+        scouted.domain_benchmark_resolver.blockers
+        if scouted.domain_benchmark_resolver is not None
+        else []
+    )
+    domain_protocol_blockers = (
+        scouted.domain_experiment_protocol.blockers
+        or scouted.domain_experiment_protocol.readiness_blockers
+        if scouted.domain_experiment_protocol is not None
+        else []
+    )
+    blockers = _dedupe(
+        [
+            *scouted.domain_blockers,
+            *domain_benchmark_blockers,
+            *domain_protocol_blockers,
+            *project_paper.blockers,
+        ]
+    )
+    task_kind = str(case["task_kind"])
+    submission_fields = _submission_trace_fields(project_paper)
+    return AutoResearchEvaluationCaseTraceRead(
+        idea=scouted.original_idea,
+        brief_id=scouted.brief_id,
+        domain_decision=scouted.domain_decision,
+        domain_template=scouted.domain_template,
+        domain_blockers=scouted.domain_blockers,
+        domain_literature_strategy=scouted.domain_literature_strategy,
+        domain_literature_result=scouted.domain_literature_result,
+        domain_benchmark_resolver=scouted.domain_benchmark_resolver,
+        domain_experiment_protocol=scouted.domain_experiment_protocol,
+        domain_readiness_status=scouted.domain_readiness_status,
+        domain_claim_ceiling=scouted.domain_claim_ceiling,
+        paper_decision=project_paper.paper_decision,
+        steps_completed=[
+            "idea",
+            "research_brief",
+            "domain_routing_blocker",
+            "literature_scout",
+            "gap_mining",
+            "project_paper_orchestration",
+            "publication_readiness_blocker",
+        ],
+        direction_count=scouted.direction_count,
+        hypothesis_count=scouted.hypothesis_count,
+        literature_cache_hit_count=(
+            literature_scout.cache_hit_count if literature_scout is not None else 0
+        ),
+        real_literature_count=0,
+        literature_source_counts=(
+            dict(literature_scout.source_counts) if literature_scout is not None else {}
+        ),
+        literature_network_enabled=False,
+        evidence_complete=False,
+        paper_review_package_ready=False,
+        project_paper_path=project_paper.project_paper_path,
+        project_submission_manifest_path=project_paper.project_submission_manifest_path,
+        project_publication_manifest_path=project_paper.project_publication_manifest_path,
+        project_publication_readiness_report_path=project_paper.project_publication_readiness_report_path,
+        project_experiment_repair_index_path=project_paper.project_experiment_repair_index_path,
+        project_statistics_report_path=project_paper.project_statistics_report_path,
+        project_repair_execution_log_path=project_paper.project_repair_execution_log_path,
+        project_review_findings_path=project_paper.project_review_findings_path,
+        project_retrieval_evidence_ledger_path=project_paper.project_retrieval_evidence_ledger_path,
+        project_negative_evidence_report_path=project_paper.project_negative_evidence_report_path,
+        project_offline_publication_case_path=project_paper.project_offline_publication_case_path,
+        project_offline_publication_audit_path=project_paper.project_offline_publication_audit_path,
+        project_review_bundle_ready=project_paper.project_review_bundle_ready,
+        project_final_publish_ready=project_paper.project_final_publish_ready,
+        project_revision_action_count=project_paper.project_paper_revision_action_count,
+        project_review_finding_count=submission_fields["project_review_finding_count"],
+        project_review_findings_mapped_to_actions=submission_fields[
+            "project_review_findings_mapped_to_actions"
+        ],
+        project_submission_blockers=list(project_paper.project_submission_blockers),
+        project_submission_bundle_kind=submission_fields["project_submission_bundle_kind"],
+        project_submission_asset_roles=submission_fields["project_submission_asset_roles"],
+        project_submission_missing_asset_roles=submission_fields[
+            "project_submission_missing_asset_roles"
+        ],
+        project_submission_required_roles_present=submission_fields[
+            "project_submission_required_roles_present"
+        ],
+        project_paper_section_coverage_complete=not project_paper.project_paper_missing_sections,
+        project_paper_present_sections=list(project_paper.project_paper_sections),
+        project_paper_missing_sections=list(project_paper.project_paper_missing_sections),
+        project_claim_ceiling=scouted.domain_claim_ceiling,
+        project_kill_criteria=list(scouted.domain_kill_criteria),
+        project_required_followups=list(scouted.domain_required_followups),
+        architecture_materials=[
+            (
+                f"{task_kind}: unsupported-domain brief `{scouted.brief_id}` preserved "
+                "a structured domain-routing audit and created no hypotheses."
+            )
+        ],
+        case_study_materials=[
+            (
+                f"{task_kind}: project readiness artifact `{project_paper.project_publication_readiness_report_path}` "
+                "records the unsupported-domain blocker without experiment outputs."
+            )
+        ],
+        failure_analysis_materials=[
+            f"{task_kind}: blocked audit - {item}" for item in blockers[:5]
+        ],
+        blockers=blockers,
+    )
+
+
+def _benchmark_for_domain_trace(scouted, plan) -> tuple[BenchmarkSource | None, Any | None]:
+    resolver = plan.domain_benchmark_resolver
+    if resolver is None or resolver.benchmark_name is None or resolver.task_family is None:
+        return None, None
+    source = BenchmarkSource(
+        kind=resolver.source_kind or "builtin",
+        name=resolver.benchmark_name,
+        dataset_id=resolver.dataset_id,
+        revision=resolver.revision,
+        license=resolver.license,
+        file_path=resolver.source_locator if resolver.source_kind not in {"builtin"} else None,
+        task_family_hint=resolver.task_family,
+    )
+    benchmark = builtin_benchmark(
+        resolver.task_family,
+        source=source,
+        topic=scouted.original_idea,
+    )
+    return source, build_experiment_spec(resolver.task_family, benchmark)
+
+
 def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEvaluationCaseTraceRead:
     brief = build_research_brief(
         project_id=project_id,
         payload=_payload_for_case(case),
     )
-    if str(case["task_kind"]) == "claim_evidence_vertical_task":
-        _seed_claim_evidence_cached_literature(brief)
+    if case.get("expected_blocked"):
+        return _blocked_domain_trace(project_id=project_id, case=case)
+    if str(case["task_kind"]) == "claim_evidence_vertical_task" or case.get("seed_cached_literature"):
+        _seed_domain_cached_literature(brief)
     scouted = scout_and_mine_gaps(brief)
     save_research_brief(scouted)
     hypothesis = selected_hypothesis_from_brief(scouted)
@@ -809,7 +1295,12 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         brief=scouted,
         hypothesis=hypothesis,
     )
-    if str(case["task_kind"]) == "claim_evidence_vertical_task":
+    domain_id = (
+        scouted.domain_decision.domain_id
+        if scouted.domain_decision is not None
+        else None
+    )
+    if domain_id == "claim_evidence_retrieval":
         imported_scifact_payload = _load_imported_scifact_vertical_payload()
         execution = execute_cached_claim_evidence_experiment_factory(
             plan,
@@ -1389,7 +1880,103 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
                     + "; ".join(project_submission_blockers[:3])
                 )
             )
-    trace_evidence_complete = bool(execution.evidence_ledger.complete)
+    elif case.get("build_project_package"):
+        run_id = f"eval_{case['case_id']}_run"
+        benchmark_source, spec = _benchmark_for_domain_trace(scouted, plan)
+        run = AutoResearchRunRead(
+            id=run_id,
+            project_id=project_id,
+            topic=str(case["idea"]),
+            status="done",
+            brief_id=scouted.brief_id,
+            hypothesis_id=hypothesis.hypothesis_id,
+            direction_selection_reason=scouted.selection_reason,
+            task_family=(
+                plan.domain_benchmark_resolver.task_family
+                if plan.domain_benchmark_resolver is not None
+                else None
+            ),
+            benchmark=benchmark_source,
+            spec=spec,
+            execution_backend=plan.execution_backend,
+            literature=real_literature,
+            artifact=execution.result_artifact,
+            experiment_factory_plan=plan,
+            experiment_factory_environment_manifest=execution.environment_manifest,
+            experiment_factory_materialized_jobs=execution.materialized_jobs,
+            evidence_ledger=execution.evidence_ledger,
+            experiment_factory_repair_plan=execution.repair_plan,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
+        )
+        save_run(run)
+        project_paper = build_project_paper_orchestration(project_id)
+        project_paper_path = project_paper.project_paper_path
+        project_submission_manifest_path = project_paper.project_submission_manifest_path
+        project_publication_manifest_path = project_paper.project_publication_manifest_path
+        project_publication_readiness_report_path = project_paper.project_publication_readiness_report_path
+        project_experiment_repair_index_path = project_paper.project_experiment_repair_index_path
+        project_statistics_report_path = project_paper.project_statistics_report_path
+        project_repair_execution_log_path = project_paper.project_repair_execution_log_path
+        project_review_findings_path = project_paper.project_review_findings_path
+        project_retrieval_evidence_ledger_path = project_paper.project_retrieval_evidence_ledger_path
+        project_negative_evidence_report_path = project_paper.project_negative_evidence_report_path
+        project_offline_publication_case_path = project_paper.project_offline_publication_case_path
+        project_offline_publication_audit_path = project_paper.project_offline_publication_audit_path
+        project_review_bundle_ready = project_paper.project_review_bundle_ready
+        project_final_publish_ready = project_paper.project_final_publish_ready
+        project_revision_action_count = project_paper.project_paper_revision_action_count
+        project_submission_blockers = list(project_paper.project_submission_blockers)
+        submission_fields = _submission_trace_fields(project_paper)
+        project_review_finding_count = submission_fields["project_review_finding_count"]
+        project_review_findings_mapped_to_actions = submission_fields[
+            "project_review_findings_mapped_to_actions"
+        ]
+        project_submission_bundle_kind = submission_fields["project_submission_bundle_kind"]
+        project_submission_asset_roles = submission_fields["project_submission_asset_roles"]
+        project_submission_missing_asset_roles = submission_fields[
+            "project_submission_missing_asset_roles"
+        ]
+        project_submission_required_roles_present = submission_fields[
+            "project_submission_required_roles_present"
+        ]
+        project_paper_section_coverage_complete = not project_paper.project_paper_missing_sections
+        project_paper_present_sections = list(project_paper.project_paper_sections)
+        project_paper_missing_sections = list(project_paper.project_paper_missing_sections)
+        project_claim_ceiling = (
+            project_paper.latest_brief_domain_claim_ceiling
+            or scouted.domain_claim_ceiling
+        )
+        project_kill_criteria = list(project_paper.latest_brief_domain_kill_criteria)
+        project_required_followups = list(project_paper.latest_brief_domain_required_followups)
+        end_to_end_package_ready = bool(
+            project_review_bundle_ready and project_submission_manifest_path is not None
+        )
+        steps.extend(
+            [
+                "project_paper_orchestration",
+                "project_submission_package",
+                "domain_package_readiness",
+            ]
+        )
+        case_study_materials.append(
+            (
+                f"{case['task_kind']}: domain package context for "
+                f"`{scouted.domain_decision.domain_id if scouted.domain_decision is not None else 'unknown'}` "
+                f"was materialized at `{project_publication_readiness_report_path}`."
+            )
+        )
+        if project_submission_blockers:
+            failure_analysis_materials.append(
+                (
+                    f"{case['task_kind']}: package blockers preserve non-final evidence limits: "
+                    + "; ".join(project_submission_blockers[:3])
+                )
+            )
+    trace_evidence_complete = bool(
+        execution.result_artifact.status == "done"
+        and execution.evidence_ledger.entry_count > 0
+    )
     if str(case["task_kind"]) == "claim_evidence_vertical_task":
         trace_evidence_complete = bool(
             project_review_bundle_ready
@@ -1416,6 +2003,12 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         domain_decision=scouted.domain_decision,
         domain_template=scouted.domain_template,
         domain_blockers=scouted.domain_blockers,
+        domain_literature_strategy=scouted.domain_literature_strategy,
+        domain_literature_result=scouted.domain_literature_result,
+        domain_benchmark_resolver=scouted.domain_benchmark_resolver,
+        domain_experiment_protocol=scouted.domain_experiment_protocol,
+        domain_readiness_status=scouted.domain_readiness_status,
+        domain_claim_ceiling=scouted.domain_claim_ceiling,
         selected_hypothesis_id=hypothesis.hypothesis_id,
         experiment_plan_id=plan.plan_id,
         evidence_ledger_id=execution.evidence_ledger.ledger_id,
@@ -1519,16 +2112,90 @@ def _build_toy_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEvalu
     return _build_case_trace(project_id, case)
 
 
+def _expected_blocked_trace_succeeded(trace: AutoResearchEvaluationCaseTraceRead | None) -> bool:
+    if trace is None:
+        return False
+    domain_id = (
+        trace.domain_decision.domain_id
+        if trace.domain_decision is not None
+        else None
+    )
+    resolver_status = (
+        trace.domain_benchmark_resolver.status
+        if trace.domain_benchmark_resolver is not None
+        else None
+    )
+    protocol_status = (
+        trace.domain_experiment_protocol.status
+        if trace.domain_experiment_protocol is not None
+        else None
+    )
+    return bool(
+        domain_id == "unsupported"
+        and trace.domain_readiness_status == "blocked"
+        and resolver_status == "blocked"
+        and protocol_status == "blocked"
+        and trace.selected_hypothesis_id is None
+        and trace.experiment_plan_id is None
+        and trace.experiment_job_count == 0
+        and trace.evidence_ledger_id is None
+        and trace.evidence_entry_count == 0
+        and trace.result_artifact_status is None
+        and not trace.paper_review_package_ready
+        and trace.blockers
+    )
+
+
+def _case_trace_succeeded(
+    *,
+    definition: dict[str, Any],
+    trace: AutoResearchEvaluationCaseTraceRead | None,
+) -> bool:
+    if trace is None:
+        return False
+    if definition.get("expected_blocked"):
+        return _expected_blocked_trace_succeeded(trace)
+    if definition.get("build_project_package"):
+        return bool(
+            trace.result_artifact_status == "done"
+            and trace.experiment_job_count > 0
+            and trace.evidence_entry_count > 0
+            and trace.project_publication_readiness_report_path
+            and trace.project_paper_path
+            and trace.project_review_bundle_ready
+            and trace.project_submission_bundle_kind == "review_bundle"
+            and not trace.project_final_publish_ready
+            and not trace.blockers
+        )
+    return bool(trace.paper_review_package_ready and not trace.blockers)
+
+
+def _case_has_auditable_blocker(case: AutoResearchEvaluationCaseRead) -> bool:
+    return case.case_id == "unsupported_domain_case" and _expected_blocked_trace_succeeded(case.trace)
+
+
 def _case_from_definition(
     *,
     definition: dict[str, Any],
     trace: AutoResearchEvaluationCaseTraceRead | None,
 ) -> AutoResearchEvaluationCaseRead:
-    blockers = trace.blockers if trace is not None else []
+    succeeded = _case_trace_succeeded(definition=definition, trace=trace)
+    if trace is None:
+        blockers = []
+    elif succeeded:
+        blockers = []
+    elif definition.get("expected_blocked"):
+        blockers = [
+            "Expected an auditable unsupported-domain blocker with no hypothesis, plan, or execution outputs."
+        ]
+    else:
+        blockers = trace.blockers or [
+            "Evaluation case did not reach the required deterministic review/package state."
+        ]
     warnings = [] if trace is not None else [
         "Case is specified for internal evaluation but not executed by the deterministic toy backend yet."
     ]
-    score = 100 if trace is not None and trace.paper_review_package_ready and not blockers else 40
+    score = 100 if succeeded else 40
     return AutoResearchEvaluationCaseRead(
         case_id=str(definition["case_id"]),
         task_kind=str(definition["task_kind"]),  # type: ignore[arg-type]
@@ -1547,10 +2214,8 @@ def _case_from_definition(
 
 def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSystemEvaluationMetricRead]:
     traces = [case.trace for case in cases if case.trace is not None]
-    ready_traces = [
-        trace
-        for trace in traces
-        if trace.paper_review_package_ready and not trace.blockers
+    successful_cases = [
+        case for case in cases if case.trace is not None and case.score == 100 and not case.blockers
     ]
     case_count = len(cases)
     executed_count = len(traces)
@@ -1581,11 +2246,18 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
             label="Hypothesis Selection Quality",
             numerator=sum(
                 1
-                for trace in traces
-                if trace.selected_hypothesis_id and trace.hypothesis_count >= 2
+                for case in cases
+                if case.trace is not None
+                and (
+                    (
+                        case.trace.selected_hypothesis_id
+                        and case.trace.hypothesis_count >= 2
+                    )
+                    or _case_has_auditable_blocker(case)
+                )
             ),
             denominator=max(executed_count, 1),
-            rationale="Every deterministic trace must produce a hypothesis bank and selected hypothesis before execution.",
+            rationale="Supported deterministic traces must produce a selected hypothesis; unsupported-domain traces must stop with an auditable blocker before hypothesis selection.",
         ),
         _metric(
             metric_id="novelty_risk_detection",
@@ -1597,17 +2269,32 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
         _metric(
             metric_id="experiment_plan_executability",
             label="Experiment Plan Executability",
-            numerator=sum(1 for trace in traces if trace.experiment_job_count > 0 and not trace.blockers),
+            numerator=sum(
+                1
+                for case in cases
+                if case.trace is not None
+                and (
+                    (
+                        case.trace.experiment_job_count > 0
+                        and not case.trace.blockers
+                    )
+                    or _case_has_auditable_blocker(case)
+                )
+            ),
             denominator=max(executed_count, 1),
-            rationale="Each trace must materialize baseline, method, ablation, seed, and sweep jobs without live GPU/network dependencies.",
+            rationale="Supported traces must materialize deterministic jobs; unsupported domains must block before fake experiment generation.",
         ),
         _metric(
             metric_id="evidence_consistency",
             label="Evidence Consistency",
             numerator=sum(
                 1
-                for trace in traces
-                if trace.evidence_entry_count > 0
+                for case in cases
+                if case.trace is not None
+                and (
+                    case.trace.evidence_entry_count > 0
+                    or _case_has_auditable_blocker(case)
+                )
             ),
             denominator=max(executed_count, 1),
             rationale=(
@@ -1619,20 +2306,26 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
         _metric(
             metric_id="reviewer_score_improvement",
             label="Reviewer Score Improvement",
-            numerator=len(ready_traces),
+            numerator=len(successful_cases),
             denominator=max(executed_count, 1),
-            rationale="The deterministic suite checks that every case reaches a paper/review package ready for reviewer-loop scoring.",
+            rationale="The deterministic suite checks that supported cases reach review/package readiness and unsupported-domain cases stop with auditable blockers.",
         ),
         _metric(
             metric_id="final_publish_correctness",
             label="Final Publish Correctness",
             numerator=sum(
                 1
-                for trace in ready_traces
-                if trace.paper_decision == "technical_report"
+                for case in successful_cases
+                if (
+                    case.trace is not None
+                    and (
+                        case.trace.paper_decision == "technical_report"
+                        or _case_has_auditable_blocker(case)
+                    )
+                )
             ),
             denominator=max(executed_count, 1),
-            rationale="Offline execution cases should remain technical-report packages instead of overclaiming full project-level papers.",
+            rationale="Offline execution cases should remain technical-report packages, while unsupported domains should produce do-not-write blockers instead of overclaiming.",
         ),
         _metric(
             metric_id="offline_end_to_end_submission_package",
@@ -1645,33 +2338,36 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
 
 
 def build_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSuiteRead:
-    traces_by_task_kind = {
-        str(definition["task_kind"]): _build_case_trace(project_id, definition)
+    traces_by_case_id = {
+        str(definition["case_id"]): _build_case_trace(
+            f"{project_id}_{str(definition['case_id'])}",
+            definition,
+        )
         for definition in _CASE_DEFINITIONS
     }
     cases = [
         _case_from_definition(
             definition=definition,
-            trace=traces_by_task_kind[str(definition["task_kind"])],
+            trace=traces_by_case_id[str(definition["case_id"])],
         )
         for definition in _CASE_DEFINITIONS
     ]
     metrics = _metrics(cases)
     traces = [case.trace for case in cases if case.trace is not None]
-    ready_traces = [
-        trace
-        for trace in traces
-        if trace.paper_review_package_ready and not trace.blockers
+    successful_cases = [
+        case
+        for case in cases
+        if case.trace is not None and case.score == 100 and not case.blockers
     ]
-    toy_trace = traces_by_task_kind["toy_task"]
+    toy_trace = traces_by_case_id["eval_case_toy_task"]
     toy_ready = toy_trace.paper_review_package_ready and not toy_trace.blockers
     blockers = [
         f"{case.case_id}: " + "; ".join(case.blockers)
         for case in cases
         if case.blockers
     ]
-    warnings = [] if len(ready_traces) == len(cases) else [
-        "One or more deterministic evaluation cases did not reach a paper/review package."
+    warnings = [] if len(successful_cases) == len(cases) else [
+        "One or more deterministic evaluation cases did not reach the required review/package or auditable-blocker state."
     ]
     architecture_materials = _dedupe(
         [

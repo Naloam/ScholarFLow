@@ -6531,6 +6531,26 @@ def test_controlled_domain_briefs_create_selected_hypotheses_and_factory_plans()
         assert brief.domain_template is not None
         assert brief.domain_template.benchmark_name == benchmark_name
         assert brief.domain_blockers == []
+        assert brief.domain_literature_strategy is not None
+        assert brief.domain_literature_strategy.domain_id == expected_domain
+        assert brief.domain_literature_strategy.query_strings
+        assert brief.domain_literature_strategy.required_source_classes == [
+            "arxiv",
+            "semantic_scholar",
+            "crossref",
+        ]
+        assert brief.domain_benchmark_resolver is not None
+        assert brief.domain_benchmark_resolver.domain_id == expected_domain
+        assert brief.domain_experiment_protocol is not None
+        assert brief.domain_experiment_protocol.domain_id == expected_domain
+        assert brief.domain_experiment_protocol.expected_outputs
+        assert brief.domain_experiment_protocol.metric_schema == (
+            brief.domain_template.metric_schema
+        )
+        assert brief.domain_readiness_status in {"ready", "limited"}
+        assert brief.domain_claim_ceiling is not None
+        assert brief.domain_required_followups
+        assert brief.domain_kill_criteria
         assert brief.direction_count == 3
         assert brief.hypothesis_count == 3
         assert brief.selected_direction_id is not None
@@ -6554,6 +6574,150 @@ def test_controlled_domain_briefs_create_selected_hypotheses_and_factory_plans()
         assert plan.job_count > 0
         assert plan.toy_backend_supported is True
         assert plan.blockers == []
+        assert plan.domain_decision is not None
+        assert plan.domain_decision.domain_id == expected_domain
+        assert plan.domain_benchmark_resolver == brief.domain_benchmark_resolver
+        assert plan.domain_experiment_protocol == brief.domain_experiment_protocol
+        if expected_domain == "claim_evidence_retrieval":
+            assert brief.domain_benchmark_resolver.status == "ready"
+            assert brief.domain_benchmark_resolver.benchmark_name == (
+                "SciFact Claim Verification Frozen Snapshot"
+            )
+            assert brief.domain_benchmark_resolver.source_kind == "scifact_json"
+            assert brief.domain_benchmark_resolver.publication_grade_eligible is True
+            assert brief.domain_benchmark_resolver.final_candidate_eligible is True
+            assert brief.domain_experiment_protocol.status == "ready"
+            assert "retrieval_evidence_ledger.json" in (
+                brief.domain_experiment_protocol.expected_outputs
+            )
+        else:
+            assert brief.domain_benchmark_resolver.benchmark_name == benchmark_name
+            assert brief.domain_benchmark_resolver.status == "limited"
+            assert brief.domain_benchmark_resolver.publication_grade_eligible is False
+            assert brief.domain_benchmark_resolver.final_candidate_eligible is False
+            assert brief.domain_benchmark_resolver.blockers
+            assert brief.domain_experiment_protocol.status == "limited"
+            assert brief.domain_claim_ceiling == "review_only_engineering_validation_claim"
+
+
+def test_domain_literature_strategy_marks_fixture_only_evidence_non_final() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-domain-literature-fixture-only",
+        payload=AutoResearchIdeaRequest(
+            idea="Evaluate RAG citation faithfulness for knowledge intensive QA with grounded source attributions",
+            domain="citation faithfulness",
+            allow_web=False,
+            allow_experiments=True,
+        ),
+    )
+
+    scouted = autoresearch_literature_scout.scout_and_mine_gaps(
+        brief,
+        sources=[],
+        cache_enabled=False,
+        network_enabled=False,
+    )
+
+    assert scouted.domain_literature_strategy is not None
+    assert any("citation faithfulness" in query.lower() for query in scouted.domain_literature_strategy.query_strings)
+    assert any("rag" in query.lower() for query in scouted.domain_literature_strategy.query_strings)
+    assert scouted.domain_literature_result is not None
+    assert scouted.domain_literature_result.status == "limited"
+    assert scouted.domain_literature_result.fixture_only is True
+    assert scouted.domain_literature_result.real_source_count == 0
+    assert "fixture_or_offline" in scouted.domain_literature_result.source_class_counts
+    assert any(
+        "fixture/offline-only evidence" in item
+        for item in scouted.domain_literature_result.blockers
+    )
+    assert any(
+        "Final publish requires real multi-source citation-faithfulness literature" in item
+        for item in scouted.domain_literature_result.final_publish_blockers
+    )
+    assert scouted.domain_readiness_status == "limited"
+    assert scouted.domain_claim_ceiling == "review_only_engineering_validation_claim"
+
+
+def test_domain_experiment_execution_records_review_only_rag_and_lightweight_outputs() -> None:
+    cases = [
+        (
+            "project-domain-exec-rag",
+            "Evaluate RAG citation faithfulness for knowledge intensive QA with grounded source attributions",
+            "citation faithfulness",
+            "rag_citation_faithfulness",
+            {
+                "citation_support_scores",
+                "unsupported_citations",
+                "abstentions",
+            },
+            {"mrr", "recall_at_1", "ndcg_at_10", "recall_at_10", "evidence_coverage", "citation_support_coverage"},
+        ),
+        (
+            "project-domain-exec-lightweight",
+            "Run a lightweight ML NLP benchmark comparing local text classifiers with macro F1",
+            "lightweight ml nlp benchmark",
+            "lightweight_ml_nlp_benchmark",
+            {
+                "classification_predictions",
+                "baseline_comparison",
+            },
+            {"accuracy", "macro_f1"},
+        ),
+    ]
+
+    for project_id, idea, domain_hint, expected_domain, expected_output_keys, expected_metrics in cases:
+        brief = autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=AutoResearchIdeaRequest(
+                idea=idea,
+                domain=domain_hint,
+                allow_web=False,
+                allow_experiments=True,
+            ),
+        )
+        hypothesis = autoresearch_idea_brief.selected_hypothesis_from_brief(brief)
+        plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+            project_id=project_id,
+            brief=brief,
+            hypothesis=hypothesis,
+        )
+        execution = autoresearch_experiment_factory.execute_toy_experiment_factory(plan)
+
+        assert execution.result_artifact.status == "done"
+        assert execution.result_artifact.environment["domain_id"] == expected_domain
+        assert execution.result_artifact.environment["domain_review_only"] is True
+        assert execution.evidence_ledger.complete is False
+        assert any(
+            "review-only engineering validation" in blocker
+            for blocker in execution.evidence_ledger.blockers
+        )
+        assert execution.repair_plan is not None
+        assert execution.repair_plan.actions == ["none"]
+        outputs = execution.result_artifact.outputs
+        domain_outputs = outputs["domain_outputs"]
+        validation = outputs["domain_execution_validation"]
+        assert expected_output_keys.issubset(set(domain_outputs))
+        assert validation["missing_outputs"] == []
+        assert validation["missing_metrics"] == []
+        assert validation["blockers"] == []
+        assert validation["review_only"] is True
+        assert validation["claim_ceiling"] == "review_only_engineering_validation_claim"
+        assert expected_metrics.issubset(set(validation["present_metrics"]))
+        assert any(
+            item.artifact_ref == "experiment_factory_plan_json:domain_benchmark_resolver"
+            for item in execution.evidence_ledger.entries
+        )
+        assert any(
+            item.artifact_ref == "experiment_factory_plan_json:domain_experiment_protocol"
+            for item in execution.evidence_ledger.entries
+        )
+        if expected_domain == "rag_citation_faithfulness":
+            assert domain_outputs["citation_support_scores"]
+            assert domain_outputs["unsupported_citations"]
+            assert domain_outputs["abstentions"]
+        else:
+            assert domain_outputs["classification_predictions"]
+            assert domain_outputs["baseline_comparison"]["publication_grade"] is False
 
 
 def test_research_brief_selected_hypothesis_creates_metadata_run(
@@ -7255,6 +7419,19 @@ def test_unsupported_domain_brief_blocks_factory_scout_console_and_project_readi
     assert brief.domain_decision.is_supported is False
     assert brief.domain_template is None
     assert brief.domain_blockers
+    assert brief.domain_literature_strategy is None
+    assert brief.domain_literature_result is None
+    assert brief.domain_benchmark_resolver is not None
+    assert brief.domain_benchmark_resolver.domain_id == "unsupported"
+    assert brief.domain_benchmark_resolver.status == "blocked"
+    assert brief.domain_benchmark_resolver.blockers == brief.domain_blockers
+    assert brief.domain_experiment_protocol is not None
+    assert brief.domain_experiment_protocol.domain_id == "unsupported"
+    assert brief.domain_experiment_protocol.status == "blocked"
+    assert brief.domain_experiment_protocol.deterministic_execution_route == "none"
+    assert brief.domain_experiment_protocol.import_replay_route == "none"
+    assert brief.domain_readiness_status == "blocked"
+    assert brief.domain_claim_ceiling == "blocked_no_supported_domain_claim"
     assert brief.direction_count == 0
     assert brief.hypothesis_count == 0
     assert brief.research_directions == []
@@ -7270,6 +7447,10 @@ def test_unsupported_domain_brief_blocks_factory_scout_console_and_project_readi
     )
     assert factory_plan.job_count == 0
     assert factory_plan.jobs == []
+    assert factory_plan.domain_benchmark_resolver is not None
+    assert factory_plan.domain_benchmark_resolver.status == "blocked"
+    assert factory_plan.domain_experiment_protocol is not None
+    assert factory_plan.domain_experiment_protocol.status == "blocked"
     assert factory_plan.toy_backend_supported is False
     assert factory_plan.bridge_ready is False
     assert factory_plan.blockers
@@ -7282,6 +7463,11 @@ def test_unsupported_domain_brief_blocks_factory_scout_console_and_project_readi
     assert scouted.status == "blocked"
     assert scouted.next_action == "blocked"
     assert scouted.domain_blockers == brief.domain_blockers
+    assert scouted.domain_benchmark_resolver is not None
+    assert scouted.domain_benchmark_resolver.status == "blocked"
+    assert scouted.domain_experiment_protocol is not None
+    assert scouted.domain_experiment_protocol.status == "blocked"
+    assert scouted.domain_literature_result is None
 
     console = autoresearch_console.build_operator_console(project_id)
     assert console.brief_count == 1
@@ -7290,6 +7476,12 @@ def test_unsupported_domain_brief_blocks_factory_scout_console_and_project_readi
     assert console.latest_brief_domain_id == "unsupported"
     assert console.latest_brief_domain_supported is False
     assert console.latest_brief_domain_blockers == brief.domain_blockers
+    assert console.latest_brief_domain_literature_status == "blocked"
+    assert console.latest_brief_domain_benchmark_status == "blocked"
+    assert console.latest_brief_domain_protocol_status == "blocked"
+    assert console.latest_brief_domain_claim_ceiling == "blocked_no_supported_domain_claim"
+    assert console.latest_brief_domain_required_followups
+    assert console.latest_brief_domain_kill_criteria
     assert console.latest_brief_hypothesis_count == 0
     assert console.actions.create_run_from_brief is False
 
@@ -7299,6 +7491,12 @@ def test_unsupported_domain_brief_blocks_factory_scout_console_and_project_readi
     assert orchestration.latest_brief_domain_decision.domain_id == "unsupported"
     assert orchestration.latest_brief_domain_template is None
     assert orchestration.latest_brief_domain_blockers == brief.domain_blockers
+    assert orchestration.latest_brief_domain_benchmark_resolver is not None
+    assert orchestration.latest_brief_domain_benchmark_resolver.status == "blocked"
+    assert orchestration.latest_brief_domain_experiment_protocol is not None
+    assert orchestration.latest_brief_domain_experiment_protocol.status == "blocked"
+    assert orchestration.latest_brief_domain_readiness_status == "blocked"
+    assert orchestration.latest_brief_domain_claim_ceiling == "blocked_no_supported_domain_claim"
     assert any(blocker in orchestration.blockers for blocker in brief.domain_blockers)
     assert any("domain-routing blockers" in item for item in orchestration.next_actions)
     assert orchestration.project_publication_readiness_report_path is not None
@@ -7312,6 +7510,16 @@ def test_unsupported_domain_brief_blocks_factory_scout_console_and_project_readi
     assert domain_check["passed"] is False
     assert domain_check["domain_decision"]["domain_id"] == "unsupported"
     assert domain_check["blockers"] == brief.domain_blockers
+    benchmark_check = next(
+        check for check in readiness_report["checks"] if check["check_id"] == "domain_benchmark_resolver"
+    )
+    protocol_check = next(
+        check for check in readiness_report["checks"] if check["check_id"] == "domain_experiment_protocol"
+    )
+    assert benchmark_check["passed"] is False
+    assert benchmark_check["resolver"]["status"] == "blocked"
+    assert protocol_check["passed"] is False
+    assert protocol_check["protocol"]["status"] == "blocked"
     assert readiness_report["domain_blockers"] == brief.domain_blockers
 
 
@@ -7348,7 +7556,7 @@ def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:
         == execution.environment_manifest.manifest_id
     )
     assert execution.result_artifact.environment["materialized_job_count"] == plan.job_count
-    assert execution.evidence_ledger.complete is True
+    assert execution.evidence_ledger.complete is False
     assert execution.evidence_ledger.entry_count >= plan.baseline_job_count + plan.ablation_job_count
     assert any(item.evidence_kind == "baseline" for item in execution.evidence_ledger.entries)
     assert any(item.evidence_kind == "ablation" for item in execution.evidence_ledger.entries)
@@ -7360,8 +7568,20 @@ def test_experiment_factory_toy_execution_builds_evidence_ledger() -> None:
         item.artifact_ref == "experiment_factory_materialized_jobs_json"
         for item in execution.evidence_ledger.entries
     )
+    validation = execution.result_artifact.outputs["domain_execution_validation"]
+    assert validation["protocol_id"] == plan.domain_experiment_protocol.protocol_id
+    assert "retrieval_evidence_ledger" in validation["missing_outputs"]
+    assert "verification_accuracy" in validation["missing_metrics"]
+    assert any(
+        "Domain protocol missing expected output(s): retrieval_evidence_ledger" in blocker
+        for blocker in execution.evidence_ledger.blockers
+    )
+    assert any(
+        "Domain protocol metric schema mismatch" in blocker
+        for blocker in execution.evidence_ledger.blockers
+    )
     assert execution.repair_plan is not None
-    assert execution.repair_plan.actions == ["none"]
+    assert execution.repair_plan.actions == ["rerun_failed_job"]
 
 
 def test_experiment_factory_executes_cached_scifact_claim_evidence_benchmark(
@@ -7631,9 +7851,21 @@ def test_experiment_factory_external_import_can_complete_ledger() -> None:
     assert len(execution.materialized_jobs) == plan.job_count
     assert all(job.status == "done" for job in execution.materialized_jobs)
     assert all(job.repair_classification == "none" for job in execution.materialized_jobs)
-    assert execution.evidence_ledger.complete is True
+    assert execution.evidence_ledger.complete is False
+    validation = execution.result_artifact.outputs["domain_execution_validation"]
+    assert validation["protocol_id"] == plan.domain_experiment_protocol.protocol_id
+    assert "retrieval_evidence_ledger" in validation["missing_outputs"]
+    assert "verification_accuracy" in validation["missing_metrics"]
+    assert any(
+        "Domain protocol missing expected output(s): retrieval_evidence_ledger" in blocker
+        for blocker in execution.evidence_ledger.blockers
+    )
+    assert any(
+        "Domain protocol metric schema mismatch" in blocker
+        for blocker in execution.evidence_ledger.blockers
+    )
     assert execution.repair_plan is not None
-    assert execution.repair_plan.actions == ["none"]
+    assert execution.repair_plan.actions == ["rerun_failed_job"]
 
 
 def test_experiment_factory_maps_imported_artifact_to_ledger() -> None:
@@ -7672,9 +7904,21 @@ def test_experiment_factory_maps_imported_artifact_to_ledger() -> None:
     assert execution.result_artifact.environment["external_imported"] is True
     assert len(execution.materialized_jobs) == plan.job_count
     assert all(job.status == "done" for job in execution.materialized_jobs)
-    assert execution.evidence_ledger.complete is True
+    assert execution.evidence_ledger.complete is False
+    validation = execution.result_artifact.outputs["domain_execution_validation"]
+    assert validation["protocol_id"] == plan.domain_experiment_protocol.protocol_id
+    assert "retrieval_evidence_ledger" in validation["missing_outputs"]
+    assert "verification_accuracy" in validation["missing_metrics"]
+    assert any(
+        "Domain protocol missing expected output(s): retrieval_evidence_ledger" in blocker
+        for blocker in execution.evidence_ledger.blockers
+    )
+    assert any(
+        "Domain protocol metric schema mismatch" in blocker
+        for blocker in execution.evidence_ledger.blockers
+    )
     assert execution.repair_plan is not None
-    assert execution.repair_plan.actions == ["none"]
+    assert execution.repair_plan.actions == ["rerun_failed_job"]
 
 
 def test_bridge_ingest_persists_factory_evidence_ledger(monkeypatch, tmp_path: Path) -> None:
@@ -10486,6 +10730,18 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         "ablation_heavy_task",
         "failed_hypothesis_task",
     }
+    expected_case_ids = {
+        "eval_case_toy_task",
+        "eval_case_medium_benchmark_task",
+        "eval_case_literature_heavy_task",
+        "eval_case_claim_evidence_vertical_task",
+        "claim_evidence_generalized_idea",
+        "rag_citation_faithfulness_review_case",
+        "lightweight_ml_nlp_review_case",
+        "unsupported_domain_case",
+        "eval_case_ablation_heavy_task",
+        "eval_case_failed_hypothesis_task",
+    }
     expected_metrics = {
         "idea_to_brief_completeness",
         "hypothesis_selection_quality",
@@ -10497,12 +10753,13 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         "offline_end_to_end_submission_package",
     }
 
-    assert suite.case_count == 6
-    assert suite.executed_case_count == 6
+    assert suite.case_count == 10
+    assert suite.executed_case_count == 10
+    assert {case.case_id for case in suite.cases} == expected_case_ids
     assert {case.task_kind for case in suite.cases} == expected_kinds
     assert {metric.metric_id for metric in suite.metrics} == expected_metrics
     assert suite.toy_end_to_end_ready is True
-    assert suite.completed_case_count == 6
+    assert suite.completed_case_count == 10
     assert suite.evaluation_artifact_count > 0
     assert not suite.blockers
     assert not suite.warnings
@@ -10520,15 +10777,55 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert len(suite.case_study_materials) >= 6
     assert len(suite.failure_analysis_materials) >= 5
     assert all(metric.score == 100 for metric in suite.metrics)
-    literature_heavy = next(case for case in suite.cases if case.task_kind == "literature_heavy_task")
+    cases_by_id = {case.case_id: case for case in suite.cases}
+    literature_heavy = cases_by_id["eval_case_literature_heavy_task"]
     assert literature_heavy.trace is not None
     assert any(
         "Frozen Claim Evidence Reranking" in material
         for material in literature_heavy.trace.architecture_materials
     )
-    claim_evidence_vertical = next(
-        case for case in suite.cases if case.task_kind == "claim_evidence_vertical_task"
-    )
+    unsupported = cases_by_id["unsupported_domain_case"]
+    assert unsupported.score == 100
+    assert unsupported.blockers == []
+    assert unsupported.trace is not None
+    assert unsupported.trace.domain_decision is not None
+    assert unsupported.trace.domain_decision.domain_id == "unsupported"
+    assert unsupported.trace.domain_readiness_status == "blocked"
+    assert unsupported.trace.domain_benchmark_resolver is not None
+    assert unsupported.trace.domain_benchmark_resolver.status == "blocked"
+    assert unsupported.trace.domain_experiment_protocol is not None
+    assert unsupported.trace.domain_experiment_protocol.status == "blocked"
+    assert unsupported.trace.selected_hypothesis_id is None
+    assert unsupported.trace.experiment_plan_id is None
+    assert unsupported.trace.experiment_job_count == 0
+    assert unsupported.trace.evidence_entry_count == 0
+    assert unsupported.trace.paper_review_package_ready is False
+    assert unsupported.trace.blockers
+    assert "domain_routing_blocker" in unsupported.trace.steps_completed
+    rag_case = cases_by_id["rag_citation_faithfulness_review_case"]
+    lightweight_case = cases_by_id["lightweight_ml_nlp_review_case"]
+    for review_case, expected_domain, expected_ceiling in (
+        (rag_case, "rag_citation_faithfulness", "review_only_engineering_validation_claim"),
+        (lightweight_case, "lightweight_ml_nlp_benchmark", "review_only_engineering_validation_claim"),
+    ):
+        assert review_case.trace is not None
+        assert review_case.trace.domain_decision is not None
+        assert review_case.trace.domain_decision.domain_id == expected_domain
+        assert review_case.trace.domain_benchmark_resolver is not None
+        assert review_case.trace.domain_benchmark_resolver.status == "limited"
+        assert review_case.trace.domain_experiment_protocol is not None
+        assert review_case.trace.domain_experiment_protocol.status == "limited"
+        assert review_case.trace.domain_claim_ceiling == expected_ceiling
+        assert review_case.trace.project_review_bundle_ready is True
+        assert review_case.trace.project_final_publish_ready is False
+        assert review_case.trace.project_publication_readiness_report_path is not None
+        readiness_payload = json.loads(
+            Path(review_case.trace.project_publication_readiness_report_path).read_text(encoding="utf-8")
+        )
+        assert readiness_payload["domain_package_context"]["claim_ceiling"] == expected_ceiling
+        assert readiness_payload["domain_package_context"]["benchmark_resolver"]["status"] == "limited"
+        assert readiness_payload["domain_package_context"]["experiment_protocol"]["status"] == "limited"
+    claim_evidence_vertical = cases_by_id["eval_case_claim_evidence_vertical_task"]
     assert claim_evidence_vertical.trace is not None
     assert claim_evidence_vertical.expected_paper_tier == "workshop_candidate"
     assert "imported_frozen_benchmark_execution" in claim_evidence_vertical.trace.steps_completed
@@ -11720,18 +12017,22 @@ def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:
     assert trace.primary_metric is not None
     assert trace.objective_score is not None
     assert trace.paper_decision == "technical_report"
-    assert {
+    expected_steps = {
         "idea",
         "research_brief",
         "literature_scout",
         "gap_mining",
         "hypothesis_selection",
         "experiment_plan",
-        "toy_execution",
         "evidence_ledger",
         "paper_draft",
         "review_package",
-    }.issubset(set(trace.steps_completed))
+    }
+    assert expected_steps.issubset(set(trace.steps_completed))
+    assert (
+        "toy_execution" in trace.steps_completed
+        or "imported_frozen_benchmark_execution" in trace.steps_completed
+    )
     assert 2 <= trace.direction_count <= 5
     assert trace.hypothesis_count == trace.direction_count
     assert trace.experiment_job_count > 0
@@ -11752,6 +12053,17 @@ def test_all_evaluation_cases_execute_offline_to_paper_packages() -> None:
 
     for case in suite.cases:
         assert case.trace is not None
+        if case.case_id == "unsupported_domain_case":
+            assert case.score == 100
+            assert case.blockers == []
+            assert case.trace.domain_readiness_status == "blocked"
+            assert case.trace.experiment_plan_id is None
+            assert case.trace.experiment_job_count == 0
+            assert case.trace.evidence_entry_count == 0
+            assert case.trace.paper_review_package_ready is False
+            assert case.trace.blockers
+            assert "domain_routing_blocker" in case.trace.steps_completed
+            continue
         assert case.trace.paper_review_package_ready is True
         assert case.trace.evidence_complete is True
         assert case.trace.experiment_job_count > 0

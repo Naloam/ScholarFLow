@@ -52,11 +52,13 @@ def _slug(value: str) -> str:
     return "".join(character.lower() if character.isalnum() else "_" for character in value).strip("_")[:80] or "job"
 
 
-def _dedupe(items: list[str]) -> list[str]:
+def _dedupe(items: list[Any]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
     for item in items:
-        cleaned = " ".join(item.split()).strip()
+        if item is None:
+            continue
+        cleaned = " ".join(str(item).split()).strip()
         key = cleaned.lower()
         if not cleaned or key in seen:
             continue
@@ -152,6 +154,21 @@ def build_experiment_factory_plan(
             "hypothesis_id": None,
             "run_id": run.id if run is not None else None,
             "execution_backend": backend.model_dump(mode="json"),
+            "domain_decision": (
+                brief.domain_decision.model_dump(mode="json")
+                if brief.domain_decision is not None
+                else None
+            ),
+            "domain_benchmark_resolver": (
+                brief.domain_benchmark_resolver.model_dump(mode="json")
+                if brief.domain_benchmark_resolver is not None
+                else None
+            ),
+            "domain_experiment_protocol": (
+                brief.domain_experiment_protocol.model_dump(mode="json")
+                if brief.domain_experiment_protocol is not None
+                else None
+            ),
             "selected_direction_id": None,
             "selected_hypothesis": None,
             "jobs": [],
@@ -302,6 +319,23 @@ def build_experiment_factory_plan(
         warnings.append("Factory has fewer than two seed jobs; statistical evidence is weak.")
     if experiment_design is not None and experiment_design.blockers:
         blockers.extend(experiment_design.blockers)
+    domain_benchmark_resolver = brief.domain_benchmark_resolver if brief is not None else None
+    domain_protocol = brief.domain_experiment_protocol if brief is not None else None
+    if domain_benchmark_resolver is not None and domain_benchmark_resolver.status == "blocked":
+        blockers.extend(domain_benchmark_resolver.blockers)
+    if domain_protocol is not None and domain_protocol.status == "blocked":
+        blockers.extend(domain_protocol.blockers or domain_protocol.readiness_blockers)
+    if domain_benchmark_resolver is not None and domain_benchmark_resolver.status == "limited":
+        warnings.extend(domain_benchmark_resolver.blockers[:3])
+        warnings.extend(domain_benchmark_resolver.limitations[:3])
+    if domain_protocol is not None and domain_protocol.status == "limited":
+        warnings.extend(domain_protocol.readiness_blockers[:3])
+        warnings.extend(domain_protocol.limitations[:3])
+    protocol_expected_outputs = (
+        list(domain_protocol.expected_outputs)
+        if domain_protocol is not None and domain_protocol.expected_outputs
+        else []
+    )
     payload = {
         "plan_id": "experiment_factory_v1",
         "project_id": project_id,
@@ -309,6 +343,21 @@ def build_experiment_factory_plan(
         "hypothesis_id": hypothesis_id,
         "run_id": run_id,
         "execution_backend": backend.model_dump(mode="json"),
+        "domain_decision": (
+            brief.domain_decision.model_dump(mode="json")
+            if brief is not None and brief.domain_decision is not None
+            else None
+        ),
+        "domain_benchmark_resolver": (
+            domain_benchmark_resolver.model_dump(mode="json")
+            if domain_benchmark_resolver is not None
+            else None
+        ),
+        "domain_experiment_protocol": (
+            domain_protocol.model_dump(mode="json")
+            if domain_protocol is not None
+            else None
+        ),
         "selected_direction_id": selected.direction_id if selected is not None else None,
         "selected_hypothesis": selected.hypothesis if selected is not None else None,
         "jobs": [item.model_dump(mode="json") for item in jobs],
@@ -318,11 +367,14 @@ def build_experiment_factory_plan(
         "ablation_job_count": sum(1 for item in jobs if item.job_kind == "ablation"),
         "seed_job_count": sum(1 for item in jobs if item.job_kind == "seed"),
         "sweep_job_count": sum(1 for item in jobs if item.job_kind == "sweep"),
-        "expected_artifacts": _dedupe([output for job in jobs for output in job.expected_outputs]),
+        "expected_artifacts": _dedupe(
+            [output for job in jobs for output in job.expected_outputs]
+            + protocol_expected_outputs
+        ),
         "bridge_ready": True,
         "toy_backend_supported": True,
-        "blockers": blockers,
-        "warnings": warnings,
+        "blockers": _dedupe(blockers),
+        "warnings": _dedupe(warnings),
     }
     return AutoResearchExperimentFactoryPlanRead(
         generated_at=_utcnow(),
@@ -1844,6 +1896,277 @@ def run_toy_factory_backend(
     )
 
 
+def _normalized_output_key(value: str) -> str:
+    cleaned = str(value or "").strip()
+    for suffix in (".json", ".txt", ".md"):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)]
+            break
+    return _slug(cleaned)
+
+
+def _artifact_metric_map(artifact: ResultArtifact) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    objective_system = artifact.objective_system or artifact.best_system
+    for result in artifact.system_results:
+        if objective_system is None or result.system == objective_system:
+            metrics.update({str(key): float(value) for key, value in result.metrics.items()})
+    for result in artifact.aggregate_system_results:
+        if objective_system is None or result.system == objective_system:
+            metrics.update({str(key): float(value) for key, value in result.mean_metrics.items()})
+    if artifact.objective_score is not None:
+        metrics.setdefault(artifact.primary_metric, float(artifact.objective_score))
+    return metrics
+
+
+def _domain_fixture_metrics(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    artifact: ResultArtifact,
+) -> dict[str, float]:
+    protocol = plan.domain_experiment_protocol
+    metrics = _artifact_metric_map(artifact)
+    if protocol is None:
+        return metrics
+    primary = metrics.get(artifact.primary_metric, artifact.objective_score or 0.0)
+    if protocol.domain_id == "rag_citation_faithfulness":
+        metrics.setdefault("mrr", round(primary, 4))
+        metrics.setdefault("recall_at_1", round(min(0.99, primary - 0.04), 4))
+        metrics.setdefault("ndcg_at_10", round(min(0.99, primary + 0.03), 4))
+        metrics.setdefault("recall_at_10", round(min(0.99, primary + 0.08), 4))
+        metrics.setdefault("evidence_coverage", round(max(0.0, primary - 0.02), 4))
+        metrics.setdefault("citation_support_coverage", round(max(0.0, min(0.99, primary - 0.01)), 4))
+    elif protocol.domain_id == "lightweight_ml_nlp_benchmark":
+        metrics.setdefault("accuracy", round(primary, 4))
+        metrics.setdefault("macro_f1", round(max(0.0, min(0.99, primary - 0.02)), 4))
+    return metrics
+
+
+def _domain_negative_evidence_payload(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    artifact: ResultArtifact,
+) -> dict[str, object]:
+    protocol = plan.domain_experiment_protocol
+    categories = list(protocol.negative_evidence_categories) if protocol is not None else []
+    output_failures = artifact.outputs.get("objective_failure_cases")
+    if not isinstance(output_failures, list):
+        output_failures = []
+    payload: dict[str, object] = {
+        "categories": categories,
+        "negative_result_count": len(artifact.negative_results),
+        "failed_trial_count": len(artifact.failed_trials),
+        "objective_failure_case_count": len(output_failures),
+        "records": [item.model_dump(mode="json") for item in artifact.negative_results],
+    }
+    if protocol is not None and protocol.domain_id == "rag_citation_faithfulness":
+        payload.update(
+            {
+                "unsupported_citations": [
+                    {
+                        "citation_id": f"citation_fixture_{index}",
+                        "status": "unsupported" if index % 2 else "supported",
+                        "artifact_ref": "run_result_artifact_json:domain_outputs:citation_support_scores",
+                    }
+                    for index in range(1, 4)
+                ],
+                "abstentions": [
+                    {
+                        "claim_id": "fixture_abstention_1",
+                        "reason": "Citation support score falls below the deterministic review threshold.",
+                    }
+                ],
+            }
+        )
+    if protocol is not None and protocol.domain_id == "lightweight_ml_nlp_benchmark":
+        payload.update(
+            {
+                "baseline_comparison": {
+                    "candidate": artifact.objective_system or artifact.best_system,
+                    "claim_scope": "review_only_engineering_validation",
+                    "publication_grade": False,
+                },
+            }
+        )
+    return payload
+
+
+def _domain_method_outputs(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    artifact: ResultArtifact,
+    *,
+    metrics: dict[str, float],
+) -> dict[str, object]:
+    existing = artifact.outputs.get("method_outputs")
+    if isinstance(existing, dict) and existing:
+        return existing
+    return {
+        result.system: {
+            "system": result.system,
+            "metrics": result.metrics,
+            "artifact_ref": f"run_result_artifact_json:system_results:{result.system}",
+            "review_only": bool(
+                plan.domain_benchmark_resolver is not None
+                and not plan.domain_benchmark_resolver.publication_grade_eligible
+            ),
+        }
+        for result in artifact.system_results
+    } or {
+        artifact.objective_system or artifact.best_system or "candidate_method": {
+            "metrics": metrics,
+            "artifact_ref": "run_result_artifact_json:objective_score",
+        }
+    }
+
+
+def _enrich_artifact_with_domain_protocol(
+    plan: AutoResearchExperimentFactoryPlanRead,
+    artifact: ResultArtifact,
+) -> ResultArtifact:
+    protocol = plan.domain_experiment_protocol
+    resolver = plan.domain_benchmark_resolver
+    if protocol is None:
+        return artifact
+    metrics = _domain_fixture_metrics(plan, artifact)
+    method_outputs = _domain_method_outputs(plan, artifact, metrics=metrics)
+    negative_evidence = _domain_negative_evidence_payload(plan, artifact)
+    domain_outputs: dict[str, object] = {
+        "method_outputs": method_outputs,
+        "metrics": metrics,
+        "evidence_ledger": "evidence_ledger.json",
+        "negative_evidence": negative_evidence,
+        "execution_profile": {
+            "protocol_id": protocol.protocol_id,
+            "execution_route": protocol.deterministic_execution_route,
+            "import_replay_route": protocol.import_replay_route,
+            "review_only": bool(resolver is not None and not resolver.publication_grade_eligible),
+        },
+        "environment_manifest": "experiment_factory_environment_manifest.json",
+        "benchmark_resolver_ref": resolver.resolver_id if resolver is not None else None,
+        "deterministic_fingerprint": _fingerprint(
+            {
+                "plan_id": plan.plan_id,
+                "protocol_id": protocol.protocol_id,
+                "resolver_id": resolver.resolver_id if resolver is not None else None,
+                "artifact_summary": artifact.summary,
+                "metrics": metrics,
+            }
+        ),
+    }
+    if protocol.domain_id == "rag_citation_faithfulness":
+        domain_outputs.update(
+            {
+                "citation_support_scores": [
+                    {
+                        "claim_id": "fixture_claim_1",
+                        "citation_ref": "fixture_citation_1",
+                        "support_score": metrics.get("citation_support_coverage", 0.0),
+                        "status": "supported",
+                    },
+                    {
+                        "claim_id": "fixture_claim_2",
+                        "citation_ref": "fixture_citation_2",
+                        "support_score": max(0.0, metrics.get("citation_support_coverage", 0.0) - 0.25),
+                        "status": "unsupported",
+                    },
+                ],
+                "unsupported_citations": negative_evidence.get("unsupported_citations", []),
+                "abstentions": negative_evidence.get("abstentions", []),
+            }
+        )
+    if protocol.domain_id == "lightweight_ml_nlp_benchmark":
+        domain_outputs.update(
+            {
+                "classification_predictions": [
+                    {
+                        "example_id": f"fixture_test_{index}",
+                        "gold_label": label,
+                        "predicted_label": label if index % 3 else "review_only_error",
+                    }
+                    for index, label in enumerate(("machine_learning", "nlp", "robotics", "machine_learning", "nlp", "robotics"), start=1)
+                ],
+                "baseline_comparison": negative_evidence.get("baseline_comparison", {}),
+            }
+        )
+    if protocol.domain_id == "claim_evidence_retrieval":
+        if "retrieval_evidence_ledger" in artifact.outputs:
+            domain_outputs["retrieval_evidence_ledger"] = artifact.outputs["retrieval_evidence_ledger"]
+        domain_outputs["claim_verification_metrics"] = {
+            key: value
+            for key, value in metrics.items()
+            if key
+            in {
+                "verification_accuracy",
+                "unsupported_claim_precision",
+                "unsupported_claim_recall",
+                "abstention_accuracy",
+                "repair_precision",
+                "repair_recall",
+            }
+        }
+    combined_outputs = {
+        **artifact.outputs,
+        **domain_outputs,
+        "domain_outputs": domain_outputs,
+        "domain_benchmark_resolver": resolver.model_dump(mode="json") if resolver is not None else None,
+        "domain_experiment_protocol": protocol.model_dump(mode="json"),
+    }
+    expected_keys = {_normalized_output_key(item) for item in protocol.expected_outputs}
+    present_keys = {_normalized_output_key(item) for item in combined_outputs}
+    missing_outputs = sorted(expected_keys - present_keys)
+    missing_metrics = sorted(set(protocol.metric_schema) - set(metrics))
+    validation_blockers = _dedupe(
+        [
+            (
+                "Domain protocol missing expected output(s): "
+                + ", ".join(missing_outputs)
+                if missing_outputs
+                else None
+            ),
+            (
+                "Domain protocol metric schema mismatch; missing metric(s): "
+                + ", ".join(missing_metrics)
+                if missing_metrics
+                else None
+            ),
+            *(
+                resolver.blockers
+                if resolver is not None and resolver.status == "blocked"
+                else []
+            ),
+        ]
+    )
+    combined_outputs["domain_execution_validation"] = {
+        "protocol_id": protocol.protocol_id,
+        "benchmark_resolver_id": resolver.resolver_id if resolver is not None else None,
+        "expected_outputs": list(protocol.expected_outputs),
+        "present_outputs": sorted(present_keys),
+        "missing_outputs": missing_outputs,
+        "metric_schema": list(protocol.metric_schema),
+        "present_metrics": sorted(metrics),
+        "missing_metrics": missing_metrics,
+        "blockers": validation_blockers,
+        "review_only": bool(resolver is not None and not resolver.publication_grade_eligible),
+        "claim_ceiling": (
+            "review_only_engineering_validation_claim"
+            if resolver is not None and not resolver.publication_grade_eligible
+            else "scoped_review_or_final_candidate_audit_claim"
+        ),
+    }
+    return artifact.model_copy(
+        update={
+            "outputs": combined_outputs,
+            "environment": {
+                **artifact.environment,
+                "domain_id": protocol.domain_id,
+                "domain_protocol_id": protocol.protocol_id,
+                "domain_benchmark_resolver_id": resolver.resolver_id if resolver is not None else None,
+                "domain_review_only": bool(
+                    resolver is not None and not resolver.publication_grade_eligible
+                ),
+            },
+        }
+    )
+
+
 def build_evidence_ledger(
     *,
     plan: AutoResearchExperimentFactoryPlanRead,
@@ -1938,6 +2261,41 @@ def build_evidence_ledger(
                 support_status="supported" if job.status == "done" else "missing",
             )
         )
+    if plan.domain_benchmark_resolver is not None:
+        entries.append(
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id=f"evidence_domain_benchmark_{_slug(plan.domain_benchmark_resolver.resolver_id)}",
+                evidence_kind="artifact",
+                claim=(
+                    "Domain benchmark resolver recorded "
+                    f"`{plan.domain_benchmark_resolver.benchmark_name or 'blocked benchmark'}` "
+                    f"with status `{plan.domain_benchmark_resolver.status}`."
+                ),
+                artifact_ref="experiment_factory_plan_json:domain_benchmark_resolver",
+                support_status=(
+                    "supported"
+                    if plan.domain_benchmark_resolver.status != "blocked"
+                    else "missing"
+                ),
+            )
+        )
+    if plan.domain_experiment_protocol is not None:
+        entries.append(
+            AutoResearchEvidenceLedgerEntryRead(
+                evidence_id=f"evidence_domain_protocol_{_slug(plan.domain_experiment_protocol.protocol_id)}",
+                evidence_kind="artifact",
+                claim=(
+                    "Domain experiment protocol recorded expected outputs, metric schema, "
+                    f"runtime contract, and repair routing for `{plan.domain_experiment_protocol.domain_id}`."
+                ),
+                artifact_ref="experiment_factory_plan_json:domain_experiment_protocol",
+                support_status=(
+                    "supported"
+                    if plan.domain_experiment_protocol.status != "blocked"
+                    else "missing"
+                ),
+            )
+        )
     blockers: list[str] = []
     if not any(item.evidence_kind == "baseline" for item in entries):
         blockers.append("Evidence ledger is missing baseline evidence.")
@@ -1963,6 +2321,22 @@ def build_evidence_ledger(
         blockers.append("Evidence ledger is missing statistical test evidence.")
     if materialized_jobs is not None and len(materialized_jobs) != plan.job_count:
         blockers.append("Evidence ledger job materialization count does not match the factory plan.")
+    domain_validation = artifact.outputs.get("domain_execution_validation")
+    if isinstance(domain_validation, dict):
+        validation_blockers = [
+            str(item)
+            for item in domain_validation.get("blockers", [])
+            if item
+        ]
+        blockers.extend(validation_blockers)
+        if domain_validation.get("review_only"):
+            blockers.append(
+                "Domain execution evidence is review-only engineering validation and cannot support final-publish claims."
+            )
+    if plan.domain_benchmark_resolver is not None and plan.domain_benchmark_resolver.status == "blocked":
+        blockers.extend(plan.domain_benchmark_resolver.blockers)
+    if plan.domain_experiment_protocol is not None and plan.domain_experiment_protocol.status == "blocked":
+        blockers.extend(plan.domain_experiment_protocol.blockers or plan.domain_experiment_protocol.readiness_blockers)
     payload = {
         "ledger_id": "experiment_evidence_ledger_v1",
         "project_id": plan.project_id,
@@ -1972,7 +2346,7 @@ def build_evidence_ledger(
         "entries": [item.model_dump(mode="json") for item in entries],
         "entry_count": len(entries),
         "complete": not blockers,
-        "blockers": blockers,
+        "blockers": _dedupe(blockers),
     }
     return AutoResearchEvidenceLedgerRead(
         generated_at=_utcnow(),
@@ -1998,11 +2372,21 @@ def build_factory_repair_plan(
     if plan.seed_job_count < 3 or "statistical" in blocker_text or "seed" in blocker_text:
         actions.append("increase_seed_count")
         reasons.append("Statistical evidence has fewer than three seed jobs.")
-    if plan.blockers or "runtime job failures" in blocker_text:
+    if (
+        plan.blockers
+        or "runtime job failures" in blocker_text
+        or "missing expected output" in blocker_text
+        or "metric schema mismatch" in blocker_text
+        or "domain protocol" in blocker_text
+    ):
         actions.append("rerun_failed_job")
         reasons.extend(plan.blockers)
         if "runtime job failures" in blocker_text:
             reasons.append("At least one materialized job failed at runtime.")
+        if "missing expected output" in blocker_text:
+            reasons.append("Domain protocol expected output validation failed.")
+        if "metric schema mismatch" in blocker_text:
+            reasons.append("Domain metric schema validation failed.")
     if not actions:
         actions.append("none")
         reasons.append("Factory evidence is complete enough for the selected profile.")
@@ -2048,6 +2432,7 @@ def execute_toy_experiment_factory(
             },
         }
     )
+    artifact = _enrich_artifact_with_domain_protocol(plan, artifact)
     ledger = build_evidence_ledger(
         plan=plan,
         artifact=artifact,
@@ -2062,6 +2447,8 @@ def execute_toy_experiment_factory(
         hypothesis_id=plan.hypothesis_id,
         generated_at=_utcnow(),
         execution_plan=plan,
+        domain_benchmark_resolver=plan.domain_benchmark_resolver,
+        domain_experiment_protocol=plan.domain_experiment_protocol,
         environment_manifest=manifest,
         materialized_jobs=materialized_jobs,
         result_artifact=artifact,
@@ -2104,6 +2491,7 @@ def execute_cached_claim_evidence_experiment_factory(
             },
         }
     )
+    artifact = _enrich_artifact_with_domain_protocol(plan, artifact)
     ledger = build_evidence_ledger(
         plan=plan,
         artifact=artifact,
@@ -2118,6 +2506,8 @@ def execute_cached_claim_evidence_experiment_factory(
         hypothesis_id=plan.hypothesis_id,
         generated_at=_utcnow(),
         execution_plan=plan,
+        domain_benchmark_resolver=plan.domain_benchmark_resolver,
+        domain_experiment_protocol=plan.domain_experiment_protocol,
         environment_manifest=manifest,
         materialized_jobs=materialized_jobs,
         result_artifact=artifact,
@@ -2159,6 +2549,7 @@ def materialize_factory_execution(
             "materialized_jobs": "experiment_factory_materialized_jobs.json",
         },
     )
+    artifact = _enrich_artifact_with_domain_protocol(plan, artifact)
     ledger = build_evidence_ledger(
         plan=plan,
         artifact=artifact,
@@ -2172,6 +2563,8 @@ def materialize_factory_execution(
         hypothesis_id=plan.hypothesis_id,
         generated_at=_utcnow(),
         execution_plan=plan,
+        domain_benchmark_resolver=plan.domain_benchmark_resolver,
+        domain_experiment_protocol=plan.domain_experiment_protocol,
         environment_manifest=manifest,
         materialized_jobs=materialized_jobs,
         result_artifact=artifact,
@@ -2240,6 +2633,7 @@ def execute_imported_artifact_experiment_factory(
             },
         }
     )
+    enriched_artifact = _enrich_artifact_with_domain_protocol(plan, enriched_artifact)
     ledger = build_evidence_ledger(
         plan=plan,
         artifact=enriched_artifact,
@@ -2254,6 +2648,8 @@ def execute_imported_artifact_experiment_factory(
         hypothesis_id=plan.hypothesis_id,
         generated_at=_utcnow(),
         execution_plan=plan,
+        domain_benchmark_resolver=plan.domain_benchmark_resolver,
+        domain_experiment_protocol=plan.domain_experiment_protocol,
         environment_manifest=manifest,
         materialized_jobs=materialized_jobs,
         result_artifact=enriched_artifact,

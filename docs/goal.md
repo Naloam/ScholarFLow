@@ -4,7 +4,7 @@ ScholarFlow 下一阶段目标：Generalized Idea-To-Paper Runner And Production
 当前状态
 ========
 
-ScholarFlow 已完成三个关键里程碑：
+ScholarFlow 已完成四个关键里程碑：
 
 1. Offline Publication-Grade Paper Case And Submission Package V3
    - 完成提交：`0aec946 Complete offline publication case package`
@@ -43,11 +43,34 @@ ScholarFlow 已完成三个关键里程碑：
      - `cd frontend && npm run build` 通过。
      - `git diff --check` 通过。
 
+4. Goal 2B: Domain Evidence And Review Package Loop
+   - 完成提交：`7d48bbf Implement domain evidence package loop`
+   - 已实现：
+     - per-domain literature strategy/result；
+     - structured benchmark resolver；
+     - experiment protocol and deterministic execution/import replay validation；
+     - evidence ledger/domain readiness propagation；
+     - generalized project package/readiness domain context；
+     - Operator Console/API/frontend/docs/evaluation trace surface；
+     - deterministic evaluation cases for `claim_evidence_generalized_idea`、`rag_citation_faithfulness_review_case`、`lightweight_ml_nlp_review_case`、`unsupported_domain_case`。
+   - 当前正确语义：
+     - claim-evidence generalized idea 继续复用 Goal 1 SciFact frozen-snapshot evidence path；
+     - RAG/citation 和 lightweight ML/NLP domains 可以生成 review-ready package 或 concrete blockers，但 fixture/local smoke evidence 仍保持 review-only / engineering-validation claim ceiling；
+     - unsupported domain 全链路 blocked/auditable，不生成 fake experiment outputs；
+     - final publish readiness 仍必须受 benchmark provenance、statistics、negative evidence、claim support、source independence 和 package gates 约束。
+   - 已验证：
+     - `python -m py_compile ...` 通过。
+     - Goal 2B tracked regression 窄测通过：`8 passed, 113 deselected`。
+     - `cd backend && ../.venv/bin/pytest -q` 通过：`249 passed, 2 warnings`。
+     - `cd frontend && npm run build` 通过。
+     - `git diff --check` 通过。
+
 当前不要重做的事情
 ==================
 
 - 不要重做 Goal 1。Goal 1 已通过 `d53e5a6` 完成，只能在测试回归或新改动破坏 Goal 1 artifact 时修复。
 - 不要重做 Goal 2A。Domain router、domain template registry、idea-to-hypothesis automation 已通过 `dda8dc6` 完成。
+- 不要重做 Goal 2B。Goal 2B 已通过 `7d48bbf` 完成，只能在测试回归、API/schema/docs 漂移或 evidence-chain 缺陷暴露时修复。
 - 不要为了让 demo 看起来完整而降低 publish gates、claim-evidence ledger、artifact lineage、repair safety、negative evidence 或 readiness blockers。
 - 不要把 fixture/toy/local smoke evidence 宣称为 publication-grade。
 - 不要把 unsupported domain 降级成无关 toy experiment。
@@ -61,20 +84,20 @@ user idea -> research brief -> literature/gap validation -> hypothesis bank -> s
 
 当前系统距离这个目标的状态：
 
-- Idea classification/domain routing：已完成第一版。还需要让后续 literature、benchmark、experiment、paper package 真正消费 domain context，而不是只显示 domain fields。
-- Research brief/hypothesis/direction：已完成第一版。supported domains 能生成 3 个候选 hypothesis 并选中方向；unsupported domain 可审计阻断。
-- Literature/gap validation：仍是下一大缺口。已有 cached/imported connectors 和 scout/gap miner 基础，但还没有 per-domain literature strategy、source class requirements、domain-specific novelty/gap risk、final-publish literature blockers 的完整闭环。
-- Benchmark resolver：仍是下一大缺口。claim-evidence 可复用 Goal 1 frozen SciFact path；RAG/citation 和 lightweight ML/NLP 还需要结构化 resolver result、provenance/eligibility/blockers 和 package/readiness 传播。
-- Experiment protocol/execution：已有 experiment factory / toy execution / import replay 基础，但还没有 per-domain protocol id、metric schema validation、domain-specific execution adapter、domain-specific negative evidence taxonomy 和 repair routing 的完整闭环。
-- Evidence ledger/readiness：claim-evidence 最强；新 domains 还需要把 benchmark/literature/execution evidence 系统性写入 ledgers、negative evidence、readiness report 和 package manifests。
-- Project paper/reviewer/revision/submission：已有 project orchestrator 和 submission package 基础；还需要 generalized domain package context，让至少一个新 domain 生成 review-ready package 或清晰 blocker，而不是只有 fixed claim-evidence vertical 最完整。
-- Final publish：仍然远。当前下一阶段目标不是强行 `final_publish_ready=true`，而是让受控 domain 的 evidence chain 可审计、可扩展、不会夸大证据。
+- Idea classification/domain routing：已完成第一版。受控 domains 能进入 domain evidence loop；unsupported domain 可审计阻断。
+- Research brief/hypothesis/direction：已完成第一版。supported domains 能生成候选 hypothesis 并选中方向；unsupported domain 保持 0 directions / 0 hypotheses。
+- Literature/gap validation：Goal 2B 已补齐 per-domain literature strategy/result、source-class requirements、fixture-only final-publish blockers 和 related-system coverage limitations；下一步 P15 是更真实的 cached connector coverage、deduplication、fuller metadata extraction 和 broader real-paper coverage。
+- Benchmark resolver：Goal 2B 已补齐 structured per-domain resolver。claim-evidence 复用 Goal 1 SciFact frozen-snapshot path；RAG/citation 与 lightweight ML/NLP 保留 deterministic review-only fixture/import replay blockers，直到真实 benchmark provenance/scale 存在。
+- Experiment protocol/execution：Goal 2B 已补齐 per-domain protocol、metric schema validation、expected-output validation、domain-specific deterministic execution outputs、negative evidence taxonomy 和 repair routing；下一步 Goal 3/P16 是 production-grade local/Docker/bridge execution backend。
+- Evidence ledger/readiness：domain benchmark/protocol/execution blockers 已进入 evidence ledger、readiness report、package manifest context、Operator Console 和 evaluation trace；fixture/local smoke evidence 不会升级为 publication-grade。
+- Project paper/reviewer/revision/submission：project orchestrator 已消费 generalized domain package context。RAG/citation 与 lightweight ML/NLP 可以形成 review-ready package 或 concrete blockers，final publish 仍按证据 gate 保持 false。
+- Final publish：仍然远。Goal 2B 没有强行 `final_publish_ready=true`；下一步应加强真实执行、真实 literature/benchmark evidence、revision loop 和 submission packaging。
 
 实话总结：
 
 - Goal 2A 已完成，约等于完成从 idea 到 selected executable direction 的受控入口。
-- 距离“任意受控 idea 自动产出 review-ready package”还差 Goal 2B。
-- 距离“真实执行后端生产化”还差 Goal 3。
+- Goal 2B 已完成，约等于完成从受控 idea 到 domain evidence loop / review-ready package 或 concrete blocker 的可审计闭环。
+- 距离“真实执行后端生产化”还差 Goal 3/P16。
 - 距离“从用户 idea 到 submission-ready / final-publish-ready package”还差 Goal 4。
 
 全局原则
@@ -110,8 +133,8 @@ user idea -> research brief -> literature/gap validation -> hypothesis bank -> s
 3. 阅读并审计当前目标涉及的关键文件。
 4. 审计结论必须进入代码产物、evaluation artifact、readiness report、docs 或 tests，不能只写在聊天回复里。
 
-下一轮 Goal 2B 的最小必读文件
-=============================
+Goal 2B completion audit 的最小必读文件
+=====================================
 
 - `backend/services/autoresearch/domain_router.py`
 - `backend/services/autoresearch/evaluation_cases.py`
@@ -135,12 +158,12 @@ user idea -> research brief -> literature/gap validation -> hypothesis bank -> s
 注意：
 
 - `backend/services/autoresearch/hypothesis_bank.py` 和 `backend/services/autoresearch/direction_selector.py` 目前不存在；相关逻辑仍内聚在 `idea_brief.py`。
-- 如果下一轮需要拆模块，可以拆，但不是必须。优先让 evidence chain 和 package readiness 变强。
+- 如果 Goal 2B 出现回归，优先审计这些文件中的 evidence chain、package readiness、claim ceiling 和 unsupported-domain blockers。
 
-下一轮默认目标：Goal 2B - Domain Evidence And Review Package Loop
-=================================================================
+Goal 2B - Domain Evidence And Review Package Loop
+=================================================
 
-下一轮默认执行 Goal 2B。不要直接跳到 Goal 3 或 Goal 4，除非用户明确改目标。
+Goal 2B 已通过 `7d48bbf Implement domain evidence package loop` 完成。不要重做本节，除非新的测试或审计发现回归。
 
 Goal 2B 的核心目标
 ------------------
@@ -465,7 +488,7 @@ Goal 2B is complete only when all of the following are true:
 Goal 3: Real Experiment Backend And Repair Productionization
 ===========================================================
 
-Do not start Goal 3 until Goal 2B is complete, unless the user explicitly redirects。
+Goal 2B 已完成，下一轮默认可以进入 Goal 3，除非用户显式要求继续打磨 Goal 2B artifacts 或修复回归。
 
 目标
 ----
@@ -843,23 +866,23 @@ Current decision:
 
 Reason:
 
-- Goal 2B is still project-specific engineering work; the repo-local instructions and this goal file are enough。
+- Goal 2B 已完成，但 domain package verification 和 publication-case audit 仍是项目内工作流；repo-local instructions 和 this goal file 目前仍足够。
 - Consider a repository-local skill only after domain package verification and publication-case audit become a repeated stable workflow across several turns。
 
 下一轮执行建议
 ==============
 
-- 默认执行 Goal 2B。
+- 默认执行 Goal 3: Real Experiment Backend And Repair Productionization。
 - 优先顺序:
-  1. Literature Strategy Per Domain。
-  2. Benchmark Resolver Per Domain。
-  3. Experiment Protocol And Execution Adapter。
-  4. Generalized Project Paper Package。
-  5. API/Console/Evaluation surface only as needed by the backend capability。
-- 不要一次性做 Goal 3 或 Goal 4。
+  1. Goal 3 Phase 1: Execution Plan Materialization。
+  2. Goal 3 Phase 2: Local And Replay Execution Runtime。
+  3. Goal 3 Phase 3: Evidence Ledger Mapping。
+  4. Goal 3 Phase 4: Repair Classifier And Bounded Replanning。
+  5. Goal 3 Phase 5: Operator Controls And Resumability。
+- 不要一次性做 Goal 4。
 - 不要把 RAG/citation 或 lightweight ML/NLP fixture evidence 宣称为 publication-grade。
-- 每完成一个实质子阶段，提交前确认 blockers、limitations、followups、kill criteria 都进入 artifact 或 tests。
-- 如果工作量过大，下一轮至少完成 Phase 4 和 Phase 5，并让 Phase 6 的 protocol result 能给出 structured blocker。
+- 每完成一个实质子阶段，提交前确认 execution lineage、runtime contract、failure classification、repair recommendation、blockers、limitations、followups、kill criteria 都进入 artifact 或 tests。
+- 如果工作量过大，下一轮至少完成 Goal 3 Phase 1，并让 unsupported backend / Docker unavailable / missing protocol 输出 structured blocker。
 
 下一轮可直接使用的 /goal prompt
 ==============================
@@ -869,24 +892,25 @@ Reason:
 ```
 接下来请使用 /goal 功能执行 ScholarFlow 的下一阶段目标。
 
-目标：实现 docs/goal.md 中的 Goal 2B - Domain Evidence And Review Package Loop。
+目标：实现 docs/goal.md 中的 Goal 3 - Real Experiment Backend And Repair Productionization。
 
 优先完成：
-1. Goal 2B Phase 4: Literature Strategy Per Domain
-2. Goal 2B Phase 5: Benchmark Resolver Per Domain
-3. Goal 2B Phase 6: Experiment Protocol And Execution Adapter
-4. 如果前 3 项稳定，再推进 Phase 7: Generalized Project Paper Package
-5. 必要时同步 Phase 8/9 的 API、Operator Console、evaluation trace、frontend types、docs/tests
+1. Goal 3 Phase 1: Execution Plan Materialization
+2. Goal 3 Phase 2: Local And Replay Execution Runtime
+3. Goal 3 Phase 3: Evidence Ledger Mapping
+4. 如果前 3 项稳定，再推进 Phase 4: Repair Classifier And Bounded Replanning
+5. 必要时同步 Phase 5 的 Operator Console、API、evaluation trace、frontend types、docs/tests
 
 开始前请先执行并审计：
 - git status --short --branch
 - git log --oneline -n 8
 - 阅读 docs/goal.md
-- 阅读 docs/goal.md 中 “下一轮 Goal 2B 的最小必读文件”
+- 阅读 docs/goal.md 中 Goal 3 的 phases 和测试要求
 
 当前基线：
 - Goal 1 已通过 commit d53e5a6 完成，不要重做。
 - Goal 2A 已通过 commit dda8dc6 完成，不要重做。
+- Goal 2B 已通过 commit 7d48bbf 完成，不要重做。
 - 默认分支是 master。
 
 核心要求：
@@ -897,13 +921,12 @@ Reason:
 - Literature、benchmark、experiment、statistics、negative evidence 和 manuscript claims 必须能通过 artifact lineage 追溯。
 - Tests 必须 deterministic，不能依赖 live network、paid LLM、GPU、Docker daemon、外部 benchmark 在线可用性。
 
-Goal 2B 验收标准：
-- claim-evidence generalized idea 继续兼容 Goal 1 evidence path。
-- RAG/citation domain 有 per-domain literature strategy、benchmark resolver、experiment protocol、execution/import replay evidence，并进入 package/readiness/evaluation trace，或者输出 concrete blockers。
-- Lightweight ML/NLP domain 有 per-domain literature strategy、benchmark resolver、experiment protocol、execution/import replay evidence，并进入 package/readiness/evaluation trace，或者输出 concrete blockers。
-- 至少一个新 domain 生成 review-ready package，或生成完整可审计 blocker package 且没有 fake claims。
-- Unsupported domain 仍通过 API、console、project readiness、evaluation trace、repository persistence 全链路 blocked。
-- Benchmark/literature/execution blockers propagate 到 package/readiness/console/evaluation trace。
+Goal 3 验收标准：
+- Factory/domain protocol outputs materialize into typed replay/local/import/Docker-blocked execution jobs。
+- Unsupported domain、missing protocol、Docker unavailable、budget/approval blocker 都输出 structured blocker，不生成 fake job。
+- Local/replay runtime records command/import spec、environment manifest、runtime contract、expected/actual outputs、stdout/stderr refs where applicable、fingerprint、failure classification、repair recommendation 和 lineage refs。
+- Missing outputs、bad JSON、bad metric schema、runtime failure、benchmark/environment mismatch 不得标记为成功。
+- Execution result maps back into evidence ledger、negative evidence、benchmark card/readiness/package manifest，且保留 claim ceiling。
 - 新增或更新 deterministic regression tests。
 - 如涉及 API/schema/types，更新 backend schema、frontend types/client、docs，并跑 frontend build。
 
@@ -915,7 +938,7 @@ Goal 2B 验收标准：
 完成后：
 - 更新 docs/api-reference.md 和 docs/claim-evidence-vertical-loop.md 中相关说明。
 - 如 AGENTS.md 当前状态/路线图会误导下一轮，也做最小同步。
-- 提交并 push scoped commit。
+- 提交并按需要 push scoped commit。
 ```
 
 最终验收

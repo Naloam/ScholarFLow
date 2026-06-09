@@ -21,6 +21,7 @@ from schemas.autoresearch import (
     AutoResearchResearchBriefRead,
 )
 from services.autoresearch.repository import (
+    literature_scout_cache_key,
     load_literature_scout_cache,
     save_literature_scout_cache,
 )
@@ -153,6 +154,11 @@ def _stable_id(prefix: str, value: str) -> str:
         return f"{prefix}:{cleaned}"
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}:{digest}"
+
+
+def _fingerprint(payload: object) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _terms(*texts: str | None) -> set[str]:
@@ -349,11 +355,14 @@ def _relevance_score(
 def _make_paper(
     *,
     source: str,
+    source_id: str | None = None,
     paper_id: str,
     title: str,
     query: str | None,
     brief: AutoResearchResearchBriefRead | None,
     cache_status: str,
+    cache_key: str | None = None,
+    cache_timestamp: datetime | str | None = None,
     authors: list[str] | None = None,
     year: int | None = None,
     venue: str | None = None,
@@ -370,6 +379,15 @@ def _make_paper(
 ) -> AutoResearchLiteratureScoutPaperRead:
     full_text_excerpt = _excerpt(full_text)
     extraction_level = "full_text" if full_text_excerpt else "abstract" if abstract else "metadata"
+    extraction_status = (
+        "full_text"
+        if full_text_excerpt
+        else "abstract_only"
+        if abstract
+        else "metadata_only"
+        if authors or year or venue or url or doi or arxiv_id
+        else "limited_metadata"
+    )
     text = " ".join(part for part in [title, abstract or "", full_text_excerpt or "", venue or ""] if part)
     shared_terms = sorted(_terms(_brief_text(brief), query or "") & _terms(text))
     methods = _dedupe([*(provided_methods or []), *_extract_methods(text, brief)])
@@ -391,10 +409,33 @@ def _make_paper(
         f"query={query}" if query else None,
         f"shared_terms={', '.join(shared_terms[:6])}" if shared_terms else None,
     ]
+    cleaned_source_id = _norm(source_id) or _norm(arxiv_id) or _norm(doi) or paper_id
+    paper_fingerprint = _fingerprint(
+        {
+            "source": source,
+            "source_id": cleaned_source_id,
+            "title": _norm(title),
+            "authors": _dedupe(authors or []),
+            "year": year,
+            "venue": _norm(venue),
+            "abstract": _norm(abstract),
+            "url": _norm(url),
+            "doi": _norm(doi).lower(),
+            "arxiv_id": _norm(arxiv_id),
+            "methods": methods,
+            "datasets": datasets,
+            "metrics": metrics,
+            "reported_results": reported_results,
+            "known_sota": known_sota,
+            "extraction_level": extraction_level,
+            "full_text_excerpt": full_text_excerpt,
+        }
+    )
     return AutoResearchLiteratureScoutPaperRead(
         paper_id=paper_id,
         title=_norm(title) or "Untitled paper",
         source=source,
+        source_id=cleaned_source_id,
         authors=_dedupe(authors or []),
         year=year,
         venue=_norm(venue) or None,
@@ -417,6 +458,10 @@ def _make_paper(
         shared_terms=shared_terms[:12],
         source_query=query,
         cache_status=cache_status,  # type: ignore[arg-type]
+        cache_key=cache_key,
+        cache_timestamp=cache_timestamp,
+        fingerprint=paper_fingerprint,
+        extraction_status=extraction_status,  # type: ignore[arg-type]
         evidence="; ".join(part for part in evidence_parts if part) + ".",
     )
 
@@ -446,6 +491,8 @@ def parse_arxiv_response(
     query: str | None = None,
     brief: AutoResearchResearchBriefRead | None = None,
     cache_status: str = "cache_hit",
+    cache_key: str | None = None,
+    cache_timestamp: datetime | str | None = None,
 ) -> list[AutoResearchLiteratureScoutPaperRead]:
     try:
         root = ET.fromstring(raw)
@@ -469,11 +516,14 @@ def parse_arxiv_response(
         papers.append(
             _make_paper(
                 source=ARXIV_SOURCE,
+                source_id=arxiv_id or doi or title,
                 paper_id=f"arxiv:{arxiv_id}" if arxiv_id else _stable_id("arxiv", title),
                 title=title,
                 query=query,
                 brief=brief,
                 cache_status=cache_status,
+                cache_key=cache_key,
+                cache_timestamp=cache_timestamp,
                 authors=authors,
                 year=_int_year(published),
                 venue="arXiv",
@@ -499,6 +549,8 @@ def parse_semantic_scholar_response(
     query: str | None = None,
     brief: AutoResearchResearchBriefRead | None = None,
     cache_status: str = "cache_hit",
+    cache_key: str | None = None,
+    cache_timestamp: datetime | str | None = None,
 ) -> list[AutoResearchLiteratureScoutPaperRead]:
     try:
         payload = _json_payload(raw)
@@ -530,11 +582,14 @@ def parse_semantic_scholar_response(
         papers.append(
             _make_paper(
                 source=SEMANTIC_SCHOLAR_SOURCE,
+                source_id=str(raw_id),
                 paper_id=_stable_id("semantic_scholar", str(raw_id)),
                 title=title,
                 query=query,
                 brief=brief,
                 cache_status=cache_status,
+                cache_key=cache_key,
+                cache_timestamp=cache_timestamp,
                 authors=authors,
                 year=_int_year(item.get("year")),
                 venue=str(venue) if venue else None,
@@ -577,6 +632,8 @@ def parse_crossref_response(
     query: str | None = None,
     brief: AutoResearchResearchBriefRead | None = None,
     cache_status: str = "cache_hit",
+    cache_key: str | None = None,
+    cache_timestamp: datetime | str | None = None,
 ) -> list[AutoResearchLiteratureScoutPaperRead]:
     try:
         payload = _json_payload(raw)
@@ -606,11 +663,14 @@ def parse_crossref_response(
         papers.append(
             _make_paper(
                 source=CROSSREF_SOURCE,
+                source_id=doi or title,
                 paper_id=_stable_id("crossref", doi or title),
                 title=title,
                 query=query,
                 brief=brief,
                 cache_status=cache_status,
+                cache_key=cache_key,
+                cache_timestamp=cache_timestamp,
                 authors=authors,
                 year=_crossref_year(item),
                 venue=venue,
@@ -639,11 +699,19 @@ def fixture_literature_papers(
         papers.append(
             _make_paper(
                 source=FIXTURE_SOURCE,
+                source_id=f"fixture:{direction.direction_id}",
                 paper_id=f"fixture_literature_{index}_{_slug(direction.direction_id)}",
                 title=title,
                 query=query,
                 brief=brief,
                 cache_status="fixture",
+                cache_key=_fingerprint(
+                    {
+                        "source": FIXTURE_SOURCE,
+                        "query": query,
+                        "direction_id": direction.direction_id,
+                    }
+                ),
                 authors=["ScholarFlow fixture"],
                 year=2024,
                 venue="Deterministic offline fixture",
@@ -671,6 +739,8 @@ def _parse_response(
     query: str,
     brief: AutoResearchResearchBriefRead,
     cache_status: str,
+    cache_key: str | None,
+    cache_timestamp: datetime | str | None,
 ) -> list[AutoResearchLiteratureScoutPaperRead]:
     if source == ARXIV_SOURCE:
         return parse_arxiv_response(
@@ -678,6 +748,8 @@ def _parse_response(
             query=query,
             brief=brief,
             cache_status=cache_status,
+            cache_key=cache_key,
+            cache_timestamp=cache_timestamp,
         )
     if source == SEMANTIC_SCHOLAR_SOURCE:
         return parse_semantic_scholar_response(
@@ -685,6 +757,8 @@ def _parse_response(
             query=query,
             brief=brief,
             cache_status=cache_status,
+            cache_key=cache_key,
+            cache_timestamp=cache_timestamp,
         )
     if source == CROSSREF_SOURCE:
         return parse_crossref_response(
@@ -692,6 +766,8 @@ def _parse_response(
             query=query,
             brief=brief,
             cache_status=cache_status,
+            cache_key=cache_key,
+            cache_timestamp=cache_timestamp,
         )
     return []
 
@@ -702,6 +778,13 @@ def _raw_from_cache(payload: dict[str, object]) -> object:
     if "response" in payload:
         return payload["response"]
     return payload
+
+
+def _cache_timestamp(payload: dict[str, object] | None) -> datetime | str | None:
+    if payload is None:
+        return None
+    value = payload.get("cache_timestamp") or payload.get("fetched_at")
+    return value if isinstance(value, str) else None
 
 
 def _cache_full_text(payload: dict[str, object] | None) -> object | None:
@@ -747,11 +830,14 @@ def _enrich_with_full_text(
         enriched.append(
             _make_paper(
                 source=paper.source,
+                source_id=paper.source_id,
                 paper_id=paper.paper_id,
                 title=paper.title,
                 query=paper.source_query or query,
                 brief=brief,
                 cache_status=paper.cache_status,
+                cache_key=paper.cache_key,
+                cache_timestamp=paper.cache_timestamp,
                 authors=paper.authors,
                 year=paper.year,
                 venue=paper.venue,
@@ -920,6 +1006,7 @@ def _merge_duplicate_papers(
         update={
             "paper_id": incoming.paper_id if prefer_incoming_identity else existing.paper_id,
             "source": incoming.source if prefer_incoming_identity else existing.source,
+            "source_id": incoming.source_id if prefer_incoming_identity else existing.source_id or incoming.source_id,
             "authors": _dedupe([*existing.authors, *incoming.authors]),
             "venue": existing.venue or incoming.venue,
             "abstract": existing.abstract or incoming.abstract,
@@ -955,6 +1042,28 @@ def _merge_duplicate_papers(
                 else existing.source_query or incoming.source_query
             ),
             "cache_status": incoming.cache_status if prefer_incoming_identity else existing.cache_status,
+            "cache_key": incoming.cache_key if prefer_incoming_identity else existing.cache_key or incoming.cache_key,
+            "cache_timestamp": incoming.cache_timestamp if prefer_incoming_identity else existing.cache_timestamp or incoming.cache_timestamp,
+            "fingerprint": _fingerprint(
+                {
+                    "existing": existing.fingerprint,
+                    "incoming": incoming.fingerprint,
+                    "methods": methods,
+                    "datasets": datasets,
+                    "metrics": metrics,
+                    "reported_results": reported_results,
+                    "extraction_level": extraction_level,
+                }
+            ),
+            "extraction_status": (
+                "full_text"
+                if extraction_level == "full_text"
+                else "abstract_only"
+                if extraction_level == "abstract"
+                else existing.extraction_status
+                if existing.extraction_status != "limited_metadata"
+                else incoming.extraction_status
+            ),
             "evidence": f"{existing.evidence} Duplicate metadata also found via {incoming.source}.",
         }
     )
@@ -1025,6 +1134,8 @@ def search_literature_connectors(
         status = AutoResearchLiteratureScoutSourceStatusRead(source=source)
         if source not in SUPPORTED_CONNECTOR_SOURCES:
             status.error_count = 1
+            status.availability_status = "unsupported"
+            status.unavailable_reason = f"Unsupported literature connector source: {source}"
             status.errors.append(f"Unsupported literature connector source: {source}")
             statuses.append(status)
             continue
@@ -1041,6 +1152,12 @@ def search_literature_connectors(
             raw: object | None = None
             cached_payload: dict[str, object] | None = None
             cache_status = "cache_hit"
+            cache_key = literature_scout_cache_key(
+                source=source,
+                query=query,
+                limit=limit_per_source,
+            )
+            cache_timestamp: datetime | str | None = None
             if cache_enabled:
                 cached = load_literature_scout_cache(
                     brief.project_id,
@@ -1052,9 +1169,13 @@ def search_literature_connectors(
                     status.cache_hit_count += 1
                     cached_payload = cached
                     raw = _raw_from_cache(cached)
+                    cache_timestamp = _cache_timestamp(cached)
+                else:
+                    status.cache_miss_count += 1
             if raw is None and network_enabled:
                 try:
                     status.network_request_count += 1
+                    cache_timestamp = _utcnow().isoformat()
                     raw = _fetch_connector_response(source, query, limit=limit_per_source)
                     cache_status = "network"
                     if cache_enabled:
@@ -1064,7 +1185,7 @@ def search_literature_connectors(
                             query=query,
                             limit=limit_per_source,
                             payload={
-                                "fetched_at": _utcnow().isoformat(),
+                                "fetched_at": str(cache_timestamp),
                                 "raw": raw,
                             },
                         )
@@ -1080,6 +1201,8 @@ def search_literature_connectors(
                 query=query,
                 brief=brief,
                 cache_status=cache_status,
+                cache_key=cache_key,
+                cache_timestamp=cache_timestamp,
             )
             parsed = _enrich_with_full_text(
                 parsed,
@@ -1089,6 +1212,19 @@ def search_literature_connectors(
             )
             status.paper_count += len(parsed)
             papers.extend(parsed)
+        if status.error_count:
+            status.availability_status = "error"
+            status.unavailable_reason = "; ".join(status.errors[:3])
+        elif status.paper_count > 0:
+            status.availability_status = "available"
+        elif status.cache_miss_count and not network_enabled:
+            status.availability_status = "cache_miss"
+            status.unavailable_reason = (
+                f"No cached {source} connector responses were available for this deterministic scout."
+            )
+        else:
+            status.availability_status = "unavailable"
+            status.unavailable_reason = f"No {source} literature records were available."
         statuses.append(status)
 
     return deduplicate_literature_papers(papers), statuses

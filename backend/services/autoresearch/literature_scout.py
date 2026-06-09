@@ -157,14 +157,22 @@ def _offline_papers(brief: AutoResearchResearchBriefRead) -> list[AutoResearchLi
             ]
         )
         shared = sorted(idea_terms & set(_terms(text)))
+        paper_payload = {
+            "source": "offline_project_context",
+            "source_id": direction.direction_id,
+            "title": f"Prior {direction.task_family.replace('_', ' ')} work near {direction.candidate_dataset}",
+            "direction_id": direction.direction_id,
+            "candidate_dataset": direction.candidate_dataset,
+            "metrics": direction.candidate_metrics,
+            "baselines": direction.required_baselines,
+            "method": direction.method_sketch,
+        }
         papers.append(
             AutoResearchLiteratureScoutPaperRead(
                 paper_id=f"offline_related_{index}_{_slug(direction.direction_id)}",
-                title=(
-                    f"Prior {direction.task_family.replace('_', ' ')} work near "
-                    f"{direction.candidate_dataset}"
-                ),
+                title=paper_payload["title"],
                 source="offline_project_context",
+                source_id=direction.direction_id,
                 authors=["ScholarFlow offline scout"],
                 year=2025,
                 venue="Project context",
@@ -191,6 +199,15 @@ def _offline_papers(brief: AutoResearchResearchBriefRead) -> list[AutoResearchLi
                 overlap_score=len(shared),
                 shared_terms=shared[:10],
                 cache_status="offline",
+                cache_key=_fingerprint(
+                    {
+                        "source": "offline_project_context",
+                        "brief_id": brief.brief_id,
+                        "direction_id": direction.direction_id,
+                    }
+                ),
+                fingerprint=_fingerprint(paper_payload),
+                extraction_status="abstract_only",
                 evidence=(
                     "Offline scout synthesized this risk from the brief's benchmark, baseline, "
                     "metric, and method obligations; live literature is still required before publish claims."

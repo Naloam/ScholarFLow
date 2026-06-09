@@ -1235,6 +1235,32 @@ def _blocked_domain_trace(
         literature_source_counts=(
             dict(literature_scout.source_counts) if literature_scout is not None else {}
         ),
+        literature_source_sufficiency_ready=(
+            bool(scouted.domain_literature_result.source_sufficiency_ready)
+            if scouted.domain_literature_result is not None
+            else False
+        ),
+        literature_connector_availability=(
+            [
+                {
+                    "source": status.source,
+                    "availability_status": status.availability_status,
+                    "cache_hit_count": status.cache_hit_count,
+                    "cache_miss_count": status.cache_miss_count,
+                    "network_request_count": status.network_request_count,
+                    "paper_count": status.paper_count,
+                    "unavailable_reason": status.unavailable_reason,
+                }
+                for status in literature_scout.source_statuses
+            ]
+            if literature_scout is not None
+            else []
+        ),
+        literature_extraction_limitations=(
+            list(scouted.domain_literature_result.extraction_limitations)
+            if scouted.domain_literature_result is not None
+            else []
+        ),
         literature_network_enabled=False,
         evidence_complete=False,
         paper_review_package_ready=False,
@@ -2099,6 +2125,32 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         real_literature_count=len(real_literature),
         literature_source_counts=(
             dict(literature_scout.source_counts) if literature_scout is not None else {}
+        ),
+        literature_source_sufficiency_ready=(
+            bool(scouted.domain_literature_result.source_sufficiency_ready)
+            if scouted.domain_literature_result is not None
+            else False
+        ),
+        literature_connector_availability=(
+            [
+                {
+                    "source": status.source,
+                    "availability_status": status.availability_status,
+                    "cache_hit_count": status.cache_hit_count,
+                    "cache_miss_count": status.cache_miss_count,
+                    "network_request_count": status.network_request_count,
+                    "paper_count": status.paper_count,
+                    "unavailable_reason": status.unavailable_reason,
+                }
+                for status in literature_scout.source_statuses
+            ]
+            if literature_scout is not None
+            else []
+        ),
+        literature_extraction_limitations=(
+            list(scouted.domain_literature_result.extraction_limitations)
+            if scouted.domain_literature_result is not None
+            else []
         ),
         literature_network_enabled=(
             literature_scout.network_enabled if literature_scout is not None else False

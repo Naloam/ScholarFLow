@@ -775,6 +775,7 @@ def build_research_brief(
             allow_experiments=False,
             target_tier=payload.target_tier,
             resource_budget=payload.resource_budget,
+            benchmark_source=payload.benchmark,
             brief_fingerprint=_fingerprint(payload_for_fingerprint),
         )
         return _attach_domain_evidence_context(brief)
@@ -888,6 +889,11 @@ def build_research_brief(
         "allow_experiments": payload.allow_experiments,
         "target_tier": payload.target_tier,
         "resource_budget": payload.resource_budget.model_dump(mode="json"),
+        "benchmark_source": (
+            payload.benchmark.model_dump(mode="json")
+            if payload.benchmark is not None
+            else None
+        ),
         "directions": [item.model_dump(mode="json") for item in directions],
         "hypothesis_bank": [item.model_dump(mode="json") for item in hypothesis_bank],
         "direction_selection": direction_selection.model_dump(mode="json"),
@@ -951,6 +957,7 @@ def build_research_brief(
         allow_experiments=payload.allow_experiments,
         target_tier=payload.target_tier,
         resource_budget=payload.resource_budget,
+        benchmark_source=payload.benchmark,
         brief_fingerprint=_fingerprint(payload_for_fingerprint),
     )
     return _attach_domain_evidence_context(brief)
@@ -994,7 +1001,7 @@ def run_request_from_selected_direction(
         max_rounds=resource_budget.max_rounds,
         candidate_execution_limit=resource_budget.candidate_execution_limit,
         queue_priority=payload.queue_priority if payload is not None else "normal",
-        benchmark=payload.benchmark if payload is not None else None,
+        benchmark=payload.benchmark if payload is not None else brief.benchmark_source,
         execution_backend=payload.execution_backend if payload is not None else None,
         experiment_bridge=payload.experiment_bridge if payload is not None else None,
         auto_search_literature=brief.allow_web,

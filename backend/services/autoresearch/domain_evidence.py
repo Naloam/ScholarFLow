@@ -258,6 +258,15 @@ def build_domain_literature_result(
         for source in strategy.required_source_classes
         if scout.source_counts.get(source, 0) > 0
     ]
+    missing_required_sources = [
+        source
+        for source in strategy.required_source_classes
+        if source not in required_present
+    ]
+    source_sufficiency_ready = (
+        len(real_sources) >= strategy.minimum_real_source_count
+        and not missing_required_sources
+    )
     fixture_only = bool(papers) and not real_papers
     coverage = [
         _coverage_for_expectation(expectation, real_papers)
@@ -269,6 +278,16 @@ def build_domain_literature_result(
             *[item.limitation for item in coverage if item.limitation],
             "Literature scout metadata is abstract-level; full-paper verification is required before final-publish positioning.",
             strategy.fixture_only_limitation_policy if fixture_only else None,
+        ]
+    )
+    extraction_limitations = _dedupe(
+        [
+            (
+                f"Paper `{paper.paper_id}` has extraction_status={paper.extraction_status}; "
+                "do not use it alone for novelty or final-publish positioning."
+            )
+            for paper in papers
+            if paper.extraction_status in {"limited_metadata", "metadata_only", "abstract_only"}
         ]
     )
     blockers = _dedupe(
@@ -286,12 +305,13 @@ def build_domain_literature_result(
             ),
             (
                 "Missing required literature source classes: "
-                + ", ".join(
-                    source
-                    for source in strategy.required_source_classes
-                    if source not in required_present
-                )
-                if len(required_present) < len(strategy.required_source_classes)
+                + ", ".join(missing_required_sources)
+                if missing_required_sources
+                else None
+            ),
+            (
+                "Literature source sufficiency policy is not satisfied for final-publish novelty claims."
+                if not source_sufficiency_ready
                 else None
             ),
             (
@@ -332,6 +352,19 @@ def build_domain_literature_result(
         "real_source_types": real_sources,
         "required_source_classes": list(strategy.required_source_classes),
         "required_source_classes_present": required_present,
+        "source_sufficiency_policy": {
+            "minimum_real_source_count": strategy.minimum_real_source_count,
+            "real_source_count": len(real_sources),
+            "required_source_classes": list(strategy.required_source_classes),
+            "required_source_classes_present": required_present,
+            "missing_required_source_classes": missing_required_sources,
+            "ready": source_sufficiency_ready,
+            "connector_statuses": [
+                status.model_dump(mode="json")
+                for status in scout.source_statuses
+            ],
+        },
+        "source_sufficiency_ready": source_sufficiency_ready,
         "fixture_only": fixture_only,
         "related_system_coverage": [item.model_dump(mode="json") for item in coverage],
         "related_system_coverage_complete": coverage_complete,
@@ -341,6 +374,7 @@ def build_domain_literature_result(
         "known_sota": list(scout.known_sota),
         "novelty_risks": novelty_risks,
         "limitations": limitations,
+        "extraction_limitations": extraction_limitations,
         "final_publish_blockers": final_publish_blockers,
         "blockers": blockers,
         "required_followups": _dedupe(
@@ -351,6 +385,13 @@ def build_domain_literature_result(
                     for item in coverage
                     if not item.covered
                 ],
+                *(
+                    [
+                        "Verify abstract-level or metadata-only literature against full papers before novelty claims."
+                    ]
+                    if extraction_limitations
+                    else []
+                ),
             ]
         ),
         "kill_criteria": list(strategy.kill_criteria),
@@ -382,7 +423,14 @@ def _resolved_benchmark_for_template(
     template: AutoResearchDomainTemplateRead,
     *,
     topic: str,
+    benchmark_source: BenchmarkSource | None = None,
 ) -> ResolvedBenchmark:
+    if benchmark_source is not None:
+        return resolve_benchmark(
+            topic=topic,
+            task_family_hint=template.task_family,
+            benchmark_source=benchmark_source,
+        )
     if template.domain_id == "claim_evidence_retrieval" and _SCIFACT_VERIFICATION_SNAPSHOT_PATH.is_file():
         return resolve_benchmark(
             topic=topic,
@@ -472,7 +520,11 @@ def resolve_domain_benchmark(
             resolver_fingerprint=_fingerprint(payload),
             **payload,
         )
-    benchmark = _resolved_benchmark_for_template(template, topic=brief.polished_idea)
+    benchmark = _resolved_benchmark_for_template(
+        template,
+        topic=brief.polished_idea,
+        benchmark_source=brief.benchmark_source,
+    )
     eligibility = benchmark_source_publication_eligibility(benchmark.source, benchmark.payload)
     schema = _schema_coverage(benchmark)
     observations = _observation_coverage(benchmark)
@@ -485,11 +537,12 @@ def resolve_domain_benchmark(
     domain_limitations: list[str] = []
     domain_blockers: list[str] = []
     domain_followups: list[str] = []
+    imported_source_used = brief.benchmark_source is not None
     if template.domain_id == "claim_evidence_retrieval":
         domain_limitations.append(
             "Goal 1-compatible SciFact frozen snapshots support a scoped review/final-candidate audit, but same-release source independence remains a project-level final-publish blocker."
         )
-    else:
+    elif not imported_source_used:
         domain_blockers.append(
             "Repository-local fixture benchmark cannot be publication-grade or final-publish-candidate evidence."
         )
@@ -500,6 +553,18 @@ def resolve_domain_benchmark(
             "Import or freeze a real benchmark with source locator, dataset id, revision, license, fingerprint, adequate scale, and task-aware observations."
         )
         final_candidate = False
+    elif not bool(eligibility.get("publication_grade")):
+        domain_blockers.append(
+            "Imported benchmark provenance is incomplete or below publication-grade eligibility."
+        )
+        domain_followups.append(
+            "Repair imported benchmark provenance, license, fingerprint, source locator, scale, or schema before final-publish claims."
+        )
+        final_candidate = False
+    else:
+        domain_limitations.append(
+            "Imported benchmark provenance can support domain readiness, but statistics, source independence, execution validation, and negative evidence still gate final publish."
+        )
     blockers = _dedupe([*eligibility.get("blockers", []), *domain_blockers])
     status: AutoResearchDomainEvidenceStatus = "ready" if not blockers else "limited"
     payload = {
@@ -526,24 +591,36 @@ def resolve_domain_benchmark(
         "query_document_evidence_schema_coverage": schema,
         "source_observation_coverage": observations,
         "benchmark_provenance_complete": bool(eligibility.get("provenance_complete")),
-        "publication_grade_eligible": bool(eligibility.get("publication_grade")) and template.domain_id == "claim_evidence_retrieval",
-        "final_candidate_eligible": final_candidate and template.domain_id == "claim_evidence_retrieval",
+        "publication_grade_eligible": bool(eligibility.get("publication_grade")) and (
+            template.domain_id == "claim_evidence_retrieval" or imported_source_used
+        ),
+        "final_candidate_eligible": final_candidate and (
+            template.domain_id == "claim_evidence_retrieval" or imported_source_used
+        ),
         "source_independence_audit": {
-            "ready": False if template.domain_id == "claim_evidence_retrieval" else None,
+            "ready": False if template.domain_id == "claim_evidence_retrieval" or imported_source_used else None,
             "policy": (
                 "Claim-evidence frozen verification and retrieval views share the same parent SciFact release; independent source replication remains required."
                 if template.domain_id == "claim_evidence_retrieval"
+                else "Imported benchmark provenance still requires independent source replication before final publish."
+                if imported_source_used
                 else "Fixture benchmark has no source-independence evidence."
             ),
             "blockers": (
                 ["Independent source replication is required before broad final-publish claims."]
                 if template.domain_id == "claim_evidence_retrieval"
+                else ["Independent source replication is required before final-publish claims."]
+                if imported_source_used
                 else ["Fixture benchmark has no independent source provenance."]
             ),
         },
         "benchmark_payload_ref": (
             str(_SCIFACT_VERIFICATION_SNAPSHOT_PATH)
             if template.domain_id == "claim_evidence_retrieval"
+            else brief.benchmark_source.file_path
+            if imported_source_used and brief.benchmark_source is not None and brief.benchmark_source.file_path
+            else brief.benchmark_source.url
+            if imported_source_used and brief.benchmark_source is not None and brief.benchmark_source.url
             else f"builtin:{benchmark.benchmark_name}"
         ),
         "blockers": blockers,

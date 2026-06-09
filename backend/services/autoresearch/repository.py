@@ -157,6 +157,10 @@ def _literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
+    return _literature_scout_cache_key(source=source, query=query, limit=limit)
+
+
 def _candidate_path(project_id: str, run_id: str, candidate_id: str) -> Path:
     return _run_path(project_id, run_id) / CANDIDATES_DIRNAME / candidate_id
 
@@ -235,10 +239,12 @@ def save_literature_scout_cache(
     _write_json(
         path,
         {
+            **payload,
             "source": source,
             "query": query,
             "limit": limit,
-            **payload,
+            "cache_key": literature_scout_cache_key(source=source, query=query, limit=limit),
+            "cache_timestamp": str(payload.get("cache_timestamp") or payload.get("fetched_at") or _utcnow().isoformat()),
         },
     )
     return str(path)

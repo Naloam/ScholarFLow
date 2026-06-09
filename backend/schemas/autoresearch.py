@@ -731,6 +731,8 @@ class AutoResearchDomainLiteratureResultRead(BaseModel):
     real_source_types: list[str] = Field(default_factory=list)
     required_source_classes: list[str] = Field(default_factory=list)
     required_source_classes_present: list[str] = Field(default_factory=list)
+    source_sufficiency_policy: dict[str, Any] = Field(default_factory=dict)
+    source_sufficiency_ready: bool = False
     fixture_only: bool = False
     related_system_coverage: list[AutoResearchDomainRelatedSystemCoverageRead] = Field(default_factory=list)
     related_system_coverage_complete: bool = False
@@ -740,6 +742,7 @@ class AutoResearchDomainLiteratureResultRead(BaseModel):
     known_sota: list[str] = Field(default_factory=list)
     novelty_risks: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    extraction_limitations: list[str] = Field(default_factory=list)
     final_publish_blockers: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     required_followups: list[str] = Field(default_factory=list)
@@ -875,6 +878,7 @@ class AutoResearchLiteratureScoutPaperRead(BaseModel):
     paper_id: str
     title: str
     source: str = "offline_project_context"
+    source_id: str | None = None
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
     venue: str | None = None
@@ -897,6 +901,10 @@ class AutoResearchLiteratureScoutPaperRead(BaseModel):
     shared_terms: list[str] = Field(default_factory=list)
     source_query: str | None = None
     cache_status: Literal["offline", "fixture", "cache_hit", "network"] = "offline"
+    cache_key: str | None = None
+    cache_timestamp: datetime | None = None
+    fingerprint: str | None = None
+    extraction_status: Literal["limited_metadata", "metadata_only", "abstract_only", "full_text"] = "metadata_only"
     evidence: str
 
 
@@ -904,9 +912,12 @@ class AutoResearchLiteratureScoutSourceStatusRead(BaseModel):
     source: str
     query_count: int = 0
     cache_hit_count: int = 0
+    cache_miss_count: int = 0
     network_request_count: int = 0
     paper_count: int = 0
     error_count: int = 0
+    availability_status: Literal["available", "cache_miss", "unavailable", "unsupported", "error"] = "available"
+    unavailable_reason: str | None = None
     errors: list[str] = Field(default_factory=list)
 
 
@@ -1009,6 +1020,7 @@ class AutoResearchResearchBriefRead(BaseModel):
     allow_experiments: bool = True
     target_tier: AutoResearchPaperTier = "workshop_candidate"
     resource_budget: AutoResearchIdeaResourceBudget = Field(default_factory=AutoResearchIdeaResourceBudget)
+    benchmark_source: BenchmarkSource | None = None
     brief_fingerprint: str | None = None
     brief_path: str | None = None
 
@@ -3247,6 +3259,9 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     literature_cache_hit_count: int = 0
     real_literature_count: int = 0
     literature_source_counts: dict[str, int] = Field(default_factory=dict)
+    literature_source_sufficiency_ready: bool = False
+    literature_connector_availability: list[dict[str, Any]] = Field(default_factory=list)
+    literature_extraction_limitations: list[str] = Field(default_factory=list)
     literature_network_enabled: bool = False
     evidence_complete: bool = False
     paper_review_package_ready: bool = False

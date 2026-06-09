@@ -4,8 +4,8 @@ ScholarFlow 目标路线图：AI 自动科研 + 写论文系统
 文档状态
 ========
 
-- 更新时间：2026-06-08。
-- 默认下一阶段：Goal 4 - Real Literature Scout And Benchmark Provenance Expansion。
+- 更新时间：2026-06-09。
+- 默认下一阶段：Goal 5 - Project-Level Manuscript Compiler V2。
 - 本文件是下一轮 `/goal` 的主要执行依据。
 - `AGENTS.md` 只保留高层协作约束；具体阶段、验收标准、下一轮 prompt 以本文件为准。
 
@@ -47,10 +47,10 @@ user idea
 
 简短结论：
 
-- 已经完成从固定 claim-evidence case 到受控 domain idea-to-review-package loop 的工程骨架。
+- 已经完成从固定 claim-evidence case 到受控 domain idea-to-review-package loop 的工程骨架，并完成第一版真实缓存文献/benchmark provenance 扩展。
 - 现在处在“能生成 review-ready package 或可审计 blocker”的阶段。
 - 离“真实自动科研 + 写论文 + submission package”还差 3 个大能力层：
-  1. real literature/benchmark provenance expansion；
+  1. project-level manuscript compiler V2；
   2. autonomous revision and submission packaging；
   3. real end-to-end evaluation and operator productionization。
 - 离“可靠 final-publish-ready autonomous scientist”还远，因为 final publish 需要真实、多源、可复现、统计充分、负证据完整的 evidence chain。
@@ -60,11 +60,11 @@ user idea
 - Idea routing / controlled domains：第一版完成。
 - Brief / hypothesis / selected direction：第一版完成。
 - Per-domain evidence package loop：第一版完成。
-- Literature/gap validation：已有策略、fixture blocker、readiness propagation；还缺 P15 级真实 cached connector coverage、dedupe、metadata extraction、known methods/datasets/metrics/SOTA extraction。
-- Benchmark resolver：已有 structured resolver；还缺更多真实/imported benchmark provenance、source independence、scale/statistics support。
+- Literature/gap validation：已有策略、fixture blocker、readiness propagation、cached arXiv/Semantic Scholar/Crossref connector contract、dedupe、structured metadata、known methods/datasets/metrics/SOTA extraction、source sufficiency policy 和 extraction limitations；后续仍需更广的真实全文/现场 connector coverage。
+- Benchmark resolver：已有 structured resolver 和 imported benchmark provenance path；source independence、scale/statistics support 仍继续约束 final publish。
 - Experiment protocol：已有 per-domain protocol、typed execution job materialization、deterministic replay/local/import runtime、Docker/bridge structured blockers。
 - Execution/repair：已有 typed runtime validation、environment manifest、failure classifier、repair recommendation 和 bounded blocker 分类；后续真实外部执行能力仍需由具体 bridge/Docker 环境接入。
-- Evidence ledger/readiness：已有 typed execution result 到 run/project/package-level evidence、negative evidence、readiness/package manifest 的映射；后续要扩展真实 literature/benchmark provenance。
+- Evidence ledger/readiness：已有 typed execution result 到 run/project/package-level evidence、negative evidence、readiness/package manifest 的映射，并已接入 cached literature / imported benchmark provenance；后续要在 manuscript compiler/package 中消费这些 evidence refs。
 - Paper/reviewer/revision：已有 project orchestrator 和 reviewer/publish gate 基础；还缺 submission-ready compiler V2、autonomous revision loop、finding-by-finding reviewer response。
 - Submission/final publish：还没有完整 final submission archive；`final_publish_ready=true` 只能在后续真实 evidence 满足 publish policy 后出现。
 
@@ -108,12 +108,21 @@ user idea
    - Project `experiment_repair_index.json` 现在可记录 typed execution capsules、typed execution run ids、output validation、manifest fragment、failure/repair state，并保留 claim ceiling。
    - API、frontend types/client、deterministic evaluation traces、docs 和 regression tests 已同步；fixture/local smoke evidence 仍不会升级 final publish。
 
+6. Goal 4: Real Literature Scout And Benchmark Provenance Expansion
+   - 完成状态：已完成；提交哈希以 `git log` 为准。
+   - 已实现 cached arXiv / Semantic Scholar / Crossref connector contract；tests 使用 repository-local cache/fixtures，不依赖 live network。
+   - Paper metadata 现在记录 source id、cache key、cache timestamp、fingerprint、extraction status，并保留 source/cache availability status。
+   - Literature scout 保留 known methods/datasets/metrics/reported results/SOTA hints、source sufficiency policy、related-system coverage 和 extraction limitations。
+   - Benchmark resolver 支持 brief-provided imported benchmark provenance，能提升 domain readiness，但仍保留 statistics、source independence、execution validation、negative evidence 和 publish-gate blockers。
+
 当前不要重做
 ============
 
 - 不要重做 Goal 1，除非新改动破坏其 artifact 或测试。
 - 不要重做 Goal 2A，除非 router/template/unsupported-domain blocker 回归。
 - 不要重做 Goal 2B，除非 evidence chain、package readiness、claim ceiling 或 API/schema/docs 出现漂移。
+- 不要重做 Goal 3，除非 typed execution runtime、validation、environment manifest、evidence mapping 或 repair classification 回归。
+- 不要重做 Goal 4，除非 cached connector provenance、source sufficiency、extraction limitations、benchmark provenance 或 evaluation trace 回归。
 - 不要为了 demo 降低 publish gates、claim-evidence ledger、artifact lineage、repair safety、negative evidence、readiness blockers。
 - 不要把 fixture/toy/local smoke evidence 宣称为 publication-grade。
 - 不要把 unsupported domain 降级成无关 toy experiment。
@@ -546,7 +555,7 @@ Goal 3 只有在以下条件都满足时才能标记完成：
 Goal 4: Real Literature Scout And Benchmark Provenance Expansion
 ================================================================
 
-Goal 4 是下一阶段默认目标。Goal 3 已有 stable deterministic replay/local/import path；除非 Goal 3 回归，下一轮不要重复实现 execution backend。
+Goal 4 已完成第一版。Goal 3 已有 stable deterministic replay/local/import path；除非 Goal 3/Goal 4 回归，下一轮不要重复实现 execution backend 或 cached connector provenance。
 
 目标
 ----
@@ -638,6 +647,14 @@ Goal 4 完成标准
 - All connectors are deterministic under tests。
 - Readiness/publish gates receive source sufficiency, related-system coverage, extraction limitations, and benchmark provenance blockers。
 - No novelty/final-publish claim is supported by fixture-only literature。
+
+Goal 4 当前完成状态
+------------------
+
+- Cached arXiv / Semantic Scholar / Crossref connectors share a deterministic cache contract and cache-miss availability status。
+- Paper records carry source id、cache key/timestamp、fingerprint、extraction status、structured extraction hints。
+- Domain literature results expose source sufficiency policy, related-system coverage, extraction limitations, blockers, follow-ups, and kill criteria。
+- Imported benchmark provenance can make a supported domain resolver ready only when provenance passes base eligibility; final publish remains blocked by source independence/statistics/execution/negative-evidence gates。
 
 Goal 5: Project-Level Manuscript Compiler V2
 ============================================
@@ -961,14 +978,14 @@ AGENTS.md 和 skills 决策
 下一轮执行建议
 ==============
 
-- 默认执行 Goal 4。
-- 不要一次性做 Goal 5-9。
-- Goal 4 优先顺序：
-  1. Phase 1: Cached Connector Contract。
-  2. Phase 2: Metadata And Evidence Extraction。
-  3. Phase 3: Benchmark Provenance Expansion。
-- 如果 Goal 3 execution backend 出现回归，先修复 typed runtime / validation / evidence mapping，再继续 Goal 4。
-- 每完成一个实质子阶段，确认 source provenance、dedupe、metadata extraction、benchmark eligibility、blockers、limitations、followups、kill criteria 进入 artifact 或 tests。
+- 默认执行 Goal 5。
+- 不要一次性做 Goal 6-9。
+- Goal 5 优先顺序：
+  1. Phase 1: Manuscript Context Assembly。
+  2. Phase 2: Evidence-Constrained Compiler。
+  3. Phase 3: Source Package And Compile Manifest。
+- 如果 Goal 3/Goal 4 出现回归，先修复 typed runtime / validation / evidence mapping 或 cached connector / benchmark provenance，再继续 Goal 5。
+- 每完成一个实质子阶段，确认 manuscript context、claim evidence index、unsupported-claim downgrade、negative evidence、compile blockers、source fingerprints 和 package readiness 进入 artifact 或 tests。
 
 下一轮可直接使用的 /goal prompt
 ==============================
@@ -978,26 +995,27 @@ AGENTS.md 和 skills 决策
 ```text
 接下来请使用 /goal 功能执行 ScholarFlow 的下一阶段目标。
 
-目标：实现 docs/goal.md 中的 Goal 4 - Real Literature Scout And Benchmark Provenance Expansion。
+目标：实现 docs/goal.md 中的 Goal 5 - Project-Level Manuscript Compiler V2。
 
 优先完成：
-1. Goal 4 Phase 1: Cached Connector Contract
-2. Goal 4 Phase 2: Metadata And Evidence Extraction
-3. Goal 4 Phase 3: Benchmark Provenance Expansion
+1. Goal 5 Phase 1: Manuscript Context Assembly
+2. Goal 5 Phase 2: Evidence-Constrained Compiler
+3. Goal 5 Phase 3: Source Package And Compile Manifest
 4. 必要时同步 API/schema/frontend types、evaluation trace、docs/tests
 
 开始前请先执行并审计：
 - git status --short --branch
 - git log --oneline -n 8
 - 阅读 docs/goal.md
-- 阅读 docs/goal.md 中 Goal 4 的 phases 和测试要求
-- 阅读 Goal 4 涉及的 literature scout / connectors / benchmark resolver / readiness 关键文件
+- 阅读 docs/goal.md 中 Goal 5 的 phases 和测试要求
+- 阅读 Goal 5 涉及的 project paper compiler / package orchestrator / claim-evidence index / readiness 关键文件
 
 当前基线：
 - Goal 1 已通过 commit d53e5a6 完成，不要重做。
 - Goal 2A 已通过 commit dda8dc6 完成，不要重做。
 - Goal 2B 已通过 commit 7d48bbf 完成，不要重做。
 - Goal 3 已完成 typed experiment execution backend；除非测试回归，不要重做。
+- Goal 4 已完成 cached literature scout and benchmark provenance expansion；除非测试回归，不要重做。
 - 默认分支是 master。
 
 核心要求：
@@ -1008,12 +1026,13 @@ AGENTS.md 和 skills 决策
 - Literature、benchmark、experiment、statistics、negative evidence 和 manuscript claims 必须能通过 artifact lineage 追溯。
 - Tests 必须 deterministic，不能依赖 live network、paid LLM、GPU、Docker daemon、外部 benchmark 在线可用性。
 
-Goal 4 验收标准：
-- arXiv、Semantic Scholar、Crossref connectors 通过统一 cached connector contract 工作，测试只使用 repository-local cache/fixtures。
-- Metadata 包含 source/source id/title/authors/venue/year/abstract/url/doi/arxiv id/cache key/cache timestamp/fingerprint/extraction status。
-- Duplicate paper 跨 source 可按 DOI/arXiv/title fingerprint 去重。
-- Extract known methods/datasets/metrics/reported results/SOTA hints，并保留 uncertainty/limitations。
-- Benchmark resolver 扩展 source class、locator、dataset id、revision、license、fingerprint、sample/split counts、schema coverage、publication-grade eligibility、source-independence blockers。
+Goal 5 验收标准：
+- 至少一个 controlled-domain idea 能生成 project-level manuscript package。
+- Manuscript context versioned/fingerprinted，并包含 brief、literature、hypotheses、selected direction、execution evidence、claim evidence、negative evidence、review/revision state、domain readiness 和 claim ceiling。
+- Every core claim has evidence refs；unsupported claims are removed, downgraded, or blocked。
+- Negative evidence and limitations remain visible。
+- Source package 包含 manuscript source、references、figures/tables metadata、artifact index、compile manifest、claim-evidence index、source fingerprints。
+- 如果 compiler 不可用，仍输出完整 source package 和 explicit compiler blocker。
 - 新增或更新 deterministic regression tests。
 - 如涉及 API/schema/types，更新 backend schema、frontend types/client、docs，并跑 frontend build。
 

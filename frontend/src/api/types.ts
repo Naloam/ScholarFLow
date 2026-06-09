@@ -351,6 +351,31 @@ export type AutoResearchBenchmarkKind =
   | "beir_json"
   | "scifact_json";
 
+export type AutoResearchBenchmarkSource = {
+  kind?: AutoResearchBenchmarkKind;
+  name?: string | null;
+  url?: string | null;
+  dataset_id?: string | null;
+  revision?: string | null;
+  license?: string | null;
+  file_path?: string | null;
+  subset?: string | null;
+  task_family_hint?: AutoResearchTaskFamily | null;
+  text_field?: string | null;
+  label_field?: string | null;
+  feature_fields?: string[];
+  split_field?: string | null;
+  train_split_values?: string[];
+  test_split_values?: string[];
+  test_ratio?: number;
+  limit_rows?: number | null;
+  query_field?: string | null;
+  candidates_field?: string | null;
+  candidate_text_field?: string | null;
+  candidate_id_field?: string | null;
+  relevant_ids_field?: string | null;
+};
+
 export type AutoResearchAcceptanceStatistic =
   | "mean"
   | "std"
@@ -411,7 +436,7 @@ export type AutoResearchRunRequest = {
   max_rounds?: number;
   candidate_execution_limit?: number | null;
   queue_priority?: "low" | "normal" | "high";
-  benchmark?: Record<string, unknown> | null;
+  benchmark?: AutoResearchBenchmarkSource | null;
   execution_backend?: Record<string, unknown> | null;
   experiment_bridge?: AutoResearchExperimentBridgeConfig | null;
   auto_search_literature?: boolean;
@@ -2720,7 +2745,7 @@ export type AutoResearchIdeaRequest = {
   allow_web?: boolean;
   allow_experiments?: boolean;
   task_family_hint?: AutoResearchTaskFamily | null;
-  benchmark?: Record<string, unknown> | null;
+  benchmark?: AutoResearchBenchmarkSource | null;
   execution_backend?: Record<string, unknown> | null;
   experiment_bridge?: AutoResearchExperimentBridgeConfig | null;
   queue_priority?: "low" | "normal" | "high";
@@ -2825,6 +2850,8 @@ export type AutoResearchDomainLiteratureResult = {
   real_source_types: string[];
   required_source_classes: string[];
   required_source_classes_present: string[];
+  source_sufficiency_policy: Record<string, unknown>;
+  source_sufficiency_ready: boolean;
   fixture_only: boolean;
   related_system_coverage: AutoResearchDomainRelatedSystemCoverage[];
   related_system_coverage_complete: boolean;
@@ -2834,6 +2861,7 @@ export type AutoResearchDomainLiteratureResult = {
   known_sota: string[];
   novelty_risks: string[];
   limitations: string[];
+  extraction_limitations: string[];
   final_publish_blockers: string[];
   blockers: string[];
   required_followups: string[];
@@ -2969,6 +2997,7 @@ export type AutoResearchLiteratureScoutPaper = {
   paper_id: string;
   title: string;
   source: string;
+  source_id?: string | null;
   authors: string[];
   year?: number | null;
   venue?: string | null;
@@ -2991,6 +3020,10 @@ export type AutoResearchLiteratureScoutPaper = {
   shared_terms: string[];
   source_query?: string | null;
   cache_status: "offline" | "fixture" | "cache_hit" | "network";
+  cache_key?: string | null;
+  cache_timestamp?: string | null;
+  fingerprint?: string | null;
+  extraction_status: "limited_metadata" | "metadata_only" | "abstract_only" | "full_text";
   evidence: string;
 };
 
@@ -2998,9 +3031,12 @@ export type AutoResearchLiteratureScoutSourceStatus = {
   source: string;
   query_count: number;
   cache_hit_count: number;
+  cache_miss_count: number;
   network_request_count: number;
   paper_count: number;
   error_count: number;
+  availability_status: "available" | "cache_miss" | "unavailable" | "unsupported" | "error";
+  unavailable_reason?: string | null;
   errors: string[];
 };
 
@@ -3103,6 +3139,7 @@ export type AutoResearchResearchBrief = {
   allow_experiments: boolean;
   target_tier: AutoResearchPaperTier;
   resource_budget: AutoResearchIdeaResourceBudget;
+  benchmark_source?: AutoResearchBenchmarkSource | null;
   brief_fingerprint?: string | null;
   brief_path?: string | null;
 };
@@ -4096,6 +4133,9 @@ export type AutoResearchEvaluationCaseTrace = {
   literature_cache_hit_count: number;
   real_literature_count: number;
   literature_source_counts: Record<string, number>;
+  literature_source_sufficiency_ready: boolean;
+  literature_connector_availability: Record<string, unknown>[];
+  literature_extraction_limitations: string[];
   literature_network_enabled: boolean;
   evidence_complete: boolean;
   paper_review_package_ready: boolean;

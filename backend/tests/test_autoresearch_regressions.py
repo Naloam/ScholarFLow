@@ -6628,9 +6628,20 @@ def test_domain_literature_strategy_marks_fixture_only_evidence_non_final() -> N
     assert scouted.domain_literature_result.status == "limited"
     assert scouted.domain_literature_result.fixture_only is True
     assert scouted.domain_literature_result.real_source_count == 0
+    assert scouted.domain_literature_result.source_sufficiency_ready is False
+    assert scouted.domain_literature_result.source_sufficiency_policy["missing_required_source_classes"] == [
+        "arxiv",
+        "semantic_scholar",
+        "crossref",
+    ]
     assert "fixture_or_offline" in scouted.domain_literature_result.source_class_counts
+    assert scouted.domain_literature_result.extraction_limitations
     assert any(
         "fixture/offline-only evidence" in item
+        for item in scouted.domain_literature_result.blockers
+    )
+    assert any(
+        "source sufficiency policy" in item
         for item in scouted.domain_literature_result.blockers
     )
     assert any(
@@ -6639,6 +6650,84 @@ def test_domain_literature_strategy_marks_fixture_only_evidence_non_final() -> N
     )
     assert scouted.domain_readiness_status == "limited"
     assert scouted.domain_claim_ceiling == "review_only_engineering_validation_claim"
+
+
+def test_domain_benchmark_resolver_accepts_imported_provenance_without_final_publish(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    rows = [
+        {
+            "query": f"citation faithfulness query {index}",
+            "candidates": [
+                {"id": f"doc{index}_support", "text": f"Grounded citation support evidence {index}."},
+                {"id": f"doc{index}_distractor", "text": f"Distractor citation context {index}."},
+            ],
+            "relevant_ids": [f"doc{index}_support"],
+            "claim_label": "supported",
+        }
+        for index in range(24)
+    ]
+    payload = {
+        "name": "Imported Citation Faithfulness Benchmark",
+        "description": "Repository-local imported RAG citation benchmark with complete provenance.",
+        "dataset_id": "external/citation-faithfulness-imported",
+        "revision": "2026-06-09",
+        "license": "cc-by-4.0",
+        "fingerprint": "sha256:imported-citation-faithfulness",
+        "source_class": "imported_real",
+        "source_content_origin": "original_benchmark_records",
+        "source_content_note": "Deterministic local import fixture for Goal 4 resolver provenance.",
+        "train": rows[:16],
+        "test": rows[16:],
+    }
+    benchmark_path = tmp_path / "citation_faithfulness_imported.json"
+    benchmark_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"Imported benchmark fixture should load from file, not network: {url}"),
+    )
+
+    benchmark_source = BenchmarkSource(
+        kind="remote_json",
+        name="Imported Citation Faithfulness Benchmark",
+        file_path=str(benchmark_path),
+        dataset_id=payload["dataset_id"],
+        revision=payload["revision"],
+        license=payload["license"],
+        task_family_hint="ir_reranking",
+    )
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-domain-imported-benchmark",
+        payload=AutoResearchIdeaRequest(
+            idea="Evaluate RAG citation faithfulness for knowledge intensive QA with grounded source attributions",
+            domain="citation faithfulness",
+            allow_web=False,
+            allow_experiments=True,
+            benchmark=benchmark_source,
+        ),
+    )
+
+    assert brief.benchmark_source == benchmark_source
+    assert brief.domain_benchmark_resolver is not None
+    resolver = brief.domain_benchmark_resolver
+    assert resolver.domain_id == "rag_citation_faithfulness"
+    assert resolver.status == "ready"
+    assert resolver.source_class == "imported_real"
+    assert resolver.dataset_id == payload["dataset_id"]
+    assert resolver.revision == payload["revision"]
+    assert resolver.license == payload["license"]
+    assert resolver.source_fingerprint == payload["fingerprint"]
+    assert resolver.sample_count == 24
+    assert resolver.benchmark_provenance_complete is True
+    assert resolver.publication_grade_eligible is True
+    assert resolver.final_candidate_eligible is False
+    assert resolver.source_independence_audit["ready"] is False
+    assert resolver.source_independence_audit["blockers"]
+    assert not any("fixture benchmark" in blocker.lower() for blocker in resolver.blockers)
+    assert any("statistics" in item.lower() or "source independence" in item.lower() for item in resolver.limitations)
+    assert brief.domain_claim_ceiling == "technical_report_only"
 
 
 def test_domain_experiment_execution_records_review_only_rag_and_lightweight_outputs() -> None:
@@ -6969,12 +7058,55 @@ def test_literature_connectors_parse_cached_sources_without_network(
     assert all(status.network_request_count == 0 for status in statuses)
     assert all(status.cache_hit_count == 1 for status in statuses)
     assert all(item.cache_status == "cache_hit" for item in papers)
+    assert all(item.source_id for item in papers)
+    assert all(item.cache_key for item in papers)
+    assert all(item.cache_timestamp is not None for item in papers)
+    assert all(item.fingerprint for item in papers)
+    assert all(item.extraction_status in {"abstract_only", "metadata_only", "full_text"} for item in papers)
     assert any(item.arxiv_id == "2401.01234v1" for item in papers)
     assert any(item.doi == "10.0000/semantic-fixture" for item in papers)
     assert any(item.venue == "SIGIR Workshop" for item in papers)
     assert any("macro_f1" in item.metrics for item in papers)
     assert all(item.methods for item in papers)
     assert all(item.relevance_score > 0 for item in papers)
+    assert all(status.cache_miss_count == 0 for status in statuses)
+    assert all(status.availability_status == "available" for status in statuses)
+
+
+def test_literature_connectors_record_cache_miss_without_fake_papers(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-cached-connectors-cache-miss",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("cache-miss deterministic test must not use network")
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fail_fetch)
+
+    papers, statuses = autoresearch_literature_connectors.search_literature_connectors(
+        brief,
+        search_queries=[_cached_literature_query(brief)],
+        sources=["arxiv"],
+        limit_per_source=2,
+        network_enabled=False,
+        cache_enabled=True,
+    )
+
+    assert papers == []
+    assert len(statuses) == 1
+    assert statuses[0].source == "arxiv"
+    assert statuses[0].cache_hit_count == 0
+    assert statuses[0].cache_miss_count == 1
+    assert statuses[0].network_request_count == 0
+    assert statuses[0].paper_count == 0
+    assert statuses[0].availability_status == "cache_miss"
+    assert statuses[0].unavailable_reason is not None
+    assert "No cached arxiv connector responses" in statuses[0].unavailable_reason
 
 
 def test_literature_connector_retries_transient_network_errors(monkeypatch) -> None:
@@ -7063,8 +7195,12 @@ def test_literature_connectors_use_cached_full_text_for_structured_extraction(
     assert statuses[0].cache_hit_count == 1
     paper = next(item for item in papers if item.paper_id == "arxiv:2401.01234v1")
     assert paper.extraction_level == "full_text"
+    assert paper.extraction_status == "full_text"
     assert paper.full_text_available is True
     assert paper.full_text_excerpt is not None
+    assert paper.cache_key
+    assert paper.cache_timestamp is not None
+    assert paper.fingerprint
     assert "contrastive calibration reranker" in paper.full_text_excerpt
     assert "MIMIC" in paper.datasets
     assert "ndcg" in paper.metrics
@@ -11339,6 +11475,15 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert claim_evidence_vertical.trace.literature_source_counts["arxiv"] >= 1
     assert claim_evidence_vertical.trace.literature_source_counts["semantic_scholar"] >= 1
     assert claim_evidence_vertical.trace.literature_source_counts["crossref"] >= 1
+    assert claim_evidence_vertical.trace.literature_source_sufficiency_ready is True
+    literature_availability = {
+        item["source"]: item["availability_status"]
+        for item in claim_evidence_vertical.trace.literature_connector_availability
+    }
+    assert literature_availability["arxiv"] == "available"
+    assert literature_availability["semantic_scholar"] == "available"
+    assert literature_availability["crossref"] == "available"
+    assert claim_evidence_vertical.trace.literature_extraction_limitations
     assert any(
         "Project publish gate has not passed" in item
         for item in claim_evidence_vertical.trace.project_submission_blockers

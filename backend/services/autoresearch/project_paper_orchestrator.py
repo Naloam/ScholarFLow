@@ -26,6 +26,13 @@ from schemas.autoresearch import (
     AutoResearchProjectPaperOrchestrationRead,
     AutoResearchProjectPaperSourceStrategy,
     AutoResearchResearchBriefRead,
+    AutoResearchAutonomousRevisionActionRead,
+    AutoResearchReviewerResponseDossierRead,
+    AutoResearchReviewerResponseItemRead,
+    AutoResearchRevisionActionExecutionRead,
+    AutoResearchRevisionActionPlanRead,
+    AutoResearchRevisionRoundRead,
+    AutoResearchReReviewFindingRead,
     AutoResearchReviewLoopActionRead,
     AutoResearchRunRead,
     LiteratureInsight,
@@ -39,6 +46,7 @@ from services.workspace import autoresearch_dir
 
 PROJECT_PAPER_DIRNAME = "project_paper"
 PROJECT_PAPER_FILENAME = "paper.md"
+PROJECT_PAPER_ORIGINAL_FILENAME = "paper_original.md"
 PROJECT_PAPER_SOURCES_DIRNAME = "paper_sources"
 PROJECT_PAPER_LATEX_FILENAME = "main.tex"
 PROJECT_PAPER_BIB_FILENAME = "references.bib"
@@ -55,6 +63,9 @@ PROJECT_PAPER_REVISION_ACTION_INDEX_FILENAME = "project_revision_action_index.js
 PROJECT_PAPER_REVISION_ACTION_NOTE_FILENAME = "revision_actions.md"
 PROJECT_PAPER_REVISED_FILENAME = "paper_revised.md"
 PROJECT_REVIEW_FINDINGS_FILENAME = "project_review_findings.json"
+PROJECT_REVISION_ACTION_PLAN_FILENAME = "revision_action_plan.json"
+PROJECT_REVIEWER_RESPONSE_DOSSIER_FILENAME = "reviewer_response_dossier.json"
+PROJECT_REVISION_ROUND_FILENAME = "revision_round.json"
 PROJECT_PAPER_REVISION_APPLICATION_FILENAME = "project_revision_application.json"
 PROJECT_PAPER_REREVIEW_REPORT_FILENAME = "project_rereview_report.json"
 PROJECT_SUBMISSION_DIRNAME = "submission_package"
@@ -257,6 +268,9 @@ PROJECT_SUBMISSION_PACKAGE_ROLES = [
     "project_reproducibility_checklist",
     "project_reviewer_response",
     "project_review_findings",
+    "project_revision_action_plan",
+    "project_reviewer_response_dossier",
+    "project_revision_round",
     "project_repair_execution_log",
     "project_claim_evidence_index",
     "project_retrieval_evidence_ledger",
@@ -3347,6 +3361,16 @@ def _project_review_findings_payload(
                 "expected_output_asset_ids": list(action.expected_output_asset_ids),
                 "terminal_condition": action.terminal_condition,
                 "requires_rereview": action.requires_rereview,
+                "goal6_action_mapping": {
+                    "typed_action_kind": _project_revision_action_kind(action),
+                    "scope": _project_revision_action_scope(action),
+                    "evidence_requirement": _project_action_evidence_requirement(action),
+                    "policy": (
+                        "Each reviewer finding must map to a typed bounded revision action or "
+                        "an explicit no-action rationale; evidence-producing repairs remain "
+                        "blocked until artifact refs exist."
+                    ),
+                },
                 "finding_order": index,
             }
         )
@@ -3688,6 +3712,495 @@ def _project_action_rereview_details(
             }
         )
     return details
+
+
+def _project_action_evidence_requirement(action: AutoResearchReviewLoopActionRead) -> str:
+    if action.action_kind == "claim_downgrade":
+        return (
+            "No new evidence required for the text revision; the action must preserve or lower "
+            "the claim ceiling and keep unsupported evidence visible as a limitation or follow-up."
+        )
+    if action.repair_kind == "refresh_literature":
+        return (
+            "Requires cached/imported multi-source literature artifacts before the repair can be "
+            "reported as resolved."
+        )
+    if action.repair_kind == "update_benchmark_provenance":
+        return (
+            "Requires repository-local or imported benchmark provenance with source locator, "
+            "revision, license, fingerprint, schema, observations, and source-independence status."
+        )
+    if action.repair_kind == "rerun_experiments":
+        return (
+            "Requires deterministic execution or imported replay artifacts with validated metrics, "
+            "statistics, environment, and output fingerprints."
+        )
+    return (
+        "Requires explicit operator rationale or artifact-backed evidence before this finding can be closed."
+    )
+
+
+def _project_revision_action_kind(action: AutoResearchReviewLoopActionRead) -> str:
+    if action.action_kind == "claim_downgrade":
+        return "claim_downgrade"
+    if action.repair_kind == "refresh_literature":
+        return "literature_followup_request"
+    if action.repair_kind == "update_benchmark_provenance":
+        return "benchmark_provenance_followup_request"
+    if action.repair_kind == "rerun_experiments":
+        return "experiment_repair_request"
+    if action.action_kind == "paper_revision":
+        return "manuscript_text_revision"
+    return "no_action_with_rationale"
+
+
+def _project_revision_action_scope(action: AutoResearchReviewLoopActionRead) -> str:
+    if action.action_kind == "claim_downgrade":
+        return "claim_evidence_index"
+    if action.repair_kind == "refresh_literature":
+        return "literature"
+    if action.repair_kind == "update_benchmark_provenance":
+        return "benchmark"
+    if action.repair_kind == "rerun_experiments":
+        return "experiment_repair"
+    if action.execution_route == "manual_review":
+        return "readiness"
+    return "manuscript"
+
+
+def _project_revision_action_status(action: AutoResearchReviewLoopActionRead) -> str:
+    if action.status == "completed":
+        return "executed"
+    if action.status == "blocked":
+        if action.repair_kind in {"refresh_literature", "update_benchmark_provenance", "rerun_experiments"}:
+            return "requires_external_evidence"
+        return "blocked"
+    if action.status == "failed":
+        return "terminal_failed"
+    if _project_revision_action_kind(action) == "no_action_with_rationale":
+        return "no_action"
+    return "pending"
+
+
+def _project_revision_action_plan(
+    *,
+    project_id: str,
+    project_review_findings: dict[str, Any],
+    project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
+    source_review_findings_path: Path | None = None,
+) -> AutoResearchRevisionActionPlanRead:
+    finding_by_action = {
+        str(item.get("mapped_revision_action_id")): item
+        for item in project_review_findings.get("findings", [])
+        if item.get("mapped_revision_action_id")
+    }
+    actions: list[AutoResearchAutonomousRevisionActionRead] = []
+    for action in project_paper_revision_actions:
+        finding = finding_by_action.get(action.action_id, {})
+        source_finding_ids = list(action.finding_ids)
+        if finding.get("finding_id"):
+            source_finding_ids = _dedupe([*source_finding_ids, str(finding["finding_id"])])
+        source_finding_fingerprint = _fingerprint(
+            {
+                "finding_id": finding.get("finding_id"),
+                "summary": finding.get("summary") or action.title,
+                "detail": finding.get("detail") or action.detail,
+                "expected_output_asset_ids": finding.get("expected_output_asset_ids")
+                or action.expected_output_asset_ids,
+            }
+        )
+        action_kind = _project_revision_action_kind(action)
+        status = _project_revision_action_status(action)
+        evidence_producing = action_kind in {
+            "experiment_repair_request",
+            "literature_followup_request",
+            "benchmark_provenance_followup_request",
+        }
+        action_blockers = list(action.residual_blockers)
+        if evidence_producing and action.status != "completed" and not action_blockers:
+            action_blockers.append(
+                "Evidence-producing revision action requires validated artifact refs before it can be resolved."
+            )
+        actions.append(
+            AutoResearchAutonomousRevisionActionRead(
+                action_id=action.action_id,
+                project_id=project_id,
+                run_id=None,
+                review_round=int(project_review_findings.get("review_round") or 1),
+                source_finding_ids=source_finding_ids,
+                source_finding_fingerprint=source_finding_fingerprint,
+                action_kind=action_kind,
+                scope=_project_revision_action_scope(action),
+                evidence_requirement=_project_action_evidence_requirement(action),
+                can_execute_now=bool(action.auto_applicable and not evidence_producing)
+                or action.status == "completed",
+                approval_required=False,
+                approval_state="not_required",
+                expected_outputs=list(action.expected_output_asset_ids),
+                lineage_parent_refs=_dedupe(
+                    [
+                        "project_review_findings_json",
+                        "project_paper_markdown",
+                        *action.input_artifact_refs,
+                    ]
+                ),
+                claim_ids=[item for item in action.issue_ids if "claim" in item],
+                artifact_refs=list(action.output_artifact_refs),
+                terminal_condition=action.terminal_condition,
+                max_attempts=action.max_auto_rounds,
+                attempt_count=1 if action.started_at_step is not None else 0,
+                status=status,
+                blockers=action_blockers,
+                rationale=(
+                    f"Finding `{finding.get('finding_id')}` maps to {action_kind} because "
+                    f"{action.detail}"
+                    if finding
+                    else f"No direct reviewer finding was present; action remains traceable to {action.issue_ids}."
+                ),
+                source_review_loop_action_id=action.action_id,
+            )
+        )
+    covered_finding_ids = {
+        source_finding_id
+        for action in actions
+        for source_finding_id in action.source_finding_ids
+    }
+    no_action_items: list[AutoResearchAutonomousRevisionActionRead] = []
+    for finding in project_review_findings.get("findings", []):
+        finding_id = str(finding.get("finding_id") or "")
+        if not finding_id or finding_id in covered_finding_ids:
+            continue
+        no_action_items.append(
+            AutoResearchAutonomousRevisionActionRead(
+                action_id=f"no_action_{_slug(finding_id)}",
+                project_id=project_id,
+                review_round=int(project_review_findings.get("review_round") or 1),
+                source_finding_ids=[finding_id],
+                source_finding_fingerprint=_fingerprint(finding),
+                action_kind="no_action_with_rationale",
+                scope="readiness",
+                evidence_requirement="No evidence is claimed; the finding is recorded with explicit rationale.",
+                can_execute_now=False,
+                expected_outputs=[],
+                lineage_parent_refs=["project_review_findings_json"],
+                terminal_condition="No action remains acceptable only while the rationale is explicit and auditable.",
+                max_attempts=1,
+                attempt_count=0,
+                status="no_action",
+                blockers=[],
+                rationale="Reviewer finding has no mapped bounded action in the current project scope.",
+            )
+        )
+    actions.extend(no_action_items)
+    blockers = _dedupe(
+        [
+            blocker
+            for action in actions
+            for blocker in action.blockers
+            if action.status not in {"executed", "no_action"}
+        ]
+    )
+    payload = {
+        "plan_id": "project_revision_action_plan_v1",
+        "project_id": project_id,
+        "run_id": None,
+        "review_round": int(project_review_findings.get("review_round") or 1),
+        "review_fingerprint": project_review_findings.get("review_fingerprint"),
+        "source_review_findings_path": str(source_review_findings_path)
+        if source_review_findings_path is not None
+        else None,
+        "actions": [action.model_dump(mode="json") for action in actions],
+        "blockers": blockers,
+        "capability_audit": {
+            "audit_id": "goal6_revision_capability_audit_v1",
+            "review_loop_productionization": (
+                "Goal 6 builds a typed autonomous revision layer over existing review_publish.py "
+                "and project_paper_orchestrator.py artifacts; it does not replace the run-level "
+                "review loop or reviewer simulator."
+            ),
+            "existing_capabilities": [
+                "project_review_findings.json maps reviewer findings to project revision actions",
+                "project_revision_application.json records bounded execution results",
+                "project_rereview_report.json records action-level re-review",
+                "paper_sources manifest preserves original and revised manuscript artifacts",
+            ],
+            "missing_or_blocked_capabilities": [
+                "Evidence-producing repairs remain blocked unless cached/imported/typed execution artifacts exist",
+                "Final publish remains blocked while revision or evidence blockers remain",
+            ],
+            "stale_fingerprint_policy": (
+                "Run-level review-loop apply already rejects stale expected_review_fingerprint values; "
+                "project-level revision artifacts carry source review fingerprints so stale clients can inspect drift."
+            ),
+        },
+    }
+    return AutoResearchRevisionActionPlanRead(
+        generated_at=_utcnow(),
+        action_count=len(actions),
+        executable_action_count=sum(1 for action in actions if action.can_execute_now),
+        blocked_action_count=sum(
+            1
+            for action in actions
+            if action.status
+            in {"blocked", "requires_import", "requires_external_evidence", "terminal_failed"}
+        ),
+        no_action_count=sum(1 for action in actions if action.status == "no_action"),
+        complete=bool(actions)
+        and all(action.status in {"executed", "no_action"} for action in actions),
+        plan_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def _project_action_execution_detail(action: AutoResearchReviewLoopActionRead) -> str:
+    if action.status == "completed":
+        if action.action_kind == "claim_downgrade":
+            return "Claim wording was downgraded in the manuscript and source claim-evidence index."
+        return "Repair action consumed validated artifact refs and satisfied its terminal condition."
+    if action.status == "blocked":
+        return "Repair action remains blocked; no evidence is claimed as added."
+    if action.status == "failed":
+        return "Revision action failed terminally and remains auditable."
+    return "Revision action remains pending."
+
+
+def _project_revision_action_executions(
+    actions: list[AutoResearchReviewLoopActionRead],
+) -> list[AutoResearchRevisionActionExecutionRead]:
+    executions: list[AutoResearchRevisionActionExecutionRead] = []
+    for action in actions:
+        status = _project_revision_action_status(action)
+        if status == "executed":
+            execution_status = "executed"
+        elif status == "requires_external_evidence":
+            execution_status = "requires_external_evidence"
+        elif status == "terminal_failed":
+            execution_status = "terminal_failed"
+        elif status == "no_action":
+            execution_status = "no_action"
+        else:
+            execution_status = "blocked" if action.status == "blocked" else "requires_import"
+        executions.append(
+            AutoResearchRevisionActionExecutionRead(
+                action_id=action.action_id,
+                status=execution_status,
+                attempt_count=1 if action.started_at_step is not None else 0,
+                started_at_step=action.started_at_step,
+                completed_at_step=action.completed_at_step,
+                revised_artifact_refs=list(action.output_artifact_refs),
+                evidence_refs_used=[
+                    ref
+                    for ref in action.output_artifact_refs
+                    if ":" in ref
+                    and action.status == "completed"
+                ],
+                claim_ids_changed=[item for item in action.issue_ids if "claim" in item],
+                blockers=list(action.residual_blockers),
+                detail=_project_action_execution_detail(action),
+            )
+        )
+    return executions
+
+
+def _project_response_status_from_action(action: AutoResearchReviewLoopActionRead) -> str:
+    if action.status == "completed":
+        return "resolved" if action.action_kind == "claim_downgrade" else "partially_resolved"
+    if action.status == "blocked":
+        return "blocked"
+    if action.status == "failed":
+        return "unresolved"
+    return "unresolved"
+
+
+def _project_reviewer_response_dossier(
+    *,
+    project_id: str,
+    project_review_findings: dict[str, Any],
+    project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
+) -> AutoResearchReviewerResponseDossierRead:
+    action_by_finding: dict[str, AutoResearchReviewLoopActionRead] = {}
+    for action in project_paper_revision_actions:
+        for finding_id in action.finding_ids:
+            action_by_finding[finding_id] = action
+    items: list[AutoResearchReviewerResponseItemRead] = []
+    for finding in project_review_findings.get("findings", []):
+        finding_id = str(finding.get("finding_id") or "")
+        action = action_by_finding.get(finding_id)
+        if action is None:
+            items.append(
+                AutoResearchReviewerResponseItemRead(
+                    source_finding_id=finding_id,
+                    original_finding_summary=str(finding.get("summary") or ""),
+                    action_id=None,
+                    action_taken="No bounded action was applied.",
+                    revised_artifact_refs=[],
+                    evidence_refs_used=[],
+                    claim_ids_changed=[],
+                    status="no_action",
+                    limitation_or_blocker="No mapped action exists for this finding in the current scope.",
+                    final_publish_impact="final_publish_blocked_until_human_review",
+                    no_action_rationale="Finding is preserved for audit and requires explicit human review.",
+                )
+            )
+            continue
+        status = _project_response_status_from_action(action)
+        evidence_refs_used = [
+            ref
+            for ref in action.output_artifact_refs
+            if ":" in ref and action.status == "completed"
+        ]
+        items.append(
+            AutoResearchReviewerResponseItemRead(
+                source_finding_id=finding_id,
+                original_finding_summary=str(finding.get("summary") or action.title),
+                action_id=action.action_id,
+                action_taken=_project_action_execution_detail(action),
+                revised_artifact_refs=list(action.output_artifact_refs),
+                evidence_refs_used=evidence_refs_used,
+                claim_ids_changed=[item for item in action.issue_ids if "claim" in item],
+                status=status,
+                limitation_or_blocker=(
+                    "; ".join(action.residual_blockers)
+                    if action.residual_blockers
+                    else None
+                ),
+                final_publish_impact=(
+                    "final_publish_still_blocked"
+                    if status in {"blocked", "unresolved", "partially_resolved"}
+                    else "claim_ceiling_lowered_not_promoted"
+                ),
+                no_action_rationale=None,
+            )
+        )
+    payload = {
+        "dossier_id": "project_reviewer_response_dossier_v1",
+        "project_id": project_id,
+        "run_id": None,
+        "review_round": int(project_review_findings.get("review_round") or 1),
+        "review_fingerprint": project_review_findings.get("review_fingerprint"),
+        "items": [item.model_dump(mode="json") for item in items],
+    }
+    return AutoResearchReviewerResponseDossierRead(
+        generated_at=_utcnow(),
+        item_count=len(items),
+        covered_finding_count=sum(1 for item in items if item.action_id or item.no_action_rationale),
+        unresolved_count=sum(
+            1 for item in items if item.status in {"unresolved", "partially_resolved"}
+        ),
+        blocked_count=sum(1 for item in items if item.status == "blocked"),
+        complete=bool(items) and all(item.status == "resolved" for item in items),
+        dossier_fingerprint=_fingerprint(payload),
+        **payload,
+    )
+
+
+def _project_resolution_status_from_review(review: dict[str, Any]) -> str:
+    if review.get("terminal_condition_met"):
+        return "resolved"
+    if review.get("recommendation") == "block_final_publish":
+        return "superseded_by_blocker"
+    if review.get("repair_outputs_consumed"):
+        return "partially_resolved"
+    if review.get("new_blockers"):
+        return "unresolved"
+    return "regressed" if review.get("status") == "failed" else "unresolved"
+
+
+def _project_revision_round_payload(
+    *,
+    project_id: str,
+    original_manuscript_path: Path,
+    revised_manuscript_path: Path,
+    original_claim_evidence_index_path: Path | None,
+    revised_claim_evidence_index_path: Path | None,
+    project_review_findings: dict[str, Any],
+    project_revision_action_plan: AutoResearchRevisionActionPlanRead,
+    action_executions: list[AutoResearchRevisionActionExecutionRead],
+    reviewer_response_dossier: AutoResearchReviewerResponseDossierRead,
+    rereview_report: dict[str, Any],
+) -> AutoResearchRevisionRoundRead:
+    rereview_findings: list[AutoResearchReReviewFindingRead] = []
+    for review in rereview_report.get("action_reviews", []):
+        finding_ids = review.get("finding_ids") or []
+        if not finding_ids:
+            finding_ids = [str(review.get("action_id") or "unmapped_finding")]
+        for finding_id in finding_ids:
+            rereview_findings.append(
+                AutoResearchReReviewFindingRead(
+                    source_finding_id=str(finding_id),
+                    action_id=review.get("action_id"),
+                    resolution_status=_project_resolution_status_from_review(review),
+                    revised_artifact_refs=list(review.get("output_artifact_refs", [])),
+                    evidence_refs_used=[
+                        ref
+                        for ref in review.get("output_artifact_refs", [])
+                        if ":" in str(ref) and review.get("terminal_condition_met")
+                    ],
+                    residual_blockers=list(review.get("new_blockers", [])),
+                    new_findings=list(review.get("new_blockers", [])),
+                    rationale=str(review.get("rereview_finding") or review.get("reviewer_residual_concern") or ""),
+                )
+            )
+    status_counts: dict[str, int] = {}
+    for item in rereview_findings:
+        status_counts[item.resolution_status] = status_counts.get(item.resolution_status, 0) + 1
+    pending_action_count = int(rereview_report.get("pending_action_ids") and len(rereview_report.get("pending_action_ids", [])) or 0)
+    blocked_count = len(rereview_report.get("blocked_action_ids", []))
+    unresolved_blockers = _dedupe(
+        [
+            *list(rereview_report.get("new_blockers", [])),
+            *[
+                blocker
+                for finding in rereview_findings
+                for blocker in finding.residual_blockers
+            ],
+        ]
+    )
+    payload = {
+        "round_id": "project_revision_round_v1",
+        "project_id": project_id,
+        "run_id": None,
+        "review_round": int(project_review_findings.get("review_round") or 1),
+        "revision_round": int(rereview_report.get("revision_round") or 2),
+        "original_review_fingerprint": project_review_findings.get("review_fingerprint"),
+        "revised_review_fingerprint": rereview_report.get("rereview_fingerprint"),
+        "original_manuscript_ref": str(original_manuscript_path),
+        "original_manuscript_fingerprint": _file_sha256(original_manuscript_path),
+        "revised_manuscript_ref": str(revised_manuscript_path),
+        "revised_manuscript_fingerprint": _file_sha256(revised_manuscript_path),
+        "original_claim_evidence_index_ref": str(original_claim_evidence_index_path)
+        if original_claim_evidence_index_path is not None
+        else None,
+        "revised_claim_evidence_index_ref": str(revised_claim_evidence_index_path)
+        if revised_claim_evidence_index_path is not None
+        else None,
+        "action_plan": project_revision_action_plan.model_dump(mode="json"),
+        "action_executions": [item.model_dump(mode="json") for item in action_executions],
+        "reviewer_response_dossier": reviewer_response_dossier.model_dump(mode="json"),
+        "rereview_findings": [item.model_dump(mode="json") for item in rereview_findings],
+        "unresolved_blockers": unresolved_blockers,
+    }
+    terminal_status = "ready" if rereview_report.get("rereview_complete") else "needs_revision"
+    if unresolved_blockers and (pending_action_count + blocked_count) > 0:
+        terminal_status = "blocked"
+    return AutoResearchRevisionRoundRead(
+        generated_at=_utcnow(),
+        resolved_count=status_counts.get("resolved", 0),
+        partially_resolved_count=status_counts.get("partially_resolved", 0),
+        unresolved_count=status_counts.get("unresolved", 0)
+        + status_counts.get("superseded_by_blocker", 0),
+        regressed_count=status_counts.get("regressed", 0),
+        new_finding_count=sum(1 for item in rereview_findings if item.new_findings),
+        pending_action_count=pending_action_count + blocked_count,
+        terminal_status=terminal_status,
+        readiness_impact=(
+            "final_publish_blocked"
+            if terminal_status != "ready"
+            else "review_bundle_revision_complete"
+        ),
+        round_fingerprint=_fingerprint(payload),
+        **payload,
+    )
 
 
 def _apply_project_revision_actions(
@@ -4211,6 +4724,23 @@ def _apply_project_revision_actions(
         "project_id": project_id,
         "generated_at": _utcnow().isoformat(),
         "revision_round": 2 if actions else 0,
+        "previous_review_fingerprint": _fingerprint(
+            {
+                "actions_before_revision": [
+                    action.model_dump(mode="json") for action in actions
+                ],
+                "markdown": markdown,
+            }
+        ),
+        "revised_artifact_fingerprint": _fingerprint(
+            {
+                "actions_after_revision": [
+                    action.model_dump(mode="json") for action in actions_after_revision
+                ],
+                "revised_markdown": revised_markdown,
+                "repair_execution_log": repair_execution_log,
+            }
+        ),
         "rereview_complete": bool(actions) and not unresolved,
         "same_support_issue_recurs": bool(unresolved),
         "completed_action_ids": [action.action_id for action in completed],
@@ -4247,6 +4777,7 @@ def _apply_project_revision_actions(
             else "Some revision actions still require manual review, more real literature, or experiment repair."
         ),
     }
+    rereview_report["rereview_fingerprint"] = _fingerprint(rereview_report)
     return revised_markdown, actions_after_revision, application_report, rereview_report
 
 
@@ -4302,6 +4833,11 @@ def _build_project_paper_sources_manifest(*, has_bibliography: bool) -> AutoRese
                 relative_path=PROJECT_PAPER_FILENAME,
                 kind="markdown",
                 description="Project-level evidence-constrained Markdown manuscript.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_PAPER_ORIGINAL_FILENAME,
+                kind="markdown",
+                description="Project-level manuscript before bounded Goal 6 revision execution.",
             ),
             AutoResearchPaperSourceFileRead(
                 relative_path=PROJECT_PAPER_LATEX_FILENAME,
@@ -4362,6 +4898,21 @@ def _build_project_paper_sources_manifest(*, has_bibliography: bool) -> AutoRese
                 relative_path=PROJECT_REVIEW_FINDINGS_FILENAME,
                 kind="json",
                 description="Project-level reviewer-simulator findings mapped to bounded revision actions.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_REVISION_ACTION_PLAN_FILENAME,
+                kind="json",
+                description="Goal 6 typed reviewer-finding to revision-action plan.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_REVIEWER_RESPONSE_DOSSIER_FILENAME,
+                kind="json",
+                description="Goal 6 finding-by-finding reviewer response dossier.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_REVISION_ROUND_FILENAME,
+                kind="json",
+                description="Goal 6 bounded revision execution and re-review round summary.",
             ),
             AutoResearchPaperSourceFileRead(
                 relative_path=PROJECT_PAPER_REVISION_ACTION_NOTE_FILENAME,
@@ -4429,10 +4980,14 @@ def _materialize_project_paper_sources(
     *,
     project_id: str,
     markdown: str,
+    original_markdown: str,
     revised_markdown: str,
     latest_brief: AutoResearchResearchBriefRead | None,
     revision_action_index: AutoResearchPaperRevisionActionIndexRead,
     review_findings: dict[str, Any],
+    revision_action_plan: AutoResearchRevisionActionPlanRead,
+    reviewer_response_dossier: AutoResearchReviewerResponseDossierRead,
+    revision_round: AutoResearchRevisionRoundRead,
     revision_application_report: dict[str, Any],
     revision_rereview_report: dict[str, Any],
 ) -> tuple[Path, AutoResearchPaperSourcesManifestRead, AutoResearchPaperCompileReportRead, str, str]:
@@ -4449,6 +5004,7 @@ def _materialize_project_paper_sources(
         literature_count=len(literature),
     )
     (sources_dir / PROJECT_PAPER_FILENAME).write_text(markdown, encoding="utf-8")
+    (sources_dir / PROJECT_PAPER_ORIGINAL_FILENAME).write_text(original_markdown, encoding="utf-8")
     (sources_dir / PROJECT_PAPER_LATEX_FILENAME).write_text(latex_source, encoding="utf-8")
     (sources_dir / PROJECT_PAPER_BIB_FILENAME).write_text(bibliography, encoding="utf-8")
     build_script_path = sources_dir / PROJECT_PAPER_BUILD_SCRIPT_FILENAME
@@ -4464,6 +5020,18 @@ def _materialize_project_paper_sources(
     )
     (sources_dir / PROJECT_REVIEW_FINDINGS_FILENAME).write_text(
         json.dumps(review_findings, indent=2),
+        encoding="utf-8",
+    )
+    (sources_dir / PROJECT_REVISION_ACTION_PLAN_FILENAME).write_text(
+        revision_action_plan.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    (sources_dir / PROJECT_REVIEWER_RESPONSE_DOSSIER_FILENAME).write_text(
+        reviewer_response_dossier.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    (sources_dir / PROJECT_REVISION_ROUND_FILENAME).write_text(
+        revision_round.model_dump_json(indent=2),
         encoding="utf-8",
     )
     (sources_dir / PROJECT_PAPER_REVISION_ACTION_NOTE_FILENAME).write_text(
@@ -4867,6 +5435,9 @@ def _project_source_artifact_index_payload(
     selected_runs: list[AutoResearchRunRead],
     project_paper_sources_dir: Path,
     project_paper_path: Path,
+    revision_action_plan_path: Path,
+    reviewer_response_dossier_path: Path,
+    revision_round_path: Path,
     claim_index_path: Path,
     retrieval_evidence_ledger_path: Path,
     lineage_archive_path: Path,
@@ -4887,6 +5458,21 @@ def _project_source_artifact_index_payload(
     ]
     external_artifacts = [
         ("project_manuscript_markdown", project_paper_path),
+        *(
+            [("project_revision_action_plan", revision_action_plan_path)]
+            if revision_action_plan_path is not None
+            else []
+        ),
+        *(
+            [("project_reviewer_response_dossier", reviewer_response_dossier_path)]
+            if reviewer_response_dossier_path is not None
+            else []
+        ),
+        *(
+            [("project_revision_round", revision_round_path)]
+            if revision_round_path is not None
+            else []
+        ),
         ("project_claim_evidence_index", claim_index_path),
         ("project_retrieval_evidence_ledger", retrieval_evidence_ledger_path),
         ("project_lineage_archive", lineage_archive_path),
@@ -4941,6 +5527,9 @@ def _project_manuscript_context_payload(
     statistics_report: dict[str, Any],
     negative_evidence_report: dict[str, Any],
     paper_compiler_evidence: dict[str, Any],
+    revision_action_plan: AutoResearchRevisionActionPlanRead,
+    reviewer_response_dossier: AutoResearchReviewerResponseDossierRead,
+    revision_round: AutoResearchRevisionRoundRead,
     project_submission_blockers: list[str],
     project_publish_gate_passed: bool,
 ) -> dict[str, Any]:
@@ -4978,6 +5567,19 @@ def _project_manuscript_context_payload(
             "revision_actions": [
                 action.model_dump(mode="json") for action in project_paper_revision_actions
             ],
+            "revision_action_plan": (
+                revision_action_plan.model_dump(mode="json")
+                if revision_action_plan is not None
+                else None
+            ),
+            "reviewer_response_dossier": (
+                reviewer_response_dossier.model_dump(mode="json")
+                if reviewer_response_dossier is not None
+                else None
+            ),
+            "revision_round": (
+                revision_round.model_dump(mode="json") if revision_round is not None else None
+            ),
         },
         "readiness_policy": {
             "project_publish_gate_passed": project_publish_gate_passed,
@@ -5028,6 +5630,9 @@ def _materialize_project_source_package_v2(
     project_paper_missing_sections: list[str],
     project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
     project_review_findings: dict[str, Any],
+    revision_action_plan: AutoResearchRevisionActionPlanRead,
+    reviewer_response_dossier: AutoResearchReviewerResponseDossierRead,
+    revision_round: AutoResearchRevisionRoundRead,
     evidence_profile: dict[str, Any],
     literature_support_index: dict[str, Any],
     benchmark_provenance_manifest: dict[str, Any],
@@ -5038,6 +5643,9 @@ def _materialize_project_source_package_v2(
     project_submission_blockers: list[str],
     project_publish_gate_passed: bool,
     claim_index_path: Path,
+    revision_action_plan_path: Path,
+    reviewer_response_dossier_path: Path,
+    revision_round_path: Path,
     retrieval_evidence_ledger_path: Path,
     lineage_archive_path: Path,
     literature_support_index_path: Path,
@@ -5056,6 +5664,9 @@ def _materialize_project_source_package_v2(
         project_paper_missing_sections=project_paper_missing_sections,
         project_paper_revision_actions=project_paper_revision_actions,
         project_review_findings=project_review_findings,
+        revision_action_plan=revision_action_plan,
+        reviewer_response_dossier=reviewer_response_dossier,
+        revision_round=revision_round,
         evidence_profile=evidence_profile,
         literature_support_index=literature_support_index,
         benchmark_provenance_manifest=benchmark_provenance_manifest,
@@ -5092,6 +5703,9 @@ def _materialize_project_source_package_v2(
         selected_runs=selected_runs,
         project_paper_sources_dir=project_paper_sources_dir,
         project_paper_path=project_paper_path,
+        revision_action_plan_path=revision_action_plan_path,
+        reviewer_response_dossier_path=reviewer_response_dossier_path,
+        revision_round_path=revision_round_path,
         claim_index_path=claim_index_path,
         retrieval_evidence_ledger_path=retrieval_evidence_ledger_path,
         lineage_archive_path=lineage_archive_path,
@@ -5140,6 +5754,9 @@ def _materialize_project_source_package_v2(
         selected_runs=selected_runs,
         project_paper_sources_dir=project_paper_sources_dir,
         project_paper_path=project_paper_path,
+        revision_action_plan_path=revision_action_plan_path,
+        reviewer_response_dossier_path=reviewer_response_dossier_path,
+        revision_round_path=revision_round_path,
         claim_index_path=claim_index_path,
         retrieval_evidence_ledger_path=retrieval_evidence_ledger_path,
         lineage_archive_path=lineage_archive_path,
@@ -5903,6 +6520,16 @@ def _build_project_paper_compiler_evidence_packet(
         for item in review_finding_records
         if item.get("mapped_revision_action_id")
     }
+    review_finding_no_action_ids = {
+        str(item.get("finding_id"))
+        for item in review_finding_records
+        if item.get("no_action_rationale")
+    }
+    review_finding_ids = {
+        str(item.get("finding_id"))
+        for item in review_finding_records
+        if item.get("finding_id")
+    }
     revision_action_ids = {action.action_id for action in project_paper_revision_actions}
     compiler_audited_terminal_repair_actions = [
         action
@@ -5953,8 +6580,13 @@ def _build_project_paper_compiler_evidence_packet(
     statistics_complete = any(item["has_statistics"] for item in statistics_profiles)
     limitations_complete = "## Limitations" in markdown
     reviewer_revision_complete = not compiler_unresolved_revision_actions
-    review_findings_complete = bool(review_finding_records) and (
-        review_finding_action_ids == revision_action_ids
+    mapped_finding_ids = {
+        str(item.get("finding_id"))
+        for item in review_finding_records
+        if item.get("mapped_revision_action_id") in revision_action_ids
+    }
+    review_findings_complete = bool(review_finding_records) and review_finding_ids == (
+        mapped_finding_ids | review_finding_no_action_ids
     )
     source_complete_with_project_evidence = bool(
         section_coverage_complete
@@ -6121,12 +6753,14 @@ def _build_project_paper_compiler_evidence_packet(
             "review_fingerprint": project_review_findings.get("review_fingerprint"),
             "finding_count": int(project_review_findings.get("finding_count") or len(review_finding_records)),
             "mapped_revision_action_count": len(review_finding_action_ids),
+            "no_action_rationale_count": len(review_finding_no_action_ids),
             "finding_ids": [
                 str(item.get("finding_id"))
                 for item in review_finding_records
                 if item.get("finding_id")
             ],
             "mapped_revision_action_ids": sorted(review_finding_action_ids),
+            "no_action_finding_ids": sorted(review_finding_no_action_ids),
             "complete": review_findings_complete,
         },
         "reproducibility_coverage": reproducibility_coverage,
@@ -9821,6 +10455,9 @@ def _materialize_project_submission_package(
     project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
     project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
     project_review_findings: dict[str, Any],
+    revision_action_plan: AutoResearchRevisionActionPlanRead,
+    reviewer_response_dossier: AutoResearchReviewerResponseDossierRead,
+    revision_round: AutoResearchRevisionRoundRead,
     project_publish_gate_passed: bool,
     blockers: list[str],
     warnings: list[str],
@@ -9830,6 +10467,9 @@ def _materialize_project_submission_package(
     checklist_path = submission_dir / PROJECT_REPRODUCIBILITY_CHECKLIST_FILENAME
     reviewer_response_path = submission_dir / PROJECT_REVIEWER_RESPONSE_FILENAME
     review_findings_path = submission_dir / PROJECT_REVIEW_FINDINGS_FILENAME
+    revision_action_plan_path = project_paper_sources_dir / PROJECT_REVISION_ACTION_PLAN_FILENAME
+    reviewer_response_dossier_path = project_paper_sources_dir / PROJECT_REVIEWER_RESPONSE_DOSSIER_FILENAME
+    revision_round_path = project_paper_sources_dir / PROJECT_REVISION_ROUND_FILENAME
     repair_execution_log_path = submission_dir / PROJECT_REPAIR_EXECUTION_LOG_FILENAME
     claim_index_path = submission_dir / PROJECT_CLAIM_EVIDENCE_INDEX_FILENAME
     retrieval_evidence_ledger_path = submission_dir / PROJECT_RETRIEVAL_EVIDENCE_LEDGER_FILENAME
@@ -10082,6 +10722,15 @@ def _materialize_project_submission_package(
         "claim_traces": [trace.model_dump(mode="json") for trace in traces],
         "revision_actions": [action.model_dump(mode="json") for action in project_paper_revision_actions],
         "project_review_findings_path": str(review_findings_path),
+        "project_revision_action_plan_path": str(
+            project_paper_sources_dir / PROJECT_REVISION_ACTION_PLAN_FILENAME
+        ),
+        "project_reviewer_response_dossier_path": str(
+            project_paper_sources_dir / PROJECT_REVIEWER_RESPONSE_DOSSIER_FILENAME
+        ),
+        "project_revision_round_path": str(
+            project_paper_sources_dir / PROJECT_REVISION_ROUND_FILENAME
+        ),
         "project_repair_execution_log_path": str(repair_execution_log_path),
         "project_retrieval_evidence_ledger_path": str(retrieval_evidence_ledger_path),
         "project_paper_path": str(project_paper_path),
@@ -10120,6 +10769,9 @@ def _materialize_project_submission_package(
         project_paper_missing_sections=project_paper_missing_sections,
         project_paper_revision_actions=project_paper_revision_actions,
         project_review_findings=project_review_findings,
+        revision_action_plan=revision_action_plan,
+        reviewer_response_dossier=reviewer_response_dossier,
+        revision_round=revision_round,
         evidence_profile=evidence_profile,
         literature_support_index=literature_support_index_payload,
         benchmark_provenance_manifest=benchmark_provenance_manifest_payload,
@@ -10130,6 +10782,9 @@ def _materialize_project_submission_package(
         project_submission_blockers=project_submission_blockers,
         project_publish_gate_passed=project_publish_gate_passed,
         claim_index_path=claim_index_path,
+        revision_action_plan_path=project_paper_sources_dir / PROJECT_REVISION_ACTION_PLAN_FILENAME,
+        reviewer_response_dossier_path=project_paper_sources_dir / PROJECT_REVIEWER_RESPONSE_DOSSIER_FILENAME,
+        revision_round_path=project_paper_sources_dir / PROJECT_REVISION_ROUND_FILENAME,
         retrieval_evidence_ledger_path=retrieval_evidence_ledger_path,
         lineage_archive_path=lineage_archive_path,
         literature_support_index_path=literature_support_index_path,
@@ -10259,6 +10914,9 @@ def _materialize_project_submission_package(
         _submission_asset_ref("project_reproducibility_checklist", checklist_path, selected_run_ids=selected_run_ids),
         _submission_asset_ref("project_reviewer_response", reviewer_response_path, selected_run_ids=selected_run_ids),
         _submission_asset_ref("project_review_findings", review_findings_path, selected_run_ids=selected_run_ids),
+        _submission_asset_ref("project_revision_action_plan", revision_action_plan_path, selected_run_ids=selected_run_ids),
+        _submission_asset_ref("project_reviewer_response_dossier", reviewer_response_dossier_path, selected_run_ids=selected_run_ids),
+        _submission_asset_ref("project_revision_round", revision_round_path, selected_run_ids=selected_run_ids),
         _submission_asset_ref("project_repair_execution_log", repair_execution_log_path, selected_run_ids=selected_run_ids),
         _submission_asset_ref("project_claim_evidence_index", claim_index_path, selected_run_ids=selected_run_ids),
         _submission_asset_ref("project_retrieval_evidence_ledger", retrieval_evidence_ledger_path, selected_run_ids=selected_run_ids),
@@ -10313,6 +10971,9 @@ def _materialize_project_submission_package(
         "paper_sources_manifest_fingerprint": project_paper_sources_manifest.manifest_fingerprint,
         "manuscript_context_path": str(manuscript_context_path),
         "manuscript_context_fingerprint": manuscript_context_fingerprint,
+        "revision_action_plan_path": str(revision_action_plan_path),
+        "reviewer_response_dossier_path": str(reviewer_response_dossier_path),
+        "revision_round_path": str(revision_round_path),
         "generated_assets": generated_assets[1:],
         "blocked_asset_count": sum(1 for item in generated_assets[1:] if item.get("final_publish_blocking")),
         "final_publish_blocking_asset_roles": [
@@ -10326,6 +10987,21 @@ def _materialize_project_submission_package(
             1 for action in project_paper_revision_actions if action.status == "completed"
         ),
         "revision_actions": [action.title for action in project_paper_revision_actions],
+        "revision_action_plan_fingerprint": (
+            json.loads(revision_action_plan_path.read_text(encoding="utf-8")).get("plan_fingerprint")
+            if revision_action_plan_path.is_file()
+            else None
+        ),
+        "reviewer_response_dossier_fingerprint": (
+            json.loads(reviewer_response_dossier_path.read_text(encoding="utf-8")).get("dossier_fingerprint")
+            if reviewer_response_dossier_path.is_file()
+            else None
+        ),
+        "revision_round_fingerprint": (
+            json.loads(revision_round_path.read_text(encoding="utf-8")).get("round_fingerprint")
+            if revision_round_path.is_file()
+            else None
+        ),
         "phase6_negative_evidence_coverage": _phase6_negative_evidence_report_audit(
             negative_evidence_report_payload
         ),
@@ -11064,7 +11740,7 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
     effective_paper_decision: AutoResearchProjectPaperDecision = (
         "do_not_write" if blockers and not should_write else paper_decision
     )
-    project_paper_markdown = _render_project_paper_markdown(
+    original_project_paper_markdown = _render_project_paper_markdown(
         project_id=project_id,
         latest_brief=latest_brief,
         selected_runs=selected_runs,
@@ -11111,7 +11787,7 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         project_revision_rereview_report,
     ) = _apply_project_revision_actions(
         project_id=project_id,
-        markdown=project_paper_markdown,
+        markdown=original_project_paper_markdown,
         actions=project_paper_revision_actions_initial,
         selected_runs=selected_runs,
         latest_brief=latest_brief,
@@ -11121,6 +11797,38 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
     )
     project_paper_path = _project_paper_path(project_id)
     project_paper_path.write_text(project_paper_markdown, encoding="utf-8")
+    project_paper_sources_dir = _project_paper_sources_dir(project_id)
+    project_paper_sources_dir.mkdir(parents=True, exist_ok=True)
+    project_paper_original_path = project_paper_sources_dir / PROJECT_PAPER_ORIGINAL_FILENAME
+    project_paper_original_path.write_text(original_project_paper_markdown, encoding="utf-8")
+    project_paper_revised_path = project_paper_sources_dir / PROJECT_PAPER_REVISED_FILENAME
+    project_paper_revised_path.write_text(project_paper_markdown, encoding="utf-8")
+    project_revision_action_plan = _project_revision_action_plan(
+        project_id=project_id,
+        project_review_findings=project_review_findings,
+        project_paper_revision_actions=project_paper_revision_actions,
+        source_review_findings_path=project_paper_sources_dir / PROJECT_REVIEW_FINDINGS_FILENAME,
+    )
+    project_action_executions = _project_revision_action_executions(
+        project_paper_revision_actions
+    )
+    project_revision_response_dossier = _project_reviewer_response_dossier(
+        project_id=project_id,
+        project_review_findings=project_review_findings,
+        project_paper_revision_actions=project_paper_revision_actions,
+    )
+    project_revision_round = _project_revision_round_payload(
+        project_id=project_id,
+        original_manuscript_path=project_paper_original_path,
+        revised_manuscript_path=project_paper_revised_path,
+        original_claim_evidence_index_path=None,
+        revised_claim_evidence_index_path=project_paper_sources_dir / PROJECT_SOURCE_CLAIM_EVIDENCE_INDEX_FILENAME,
+        project_review_findings=project_review_findings,
+        project_revision_action_plan=project_revision_action_plan,
+        action_executions=project_action_executions,
+        reviewer_response_dossier=project_revision_response_dossier,
+        rereview_report=project_revision_rereview_report,
+    )
     project_paper_sections, project_paper_missing_sections = _project_paper_section_status(project_paper_markdown)
     project_paper_revision_action_index = _build_project_revision_action_index(
         project_paper_revision_actions,
@@ -11135,10 +11843,14 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
     ) = _materialize_project_paper_sources(
         project_id=project_id,
         markdown=project_paper_markdown,
+        original_markdown=original_project_paper_markdown,
         revised_markdown=project_paper_markdown,
         latest_brief=latest_brief,
         revision_action_index=project_paper_revision_action_index,
         review_findings=project_review_findings,
+        revision_action_plan=project_revision_action_plan,
+        reviewer_response_dossier=project_revision_response_dossier,
+        revision_round=project_revision_round,
         revision_application_report=project_revision_application_report,
         revision_rereview_report=project_revision_rereview_report,
     )
@@ -11160,6 +11872,9 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         project_paper_sources_manifest=project_paper_sources_manifest,
         project_paper_revision_actions=project_paper_revision_actions,
         project_review_findings=project_review_findings,
+        revision_action_plan=project_revision_action_plan,
+        reviewer_response_dossier=project_revision_response_dossier,
+        revision_round=project_revision_round,
         project_publish_gate_passed=effective_project_publish_gate_passed,
         blockers=_dedupe(blockers),
         warnings=_dedupe(warnings),
@@ -11288,6 +12003,20 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         "project_paper_rereview_report": project_revision_rereview_report,
         "project_paper_rereview_complete": bool(
             project_revision_rereview_report.get("rereview_complete")
+        ),
+        "project_revision_action_plan": project_revision_action_plan.model_dump(mode="json"),
+        "project_revision_action_plan_path": str(
+            project_paper_sources_dir / PROJECT_REVISION_ACTION_PLAN_FILENAME
+        ),
+        "project_revision_response_dossier": (
+            project_revision_response_dossier.model_dump(mode="json")
+        ),
+        "project_revision_response_dossier_path": str(
+            project_paper_sources_dir / PROJECT_REVIEWER_RESPONSE_DOSSIER_FILENAME
+        ),
+        "project_revision_round": project_revision_round.model_dump(mode="json"),
+        "project_revision_round_path": str(
+            project_paper_sources_dir / PROJECT_REVISION_ROUND_FILENAME
         ),
         **project_submission_updates,
         "blockers": _dedupe(blockers),

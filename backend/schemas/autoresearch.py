@@ -189,6 +189,57 @@ AutoResearchRevisionPriority = Literal["high", "medium", "low"]
 AutoResearchReviewLoopIssueStatus = Literal["open", "resolved"]
 AutoResearchReviewLoopActionStatus = Literal["pending", "running", "completed", "failed", "blocked"]
 AutoResearchRevisionDossierItemStatus = Literal["resolved", "action_required", "blocked"]
+AutoResearchAutonomousRevisionActionKind = Literal[
+    "manuscript_text_revision",
+    "claim_downgrade",
+    "claim_removal",
+    "experiment_repair_request",
+    "literature_followup_request",
+    "benchmark_provenance_followup_request",
+    "reproducibility_followup_request",
+    "no_action_with_rationale",
+]
+AutoResearchAutonomousRevisionActionScope = Literal[
+    "manuscript",
+    "claim_evidence_index",
+    "experiment_repair",
+    "literature",
+    "benchmark",
+    "readiness",
+]
+AutoResearchAutonomousRevisionActionStatus = Literal[
+    "pending",
+    "executed",
+    "blocked",
+    "needs_approval",
+    "requires_import",
+    "requires_external_evidence",
+    "terminal_failed",
+    "no_action",
+]
+AutoResearchRevisionExecutionStatus = Literal[
+    "executed",
+    "blocked",
+    "needs_approval",
+    "requires_import",
+    "requires_external_evidence",
+    "terminal_failed",
+    "no_action",
+]
+AutoResearchReviewerResponseStatus = Literal[
+    "resolved",
+    "partially_resolved",
+    "unresolved",
+    "blocked",
+    "no_action",
+]
+AutoResearchReReviewResolutionStatus = Literal[
+    "resolved",
+    "partially_resolved",
+    "unresolved",
+    "regressed",
+    "superseded_by_blocker",
+]
 AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "blocked"]
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
@@ -3156,6 +3207,12 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     project_paper_rereview_report: dict[str, Any] | None = None
     project_paper_rereview_complete: bool = False
     project_review_findings: dict[str, Any] | None = None
+    project_revision_action_plan: AutoResearchRevisionActionPlanRead | None = None
+    project_revision_action_plan_path: str | None = None
+    project_revision_response_dossier: AutoResearchReviewerResponseDossierRead | None = None
+    project_revision_response_dossier_path: str | None = None
+    project_revision_round: AutoResearchRevisionRoundRead | None = None
+    project_revision_round_path: str | None = None
     project_submission_dir: str | None = None
     project_submission_manifest: dict[str, Any] | None = None
     project_submission_manifest_path: str | None = None
@@ -3309,6 +3366,19 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     project_revision_action_count: int = 0
     project_review_finding_count: int = 0
     project_review_findings_mapped_to_actions: bool = False
+    project_revision_action_plan_path: str | None = None
+    project_revision_response_dossier_path: str | None = None
+    project_revision_round_path: str | None = None
+    project_revision_selected_action_ids: list[str] = Field(default_factory=list)
+    project_revision_paper_only_action_ids: list[str] = Field(default_factory=list)
+    project_revision_blocked_evidence_action_ids: list[str] = Field(default_factory=list)
+    project_revision_response_item_count: int = 0
+    project_revision_rereview_resolved_count: int = 0
+    project_revision_rereview_partially_resolved_count: int = 0
+    project_revision_rereview_unresolved_count: int = 0
+    project_revision_rereview_regressed_count: int = 0
+    project_revision_terminal_status: AutoResearchReviewStatus = "needs_revision"
+    project_revision_readiness_impact: str | None = None
     project_submission_blockers: list[str] = Field(default_factory=list)
     project_submission_bundle_kind: str | None = None
     project_submission_asset_roles: list[str] = Field(default_factory=list)
@@ -3884,6 +3954,136 @@ class AutoResearchReviewLoopRead(BaseModel):
     next_review_required: bool = False
     auto_revision_round_limit: int = 3
     auto_revision_rounds_remaining: int = 0
+
+
+class AutoResearchAutonomousRevisionActionRead(BaseModel):
+    action_id: str
+    project_id: str
+    run_id: str | None = None
+    review_round: int = 1
+    source_finding_ids: list[str] = Field(default_factory=list)
+    source_finding_fingerprint: str | None = None
+    action_kind: AutoResearchAutonomousRevisionActionKind
+    scope: AutoResearchAutonomousRevisionActionScope
+    evidence_requirement: str
+    can_execute_now: bool = False
+    approval_required: bool = False
+    approval_state: str = "not_required"
+    expected_outputs: list[str] = Field(default_factory=list)
+    lineage_parent_refs: list[str] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    terminal_condition: str
+    max_attempts: int = 3
+    attempt_count: int = 0
+    status: AutoResearchAutonomousRevisionActionStatus = "pending"
+    blockers: list[str] = Field(default_factory=list)
+    rationale: str
+    source_review_loop_action_id: str | None = None
+
+
+class AutoResearchRevisionActionPlanRead(BaseModel):
+    generated_at: datetime
+    plan_id: str = "project_revision_action_plan_v1"
+    project_id: str
+    run_id: str | None = None
+    review_round: int = 1
+    review_fingerprint: str | None = None
+    source_review_findings_path: str | None = None
+    action_count: int = 0
+    executable_action_count: int = 0
+    blocked_action_count: int = 0
+    no_action_count: int = 0
+    actions: list[AutoResearchAutonomousRevisionActionRead] = Field(default_factory=list)
+    complete: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    capability_audit: dict[str, Any] = Field(default_factory=dict)
+    plan_fingerprint: str
+
+
+class AutoResearchRevisionActionExecutionRead(BaseModel):
+    action_id: str
+    status: AutoResearchRevisionExecutionStatus
+    attempt_count: int = 0
+    started_at_step: int | None = None
+    completed_at_step: int | None = None
+    revised_artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs_used: list[str] = Field(default_factory=list)
+    claim_ids_changed: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    detail: str
+
+
+class AutoResearchReviewerResponseItemRead(BaseModel):
+    source_finding_id: str
+    original_finding_summary: str
+    action_id: str | None = None
+    action_taken: str
+    revised_artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs_used: list[str] = Field(default_factory=list)
+    claim_ids_changed: list[str] = Field(default_factory=list)
+    status: AutoResearchReviewerResponseStatus = "unresolved"
+    limitation_or_blocker: str | None = None
+    final_publish_impact: str
+    no_action_rationale: str | None = None
+
+
+class AutoResearchReviewerResponseDossierRead(BaseModel):
+    generated_at: datetime
+    dossier_id: str = "project_reviewer_response_dossier_v1"
+    project_id: str
+    run_id: str | None = None
+    review_round: int = 1
+    review_fingerprint: str | None = None
+    item_count: int = 0
+    covered_finding_count: int = 0
+    unresolved_count: int = 0
+    blocked_count: int = 0
+    items: list[AutoResearchReviewerResponseItemRead] = Field(default_factory=list)
+    complete: bool = False
+    dossier_fingerprint: str
+
+
+class AutoResearchReReviewFindingRead(BaseModel):
+    source_finding_id: str
+    action_id: str | None = None
+    resolution_status: AutoResearchReReviewResolutionStatus
+    revised_artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs_used: list[str] = Field(default_factory=list)
+    residual_blockers: list[str] = Field(default_factory=list)
+    new_findings: list[str] = Field(default_factory=list)
+    rationale: str
+
+
+class AutoResearchRevisionRoundRead(BaseModel):
+    generated_at: datetime
+    round_id: str = "project_revision_round_v1"
+    project_id: str
+    run_id: str | None = None
+    review_round: int = 1
+    revision_round: int = 2
+    original_review_fingerprint: str | None = None
+    revised_review_fingerprint: str | None = None
+    original_manuscript_ref: str | None = None
+    original_manuscript_fingerprint: str | None = None
+    revised_manuscript_ref: str | None = None
+    revised_manuscript_fingerprint: str | None = None
+    original_claim_evidence_index_ref: str | None = None
+    revised_claim_evidence_index_ref: str | None = None
+    action_plan: AutoResearchRevisionActionPlanRead | None = None
+    action_executions: list[AutoResearchRevisionActionExecutionRead] = Field(default_factory=list)
+    reviewer_response_dossier: AutoResearchReviewerResponseDossierRead | None = None
+    rereview_findings: list[AutoResearchReReviewFindingRead] = Field(default_factory=list)
+    resolved_count: int = 0
+    partially_resolved_count: int = 0
+    unresolved_count: int = 0
+    regressed_count: int = 0
+    new_finding_count: int = 0
+    pending_action_count: int = 0
+    terminal_status: AutoResearchReviewStatus = "needs_revision"
+    readiness_impact: str = "revision_required"
+    unresolved_blockers: list[str] = Field(default_factory=list)
+    round_fingerprint: str
 
 
 class AutoResearchRevisionDossierItemRead(BaseModel):

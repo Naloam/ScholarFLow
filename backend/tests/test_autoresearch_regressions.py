@@ -1101,6 +1101,7 @@ def _assert_goal5_project_source_package(
     manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     required_source_files = {
         "paper.md",
+        "paper_original.md",
         "main.tex",
         "references.bib",
         "build.sh",
@@ -1113,6 +1114,9 @@ def _assert_goal5_project_source_package(
         "source_fingerprints.json",
         "project_revision_action_index.json",
         "project_review_findings.json",
+        "revision_action_plan.json",
+        "reviewer_response_dossier.json",
+        "revision_round.json",
         "revision_actions.md",
         "paper_revised.md",
         "project_revision_application.json",
@@ -1147,9 +1151,13 @@ def _assert_goal5_project_source_package(
         assert file_payload["size_bytes"] > 0
     assert {
         "paper.md",
+        "paper_original.md",
         "main.tex",
         "paper_compiler_evidence.json",
         "manuscript_context.json",
+        "revision_action_plan.json",
+        "reviewer_response_dossier.json",
+        "revision_round.json",
         "claim_evidence_index.json",
         "artifact_index.json",
     }.issubset(set(manifest_payload["source_fingerprints"]))
@@ -1161,7 +1169,16 @@ def _assert_goal5_project_source_package(
     assert "manifest.json" in source_fingerprints["excluded_self_referential_files"]
     assert "source_fingerprints.json" in source_fingerprints["excluded_self_referential_files"]
     assert set(source_fingerprints["source_fingerprints"]).issuperset(
-        {"paper.md", "main.tex", "paper_compiler_evidence.json", "manuscript_context.json"}
+        {
+            "paper.md",
+            "paper_original.md",
+            "main.tex",
+            "paper_compiler_evidence.json",
+            "manuscript_context.json",
+            "revision_action_plan.json",
+            "reviewer_response_dossier.json",
+            "revision_round.json",
+        }
     )
 
     manuscript_context = json.loads(Path(orchestration.project_manuscript_context_path).read_text(encoding="utf-8"))
@@ -1184,6 +1201,15 @@ def _assert_goal5_project_source_package(
         "claim_ceiling",
     ):
         assert key in manuscript_context
+    assert manuscript_context["reviewer_revision_state"]["revision_action_plan"]["plan_id"] == (
+        "project_revision_action_plan_v1"
+    )
+    assert manuscript_context["reviewer_revision_state"]["reviewer_response_dossier"]["dossier_id"] == (
+        "project_reviewer_response_dossier_v1"
+    )
+    assert manuscript_context["reviewer_revision_state"]["revision_round"]["round_id"] == (
+        "project_revision_round_v1"
+    )
     assert manuscript_context["readiness_policy"]["review_ready_distinct_from_final_publish"] is True
     if expected_claim_ceiling is not None:
         assert manuscript_context["claim_ceiling"] == expected_claim_ceiling
@@ -8777,7 +8803,7 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert orchestration.project_review_bundle_ready is True
     assert orchestration.project_final_publish_ready is False
     assert orchestration.project_submission_ready is False
-    assert orchestration.project_submission_asset_count == 28
+    assert orchestration.project_submission_asset_count == 31
     assert orchestration.project_submission_manifest_path is not None
     assert Path(orchestration.project_submission_manifest_path).is_file()
     assert Path(orchestration.project_reproducibility_checklist_path).is_file()
@@ -10936,6 +10962,177 @@ def test_project_experiment_repairs_block_runtime_failure(
     assert rereview_report["action_reviews"][0]["recommendation"] == "continue_repair"
 
 
+def test_goal6_project_revision_loop_materializes_typed_plan_response_and_rereview(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "project-goal6-typed-revision-loop"
+    ledger = AutoResearchProjectConclusionLedgerRead(
+        project_id=project_id,
+        stable_conclusions=[],
+        conditional_conclusions=[],
+        negative_findings=[],
+        failed_hypotheses=[],
+        limitations=[
+            AutoResearchProjectConclusionEntryRead(
+                conclusion_id="missing_claim_evidence_retrieval_run_1",
+                kind="limitation",
+                text="Run 1 has a missing retrieval evidence entry.",
+                supporting_run_ids=["run_1"],
+                evidence_refs=["run_1:evidence_ledger:evidence_retrieval_missing_claim"],
+                caveats=["Keep the claim downgraded until retrieval evidence is imported."],
+                paper_claim_allowed=True,
+            )
+        ],
+        conclusion_count=1,
+        ledger_fingerprint="goal6-typed-revision-ledger",
+    )
+    traces = [
+        AutoResearchProjectClaimTraceRead(
+            claim_id="project_claim_overstated",
+            claim="The system eliminates unsupported claims across all autonomous research settings.",
+            source_conclusion_id="conditional_overstated_claim",
+            support_status="unsupported",
+            supporting_run_ids=["run_1"],
+            evidence_refs=[],
+            unsupported_reasons=["No evidence ledger entries support this broad claim."],
+            strong_claim=True,
+        )
+    ]
+    evidence_profile = {
+        "literature_ready": False,
+        "benchmark_provenance_ready": False,
+        "benchmark_publication_ready": False,
+        "benchmark_scale_ready": True,
+        "benchmark_source_independence_ready": False,
+        "blockers": [
+            "Project literature scout lacks multi-source real cached literature evidence.",
+            "Selected benchmark runs do not cover independent source datasets.",
+        ],
+    }
+    statistics_profiles = [
+        {
+            "run_id": "run_1",
+            "has_statistics": False,
+            "significance_test_count": 0,
+        }
+    ]
+
+    actions_initial = autoresearch_project_paper_orchestrator._build_project_revision_actions(
+        ledger=ledger,
+        traces=traces,
+        evidence_profile=evidence_profile,
+        statistics_profiles=statistics_profiles,
+    )
+    findings = autoresearch_project_paper_orchestrator._project_review_findings_payload(
+        project_id=project_id,
+        actions=actions_initial,
+        ledger=ledger,
+        traces=traces,
+        evidence_profile=evidence_profile,
+        statistics_profiles=statistics_profiles,
+        selected_runs=[],
+    )
+    actions_initial = autoresearch_project_paper_orchestrator._attach_project_review_finding_ids(
+        actions_initial,
+        findings,
+    )
+    original_markdown = "# Draft\n\n## Results\n\nUnsupported broad claim.\n\n## Limitations\n\n"
+    revised_markdown, actions, application_report, rereview_report = (
+        autoresearch_project_paper_orchestrator._apply_project_revision_actions(
+            project_id=project_id,
+            markdown=original_markdown,
+            actions=actions_initial,
+            traces=traces,
+            evidence_profile=evidence_profile,
+            statistics_profiles=statistics_profiles,
+        )
+    )
+
+    sources_dir = autoresearch_project_paper_orchestrator._project_paper_sources_dir(project_id)
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    original_path = sources_dir / "paper_original.md"
+    revised_path = sources_dir / "paper_revised.md"
+    original_path.write_text(original_markdown, encoding="utf-8")
+    revised_path.write_text(revised_markdown, encoding="utf-8")
+    plan = autoresearch_project_paper_orchestrator._project_revision_action_plan(
+        project_id=project_id,
+        project_review_findings=findings,
+        project_paper_revision_actions=actions,
+        source_review_findings_path=sources_dir / "project_review_findings.json",
+    )
+    executions = autoresearch_project_paper_orchestrator._project_revision_action_executions(
+        actions
+    )
+    response_dossier = autoresearch_project_paper_orchestrator._project_reviewer_response_dossier(
+        project_id=project_id,
+        project_review_findings=findings,
+        project_paper_revision_actions=actions,
+    )
+    revision_round = autoresearch_project_paper_orchestrator._project_revision_round_payload(
+        project_id=project_id,
+        original_manuscript_path=original_path,
+        revised_manuscript_path=revised_path,
+        original_claim_evidence_index_path=None,
+        revised_claim_evidence_index_path=sources_dir / "claim_evidence_index.json",
+        project_review_findings=findings,
+        project_revision_action_plan=plan,
+        action_executions=executions,
+        reviewer_response_dossier=response_dossier,
+        rereview_report=rereview_report,
+    )
+
+    finding_ids = {item["finding_id"] for item in findings["findings"]}
+    mapped_or_no_action = {
+        finding_id
+        for action in plan.actions
+        for finding_id in action.source_finding_ids
+    }
+    assert finding_ids == mapped_or_no_action
+    assert plan.capability_audit["audit_id"] == "goal6_revision_capability_audit_v1"
+    assert plan.capability_audit["review_loop_productionization"]
+    assert all(action.lineage_parent_refs for action in plan.actions)
+    assert all(action.expected_outputs or action.action_kind == "no_action_with_rationale" for action in plan.actions)
+    assert all(action.terminal_condition for action in plan.actions)
+    assert all(action.max_attempts >= 1 for action in plan.actions)
+    assert any(action.action_kind == "claim_downgrade" and action.status == "executed" for action in plan.actions)
+    assert any(
+        action.action_kind == "literature_followup_request"
+        and action.status == "requires_external_evidence"
+        and action.blockers
+        for action in plan.actions
+    )
+    assert any(
+        action.action_kind == "benchmark_provenance_followup_request"
+        and action.status == "requires_external_evidence"
+        for action in plan.actions
+    )
+    assert any(
+        action.action_kind == "experiment_repair_request"
+        and action.status == "requires_external_evidence"
+        for action in plan.actions
+    )
+    assert application_report["blocked_action_count"] >= 1
+    assert response_dossier.item_count == len(finding_ids)
+    assert response_dossier.covered_finding_count == len(finding_ids)
+    assert any(item.status == "resolved" for item in response_dossier.items)
+    assert any(item.status == "blocked" for item in response_dossier.items)
+    assert all(
+        item.evidence_refs_used or item.status in {"blocked", "unresolved", "no_action", "resolved"}
+        for item in response_dossier.items
+    )
+    assert rereview_report["rereview_fingerprint"]
+    assert rereview_report["previous_review_fingerprint"] != rereview_report["revised_artifact_fingerprint"]
+    assert revision_round.revised_review_fingerprint == rereview_report["rereview_fingerprint"]
+    assert revision_round.original_manuscript_fingerprint != revision_round.revised_manuscript_fingerprint
+    assert revision_round.resolved_count >= 1
+    assert revision_round.unresolved_count >= 1
+    assert revision_round.pending_action_count >= 1
+    assert revision_round.terminal_status == "blocked"
+    assert revision_round.unresolved_blockers
+
+
 def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
     monkeypatch,
     tmp_path: Path,
@@ -11041,6 +11238,9 @@ def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
         "project_manuscript_markdown",
         "project_paper_sources",
         "project_revised_manuscript_markdown",
+        "project_revision_action_plan",
+        "project_reviewer_response_dossier",
+        "project_revision_round",
         "project_revision_application",
         "project_revision_rereview_report",
         "project_code_package",

@@ -2239,7 +2239,7 @@ export type AutoResearchReviewLoopAction = {
   priority: "high" | "medium" | "low";
   title: string;
   detail: string;
-  status: "pending" | "completed";
+  status: "pending" | "running" | "completed" | "failed" | "blocked";
   first_seen_round: number;
   last_seen_round: number;
   completed_round?: number | null;
@@ -2257,6 +2257,187 @@ export type AutoResearchReviewLoopAction = {
   failure_classification?: string | null;
   rereview_result?: Record<string, unknown> | null;
   residual_blockers: string[];
+};
+
+export type AutoResearchAutonomousRevisionActionKind =
+  | "manuscript_text_revision"
+  | "claim_downgrade"
+  | "claim_removal"
+  | "experiment_repair_request"
+  | "literature_followup_request"
+  | "benchmark_provenance_followup_request"
+  | "reproducibility_followup_request"
+  | "no_action_with_rationale";
+
+export type AutoResearchAutonomousRevisionActionScope =
+  | "manuscript"
+  | "claim_evidence_index"
+  | "experiment_repair"
+  | "literature"
+  | "benchmark"
+  | "readiness";
+
+export type AutoResearchAutonomousRevisionActionStatus =
+  | "pending"
+  | "executed"
+  | "blocked"
+  | "needs_approval"
+  | "requires_import"
+  | "requires_external_evidence"
+  | "terminal_failed"
+  | "no_action";
+
+export type AutoResearchRevisionExecutionStatus =
+  | "executed"
+  | "blocked"
+  | "needs_approval"
+  | "requires_import"
+  | "requires_external_evidence"
+  | "terminal_failed"
+  | "no_action";
+
+export type AutoResearchReviewerResponseStatus =
+  | "resolved"
+  | "partially_resolved"
+  | "unresolved"
+  | "blocked"
+  | "no_action";
+
+export type AutoResearchReReviewResolutionStatus =
+  | "resolved"
+  | "partially_resolved"
+  | "unresolved"
+  | "regressed"
+  | "superseded_by_blocker";
+
+export type AutoResearchAutonomousRevisionAction = {
+  action_id: string;
+  project_id: string;
+  run_id?: string | null;
+  review_round: number;
+  source_finding_ids: string[];
+  source_finding_fingerprint?: string | null;
+  action_kind: AutoResearchAutonomousRevisionActionKind;
+  scope: AutoResearchAutonomousRevisionActionScope;
+  evidence_requirement: string;
+  can_execute_now: boolean;
+  approval_required: boolean;
+  approval_state: string;
+  expected_outputs: string[];
+  lineage_parent_refs: string[];
+  claim_ids: string[];
+  artifact_refs: string[];
+  terminal_condition: string;
+  max_attempts: number;
+  attempt_count: number;
+  status: AutoResearchAutonomousRevisionActionStatus;
+  blockers: string[];
+  rationale: string;
+  source_review_loop_action_id?: string | null;
+};
+
+export type AutoResearchRevisionActionPlan = {
+  generated_at: string;
+  plan_id: string;
+  project_id: string;
+  run_id?: string | null;
+  review_round: number;
+  review_fingerprint?: string | null;
+  source_review_findings_path?: string | null;
+  action_count: number;
+  executable_action_count: number;
+  blocked_action_count: number;
+  no_action_count: number;
+  actions: AutoResearchAutonomousRevisionAction[];
+  complete: boolean;
+  blockers: string[];
+  capability_audit: Record<string, unknown>;
+  plan_fingerprint: string;
+};
+
+export type AutoResearchRevisionActionExecution = {
+  action_id: string;
+  status: AutoResearchRevisionExecutionStatus;
+  attempt_count: number;
+  started_at_step?: number | null;
+  completed_at_step?: number | null;
+  revised_artifact_refs: string[];
+  evidence_refs_used: string[];
+  claim_ids_changed: string[];
+  blockers: string[];
+  detail: string;
+};
+
+export type AutoResearchReviewerResponseItem = {
+  source_finding_id: string;
+  original_finding_summary: string;
+  action_id?: string | null;
+  action_taken: string;
+  revised_artifact_refs: string[];
+  evidence_refs_used: string[];
+  claim_ids_changed: string[];
+  status: AutoResearchReviewerResponseStatus;
+  limitation_or_blocker?: string | null;
+  final_publish_impact: string;
+  no_action_rationale?: string | null;
+};
+
+export type AutoResearchReviewerResponseDossier = {
+  generated_at: string;
+  dossier_id: string;
+  project_id: string;
+  run_id?: string | null;
+  review_round: number;
+  review_fingerprint?: string | null;
+  item_count: number;
+  covered_finding_count: number;
+  unresolved_count: number;
+  blocked_count: number;
+  items: AutoResearchReviewerResponseItem[];
+  complete: boolean;
+  dossier_fingerprint: string;
+};
+
+export type AutoResearchReReviewFinding = {
+  source_finding_id: string;
+  action_id?: string | null;
+  resolution_status: AutoResearchReReviewResolutionStatus;
+  revised_artifact_refs: string[];
+  evidence_refs_used: string[];
+  residual_blockers: string[];
+  new_findings: string[];
+  rationale: string;
+};
+
+export type AutoResearchRevisionRound = {
+  generated_at: string;
+  round_id: string;
+  project_id: string;
+  run_id?: string | null;
+  review_round: number;
+  revision_round: number;
+  original_review_fingerprint?: string | null;
+  revised_review_fingerprint?: string | null;
+  original_manuscript_ref?: string | null;
+  original_manuscript_fingerprint?: string | null;
+  revised_manuscript_ref?: string | null;
+  revised_manuscript_fingerprint?: string | null;
+  original_claim_evidence_index_ref?: string | null;
+  revised_claim_evidence_index_ref?: string | null;
+  action_plan?: AutoResearchRevisionActionPlan | null;
+  action_executions: AutoResearchRevisionActionExecution[];
+  reviewer_response_dossier?: AutoResearchReviewerResponseDossier | null;
+  rereview_findings: AutoResearchReReviewFinding[];
+  resolved_count: number;
+  partially_resolved_count: number;
+  unresolved_count: number;
+  regressed_count: number;
+  new_finding_count: number;
+  pending_action_count: number;
+  terminal_status: "ready" | "needs_revision" | "blocked";
+  readiness_impact: string;
+  unresolved_blockers: string[];
+  round_fingerprint: string;
 };
 
 export type AutoResearchReviewLoop = {
@@ -4030,6 +4211,12 @@ export type AutoResearchProjectPaperOrchestration = {
   project_paper_rereview_report?: Record<string, unknown> | null;
   project_paper_rereview_complete: boolean;
   project_review_findings?: Record<string, unknown> | null;
+  project_revision_action_plan?: AutoResearchRevisionActionPlan | null;
+  project_revision_action_plan_path?: string | null;
+  project_revision_response_dossier?: AutoResearchReviewerResponseDossier | null;
+  project_revision_response_dossier_path?: string | null;
+  project_revision_round?: AutoResearchRevisionRound | null;
+  project_revision_round_path?: string | null;
   project_submission_dir?: string | null;
   project_submission_manifest?: Record<string, unknown> | null;
   project_submission_manifest_path?: string | null;
@@ -4183,6 +4370,19 @@ export type AutoResearchEvaluationCaseTrace = {
   project_revision_action_count: number;
   project_review_finding_count: number;
   project_review_findings_mapped_to_actions: boolean;
+  project_revision_action_plan_path?: string | null;
+  project_revision_response_dossier_path?: string | null;
+  project_revision_round_path?: string | null;
+  project_revision_selected_action_ids: string[];
+  project_revision_paper_only_action_ids: string[];
+  project_revision_blocked_evidence_action_ids: string[];
+  project_revision_response_item_count: number;
+  project_revision_rereview_resolved_count: number;
+  project_revision_rereview_partially_resolved_count: number;
+  project_revision_rereview_unresolved_count: number;
+  project_revision_rereview_regressed_count: number;
+  project_revision_terminal_status: "ready" | "needs_revision" | "blocked";
+  project_revision_readiness_impact?: string | null;
   project_submission_blockers: string[];
   project_submission_bundle_kind?: string | null;
   project_submission_asset_roles: string[];

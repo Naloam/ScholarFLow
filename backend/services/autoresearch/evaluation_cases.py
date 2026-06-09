@@ -490,10 +490,69 @@ def _submission_trace_fields(project_paper: Any) -> dict[str, Any]:
         for action in getattr(project_paper, "project_paper_revision_actions", [])
         if getattr(action, "action_id", None)
     }
+    revision_action_plan = getattr(project_paper, "project_revision_action_plan", None)
+    if hasattr(revision_action_plan, "model_dump"):
+        revision_action_plan = revision_action_plan.model_dump(mode="json")
+    if not isinstance(revision_action_plan, dict):
+        revision_action_plan = _read_json_file(getattr(project_paper, "project_revision_action_plan_path", None))
+    revision_round = getattr(project_paper, "project_revision_round", None)
+    if hasattr(revision_round, "model_dump"):
+        revision_round = revision_round.model_dump(mode="json")
+    if not isinstance(revision_round, dict):
+        revision_round = _read_json_file(getattr(project_paper, "project_revision_round_path", None))
+    response_dossier = getattr(project_paper, "project_revision_response_dossier", None)
+    if hasattr(response_dossier, "model_dump"):
+        response_dossier = response_dossier.model_dump(mode="json")
+    if not isinstance(response_dossier, dict):
+        response_dossier = _read_json_file(
+            getattr(project_paper, "project_revision_response_dossier_path", None)
+        )
+    plan_actions = [
+        item for item in revision_action_plan.get("actions", []) if isinstance(item, dict)
+    ]
+    paper_only_action_ids = [
+        str(item.get("action_id"))
+        for item in plan_actions
+        if item.get("scope") in {"manuscript", "claim_evidence_index"}
+    ]
+    blocked_evidence_action_ids = [
+        str(item.get("action_id"))
+        for item in plan_actions
+        if item.get("action_kind")
+        in {
+            "experiment_repair_request",
+            "literature_followup_request",
+            "benchmark_provenance_followup_request",
+        }
+        and item.get("status") != "executed"
+    ]
     return {
         "project_review_finding_count": project_review_finding_count,
         "project_review_findings_mapped_to_actions": bool(action_ids)
         and mapped_action_ids == action_ids,
+        "project_revision_action_plan_path": getattr(project_paper, "project_revision_action_plan_path", None),
+        "project_revision_response_dossier_path": getattr(
+            project_paper,
+            "project_revision_response_dossier_path",
+            None,
+        ),
+        "project_revision_round_path": getattr(project_paper, "project_revision_round_path", None),
+        "project_revision_selected_action_ids": [
+            str(item.get("action_id")) for item in plan_actions if item.get("action_id")
+        ],
+        "project_revision_paper_only_action_ids": paper_only_action_ids,
+        "project_revision_blocked_evidence_action_ids": blocked_evidence_action_ids,
+        "project_revision_response_item_count": int(response_dossier.get("item_count") or 0),
+        "project_revision_rereview_resolved_count": int(revision_round.get("resolved_count") or 0),
+        "project_revision_rereview_partially_resolved_count": int(
+            revision_round.get("partially_resolved_count") or 0
+        ),
+        "project_revision_rereview_unresolved_count": int(revision_round.get("unresolved_count") or 0),
+        "project_revision_rereview_regressed_count": int(revision_round.get("regressed_count") or 0),
+        "project_revision_terminal_status": str(
+            revision_round.get("terminal_status") or "needs_revision"
+        ),
+        "project_revision_readiness_impact": revision_round.get("readiness_impact"),
         "project_submission_bundle_kind": (
             str(manifest.get("bundle_kind"))
             if manifest.get("bundle_kind") is not None
@@ -1271,6 +1330,9 @@ def _blocked_domain_trace(
             "literature_scout",
             "gap_mining",
             "project_paper_orchestration",
+            "project_revision_action_plan",
+            "project_reviewer_response_dossier",
+            "project_rereview",
             "publication_readiness_blocker",
         ],
         direction_count=scouted.direction_count,
@@ -1330,6 +1392,39 @@ def _blocked_domain_trace(
         project_review_finding_count=submission_fields["project_review_finding_count"],
         project_review_findings_mapped_to_actions=submission_fields[
             "project_review_findings_mapped_to_actions"
+        ],
+        project_revision_action_plan_path=submission_fields["project_revision_action_plan_path"],
+        project_revision_response_dossier_path=submission_fields[
+            "project_revision_response_dossier_path"
+        ],
+        project_revision_round_path=submission_fields["project_revision_round_path"],
+        project_revision_selected_action_ids=submission_fields[
+            "project_revision_selected_action_ids"
+        ],
+        project_revision_paper_only_action_ids=submission_fields[
+            "project_revision_paper_only_action_ids"
+        ],
+        project_revision_blocked_evidence_action_ids=submission_fields[
+            "project_revision_blocked_evidence_action_ids"
+        ],
+        project_revision_response_item_count=submission_fields[
+            "project_revision_response_item_count"
+        ],
+        project_revision_rereview_resolved_count=submission_fields[
+            "project_revision_rereview_resolved_count"
+        ],
+        project_revision_rereview_partially_resolved_count=submission_fields[
+            "project_revision_rereview_partially_resolved_count"
+        ],
+        project_revision_rereview_unresolved_count=submission_fields[
+            "project_revision_rereview_unresolved_count"
+        ],
+        project_revision_rereview_regressed_count=submission_fields[
+            "project_revision_rereview_regressed_count"
+        ],
+        project_revision_terminal_status=submission_fields["project_revision_terminal_status"],
+        project_revision_readiness_impact=submission_fields[
+            "project_revision_readiness_impact"
         ],
         project_submission_blockers=list(project_paper.project_submission_blockers),
         project_submission_bundle_kind=submission_fields["project_submission_bundle_kind"],
@@ -1493,6 +1588,21 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         "project_manuscript_context_complete": False,
         "project_manuscript_context_fingerprint": None,
     }
+    project_submission_trace_fields: dict[str, Any] = {
+        "project_revision_action_plan_path": None,
+        "project_revision_response_dossier_path": None,
+        "project_revision_round_path": None,
+        "project_revision_selected_action_ids": [],
+        "project_revision_paper_only_action_ids": [],
+        "project_revision_blocked_evidence_action_ids": [],
+        "project_revision_response_item_count": 0,
+        "project_revision_rereview_resolved_count": 0,
+        "project_revision_rereview_partially_resolved_count": 0,
+        "project_revision_rereview_unresolved_count": 0,
+        "project_revision_rereview_regressed_count": 0,
+        "project_revision_terminal_status": "needs_revision",
+        "project_revision_readiness_impact": None,
+    }
     project_review_bundle_ready = False
     project_final_publish_ready = False
     project_revision_action_count = 0
@@ -1643,6 +1753,7 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         project_offline_publication_case_path = project_paper.project_offline_publication_case_path
         project_offline_publication_audit_path = project_paper.project_offline_publication_audit_path
         project_source_trace_fields = _project_source_trace_fields(project_paper)
+        project_submission_trace_fields = _submission_trace_fields(project_paper)
         project_review_bundle_ready = project_paper.project_review_bundle_ready
         project_final_publish_ready = project_paper.project_final_publish_ready
         project_revision_action_count = project_paper.project_paper_revision_action_count
@@ -1928,6 +2039,9 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
             [
                 "project_paper_orchestration",
                 "project_revision_actions",
+                "project_revision_action_plan",
+                "project_reviewer_response_dossier",
+                "project_rereview",
                 "project_submission_package",
                 "submission_package_v3_asset_manifest",
             ]
@@ -2084,6 +2198,9 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         steps.extend(
             [
                 "project_paper_orchestration",
+                "project_revision_action_plan",
+                "project_reviewer_response_dossier",
+                "project_rereview",
                 "project_submission_package",
                 "domain_package_readiness",
             ]
@@ -2235,6 +2352,45 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         project_revision_action_count=project_revision_action_count,
         project_review_finding_count=project_review_finding_count,
         project_review_findings_mapped_to_actions=project_review_findings_mapped_to_actions,
+        project_revision_action_plan_path=project_submission_trace_fields[
+            "project_revision_action_plan_path"
+        ],
+        project_revision_response_dossier_path=project_submission_trace_fields[
+            "project_revision_response_dossier_path"
+        ],
+        project_revision_round_path=project_submission_trace_fields[
+            "project_revision_round_path"
+        ],
+        project_revision_selected_action_ids=project_submission_trace_fields[
+            "project_revision_selected_action_ids"
+        ],
+        project_revision_paper_only_action_ids=project_submission_trace_fields[
+            "project_revision_paper_only_action_ids"
+        ],
+        project_revision_blocked_evidence_action_ids=project_submission_trace_fields[
+            "project_revision_blocked_evidence_action_ids"
+        ],
+        project_revision_response_item_count=project_submission_trace_fields[
+            "project_revision_response_item_count"
+        ],
+        project_revision_rereview_resolved_count=project_submission_trace_fields[
+            "project_revision_rereview_resolved_count"
+        ],
+        project_revision_rereview_partially_resolved_count=project_submission_trace_fields[
+            "project_revision_rereview_partially_resolved_count"
+        ],
+        project_revision_rereview_unresolved_count=project_submission_trace_fields[
+            "project_revision_rereview_unresolved_count"
+        ],
+        project_revision_rereview_regressed_count=project_submission_trace_fields[
+            "project_revision_rereview_regressed_count"
+        ],
+        project_revision_terminal_status=project_submission_trace_fields[
+            "project_revision_terminal_status"
+        ],
+        project_revision_readiness_impact=project_submission_trace_fields[
+            "project_revision_readiness_impact"
+        ],
         project_submission_blockers=project_submission_blockers,
         project_submission_bundle_kind=project_submission_bundle_kind,
         project_submission_asset_roles=project_submission_asset_roles,

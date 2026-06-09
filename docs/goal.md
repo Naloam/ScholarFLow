@@ -47,13 +47,10 @@ user idea
 
 简短结论：
 
-- 已经完成从固定 claim-evidence case 到受控 domain idea-to-review-package loop 的工程骨架，并完成第一版真实缓存文献/benchmark provenance 扩展。
-- 现在处在“能生成 review-ready package 或可审计 blocker”的阶段。
-- 离“真实自动科研 + 写论文 + submission package”还差 3 个大能力层：
-  1. project-level manuscript compiler V2；
-  2. autonomous revision and submission packaging；
-  3. real end-to-end evaluation and operator productionization。
-- 离“可靠 final-publish-ready autonomous scientist”还远，因为 final publish 需要真实、多源、可复现、统计充分、负证据完整的 evidence chain。
+- 已经完成 Goal 1-5：从固定 claim-evidence publication case，推进到受控 domain idea routing、domain evidence package loop、typed experiment execution backend、cached literature/benchmark provenance、project-level manuscript compiler V2。
+- 当前系统已经能从一个受控 domain idea 生成 project-level manuscript/source package，或者生成可审计 blocker；但还没有完整 autonomous revision loop、final submission archive、系统级 end-to-end evaluation、production operator controls。
+- 以 roadmap 粗略衡量，工程骨架已经过半：Goal 1-5 是“研究事实和论文草稿生成”，Goal 6-9 是“审稿修订、最终提交、自我评估和生产化操作”。
+- 以最终愿景衡量，距离“可靠 final-publish-ready autonomous scientist”仍然很远，因为 final publish 需要真实、多源、可复现、统计充分、负证据完整、审稿修订闭环完成的 evidence chain。当前大多数 deterministic fixture/local/import replay case 只能支持 review/workshop/case-study 级别，不能升级成 publication-grade claim。
 
 更具体地说：
 
@@ -64,9 +61,38 @@ user idea
 - Benchmark resolver：已有 structured resolver 和 imported benchmark provenance path；source independence、scale/statistics support 仍继续约束 final publish。
 - Experiment protocol：已有 per-domain protocol、typed execution job materialization、deterministic replay/local/import runtime、Docker/bridge structured blockers。
 - Execution/repair：已有 typed runtime validation、environment manifest、failure classifier、repair recommendation 和 bounded blocker 分类；后续真实外部执行能力仍需由具体 bridge/Docker 环境接入。
-- Evidence ledger/readiness：已有 typed execution result 到 run/project/package-level evidence、negative evidence、readiness/package manifest 的映射，并已接入 cached literature / imported benchmark provenance；后续要在 manuscript compiler/package 中消费这些 evidence refs。
-- Paper/reviewer/revision：已有 project orchestrator 和 reviewer/publish gate 基础；还缺 submission-ready compiler V2、autonomous revision loop、finding-by-finding reviewer response。
-- Submission/final publish：还没有完整 final submission archive；`final_publish_ready=true` 只能在后续真实 evidence 满足 publish policy 后出现。
+- Evidence ledger/readiness：已有 typed execution result 到 run/project/package-level evidence、negative evidence、readiness/package manifest 的映射，并已接入 cached literature / imported benchmark provenance；Goal 5 已在 manuscript compiler/source package 中消费这些 evidence refs，后续 Goal 6-7 要在 revision/submission package 中继续保持可追溯。
+- Paper/compiler：已有 project orchestrator、versioned/fingerprinted manuscript context、evidence-constrained compiler/source package、claim-evidence index、figures/tables metadata、artifact index、readiness blockers。
+- Reviewer/revision：已有 reviewer simulator/publish gate 基础；还缺 finding-by-finding autonomous revision action planner、bounded execution、reviewer response、re-review cycle。
+- Submission/final publish：还没有完整 final submission archive、reproducibility checklist、lineage archive、final publish package gate；`final_publish_ready=true` 只能在后续真实 evidence 满足 publish policy 后出现。
+- System evaluation/operator：P14 evaluation cases 还需要升级为真实 end-to-end regression/evaluation suite；Operator Console 还需要 production controls for long-running jobs、budgets、approvals、resumability、artifact lineage inspection。
+
+剩余路线总览
+============
+
+默认顺序必须是 Goal 6 -> Goal 7 -> Goal 8 -> Goal 9，不要跳过 Goal 6 直接做 final submission gate，也不要优先做 UI polish。
+
+1. Goal 6: Autonomous Revision Loop
+   - 把 reviewer findings 转换为 typed revision actions。
+   - 区分 manuscript text revision、claim downgrade/removal、experiment repair、literature follow-up、benchmark/provenance follow-up、no-action with rationale。
+   - 执行 bounded revision：只改有证据支撑的 manuscript/package 部分；需要新实验/新文献/新 benchmark provenance 的 action 必须生成 repair/follow-up blocker，不得伪造 evidence。
+   - 生成 finding-by-finding reviewer response，并保留 original/revised artifacts、lineage、attempt limit、terminal status。
+   - Re-review 必须读取 revised package，输出 resolved / partially_resolved / unresolved findings。
+
+2. Goal 7: Submission Package And Final Publish Gate
+   - 生成可重建 submission archive：manuscript、supplemental artifacts、claim-evidence index、reviewer response、lineage archive、benchmark/literature provenance、environment/command manifests、negative evidence appendix、publication readiness manifest。
+   - 生成 reproducibility checklist：commands、environment、dependencies、datasets、benchmark versions、metrics、seeds/splits、artifact hashes、external requirements、known limitations。
+   - 实现 final publish decision：只有 literature/source sufficiency、benchmark provenance/source independence、experiment evidence、statistics、negative evidence、claim coverage、revision status、reproducibility package 全部满足 policy，才允许 `final_publish_ready=true`。
+
+3. Goal 8: Real End-To-End Evaluation And ScholarFlow System Paper Material
+   - 将 P14 cases 升级为 deterministic executable evaluation suite。
+   - 每个 case 输出完整 trace：idea/domain/literature/benchmark/execution/evidence/readiness/repair/revision/package/failure-analysis timeline。
+   - 产出 ScholarFlow 自身 architecture、case studies、failure modes、limitations、reproducibility material；所有系统论文 claims 必须由 evaluation evidence 支撑。
+
+4. Goal 9: Operator Console Productionization
+   - 在 backend capability 已存在后补 production controls：long-running job inspection、resume/retry/cancel、approval/budget controls、bridge/import status、artifact lineage browser、repair queue、readiness/publish-gate/package status。
+   - UI 必须反映 persisted state，不得把 review-ready 暗示为 final-publish-ready。
+   - 这是最后做的 operational layer，不替代 Goal 6-8。
 
 已完成基线
 ==========
@@ -109,11 +135,18 @@ user idea
    - API、frontend types/client、deterministic evaluation traces、docs 和 regression tests 已同步；fixture/local smoke evidence 仍不会升级 final publish。
 
 6. Goal 4: Real Literature Scout And Benchmark Provenance Expansion
-   - 完成状态：已完成；提交哈希以 `git log` 为准。
+   - 完成提交：`a31322e Implement cached literature provenance expansion`
    - 已实现 cached arXiv / Semantic Scholar / Crossref connector contract；tests 使用 repository-local cache/fixtures，不依赖 live network。
    - Paper metadata 现在记录 source id、cache key、cache timestamp、fingerprint、extraction status，并保留 source/cache availability status。
    - Literature scout 保留 known methods/datasets/metrics/reported results/SOTA hints、source sufficiency policy、related-system coverage 和 extraction limitations。
    - Benchmark resolver 支持 brief-provided imported benchmark provenance，能提升 domain readiness，但仍保留 statistics、source independence、execution validation、negative evidence 和 publish-gate blockers。
+
+7. Goal 5: Project-Level Manuscript Compiler V2
+   - 完成提交：`91afa97 Complete project manuscript compiler package`
+   - 已实现 versioned/fingerprinted manuscript context、evidence-constrained compiler/source package、source claim-evidence index、figures/tables metadata、artifact index、source fingerprints、missing reference/artifact readiness blockers。
+   - Project-level manuscript/source package 现在能消费 brief、domain decision、literature support index、benchmark provenance、experiment execution evidence、evidence ledger、negative evidence、project conclusions、review state、domain readiness context 和 claim ceiling。
+   - Unsupported claims 会被降级、阻断或限制在 engineering/review-only 表述；negative evidence 和 limitations 保持可见。
+   - Review-ready、workshop/case-study、final-publish-ready 仍然明确区分。
 
 当前不要重做
 ============
@@ -123,6 +156,7 @@ user idea
 - 不要重做 Goal 2B，除非 evidence chain、package readiness、claim ceiling 或 API/schema/docs 出现漂移。
 - 不要重做 Goal 3，除非 typed execution runtime、validation、environment manifest、evidence mapping 或 repair classification 回归。
 - 不要重做 Goal 4，除非 cached connector provenance、source sufficiency、extraction limitations、benchmark provenance 或 evaluation trace 回归。
+- 不要重做 Goal 5，除非 manuscript context、source package、claim-evidence index、artifact manifest、readiness blockers 或 docs/schema/tests 出现漂移。
 - 不要为了 demo 降低 publish gates、claim-evidence ledger、artifact lineage、repair safety、negative evidence、readiness blockers。
 - 不要把 fixture/toy/local smoke evidence 宣称为 publication-grade。
 - 不要把 unsupported domain 降级成无关 toy experiment。
@@ -745,62 +779,275 @@ Goal 6: Autonomous Revision Loop
 目标
 ----
 
-把 reviewer simulator findings 转换为 bounded paper revisions、experiment repairs、claim downgrades、literature/benchmark follow-ups、and re-review cycles。
+把已有 reviewer simulator、review loop、publication repair plan、paper revision artifacts 升级成证据约束的 autonomous revision production path：
+
+- reviewer findings -> typed revision actions；
+- typed actions -> bounded manuscript/package revision、claim downgrade、experiment repair request、literature/benchmark follow-up blocker；
+- revised manuscript/package -> item-by-item reviewer response；
+- revised package -> deterministic re-review；
+- unresolved issues -> next bounded round or terminal blocker。
+
+Goal 6 不是重新实现 reviewer simulator，也不是为了让 paper 看起来更好而改写所有段落。它的核心是把“审稿意见”转换为可追溯、可停止、不会伪造证据的修订闭环。
+
+当前基础
+--------
+
+下一轮应先复用和审计这些现有能力：
+
+- `backend/services/autoresearch/review_publish.py` 已提供 run review、review loop、publish/readiness 相关聚合。
+- `backend/services/autoresearch/reviewer_simulator.py` 已提供 reviewer simulation / response-plan 基础。
+- `backend/services/autoresearch/publication_repair_plan.py` 已能从 review / readiness / evidence blockers 汇总 repair actions。
+- `backend/services/autoresearch/publication_repair_execution.py` 已有 repair execution 基础。
+- `backend/services/autoresearch/orchestrator.py` 已有 review-loop apply / auto-apply / paper rebuild 入口。
+- `backend/services/autoresearch/project_paper_orchestrator.py` 已有 manuscript context/source package/paper revision artifacts。
+- `backend/services/autoresearch/repository.py` 已有 paper revision state/action index/diff 的 artifact paths。
+- `backend/api/autoresearch.py` 已有 review-loop refresh/apply/auto-apply endpoint。
+
+如果这些基础已经满足某个 Phase 的一部分，下一轮应补齐 schema、lineage、deterministic tests 和 artifact persistence，而不是重写平行系统。
+
+非目标
+------
+
+- 不在 Goal 6 中实现 final submission archive；那是 Goal 7。
+- 不在 Goal 6 中新增真实 live literature/network connector；缺文献时生成 follow-up/blocker。
+- 不在 Goal 6 中执行未经 policy 允许的外部实验、Docker、GPU、paid LLM job。
+- 不用 reviewer score 变高替代 evidence sufficiency。
+- 不把 claim downgrade 包装成“证据已补足”。
+
+Goal 6 Phase 0: Revision Capability Audit
+-----------------------------------------
+
+实现要求：
+
+- 审计现有 review loop、reviewer simulator、publication repair plan、paper revision state、paper source package、claim-evidence index、experiment repair index。
+- 明确哪些 review findings 已能映射为 existing repair actions，哪些还缺 typed mapping。
+- 明确 current review-loop apply 是否只处理 paper rebuild，还是已经能处理 claim downgrade / evidence blocker / repair request。
+- 明确 re-review 是否读取 revised package 和新 fingerprint，不能只复用旧 review object。
+- 审计结论必须写入 docs、tests、artifact manifest 或 code comments 中的至少一种。
+
+输出要求：
+
+- 文档或测试中记录 Goal 6 是现有 review-loop 的 productionization，不是替换 `review_publish.py`。
+- 至少一个 regression test 固定住：old review fingerprint 改变后 apply 必须拒绝 stale action。
 
 Goal 6 Phase 1: Finding-To-Action Planner
 -----------------------------------------
 
 实现要求：
 
-- Map reviewer findings to action types:
-  - manuscript text revision；
-  - claim downgrade；
-  - experiment repair；
-  - literature follow-up；
-  - benchmark/provenance follow-up；
-  - no-action with rationale。
-- Each action records:
-  - finding id；
-  - action kind；
-  - evidence requirement；
-  - expected outputs；
-  - approval requirement；
-  - terminal condition。
+- 新增或扩展 typed planner schema，例如：
+  - `AutoResearchRevisionActionRead`
+  - `AutoResearchRevisionActionPlanRead`
+  - `AutoResearchRevisionActionExecutionRead`
+  - `AutoResearchReviewerResponseItemRead`
+  - `AutoResearchRevisionRoundRead`
+  - `AutoResearchReReviewFindingRead`
+- 每个 action 至少记录：
+  - `action_id`
+  - `project_id`
+  - `run_id`
+  - `review_round`
+  - `source_finding_ids`
+  - `source_finding_fingerprint`
+  - `action_kind`
+  - `scope`: `manuscript` / `claim_evidence_index` / `experiment_repair` / `literature` / `benchmark` / `readiness`
+  - `evidence_requirement`
+  - `can_execute_now`
+  - `approval_required`
+  - `approval_state`
+  - `expected_outputs`
+  - `lineage_parent_refs`
+  - `claim_ids`
+  - `artifact_refs`
+  - `terminal_condition`
+  - `max_attempts`
+  - `attempt_count`
+  - `status`
+  - `blockers`
+  - `rationale`
+- Map reviewer findings to action kinds：
+  - `manuscript_text_revision`：clarity、organization、missing explanation、citation wording；不需要新 evidence。
+  - `claim_downgrade`：unsupported / overstated / fixture-only / single-run / weak statistics claim。
+  - `claim_removal`：claim 无 ledger entry 且无法被 downgrade 成 honest limitation。
+  - `experiment_repair_request`：missing baseline、missing ablation、insufficient statistics、runtime failure、bad metric schema、missing output。
+  - `literature_followup_request`：related-work coverage 不足、novelty unsupported、source sufficiency 不足。
+  - `benchmark_provenance_followup_request`：benchmark license、source fingerprint、source independence、split/scale/schema provenance 不足。
+  - `reproducibility_followup_request`：command/env/seed/artifact hash 缺失。
+  - `no_action_with_rationale`：finding 已解决、与 scope 无关、需要人工判断或被 policy 明确拒绝。
+- Planner 必须合并重复 findings，但保留所有 source ids。
+- Planner 必须给 evidence-producing action 加上 blocker 或 approval requirement；不得标记为 completed。
+- Planner 输出必须持久化，例如 `revision_action_plan.json` 或 existing paper revision action index 的版本化扩展。
+
+测试要求：
+
+- Reviewer finding -> manuscript_text_revision action。
+- Unsupported claim finding -> claim_downgrade 或 claim_removal action。
+- Missing baseline/ablation/statistics finding -> experiment_repair_request action。
+- Literature novelty/source weakness -> literature_followup_request action。
+- Benchmark source-independence weakness -> benchmark_provenance_followup_request action。
+- Duplicate findings collapse into one action with multiple source ids。
+- Evidence-producing action defaults to blocked/needs_approval/import_required，而不是 completed。
 
 Goal 6 Phase 2: Bounded Revision Execution
 ------------------------------------------
 
 实现要求：
 
-- Execute or block actions according to policy。
-- Do not fake evidence for experiment/literature actions。
-- Preserve original and revised artifacts。
-- Record reviewer-response draft item by item。
-- Stop after max attempts with clear terminal status。
+- 根据 action kind 执行或阻断：
+  - paper-only action 可以更新 manuscript source package、limitations、negative evidence section、claim wording、related-work wording、reproducibility wording。
+  - `claim_downgrade` 必须更新 manuscript、claim-evidence index、readiness blockers/limitations、reviewer response。
+  - `claim_removal` 必须从 core claims 中移除或转入 limitation/future-work，且保留 reviewer response 说明。
+  - `experiment_repair_request` 只能调用 existing typed execution/repair path 或生成 repair queue item；没有真实 output/import 时不得 completed。
+  - `literature_followup_request` 只能调用 cached/offline connector path 或生成 follow-up blocker；不能现场 live network。
+  - `benchmark_provenance_followup_request` 只能消费已有/imported provenance 或生成 blocker；不能伪造 source independence。
+  - `no_action_with_rationale` 必须写明不执行原因。
+- 每轮执行必须保留：
+  - original manuscript/source package ref and fingerprint；
+  - original claim-evidence index ref；
+  - original review/review-loop fingerprint；
+  - selected action ids；
+  - revised manuscript/source package ref and fingerprint；
+  - revised claim-evidence index ref；
+  - paper revision diff；
+  - action execution result；
+  - unresolved blockers；
+  - terminal status。
+- 对 paper-only rewrite 要保持 deterministic。若依赖 prompt/LLM，测试必须使用 deterministic fixture 或 local fallback。
+- 对每个 action 记录 `executed` / `blocked` / `needs_approval` / `requires_import` / `requires_external_evidence` / `terminal_failed`。
+- Bounded loop 必须检查 `max_attempts` 和 `auto_revision_rounds_remaining`。
+- Stale review fingerprint、stale action plan、missing source package、missing claim-evidence index 必须失败或 blocker。
 
-Goal 6 Phase 3: Re-Review
+输出要求：
+
+- `paper_revision_state.json` 或 equivalent persisted state。
+- `paper_revision_action_index.json` with action execution statuses。
+- `paper_revision_diff.json` with source and revised artifact refs。
+- `reviewer_response_draft.json` or equivalent response items。
+- Revised manuscript/source package manifest。
+
+测试要求：
+
+- Paper-only finding modifies revised package and records diff。
+- Claim downgrade changes claim-evidence index/readiness and leaves limitation visible。
+- Evidence-producing experiment action becomes repair request/blocker without fake output ref。
+- Literature/benchmark follow-up without cached/imported evidence remains blocker。
+- Stale review fingerprint blocks apply。
+- Max attempts stops loop with terminal status and unresolved blocker。
+- Original artifact refs remain reconstructable after revision。
+
+Goal 6 Phase 3: Reviewer Response Dossier
+-----------------------------------------
+
+实现要求：
+
+- 生成 finding-by-finding reviewer response。
+- 每个 response item 至少包含：
+  - source finding id；
+  - original finding summary；
+  - action id；
+  - action taken；
+  - revised artifact refs；
+  - evidence refs used；
+  - claim ids changed；
+  - status：resolved / partially_resolved / unresolved / blocked / no_action；
+  - limitation or blocker if unresolved；
+  - final-publish impact。
+- Reviewer response 不能声称已补实验或已补文献，除非对应 evidence/artifact ref 存在并通过 validation。
+- Response dossier 必须进入 review package / manuscript package / future submission package。
+
+测试要求：
+
+- 每个 source finding 都有 response item 或 explicit no-action rationale。
+- Claim downgrade response 指向 revised claim-evidence index。
+- Blocked experiment/literature response 明确 required follow-up。
+- Response dossier fingerprint 随 revised artifacts 改变。
+
+Goal 6 Phase 4: Re-Review
 -------------------------
 
 实现要求：
 
-- Re-review must read revised manuscript/package。
-- It must not reuse old scores without checking revised artifacts。
-- It must report resolved, partially resolved, unresolved findings。
+- Re-review 必须读取 revised manuscript/source package、revised claim-evidence index、reviewer response dossier、unresolved blockers。
+- Re-review 必须生成新的 review fingerprint；不得只复用旧 scores/findings。
+- Re-review 必须对上一轮 findings 输出 resolution status：
+  - `resolved`
+  - `partially_resolved`
+  - `unresolved`
+  - `regressed`
+  - `superseded_by_blocker`
+- Re-review 必须保留新的 findings，不得隐藏因修订引入的新问题。
+- Re-review 必须更新 review-loop summary：
+  - current round；
+  - previous/revised fingerprints；
+  - resolved count；
+  - partially resolved count；
+  - unresolved count；
+  - new finding count；
+  - pending action count；
+  - terminal status；
+  - readiness impact。
 
 测试要求：
 
-- Reviewer finding creates bounded revision action。
-- Unsupported claim finding causes claim downgrade/blocker。
-- Missing experiment evidence finding creates repair action, not fake evidence。
-- Re-review reflects revised artifacts。
-- Revision loop stops with terminal status。
+- Re-review reads revised artifacts and produces new fingerprint。
+- Resolved wording/claim downgrade reduces or closes matching finding。
+- Blocked experiment repair remains unresolved or superseded_by_blocker。
+- Re-review can introduce new finding if revised package breaks evidence coverage。
+- Pending action count and terminal status are deterministic。
+
+Goal 6 Phase 5: API, Frontend Types, Evaluation Trace, Docs
+-----------------------------------------------------------
+
+实现要求：
+
+- 如 schema/API 变化，同步：
+  - `backend/schemas/autoresearch.py`
+  - `backend/api/autoresearch.py`
+  - `frontend/src/api/types.ts`
+  - `frontend/src/api/client.ts`
+- API surface 至少能 inspect：
+  - revision action plan；
+  - action execution results；
+  - reviewer response dossier；
+  - revised artifact refs；
+  - re-review status；
+  - unresolved blockers。
+- Evaluation traces 必须记录 Goal 6 关键信息：
+  - review round；
+  - selected actions；
+  - paper-only revisions；
+  - blocked evidence-producing actions；
+  - reviewer response；
+  - re-review resolution summary；
+  - readiness impact。
+- 更新 docs：
+  - `docs/api-reference.md`
+  - `docs/claim-evidence-vertical-loop.md`
+  - `docs/goal.md`
+
+测试要求：
+
+- API read path exposes action plan and re-review status。
+- Evaluation case trace includes revision/re-review timeline。
+- Frontend build passes if types/client changed。
+- Backend regression tests remain deterministic。
 
 Goal 6 完成标准
 ---------------
 
-- A review -> revision -> re-review loop can run deterministically。
-- Every revision action has lineage and evidence requirement。
-- Claim downgrades and unresolved blockers remain visible in package/readiness。
+Goal 6 只有在以下条件都满足时才能标记完成：
+
+- A review -> action plan -> bounded revision execution -> reviewer response -> re-review loop can run deterministically。
+- Every reviewer finding maps to an action or explicit no-action rationale。
+- Every revision action has evidence requirement、lineage parent refs、expected outputs、terminal condition、attempt count、status。
+- Claim downgrade/removal updates manuscript/source package、claim-evidence index、readiness blockers/limitations。
+- Experiment/literature/benchmark evidence-producing actions do not fake artifacts；missing evidence remains repair request/follow-up blocker。
+- Original and revised artifacts are both preserved and reconstructable。
+- Re-review reads revised artifacts and reports resolved / partially resolved / unresolved / regressed findings。
+- Revision loop stops after max attempts with terminal status。
+- Deterministic regression tests cover action planner、paper-only revision、claim downgrade、blocked evidence repair、stale fingerprint、re-review。
+- API/schema/frontend/docs are synchronized when touched。
+- `git diff --check` passes。
 
 Goal 7: Submission Package And Final Publish Gate
 =================================================
@@ -808,43 +1055,142 @@ Goal 7: Submission Package And Final Publish Gate
 目标
 ----
 
-生成真正可审计的 submission package，并只在 evidence 满足 domain-specific publish policy 时允许 `final_publish_ready=true`。
+把 existing review/publish package surface 升级成真正可审计、可重建、可下载的 final submission package，并只在 evidence 满足 domain-specific publish policy 时允许 `final_publish_ready=true`。
+
+Goal 7 不是再加一个宽松 gate，也不是把 review-ready archive 改名成 final package。它的核心是 submission archive completeness + reproducibility + final publish policy enforcement。
+
+当前基础
+--------
+
+下一轮 Goal 7 应先复用和审计：
+
+- `backend/services/autoresearch/review_publish.py`
+- `backend/services/autoresearch/project_paper_orchestrator.py`
+- `backend/services/autoresearch/publication_evidence_index.py`
+- `backend/services/autoresearch/artifact_integrity_audit.py`
+- `backend/services/autoresearch/runtime_contract.py`
+- `backend/services/autoresearch/experiment_execution.py`
+- `backend/services/autoresearch/domain_evidence.py`
+- `backend/services/autoresearch/meta_analysis.py`
+- `backend/api/autoresearch.py` publish/export/download endpoints
+- `frontend/src/api/types.ts`
+- `frontend/src/api/client.ts`
+
+非目标
+------
+
+- 不在 Goal 7 中新增 real experiment runtime；缺实验时 final gate blocked。
+- 不在 Goal 7 中用手写 checklist 代替 artifact manifest validation。
+- 不允许 review-ready/workshop/case-study package 自动升级 final package。
+- 不删除 negative evidence、limitations、unresolved reviewer findings。
+
+Goal 7 Phase 0: Publish Package Audit
+-------------------------------------
+
+实现要求：
+
+- 审计 existing publish package、manifest、archive export、download gate、paper/source package、claim-evidence index、artifact integrity audit。
+- 明确 current package 是否是 review package、submission candidate package、final publish package。
+- 找出缺失 artifact、stale archive、manifest reconstructability、readiness blocker propagation 的缺口。
+- 审计结论必须进入 docs/tests/artifact manifest。
+
+测试要求：
+
+- Stale archive must be detected。
+- Review-ready package cannot be downloaded/exported as final publish package unless final policy passes。
 
 Goal 7 Phase 1: Submission Archive
 ----------------------------------
 
 实现要求：
 
-- Final package includes:
-  - manuscript；
+- 新增或扩展 submission package schema，例如：
+  - `AutoResearchSubmissionPackageRead`
+  - `AutoResearchSubmissionArchiveManifestRead`
+  - `AutoResearchSubmissionArchiveEntryRead`
+  - `AutoResearchReproducibilityChecklistRead`
+  - `AutoResearchFinalPublishDecisionRead`
+- Final package 至少包含：
+  - manuscript source；
+  - rendered manuscript if available；
   - supplemental artifacts；
-  - reproducibility checklist；
+  - figures/tables metadata；
+  - references；
   - claim-evidence index；
-  - reviewer response；
-  - lineage archive；
+  - reviewer response dossier；
+  - revision history；
   - benchmark/source provenance manifests；
+  - literature support index；
+  - execution plan/job/result manifests；
+  - runtime contracts；
   - environment and command manifests；
+  - artifact integrity audit；
   - negative evidence appendix；
-  - publication readiness manifest。
+  - limitations appendix；
+  - reproducibility checklist；
+  - publication readiness manifest；
+  - final publish decision；
+  - lineage archive。
+- 每个 archive entry 至少记录：
+  - logical id；
+  - path in archive；
+  - source artifact ref；
+  - sha256；
+  - size；
+  - content type；
+  - generated by；
+  - required for final publish；
+  - validation status；
+  - blockers。
 - Package manifest must reconstruct archive contents。
-- Missing artifact blocks archive readiness。
+- Missing required artifact、hash mismatch、stale source fingerprint、unresolved integrity issue 必须 block archive readiness。
+- Archive export 必须通过 repository helpers / existing artifact path helpers，不允许 API endpoint ad hoc writes。
+
+测试要求：
+
+- Complete submission archive manifest reconstructs contents。
+- Missing required artifact blocks archive readiness。
+- Hash mismatch blocks archive readiness。
+- Archive current/stale status follows source package fingerprint。
+- Negative evidence appendix is included when negative evidence exists。
 
 Goal 7 Phase 2: Reproducibility Checklist
 -----------------------------------------
 
 实现要求：
 
-- Checklist includes:
+- Checklist 必须由 artifact/runtime/evidence manifests 生成，不手写空壳。
+- Checklist 至少包含：
+  - code entry points；
   - commands；
+  - cwd；
   - environment；
-  - dependencies；
+  - Python/Node/package dependencies if available；
+  - external requirements；
   - datasets；
   - benchmark versions；
+  - source fingerprints；
+  - licenses；
   - metrics；
-  - seeds/splits；
+  - seeds；
+  - splits；
+  - sample counts；
+  - statistical tests；
+  - multi-run/multi-split status；
   - artifact hashes；
+  - stdout/stderr refs where applicable；
+  - runtime contract results；
   - known limitations；
-  - external requirements。
+  - expected blocker if reproducibility is partial。
+- Checklist 必须标记哪些 item 是 complete / partial / missing / not_applicable。
+- External Docker/bridge/GPU/network requirement 不可 silent skip。
+
+测试要求：
+
+- Checklist pulls command/environment from execution result manifests。
+- Missing seeds/splits/sample counts create partial/missing status。
+- External requirement is explicit blocker, not hidden note。
+- Fixture/local smoke evidence keeps review-only claim ceiling in checklist。
 
 Goal 7 Phase 3: Final Publish Decision
 --------------------------------------
@@ -863,6 +1209,57 @@ Gate 必须检查：
 
 如果只达到 review/workshop/case-study 级别，必须保持 final false，并给出 next required evidence。
 
+实现要求：
+
+- Final publish decision 至少包含：
+  - `final_publish_ready`
+  - `paper_tier`
+  - `policy_version`
+  - `checked_at`
+  - `passed_checks`
+  - `failed_checks`
+  - `warnings`
+  - `blockers`
+  - `required_followups`
+  - `claim_ceiling`
+  - `evidence_refs`
+  - `archive_manifest_ref`
+  - `readiness_manifest_ref`
+- Gate must fail when:
+  - unsupported core claim remains；
+  - any core claim lacks evidence ref；
+  - literature source sufficiency is weak；
+  - benchmark provenance/source independence is insufficient；
+  - experiment output validation failed；
+  - baseline/ablation/statistical sufficiency required but missing；
+  - negative evidence is missing or hidden；
+  - reviewer critical finding unresolved；
+  - revision loop has pending required actions；
+  - reproducibility checklist has missing required item；
+  - archive manifest is incomplete/stale；
+  - artifact integrity audit has unresolved issue。
+- Gate may allow workshop/case-study package with `final_publish_ready=false` and explicit `paper_tier`。
+- Any policy exception must record rationale、scope、evidence refs、claim ceiling。
+
+Goal 7 Phase 4: API, Frontend, Docs
+-----------------------------------
+
+实现要求：
+
+- API/schema expose:
+  - submission package；
+  - archive manifest；
+  - reproducibility checklist；
+  - final publish decision；
+  - archive export status；
+  - blockers and required follow-ups。
+- Download endpoints must enforce final gate for final archive download。
+- Frontend/client types sync if API changes。
+- Docs update:
+  - `docs/api-reference.md`
+  - `docs/claim-evidence-vertical-loop.md`
+  - `docs/goal.md`
+
 测试要求：
 
 - Review-ready package does not become final-publish-ready。
@@ -870,13 +1267,20 @@ Gate 必须检查：
 - Final gate fails when negative evidence is missing。
 - Final gate fails when benchmark/source independence is insufficient unless policy explicitly accepts a substitute and records rationale。
 - Submission archive can be reconstructed from manifest。
+- Stale or incomplete archive cannot be downloaded as final。
+- Reproducibility checklist blockers propagate to final decision。
+- API/frontend types build if changed。
 
 Goal 7 完成标准
 ---------------
 
-- At least one case can produce a complete submission package。
-- `final_publish_ready=true` only appears when all publish-policy evidence is present。
-- Failure cases remain honest and actionable。
+- At least one case can produce a complete, reconstructable submission package。
+- `final_publish_ready=true` only appears when all publish-policy evidence is present and no hidden blocker remains。
+- Review/workshop/case-study packages remain explicitly non-final。
+- Reproducibility checklist, archive manifest, final publish decision, reviewer response, negative evidence appendix, lineage archive are included。
+- Failure cases remain honest and actionable with required follow-ups。
+- Deterministic tests cover success, review-only failure, missing artifact, stale archive, missing negative evidence, insufficient benchmark independence。
+- `git diff --check` passes。
 
 Goal 8: Real End-To-End Evaluation And ScholarFlow System Paper Material
 ========================================================================
@@ -886,21 +1290,97 @@ Goal 8: Real End-To-End Evaluation And ScholarFlow System Paper Material
 
 让 P14 evaluation cases 成为真实 end-to-end regression/evaluation suite，并产出 ScholarFlow 自身 architecture / case-study / failure-analysis paper material。
 
+Goal 8 不是宣传材料生成器。它的核心是用 deterministic cases 评估 ScholarFlow 自己的 evidence-constrained research loop，并只写评估证据支持的系统论文材料。
+
+非目标
+------
+
+- 不使用 live network、paid LLM、GPU、Docker daemon 作为测试必需条件。
+- 不把单个 happy-path case 写成系统能力证明。
+- 不隐藏 unsupported-domain、failed runtime、weak literature、insufficient statistics、unresolved review blockers。
+
+Goal 8 Phase 0: Evaluation Case Audit
+-------------------------------------
+
+实现要求：
+
+- 审计 `backend/services/autoresearch/evaluation_cases.py`、`system_evaluation.py`、existing deterministic traces。
+- 确认每个 case 当前覆盖哪些 loop stages，缺哪些 artifact。
+- 至少保留这些 case classes：
+  - claim-evidence generalized idea case；
+  - RAG/citation faithfulness review case；
+  - lightweight ML/NLP review case；
+  - unsupported domain blocker case；
+  - failed execution or missing-output case；
+  - review/revision blocker case；
+  - final package blocked case。
+- 审计结论进入 evaluation suite output 或 docs。
+
 Goal 8 Phase 1: Executable Evaluation Suite
 -------------------------------------------
 
-每个 case 输出：
+每个 case 必须可执行并输出：
 
 - full trace；
+- idea input；
+- domain routing decision；
+- research brief；
+- hypothesis bank；
+- selected direction；
 - literature/gap validation；
-- domain decision；
 - benchmark provenance；
+- experiment protocol；
+- typed execution jobs；
 - execution timeline；
+- output validation；
 - evidence ledger summary；
 - blocker/readiness timeline；
 - repair/revision timeline；
+- reviewer/re-review timeline；
+- submission/package timeline where applicable；
 - package manifest；
-- failure analysis。
+- final publish decision；
+- failure analysis；
+- artifact refs and fingerprints。
+
+每个 trace 必须记录：
+
+- stage status：succeeded / blocked / skipped_by_policy / failed。
+- blocker source and severity。
+- claim ceiling。
+- evidence refs。
+- negative evidence。
+- deterministic fixture/import/local/replay labels。
+- elapsed/budget estimates if available。
+- reproducibility constraints。
+
+测试要求：
+
+- Evaluation suite output is deterministic。
+- Unsupported domain never produces fake job/output。
+- Fixture-only evidence never upgrades final publish readiness。
+- Failed execution appears in negative evidence/readiness timeline。
+- Re-review timeline appears for Goal 6 capable case。
+- Submission/package timeline appears for Goal 7 capable case。
+
+Goal 8 Phase 2: Evaluation Metrics And Scoring
+----------------------------------------------
+
+实现要求：
+
+- Add system-level evaluation metrics such as:
+  - stage completion coverage；
+  - evidence coverage ratio；
+  - unsupported claim detection；
+  - blocker honesty；
+  - artifact lineage completeness；
+  - reproducibility package completeness；
+  - reviewer finding resolution rate；
+  - final gate false-positive count；
+  - deterministic replay stability；
+  - negative evidence retention。
+- Metrics must be computed from artifacts/traces, not manually asserted。
+- Any score must include limitations and excluded capabilities。
 
 测试要求：
 
@@ -909,8 +1389,9 @@ Goal 8 Phase 1: Executable Evaluation Suite
 - No paid LLM。
 - No GPU。
 - No Docker daemon requirement。
+- Metric values stable across repeated runs。
 
-Goal 8 Phase 2: System Paper Material
+Goal 8 Phase 3: System Paper Material
 -------------------------------------
 
 产出材料：
@@ -923,16 +1404,53 @@ Goal 8 Phase 2: System Paper Material
 - reproducibility package；
 - comparison to ARIS/FARS-style goals without overstating capability。
 
+实现要求：
+
+- System paper material must include:
+  - abstract / intro draft；
+  - architecture overview；
+  - loop stage description；
+  - evidence constraint design；
+  - artifact lineage design；
+  - case study summaries；
+  - failure analysis；
+  - limitations；
+  - threats to validity；
+  - reproducibility appendix；
+  - comparison table to target ARIS/FARS-style capabilities；
+  - future work。
+- Every system claim must point to evaluation case metrics or artifact refs。
+- Unsupported or future capabilities must be written as limitations/future work。
+- The generated material must be clearly labeled as system paper material, not final submitted paper unless Goal 7 final gate passes for the system paper itself。
+
+Goal 8 Phase 4: API, Docs, Regression
+-------------------------------------
+
+实现要求：
+
+- API/schema expose evaluation suite and system paper material if not already sufficient。
+- Evaluation artifacts should be persisted through repository helpers or deterministic build paths。
+- Docs update:
+  - `docs/api-reference.md`
+  - `docs/claim-evidence-vertical-loop.md`
+  - `docs/goal.md`
+
 测试要求：
 
 - System paper material only claims what evaluation evidence supports。
 - Failure analysis includes blocked and negative cases。
+- Unsupported-domain case remains blocked and auditable。
+- Evaluation report can be reconstructed from trace artifacts。
 
 Goal 8 完成标准
 ---------------
 
-- ScholarFlow can evaluate itself through deterministic cases。
-- The generated system-paper material is evidence-constrained and reproducible。
+- ScholarFlow can evaluate itself through deterministic cases covering success, blocker, failed execution, revision, package readiness, unsupported domain。
+- Evaluation suite outputs trace artifacts, metrics, readiness timeline, failure analysis, and package references。
+- Generated system-paper material is evidence-constrained and reproducible。
+- System claims are backed by evaluation evidence refs。
+- No live network、paid LLM、GPU、Docker daemon requirement in regression tests。
+- `git diff --check` passes。
 
 Goal 9: Operator Console Productionization
 ==========================================
@@ -942,17 +1460,122 @@ Goal 9: Operator Console Productionization
 
 只在 backend capability 已存在后补必要 operator controls，不做 UI-only polish。
 
-实现范围
---------
+Goal 9 是 operational safety layer：让 operator 能看见、审批、暂停、恢复、重试、取消 long-running research workflow，同时保持 persisted state、artifact lineage、evidence gates 一致。
 
-- Long-running job inspection。
-- Resume/retry/cancel policies。
-- Approval and budget controls。
-- Bridge/import status。
-- Artifact lineage browser。
-- Repair queue inspection。
-- Readiness and publish-gate status。
-- Project-level package status。
+非目标
+------
+
+- 不在 Goal 9 中新增核心 research capability。
+- 不为了 UI 体验隐藏 blockers 或 readiness failure。
+- 不实现只存在前端内存里的状态切换。
+- 不让 retry/resume 覆盖旧 evidence、negative evidence 或 revision history。
+
+Goal 9 Phase 0: Operator State Audit
+------------------------------------
+
+实现要求：
+
+- 审计 backend persisted state：
+  - auto-research run queue/worker execution；
+  - typed experiment jobs；
+  - approval/budget state；
+  - repair queue；
+  - revision loop；
+  - submission package/archive；
+  - readiness/final gate；
+  - artifact lineage。
+- 确认哪些 controls 已有 API，哪些只有 artifact state，哪些还缺 persistence。
+- 审计结论进入 docs/tests。
+
+Goal 9 Phase 1: Backend Control Surface
+---------------------------------------
+
+实现范围：
+
+- Long-running job inspection：
+  - run id；
+  - stage；
+  - status；
+  - started/updated timestamps；
+  - current blocker；
+  - last artifact refs；
+  - budget/approval state。
+- Resume/retry/cancel policies：
+  - policy-allowed transitions only；
+  - stale fingerprint checks；
+  - retry creates new attempt, does not overwrite old artifacts；
+  - cancel records terminal status and reason。
+- Approval and budget controls：
+  - approve/reject execution job；
+  - approve/reject repair/revision action；
+  - budget class and estimated cost/time；
+  - rejection creates visible blocker。
+- Bridge/import status：
+  - required external artifact；
+  - import schema；
+  - provenance required；
+  - current validation status。
+- Artifact lineage browser data：
+  - artifact id/ref；
+  - parent refs；
+  - generated by；
+  - sha256/fingerprint；
+  - used by claims/packages；
+  - missing/stale/integrity issue status。
+- Repair queue inspection：
+  - action id；
+  - source blocker/finding；
+  - status；
+  - required evidence；
+  - attempts；
+  - terminal condition。
+- Readiness and publish-gate status：
+  - review-ready；
+  - package-ready；
+  - final-publish-ready；
+  - blockers；
+  - claim ceiling。
+- Project-level package status：
+  - manuscript/source package；
+  - revision state；
+  - submission archive；
+  - export current/stale。
+
+测试要求：
+
+- API controls reflect persisted state。
+- Invalid transition rejected。
+- Retry/resume preserves prior artifacts。
+- Approval rejection becomes blocker。
+- Cancel records terminal status。
+
+Goal 9 Phase 2: Frontend Operator Console
+-----------------------------------------
+
+实现要求：
+
+- Update `frontend/src/api/types.ts` and `frontend/src/api/client.ts` with backend contract。
+- Add only necessary controls/views:
+  - run timeline；
+  - job list and detail；
+  - approval queue；
+  - repair queue；
+  - revision loop status；
+  - artifact lineage viewer；
+  - readiness/final gate panel；
+  - package/export status。
+- UI must distinguish:
+  - planned；
+  - needs approval；
+  - running；
+  - succeeded；
+  - failed；
+  - blocked；
+  - cancelled；
+  - stale。
+- UI must show blockers and claim ceiling close to readiness/final status。
+- Buttons must be disabled when policy disallows action。
+- No marketing/landing-page UI work。
 
 测试要求：
 
@@ -960,12 +1583,35 @@ Goal 9: Operator Console Productionization
 - Resume/retry preserves lineage。
 - Rejected/blocked actions stay visible。
 - Frontend build passes。
+- Browser E2E only if changed flows require it。
+
+Goal 9 Phase 3: Resumability And Safety Regression
+--------------------------------------------------
+
+实现要求：
+
+- Simulate restart by rebuilding console state from persisted artifacts/db only。
+- Resume must detect stale fingerprints and missing artifacts。
+- Retry must produce new attempt id and lineage parent refs。
+- Cancel/reject must be terminal unless an explicit new attempt is created。
+- UI/API must never imply final readiness when backend says false。
+
+测试要求：
+
+- Console state reconstructs after reload from persisted state。
+- Stale package/export is visible。
+- Final gate false stays false in UI/API。
+- Artifact lineage remains intact after retry/resume。
 
 Goal 9 完成标准
 ---------------
 
 - Operator can safely inspect and control long-running research workflows。
+- Controls are backed by persisted state and policy-checked transitions。
+- Resume/retry/cancel/approve/reject preserve lineage and blockers。
 - UI does not imply final readiness when backend evidence says otherwise。
+- Frontend build passes, and E2E runs if operator flows changed materially。
+- `git diff --check` passes。
 
 AGENTS.md 和 skills 决策
 ========================
@@ -973,7 +1619,7 @@ AGENTS.md 和 skills 决策
 - `AGENTS.md` 应只保持高层 current state、active roadmap、safety constraints。
 - 本文件负责详细 roadmap。
 - 当前不新增 skill。
-- 只有当“domain package verification / publication-case audit / execution backend repair loop”成为跨多轮反复使用的稳定流程时，再考虑创建 repository-local skill。
+- 只有当“domain package verification / publication-case audit / execution backend repair loop / autonomous revision audit”成为跨多轮反复使用的稳定流程时，再考虑创建 repository-local skill。
 - 由于 `AGENTS.md` 被 `.gitignore` 忽略，本轮如更新它也只是本地协作说明，不会进入普通 git commit。
 
 下一轮执行建议
@@ -982,10 +1628,12 @@ AGENTS.md 和 skills 决策
 - 默认执行 Goal 6。
 - 不要一次性做 Goal 7-9。
 - Goal 6 优先顺序：
-  1. reviewer findings -> bounded paper revisions。
-  2. reviewer findings -> experiment repair requests。
-  3. claim downgrade / removal when evidence remains insufficient。
-  4. deterministic re-review cycle with preserved blockers。
+  1. Phase 0：审计现有 review-loop / reviewer simulator / repair plan / paper revision artifacts，不重写平行系统。
+  2. Phase 1：reviewer findings -> typed revision action planner。
+  3. Phase 2：bounded revision execution，优先 paper-only revisions 和 claim downgrade/removal。
+  4. Phase 3：finding-by-finding reviewer response dossier。
+  5. Phase 4：deterministic re-review cycle with preserved blockers。
+  6. Phase 5：必要 API/schema/frontend/evaluation/docs 同步。
 - 如果 Goal 3/Goal 4/Goal 5 出现回归，先修复 typed runtime / validation / evidence mapping、cached connector / benchmark provenance，或 manuscript context/source package readiness，再继续 Goal 6。
 - 每完成一个实质子阶段，确认 revision action lineage、claim-evidence index changes、negative evidence retention、repair output refs、rereview findings 和 readiness blockers 进入 artifact 或 tests。
 
@@ -1000,25 +1648,42 @@ AGENTS.md 和 skills 决策
 目标：实现 docs/goal.md 中的 Goal 6 - Autonomous Revision Loop。
 
 优先完成：
-1. Goal 6 Phase 1: Finding-To-Action Planner
-2. Goal 6 Phase 2: Bounded Revision Execution
-3. Goal 6 Phase 3: Re-Review
-4. 必要时同步 API/schema/frontend types、evaluation trace、docs/tests
+1. Goal 6 Phase 0: Revision Capability Audit
+2. Goal 6 Phase 1: Finding-To-Action Planner
+3. Goal 6 Phase 2: Bounded Revision Execution
+4. Goal 6 Phase 3: Reviewer Response Dossier
+5. Goal 6 Phase 4: Re-Review
+6. Goal 6 Phase 5: API, Frontend Types, Evaluation Trace, Docs
 
 开始前请先执行并审计：
 - git status --short --branch
 - git log --oneline -n 8
 - 阅读 docs/goal.md
 - 阅读 docs/goal.md 中 Goal 6 的 phases 和测试要求
-- 阅读 Goal 6 涉及的 reviewer simulator / project paper revision actions / repair execution log / rereview / readiness 关键文件
+- 阅读 Goal 6 涉及的关键文件：
+  - backend/services/autoresearch/review_publish.py
+  - backend/services/autoresearch/reviewer_simulator.py
+  - backend/services/autoresearch/publication_repair_plan.py
+  - backend/services/autoresearch/publication_repair_execution.py
+  - backend/services/autoresearch/orchestrator.py
+  - backend/services/autoresearch/project_paper_orchestrator.py
+  - backend/services/autoresearch/repository.py
+  - backend/services/autoresearch/evaluation_cases.py
+  - backend/api/autoresearch.py
+  - backend/schemas/autoresearch.py
+  - backend/tests/test_autoresearch_regressions.py
+  - frontend/src/api/types.ts
+  - frontend/src/api/client.ts
+  - docs/api-reference.md
+  - docs/claim-evidence-vertical-loop.md
 
 当前基线：
 - Goal 1 已通过 commit d53e5a6 完成，不要重做。
 - Goal 2A 已通过 commit dda8dc6 完成，不要重做。
 - Goal 2B 已通过 commit 7d48bbf 完成，不要重做。
-- Goal 3 已完成 typed experiment execution backend；除非测试回归，不要重做。
-- Goal 4 已完成 cached literature scout and benchmark provenance expansion；除非测试回归，不要重做。
-- Goal 5 已完成 Project-Level Manuscript Compiler V2；除非测试回归，不要重做。
+- Goal 3 已通过 commit a0024a4 完成 typed experiment execution backend；除非测试回归，不要重做。
+- Goal 4 已通过 commit a31322e 完成 cached literature scout and benchmark provenance expansion；除非测试回归，不要重做。
+- Goal 5 已通过 commit 91afa97 完成 Project-Level Manuscript Compiler V2；除非测试回归，不要重做。
 - 默认分支是 master。
 
 核心要求：
@@ -1030,12 +1695,14 @@ AGENTS.md 和 skills 决策
 - Tests 必须 deterministic，不能依赖 live network、paid LLM、GPU、Docker daemon、外部 benchmark 在线可用性。
 
 Goal 6 验收标准：
-- Reviewer finding creates bounded revision action。
-- Unsupported claim finding causes claim downgrade/blocker。
-- Missing experiment evidence finding creates repair action, not fake evidence。
-- Re-review reflects revised artifacts。
-- Revision loop stops with terminal status。
-- Every revision action has lineage and evidence requirement。
+- Review -> action plan -> bounded revision execution -> reviewer response -> re-review loop can run deterministically。
+- Every reviewer finding maps to an action or explicit no-action rationale。
+- Every revision action has evidence requirement、lineage parent refs、expected outputs、terminal condition、attempt count、status。
+- Unsupported/overstated claim finding causes claim downgrade/removal and updates manuscript/source package、claim-evidence index、readiness blockers/limitations。
+- Missing experiment/literature/benchmark evidence creates repair/follow-up action or blocker, not fake evidence。
+- Reviewer response dossier covers every finding and does not claim evidence was added unless artifact refs exist。
+- Re-review reads revised artifacts, produces new fingerprint, and reports resolved / partially resolved / unresolved / regressed findings。
+- Revision loop stops after max attempts with terminal status and preserves unresolved blockers。
 - 新增或更新 deterministic regression tests。
 - 如涉及 API/schema/types，更新 backend schema、frontend types/client、docs，并跑 frontend build。
 

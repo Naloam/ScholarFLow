@@ -2070,6 +2070,9 @@ class AutoResearchPaperSourceFileRead(BaseModel):
     relative_path: str
     kind: AutoResearchPaperSourceKind
     description: str
+    sha256: str | None = None
+    size_bytes: int | None = None
+    required: bool = True
 
 
 class AutoResearchPaperSourcesManifestRead(BaseModel):
@@ -2080,6 +2083,19 @@ class AutoResearchPaperSourcesManifestRead(BaseModel):
     compile_commands: list[str] = Field(default_factory=list)
     expected_outputs: list[str] = Field(default_factory=list)
     files: list[AutoResearchPaperSourceFileRead] = Field(default_factory=list)
+    file_count: int = 0
+    missing_files: list[str] = Field(default_factory=list)
+    reconstructable: bool = False
+    source_package_ready: bool = False
+    external_artifact_count: int = 0
+    missing_external_artifacts: list[str] = Field(default_factory=list)
+    external_artifacts_complete: bool = False
+    artifact_index: str | None = None
+    claim_evidence_index: str | None = None
+    manuscript_context: str | None = None
+    figures_tables_metadata: str | None = None
+    source_fingerprints: dict[str, str] = Field(default_factory=dict)
+    manifest_fingerprint: str | None = None
 
 
 class AutoResearchPaperParagraphEvidenceRead(BaseModel):
@@ -3114,6 +3130,9 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     project_paper_sources_dir: str | None = None
     project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead | None = None
     project_paper_sources_manifest_path: str | None = None
+    project_manuscript_context_path: str | None = None
+    project_manuscript_context_complete: bool = False
+    project_manuscript_context_fingerprint: str | None = None
     project_paper_compile_report: AutoResearchPaperCompileReportRead | None = None
     project_paper_compile_report_path: str | None = None
     project_paper_latex_path: str | None = None
@@ -3277,6 +3296,14 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     project_negative_evidence_report_path: str | None = None
     project_offline_publication_case_path: str | None = None
     project_offline_publication_audit_path: str | None = None
+    project_paper_sources_manifest_path: str | None = None
+    project_paper_sources_reconstructable: bool = False
+    project_paper_source_package_ready: bool = False
+    project_paper_missing_source_files: list[str] = Field(default_factory=list)
+    project_paper_missing_external_artifacts: list[str] = Field(default_factory=list)
+    project_manuscript_context_path: str | None = None
+    project_manuscript_context_complete: bool = False
+    project_manuscript_context_fingerprint: str | None = None
     project_review_bundle_ready: bool = False
     project_final_publish_ready: bool = False
     project_revision_action_count: int = 0

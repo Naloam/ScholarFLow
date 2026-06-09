@@ -519,6 +519,9 @@ export type AutoResearchPaperSourceFile = {
   relative_path: string;
   kind: "latex" | "bibtex" | "json" | "markdown" | "shell";
   description: string;
+  sha256?: string | null;
+  size_bytes?: number | null;
+  required: boolean;
 };
 
 export type AutoResearchPaperRevisionAction = {
@@ -634,6 +637,19 @@ export type AutoResearchPaperSourcesManifest = {
   compile_commands: string[];
   expected_outputs: string[];
   files: AutoResearchPaperSourceFile[];
+  file_count: number;
+  missing_files: string[];
+  reconstructable: boolean;
+  source_package_ready: boolean;
+  external_artifact_count: number;
+  missing_external_artifacts: string[];
+  external_artifacts_complete: boolean;
+  artifact_index?: string | null;
+  claim_evidence_index?: string | null;
+  manuscript_context?: string | null;
+  figures_tables_metadata?: string | null;
+  source_fingerprints: Record<string, string>;
+  manifest_fingerprint?: string | null;
 };
 
 export type AutoResearchPaperParagraphEvidence = {
@@ -3988,6 +4004,9 @@ export type AutoResearchProjectPaperOrchestration = {
   project_paper_sources_dir?: string | null;
   project_paper_sources_manifest?: AutoResearchPaperSourcesManifest | null;
   project_paper_sources_manifest_path?: string | null;
+  project_manuscript_context_path?: string | null;
+  project_manuscript_context_complete: boolean;
+  project_manuscript_context_fingerprint?: string | null;
   project_paper_compile_report?: AutoResearchPaperCompileReport | null;
   project_paper_compile_report_path?: string | null;
   project_paper_latex_path?: string | null;
@@ -4151,6 +4170,14 @@ export type AutoResearchEvaluationCaseTrace = {
   project_negative_evidence_report_path?: string | null;
   project_offline_publication_case_path?: string | null;
   project_offline_publication_audit_path?: string | null;
+  project_paper_sources_manifest_path?: string | null;
+  project_paper_sources_reconstructable: boolean;
+  project_paper_source_package_ready: boolean;
+  project_paper_missing_source_files: string[];
+  project_paper_missing_external_artifacts: string[];
+  project_manuscript_context_path?: string | null;
+  project_manuscript_context_complete: boolean;
+  project_manuscript_context_fingerprint?: string | null;
   project_review_bundle_ready: boolean;
   project_final_publish_ready: boolean;
   project_revision_action_count: number;

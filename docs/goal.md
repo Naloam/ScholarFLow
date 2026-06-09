@@ -5,7 +5,7 @@ ScholarFlow 目标路线图：AI 自动科研 + 写论文系统
 ========
 
 - 更新时间：2026-06-09。
-- 默认下一阶段：Goal 5 - Project-Level Manuscript Compiler V2。
+- 默认下一阶段：Goal 6 - Autonomous Revision Loop。
 - 本文件是下一轮 `/goal` 的主要执行依据。
 - `AGENTS.md` 只保留高层协作约束；具体阶段、验收标准、下一轮 prompt 以本文件为准。
 
@@ -734,6 +734,7 @@ Goal 5 Phase 3: Source Package And Compile Manifest
 Goal 5 完成标准
 ---------------
 
+- 状态：已完成。实现包括 versioned/fingerprinted manuscript context、evidence-constrained compiler/source package、source claim-evidence index、figures/tables metadata、artifact index、source fingerprints、missing reference/artifact readiness blockers，以及 deterministic tests。
 - At least one controlled-domain idea produces a project-level manuscript package with complete claim-evidence index。
 - Review-ready remains distinct from final-publish-ready。
 - Source package is reconstructable from manifest。
@@ -978,14 +979,15 @@ AGENTS.md 和 skills 决策
 下一轮执行建议
 ==============
 
-- 默认执行 Goal 5。
-- 不要一次性做 Goal 6-9。
-- Goal 5 优先顺序：
-  1. Phase 1: Manuscript Context Assembly。
-  2. Phase 2: Evidence-Constrained Compiler。
-  3. Phase 3: Source Package And Compile Manifest。
-- 如果 Goal 3/Goal 4 出现回归，先修复 typed runtime / validation / evidence mapping 或 cached connector / benchmark provenance，再继续 Goal 5。
-- 每完成一个实质子阶段，确认 manuscript context、claim evidence index、unsupported-claim downgrade、negative evidence、compile blockers、source fingerprints 和 package readiness 进入 artifact 或 tests。
+- 默认执行 Goal 6。
+- 不要一次性做 Goal 7-9。
+- Goal 6 优先顺序：
+  1. reviewer findings -> bounded paper revisions。
+  2. reviewer findings -> experiment repair requests。
+  3. claim downgrade / removal when evidence remains insufficient。
+  4. deterministic re-review cycle with preserved blockers。
+- 如果 Goal 3/Goal 4/Goal 5 出现回归，先修复 typed runtime / validation / evidence mapping、cached connector / benchmark provenance，或 manuscript context/source package readiness，再继续 Goal 6。
+- 每完成一个实质子阶段，确认 revision action lineage、claim-evidence index changes、negative evidence retention、repair output refs、rereview findings 和 readiness blockers 进入 artifact 或 tests。
 
 下一轮可直接使用的 /goal prompt
 ==============================
@@ -995,20 +997,20 @@ AGENTS.md 和 skills 决策
 ```text
 接下来请使用 /goal 功能执行 ScholarFlow 的下一阶段目标。
 
-目标：实现 docs/goal.md 中的 Goal 5 - Project-Level Manuscript Compiler V2。
+目标：实现 docs/goal.md 中的 Goal 6 - Autonomous Revision Loop。
 
 优先完成：
-1. Goal 5 Phase 1: Manuscript Context Assembly
-2. Goal 5 Phase 2: Evidence-Constrained Compiler
-3. Goal 5 Phase 3: Source Package And Compile Manifest
+1. Goal 6 Phase 1: Finding-To-Action Planner
+2. Goal 6 Phase 2: Bounded Revision Execution
+3. Goal 6 Phase 3: Re-Review
 4. 必要时同步 API/schema/frontend types、evaluation trace、docs/tests
 
 开始前请先执行并审计：
 - git status --short --branch
 - git log --oneline -n 8
 - 阅读 docs/goal.md
-- 阅读 docs/goal.md 中 Goal 5 的 phases 和测试要求
-- 阅读 Goal 5 涉及的 project paper compiler / package orchestrator / claim-evidence index / readiness 关键文件
+- 阅读 docs/goal.md 中 Goal 6 的 phases 和测试要求
+- 阅读 Goal 6 涉及的 reviewer simulator / project paper revision actions / repair execution log / rereview / readiness 关键文件
 
 当前基线：
 - Goal 1 已通过 commit d53e5a6 完成，不要重做。
@@ -1016,6 +1018,7 @@ AGENTS.md 和 skills 决策
 - Goal 2B 已通过 commit 7d48bbf 完成，不要重做。
 - Goal 3 已完成 typed experiment execution backend；除非测试回归，不要重做。
 - Goal 4 已完成 cached literature scout and benchmark provenance expansion；除非测试回归，不要重做。
+- Goal 5 已完成 Project-Level Manuscript Compiler V2；除非测试回归，不要重做。
 - 默认分支是 master。
 
 核心要求：
@@ -1026,13 +1029,13 @@ AGENTS.md 和 skills 决策
 - Literature、benchmark、experiment、statistics、negative evidence 和 manuscript claims 必须能通过 artifact lineage 追溯。
 - Tests 必须 deterministic，不能依赖 live network、paid LLM、GPU、Docker daemon、外部 benchmark 在线可用性。
 
-Goal 5 验收标准：
-- 至少一个 controlled-domain idea 能生成 project-level manuscript package。
-- Manuscript context versioned/fingerprinted，并包含 brief、literature、hypotheses、selected direction、execution evidence、claim evidence、negative evidence、review/revision state、domain readiness 和 claim ceiling。
-- Every core claim has evidence refs；unsupported claims are removed, downgraded, or blocked。
-- Negative evidence and limitations remain visible。
-- Source package 包含 manuscript source、references、figures/tables metadata、artifact index、compile manifest、claim-evidence index、source fingerprints。
-- 如果 compiler 不可用，仍输出完整 source package 和 explicit compiler blocker。
+Goal 6 验收标准：
+- Reviewer finding creates bounded revision action。
+- Unsupported claim finding causes claim downgrade/blocker。
+- Missing experiment evidence finding creates repair action, not fake evidence。
+- Re-review reflects revised artifacts。
+- Revision loop stops with terminal status。
+- Every revision action has lineage and evidence requirement。
 - 新增或更新 deterministic regression tests。
 - 如涉及 API/schema/types，更新 backend schema、frontend types/client、docs，并跑 frontend build。
 

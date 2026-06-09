@@ -45,6 +45,11 @@ PROJECT_PAPER_BIB_FILENAME = "references.bib"
 PROJECT_PAPER_MANIFEST_FILENAME = "manifest.json"
 PROJECT_PAPER_COMPILE_REPORT_FILENAME = "paper_compile_report.json"
 PROJECT_PAPER_COMPILER_EVIDENCE_FILENAME = "paper_compiler_evidence.json"
+PROJECT_MANUSCRIPT_CONTEXT_FILENAME = "manuscript_context.json"
+PROJECT_SOURCE_ARTIFACT_INDEX_FILENAME = "artifact_index.json"
+PROJECT_SOURCE_CLAIM_EVIDENCE_INDEX_FILENAME = "claim_evidence_index.json"
+PROJECT_SOURCE_FIGURES_TABLES_METADATA_FILENAME = "figures_tables_metadata.json"
+PROJECT_SOURCE_FINGERPRINTS_FILENAME = "source_fingerprints.json"
 PROJECT_PAPER_BUILD_SCRIPT_FILENAME = "build.sh"
 PROJECT_PAPER_REVISION_ACTION_INDEX_FILENAME = "project_revision_action_index.json"
 PROJECT_PAPER_REVISION_ACTION_NOTE_FILENAME = "revision_actions.md"
@@ -809,6 +814,129 @@ def _file_sha256(path: Path) -> str | None:
     if not path.is_file():
         return None
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _file_size(path: Path) -> int | None:
+    if not path.is_file():
+        return None
+    return path.stat().st_size
+
+
+def _finalize_project_paper_sources_manifest(
+    *,
+    sources_dir: Path,
+    manifest: AutoResearchPaperSourcesManifestRead,
+    artifact_index_payload: dict[str, Any] | None = None,
+) -> AutoResearchPaperSourcesManifestRead:
+    source_fingerprints: dict[str, str] = {}
+    missing_files: list[str] = []
+    enriched_files: list[AutoResearchPaperSourceFileRead] = []
+    for item in manifest.files:
+        path = sources_dir / item.relative_path
+        is_self_referential_manifest = item.relative_path == PROJECT_PAPER_MANIFEST_FILENAME
+        sha256 = None if is_self_referential_manifest else _file_sha256(path)
+        size_bytes = None if is_self_referential_manifest else _file_size(path)
+        if item.required and not path.is_file():
+            missing_files.append(item.relative_path)
+        if sha256 is not None:
+            source_fingerprints[item.relative_path] = sha256
+        enriched_files.append(
+            item.model_copy(
+                update={
+                    "sha256": sha256,
+                    "size_bytes": size_bytes,
+                }
+            )
+        )
+    external_artifacts = (
+        list(artifact_index_payload.get("external_artifacts", []))
+        if artifact_index_payload is not None
+        else []
+    )
+    missing_external_artifacts = [
+        str(item.get("role") or item.get("path") or "unknown_external_artifact")
+        for item in external_artifacts
+        if not item.get("exists")
+    ]
+    external_artifacts_complete = artifact_index_payload is not None and not missing_external_artifacts
+    payload = manifest.model_dump(mode="json")
+    payload.update(
+        {
+            "files": [item.model_dump(mode="json") for item in enriched_files],
+            "file_count": len(enriched_files),
+            "missing_files": missing_files,
+            "reconstructable": not missing_files,
+            "source_package_ready": not missing_files and external_artifacts_complete,
+            "external_artifact_count": len(external_artifacts),
+            "missing_external_artifacts": missing_external_artifacts,
+            "external_artifacts_complete": external_artifacts_complete,
+            "artifact_index": PROJECT_SOURCE_ARTIFACT_INDEX_FILENAME,
+            "claim_evidence_index": PROJECT_SOURCE_CLAIM_EVIDENCE_INDEX_FILENAME,
+            "manuscript_context": PROJECT_MANUSCRIPT_CONTEXT_FILENAME,
+            "figures_tables_metadata": PROJECT_SOURCE_FIGURES_TABLES_METADATA_FILENAME,
+            "source_fingerprints": source_fingerprints,
+            "manifest_fingerprint": None,
+        }
+    )
+    return AutoResearchPaperSourcesManifestRead(
+        **{
+            **payload,
+            "manifest_fingerprint": _fingerprint(payload),
+        }
+    )
+
+
+def _compile_report_with_source_manifest(
+    *,
+    compile_report: AutoResearchPaperCompileReportRead,
+    manifest: AutoResearchPaperSourcesManifestRead,
+) -> AutoResearchPaperCompileReportRead:
+    source_package_complete = compile_report.source_package_complete and manifest.source_package_ready
+    missing_required_source_files = _dedupe(
+        [
+            *compile_report.missing_required_source_files,
+            *manifest.missing_files,
+        ]
+    )
+    evidence_blockers = _dedupe(
+        [
+            *compile_report.evidence_blockers,
+            (
+                "Project paper source package is not reconstructable from manifest; missing files: "
+                + ", ".join(manifest.missing_files)
+                if manifest.missing_files
+                else None
+            ),
+            (
+                "Project paper source package references missing external artifacts: "
+                + ", ".join(manifest.missing_external_artifacts)
+                if manifest.missing_external_artifacts
+                else None
+            ),
+        ]
+    )
+    return compile_report.model_copy(
+        update={
+            "required_source_files": _dedupe(
+                [
+                    *compile_report.required_source_files,
+                    *[
+                        item.relative_path
+                        for item in manifest.files
+                        if item.required
+                    ],
+                ]
+            ),
+            "missing_required_source_files": missing_required_source_files,
+            "source_package_complete": source_package_complete,
+            "ready_for_compile": (
+                compile_report.ready_for_compile
+                and source_package_complete
+                and not missing_required_source_files
+            ),
+            "evidence_blockers": evidence_blockers,
+        }
+    )
 
 
 def _submission_asset_metadata(
@@ -4201,6 +4329,31 @@ def _build_project_paper_sources_manifest(*, has_bibliography: bool) -> AutoRese
                 description="Project manuscript evidence compiler packet covering sections, claims, citations, results, statistics, provenance, revisions, and compile readiness.",
             ),
             AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_MANUSCRIPT_CONTEXT_FILENAME,
+                kind="json",
+                description="Versioned project-level manuscript context linking brief, literature, benchmark, execution, evidence, negative evidence, review state, readiness policy, and claim ceiling.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_SOURCE_ARTIFACT_INDEX_FILENAME,
+                kind="json",
+                description="Source-package artifact index used to reconstruct the manuscript package and audit referenced evidence files.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_SOURCE_CLAIM_EVIDENCE_INDEX_FILENAME,
+                kind="json",
+                description="Machine-readable core-claim evidence index mirrored into the source package.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_SOURCE_FIGURES_TABLES_METADATA_FILENAME,
+                kind="json",
+                description="Figures and tables metadata for source-package reconstruction.",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path=PROJECT_SOURCE_FINGERPRINTS_FILENAME,
+                kind="json",
+                description="Source file fingerprint ledger for reconstructing and verifying the manuscript source package.",
+            ),
+            AutoResearchPaperSourceFileRead(
                 relative_path=PROJECT_PAPER_REVISION_ACTION_INDEX_FILENAME,
                 kind="json",
                 description="Bounded project-paper revision actions derived from project claim traces and evidence gaps.",
@@ -4339,6 +4492,7 @@ def _project_reproducibility_checklist_markdown(
     project_paper_sections: list[str],
     project_paper_missing_sections: list[str],
     project_paper_compile_report: AutoResearchPaperCompileReportRead,
+    project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
     project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
     project_review_findings: dict[str, Any],
     project_publish_gate_passed: bool,
@@ -4351,6 +4505,8 @@ def _project_reproducibility_checklist_markdown(
         ("Project manuscript has required sections", not project_paper_missing_sections),
         ("At least one selected run is attached", bool(selected_runs)),
         ("Project paper source package is complete", project_paper_compile_report.source_package_complete),
+        ("Project paper source package is reconstructable", project_paper_sources_manifest.reconstructable),
+        ("Project paper source package external artifact refs are complete", project_paper_sources_manifest.external_artifacts_complete),
         ("Project paper compile report has no missing inputs", not project_paper_compile_report.missing_required_inputs),
         ("Project reviewer findings are persisted", bool(project_review_findings.get("review_fingerprint"))),
         ("No pending project-paper revision actions remain", not pending_revision_actions),
@@ -4370,6 +4526,12 @@ def _project_reproducibility_checklist_markdown(
         "",
         "## Missing Sections",
         _markdown_list(project_paper_missing_sections, empty="No required project-paper sections are missing."),
+        "",
+        "## Source Package",
+        f"- Reconstructable: `{project_paper_sources_manifest.reconstructable}`",
+        f"- External artifact refs complete: `{project_paper_sources_manifest.external_artifacts_complete}`",
+        f"- Missing source files: {', '.join(project_paper_sources_manifest.missing_files) if project_paper_sources_manifest.missing_files else 'none'}",
+        f"- Missing external artifacts: {', '.join(project_paper_sources_manifest.missing_external_artifacts) if project_paper_sources_manifest.missing_external_artifacts else 'none'}",
         "",
         "## Selected Runs",
         _markdown_list([run.id for run in selected_runs], empty="No selected runs are attached."),
@@ -4600,6 +4762,485 @@ def _project_claim_evidence_index_markdown(
             )
     complete = bool(traces) and all(trace.support_status == "supported" for trace in traces)
     return "\n".join(lines).strip() + "\n", complete
+
+
+def _project_source_claim_evidence_index_payload(
+    *,
+    ledger: AutoResearchProjectConclusionLedgerRead,
+    traces: list[AutoResearchProjectClaimTraceRead],
+) -> dict[str, Any]:
+    unsupported = [trace for trace in traces if trace.support_status != "supported"]
+    payload = {
+        "index_id": "project_source_claim_evidence_index_v2",
+        "schema_version": "2.0",
+        "generated_at": _utcnow().isoformat(),
+        "core_claim_count": len(traces),
+        "supported_core_claim_count": sum(1 for trace in traces if trace.support_status == "supported"),
+        "partial_or_unsupported_core_claim_count": len(unsupported),
+        "complete": bool(traces) and not unsupported,
+        "claim_traces": [trace.model_dump(mode="json") for trace in traces],
+        "conclusion_ledger": ledger.model_dump(mode="json"),
+        "unsupported_claim_policy": (
+            "Unsupported or partial project-level claims must be removed, downgraded, or left as "
+            "explicit blockers/follow-ups; source-package presence does not promote weak claims."
+        ),
+    }
+    return {**payload, "index_fingerprint": _fingerprint(payload)}
+
+
+def _project_figures_tables_metadata_payload(
+    *,
+    selected_runs: list[AutoResearchRunRead],
+    project_paper_sections: list[str],
+) -> dict[str, Any]:
+    tables: list[dict[str, Any]] = []
+    figures: list[dict[str, Any]] = []
+    for run in selected_runs:
+        artifact = run.artifact
+        if artifact is None:
+            continue
+        for index, table in enumerate(artifact.tables, start=1):
+            tables.append(
+                {
+                    "table_id": f"{run.id}:artifact_table:{index}",
+                    "run_id": run.id,
+                    "title": table.title,
+                    "caption": getattr(table, "caption", None),
+                    "row_count": len(table.rows),
+                    "source_ref": "run.artifact.tables",
+                }
+            )
+        if artifact.system_results:
+            tables.append(
+                {
+                    "table_id": f"{run.id}:system_results",
+                    "run_id": run.id,
+                    "title": "System Results",
+                    "caption": "Derived per-system metric rows from the selected run artifact.",
+                    "row_count": len(artifact.system_results),
+                    "source_ref": "run.artifact.system_results",
+                }
+            )
+        if artifact.aggregate_system_results:
+            tables.append(
+                {
+                    "table_id": f"{run.id}:aggregate_system_results",
+                    "run_id": run.id,
+                    "title": "Aggregate System Results",
+                    "caption": "Derived aggregate metric rows from the selected run artifact.",
+                    "row_count": len(artifact.aggregate_system_results),
+                    "source_ref": "run.artifact.aggregate_system_results",
+                }
+            )
+        for index, figure in enumerate(getattr(artifact, "figures", []) or [], start=1):
+            figures.append(
+                {
+                    "figure_id": f"{run.id}:artifact_figure:{index}",
+                    "run_id": run.id,
+                    "title": figure.title,
+                    "caption": figure.caption,
+                    "path": figure.path,
+                    "source_ref": "run.artifact.figures",
+                }
+            )
+    payload = {
+        "metadata_id": "project_source_figures_tables_metadata_v2",
+        "schema_version": "2.0",
+        "generated_at": _utcnow().isoformat(),
+        "manuscript_sections": list(project_paper_sections),
+        "figure_count": len(figures),
+        "table_count": len(tables),
+        "figures": figures,
+        "tables": tables,
+        "complete": bool(project_paper_sections),
+        "policy": (
+            "Figures and tables metadata is derived only from selected-run artifacts; missing visual "
+            "assets remain metadata limitations rather than invented figures."
+        ),
+    }
+    return {**payload, "metadata_fingerprint": _fingerprint(payload)}
+
+
+def _project_source_artifact_index_payload(
+    *,
+    project_id: str,
+    selected_runs: list[AutoResearchRunRead],
+    project_paper_sources_dir: Path,
+    project_paper_path: Path,
+    claim_index_path: Path,
+    retrieval_evidence_ledger_path: Path,
+    lineage_archive_path: Path,
+    literature_support_index_path: Path,
+    benchmark_provenance_manifest_path: Path,
+    statistics_report_path: Path,
+    experiment_repair_index_path: Path,
+    negative_evidence_report_path: Path,
+) -> dict[str, Any]:
+    source_files = [
+        {
+            "relative_path": path.relative_to(project_paper_sources_dir).as_posix(),
+            "sha256": _file_sha256(path),
+            "size_bytes": _file_size(path),
+        }
+        for path in sorted(project_paper_sources_dir.rglob("*"))
+        if path.is_file()
+    ]
+    external_artifacts = [
+        ("project_manuscript_markdown", project_paper_path),
+        ("project_claim_evidence_index", claim_index_path),
+        ("project_retrieval_evidence_ledger", retrieval_evidence_ledger_path),
+        ("project_lineage_archive", lineage_archive_path),
+        ("project_literature_support_index", literature_support_index_path),
+        ("project_benchmark_provenance_manifest", benchmark_provenance_manifest_path),
+        ("project_statistics_report", statistics_report_path),
+        ("project_experiment_repair_index", experiment_repair_index_path),
+        ("project_negative_evidence_report", negative_evidence_report_path),
+    ]
+    payload = {
+        "index_id": "project_source_artifact_index_v2",
+        "schema_version": "2.0",
+        "project_id": project_id,
+        "generated_at": _utcnow().isoformat(),
+        "selected_run_ids": [run.id for run in selected_runs],
+        "source_package_dir": str(project_paper_sources_dir),
+        "source_files": source_files,
+        "external_artifacts": [
+            {
+                "role": role,
+                "path": str(path),
+                "exists": path.exists(),
+                "sha256": _file_sha256(path),
+                "size_bytes": _file_size(path),
+            }
+            for role, path in external_artifacts
+        ],
+        "complete": all(path.exists() for _, path in external_artifacts),
+        "reconstruction_policy": (
+            "The source package can be reconstructed from manifest.json plus the listed source files; "
+            "external artifacts are evidence refs and must remain present for package-level audit."
+        ),
+    }
+    return {**payload, "index_fingerprint": _fingerprint(payload)}
+
+
+def _project_manuscript_context_payload(
+    *,
+    project_id: str,
+    selected_runs: list[AutoResearchRunRead],
+    latest_brief: AutoResearchResearchBriefRead | None,
+    ledger: AutoResearchProjectConclusionLedgerRead,
+    traces: list[AutoResearchProjectClaimTraceRead],
+    project_paper_sections: list[str],
+    project_paper_missing_sections: list[str],
+    project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
+    project_review_findings: dict[str, Any],
+    evidence_profile: dict[str, Any],
+    literature_support_index: dict[str, Any],
+    benchmark_provenance_manifest: dict[str, Any],
+    experiment_repair_index: dict[str, Any],
+    statistics_report: dict[str, Any],
+    negative_evidence_report: dict[str, Any],
+    paper_compiler_evidence: dict[str, Any],
+    project_submission_blockers: list[str],
+    project_publish_gate_passed: bool,
+) -> dict[str, Any]:
+    payload = {
+        "context_id": "project_manuscript_context_v2",
+        "schema_version": "2.0",
+        "project_id": project_id,
+        "generated_at": _utcnow().isoformat(),
+        "selected_run_ids": [run.id for run in selected_runs],
+        "research_brief": latest_brief.model_dump(mode="json") if latest_brief is not None else None,
+        "domain_decision": (
+            latest_brief.domain_decision.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_decision is not None
+            else None
+        ),
+        "domain_template": (
+            latest_brief.domain_template.model_dump(mode="json")
+            if latest_brief is not None and latest_brief.domain_template is not None
+            else None
+        ),
+        "literature_support_index": literature_support_index,
+        "benchmark_provenance": benchmark_provenance_manifest,
+        "experiment_execution_evidence": {
+            "experiment_repair_index": experiment_repair_index,
+            "execution_coverage": paper_compiler_evidence.get("execution_coverage", {}),
+        },
+        "evidence_ledger": {
+            "project_conclusion_ledger": ledger.model_dump(mode="json"),
+            "claim_traces": [trace.model_dump(mode="json") for trace in traces],
+        },
+        "negative_evidence": negative_evidence_report,
+        "project_conclusions": ledger.model_dump(mode="json"),
+        "reviewer_revision_state": {
+            "review_findings": project_review_findings,
+            "revision_actions": [
+                action.model_dump(mode="json") for action in project_paper_revision_actions
+            ],
+        },
+        "readiness_policy": {
+            "project_publish_gate_passed": project_publish_gate_passed,
+            "review_ready_distinct_from_final_publish": True,
+            "project_submission_blockers": list(project_submission_blockers),
+            "evidence_profile_blockers": list(evidence_profile.get("blockers", [])),
+            "compiler_blockers": list(paper_compiler_evidence.get("blockers", [])),
+        },
+        "claim_ceiling": (
+            latest_brief.domain_claim_ceiling
+            if latest_brief is not None and latest_brief.domain_claim_ceiling
+            else statistics_report.get("claim_ceiling_recommendation")
+            or "technical_report_only"
+        ),
+        "manuscript_sections": {
+            "required_sections": PROJECT_PAPER_REQUIRED_SECTIONS,
+            "present_sections": list(project_paper_sections),
+            "missing_sections": list(project_paper_missing_sections),
+            "complete": not project_paper_missing_sections,
+        },
+        "source_package_refs": {
+            "manifest": PROJECT_PAPER_MANIFEST_FILENAME,
+            "artifact_index": PROJECT_SOURCE_ARTIFACT_INDEX_FILENAME,
+            "claim_evidence_index": PROJECT_SOURCE_CLAIM_EVIDENCE_INDEX_FILENAME,
+            "figures_tables_metadata": PROJECT_SOURCE_FIGURES_TABLES_METADATA_FILENAME,
+            "source_fingerprints": PROJECT_SOURCE_FINGERPRINTS_FILENAME,
+        },
+        "policy": (
+            "This context is the Goal 5 manuscript compiler input contract. It records evidence "
+            "and blockers; it must not be used to upgrade unsupported claims."
+        ),
+    }
+    return {**payload, "context_fingerprint": _fingerprint(payload)}
+
+
+def _materialize_project_source_package_v2(
+    *,
+    project_id: str,
+    selected_runs: list[AutoResearchRunRead],
+    latest_brief: AutoResearchResearchBriefRead | None,
+    ledger: AutoResearchProjectConclusionLedgerRead,
+    traces: list[AutoResearchProjectClaimTraceRead],
+    project_paper_sources_dir: Path,
+    project_paper_path: Path,
+    project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+    project_paper_compile_report: AutoResearchPaperCompileReportRead,
+    project_paper_sections: list[str],
+    project_paper_missing_sections: list[str],
+    project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
+    project_review_findings: dict[str, Any],
+    evidence_profile: dict[str, Any],
+    literature_support_index: dict[str, Any],
+    benchmark_provenance_manifest: dict[str, Any],
+    experiment_repair_index: dict[str, Any],
+    statistics_report: dict[str, Any],
+    negative_evidence_report: dict[str, Any],
+    paper_compiler_evidence: dict[str, Any],
+    project_submission_blockers: list[str],
+    project_publish_gate_passed: bool,
+    claim_index_path: Path,
+    retrieval_evidence_ledger_path: Path,
+    lineage_archive_path: Path,
+    literature_support_index_path: Path,
+    benchmark_provenance_manifest_path: Path,
+    statistics_report_path: Path,
+    experiment_repair_index_path: Path,
+    negative_evidence_report_path: Path,
+) -> tuple[AutoResearchPaperSourcesManifestRead, AutoResearchPaperCompileReportRead, Path, str, dict[str, Any]]:
+    context_payload = _project_manuscript_context_payload(
+        project_id=project_id,
+        selected_runs=selected_runs,
+        latest_brief=latest_brief,
+        ledger=ledger,
+        traces=traces,
+        project_paper_sections=project_paper_sections,
+        project_paper_missing_sections=project_paper_missing_sections,
+        project_paper_revision_actions=project_paper_revision_actions,
+        project_review_findings=project_review_findings,
+        evidence_profile=evidence_profile,
+        literature_support_index=literature_support_index,
+        benchmark_provenance_manifest=benchmark_provenance_manifest,
+        experiment_repair_index=experiment_repair_index,
+        statistics_report=statistics_report,
+        negative_evidence_report=negative_evidence_report,
+        paper_compiler_evidence=paper_compiler_evidence,
+        project_submission_blockers=project_submission_blockers,
+        project_publish_gate_passed=project_publish_gate_passed,
+    )
+    manuscript_context_path = project_paper_sources_dir / PROJECT_MANUSCRIPT_CONTEXT_FILENAME
+    manuscript_context_path.write_text(json.dumps(context_payload, indent=2), encoding="utf-8")
+
+    source_claim_index = _project_source_claim_evidence_index_payload(
+        ledger=ledger,
+        traces=traces,
+    )
+    (project_paper_sources_dir / PROJECT_SOURCE_CLAIM_EVIDENCE_INDEX_FILENAME).write_text(
+        json.dumps(source_claim_index, indent=2),
+        encoding="utf-8",
+    )
+
+    figures_tables_metadata = _project_figures_tables_metadata_payload(
+        selected_runs=selected_runs,
+        project_paper_sections=project_paper_sections,
+    )
+    (project_paper_sources_dir / PROJECT_SOURCE_FIGURES_TABLES_METADATA_FILENAME).write_text(
+        json.dumps(figures_tables_metadata, indent=2),
+        encoding="utf-8",
+    )
+
+    artifact_index = _project_source_artifact_index_payload(
+        project_id=project_id,
+        selected_runs=selected_runs,
+        project_paper_sources_dir=project_paper_sources_dir,
+        project_paper_path=project_paper_path,
+        claim_index_path=claim_index_path,
+        retrieval_evidence_ledger_path=retrieval_evidence_ledger_path,
+        lineage_archive_path=lineage_archive_path,
+        literature_support_index_path=literature_support_index_path,
+        benchmark_provenance_manifest_path=benchmark_provenance_manifest_path,
+        statistics_report_path=statistics_report_path,
+        experiment_repair_index_path=experiment_repair_index_path,
+        negative_evidence_report_path=negative_evidence_report_path,
+    )
+    (project_paper_sources_dir / PROJECT_SOURCE_ARTIFACT_INDEX_FILENAME).write_text(
+        json.dumps(artifact_index, indent=2),
+        encoding="utf-8",
+    )
+
+    source_fingerprints_path = project_paper_sources_dir / PROJECT_SOURCE_FINGERPRINTS_FILENAME
+    source_fingerprints_path.write_text(
+        json.dumps(
+            {
+                "ledger_id": "project_source_fingerprints_v2",
+                "schema_version": "2.0",
+                "generated_at": _utcnow().isoformat(),
+                "project_id": project_id,
+                "source_fingerprints": {},
+                "placeholder": True,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    preliminary_manifest = _finalize_project_paper_sources_manifest(
+        sources_dir=project_paper_sources_dir,
+        manifest=project_paper_sources_manifest,
+        artifact_index_payload=artifact_index,
+    )
+    finalized_compile_report = _compile_report_with_source_manifest(
+        compile_report=project_paper_compile_report,
+        manifest=preliminary_manifest,
+    )
+    (project_paper_sources_dir / PROJECT_PAPER_COMPILE_REPORT_FILENAME).write_text(
+        finalized_compile_report.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    artifact_index = _project_source_artifact_index_payload(
+        project_id=project_id,
+        selected_runs=selected_runs,
+        project_paper_sources_dir=project_paper_sources_dir,
+        project_paper_path=project_paper_path,
+        claim_index_path=claim_index_path,
+        retrieval_evidence_ledger_path=retrieval_evidence_ledger_path,
+        lineage_archive_path=lineage_archive_path,
+        literature_support_index_path=literature_support_index_path,
+        benchmark_provenance_manifest_path=benchmark_provenance_manifest_path,
+        statistics_report_path=statistics_report_path,
+        experiment_repair_index_path=experiment_repair_index_path,
+        negative_evidence_report_path=negative_evidence_report_path,
+    )
+    (project_paper_sources_dir / PROJECT_SOURCE_ARTIFACT_INDEX_FILENAME).write_text(
+        json.dumps(artifact_index, indent=2),
+        encoding="utf-8",
+    )
+
+    source_fingerprint_payload = {
+        "ledger_id": "project_source_fingerprints_v2",
+        "schema_version": "2.0",
+        "generated_at": _utcnow().isoformat(),
+        "project_id": project_id,
+        "excluded_self_referential_files": [
+            PROJECT_PAPER_MANIFEST_FILENAME,
+            PROJECT_SOURCE_FINGERPRINTS_FILENAME,
+        ],
+        "source_fingerprints": {
+            path.relative_to(project_paper_sources_dir).as_posix(): _file_sha256(path)
+            for path in sorted(project_paper_sources_dir.rglob("*"))
+            if path.is_file()
+            and path.name not in {PROJECT_PAPER_MANIFEST_FILENAME, PROJECT_SOURCE_FINGERPRINTS_FILENAME}
+        },
+        "policy": (
+            "This ledger excludes itself and manifest.json from the embedded fingerprint map to avoid "
+            "self-referential hashes. manifest.json records the final hash of this ledger."
+        ),
+    }
+    source_fingerprint_payload["ledger_fingerprint"] = _fingerprint(source_fingerprint_payload)
+    source_fingerprints_path.write_text(
+        json.dumps(source_fingerprint_payload, indent=2),
+        encoding="utf-8",
+    )
+
+    finalized_manifest = _finalize_project_paper_sources_manifest(
+        sources_dir=project_paper_sources_dir,
+        manifest=project_paper_sources_manifest,
+        artifact_index_payload=artifact_index,
+    )
+    paper_compiler_evidence = {
+        **{
+            key: value
+            for key, value in paper_compiler_evidence.items()
+            if key != "packet_fingerprint"
+        },
+        "reproducibility_coverage": {
+            **paper_compiler_evidence.get("reproducibility_coverage", {}),
+            "source_manifest_reconstructable": finalized_manifest.reconstructable,
+            "source_manifest_ready": finalized_manifest.source_package_ready,
+            "missing_source_files": list(finalized_manifest.missing_files),
+            "missing_external_artifacts": list(finalized_manifest.missing_external_artifacts),
+        },
+    }
+    paper_compiler_evidence = {
+        **paper_compiler_evidence,
+        "packet_fingerprint": _fingerprint(paper_compiler_evidence),
+    }
+    (project_paper_sources_dir / PROJECT_PAPER_COMPILER_EVIDENCE_FILENAME).write_text(
+        json.dumps(paper_compiler_evidence, indent=2),
+        encoding="utf-8",
+    )
+    source_fingerprint_payload = {
+        **{
+            key: value
+            for key, value in source_fingerprint_payload.items()
+            if key != "ledger_fingerprint"
+        },
+        "source_fingerprints": {
+            path.relative_to(project_paper_sources_dir).as_posix(): _file_sha256(path)
+            for path in sorted(project_paper_sources_dir.rglob("*"))
+            if path.is_file()
+            and path.name not in {PROJECT_PAPER_MANIFEST_FILENAME, PROJECT_SOURCE_FINGERPRINTS_FILENAME}
+        },
+    }
+    source_fingerprint_payload["ledger_fingerprint"] = _fingerprint(source_fingerprint_payload)
+    source_fingerprints_path.write_text(
+        json.dumps(source_fingerprint_payload, indent=2),
+        encoding="utf-8",
+    )
+    finalized_manifest = _finalize_project_paper_sources_manifest(
+        sources_dir=project_paper_sources_dir,
+        manifest=project_paper_sources_manifest,
+        artifact_index_payload=artifact_index,
+    )
+    (project_paper_sources_dir / PROJECT_PAPER_MANIFEST_FILENAME).write_text(
+        finalized_manifest.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    return (
+        finalized_manifest,
+        finalized_compile_report,
+        manuscript_context_path,
+        str(context_payload["context_fingerprint"]),
+        paper_compiler_evidence,
+    )
 
 
 def _project_retrieval_evidence_ledger_payload(
@@ -5203,6 +5844,7 @@ def _build_project_paper_compiler_evidence_packet(
     project_paper_sections: list[str],
     project_paper_missing_sections: list[str],
     project_paper_compile_report: AutoResearchPaperCompileReportRead,
+    project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
     project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
     project_review_findings: dict[str, Any],
     evidence_profile: dict[str, Any],
@@ -5276,6 +5918,14 @@ def _build_project_paper_compiler_evidence_packet(
     package_roles = list(PROJECT_SUBMISSION_PACKAGE_ROLES)
     reproducibility_coverage = {
         "source_package_complete": project_paper_compile_report.source_package_complete,
+        "declared_source_file_count": len(project_paper_sources_manifest.files),
+        "declared_required_source_files": [
+            item.relative_path
+            for item in project_paper_sources_manifest.files
+            if item.required
+        ],
+        "source_manifest_reconstructable": project_paper_sources_manifest.reconstructable,
+        "source_manifest_ready": project_paper_sources_manifest.source_package_ready,
         "compile_report_materialized": True,
         "expected_compile_outputs": list(project_paper_compile_report.expected_outputs),
         "missing_required_inputs": list(project_paper_compile_report.missing_required_inputs),
@@ -9168,6 +9818,7 @@ def _materialize_project_submission_package(
     project_paper_sections: list[str],
     project_paper_missing_sections: list[str],
     project_paper_compile_report: AutoResearchPaperCompileReportRead,
+    project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
     project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
     project_review_findings: dict[str, Any],
     project_publish_gate_passed: bool,
@@ -9217,6 +9868,7 @@ def _materialize_project_submission_package(
         project_paper_sections=project_paper_sections,
         project_paper_missing_sections=project_paper_missing_sections,
         project_paper_compile_report=project_paper_compile_report,
+        project_paper_sources_manifest=project_paper_sources_manifest,
         project_paper_revision_actions=project_paper_revision_actions,
         project_review_findings=project_review_findings,
         evidence_profile=evidence_profile,
@@ -9331,6 +9983,7 @@ def _materialize_project_submission_package(
         project_paper_sections=project_paper_sections,
         project_paper_missing_sections=project_paper_missing_sections,
         project_paper_compile_report=project_paper_compile_report,
+        project_paper_sources_manifest=project_paper_sources_manifest,
         project_paper_revision_actions=project_paper_revision_actions,
         project_review_findings=project_review_findings,
         project_publish_gate_passed=project_publish_gate_passed,
@@ -9376,22 +10029,47 @@ def _materialize_project_submission_package(
         json.dumps(literature_support_index_payload, indent=2),
         encoding="utf-8",
     )
-    package_output_roles = list(PROJECT_SUBMISSION_PACKAGE_ROLES)
-    offline_publication_case_payload = _project_offline_publication_case_payload(
-        project_id=project_id,
-        latest_brief=latest_brief,
-        selected_runs=selected_runs,
-        evidence_profile=evidence_profile,
-        literature_support_index=literature_support_index_payload,
-        benchmark_card=benchmark_card_payload,
-        benchmark_provenance_manifest=benchmark_provenance_manifest_payload,
-        statistics_report=statistics_report_payload,
-        negative_evidence_report=negative_evidence_report_payload,
-        repair_execution_log=repair_execution_log_payload,
-        package_output_roles=package_output_roles,
-    )
-    offline_publication_case_path.write_text(
-        json.dumps(offline_publication_case_payload, indent=2),
+    paper_compiler_evidence_base = {
+        key: value
+        for key, value in paper_compiler_evidence.items()
+        if key != "packet_fingerprint"
+    }
+    paper_compiler_evidence = {
+        **paper_compiler_evidence_base,
+        "source_package_manifest_ref": {
+            "path": str(project_paper_sources_dir / PROJECT_PAPER_MANIFEST_FILENAME),
+            "relative_path": PROJECT_PAPER_MANIFEST_FILENAME,
+            "self_referential_hash_policy": (
+                "paper_compiler_evidence records the source manifest path but does not embed "
+                "the final manifest payload, because manifest.json records the compiler evidence hash."
+            ),
+        },
+        "manuscript_context_coverage": {
+            "path": str(project_paper_sources_dir / PROJECT_MANUSCRIPT_CONTEXT_FILENAME),
+            "relative_path": PROJECT_MANUSCRIPT_CONTEXT_FILENAME,
+            "complete": True,
+            "required_context_keys": [
+                "research_brief",
+                "domain_decision",
+                "domain_template",
+                "literature_support_index",
+                "benchmark_provenance",
+                "experiment_execution_evidence",
+                "evidence_ledger",
+                "negative_evidence",
+                "project_conclusions",
+                "reviewer_revision_state",
+                "readiness_policy",
+                "claim_ceiling",
+            ],
+        },
+    }
+    paper_compiler_evidence = {
+        **paper_compiler_evidence,
+        "packet_fingerprint": _fingerprint(paper_compiler_evidence),
+    }
+    paper_compiler_evidence_path.write_text(
+        json.dumps(paper_compiler_evidence, indent=2),
         encoding="utf-8",
     )
     lineage_payload = {
@@ -9422,6 +10100,74 @@ def _materialize_project_submission_package(
         "project_submission_blockers": project_submission_blockers,
     }
     lineage_archive_path.write_text(json.dumps(lineage_payload, indent=2), encoding="utf-8")
+    (
+        project_paper_sources_manifest,
+        project_paper_compile_report,
+        manuscript_context_path,
+        manuscript_context_fingerprint,
+        paper_compiler_evidence,
+    ) = _materialize_project_source_package_v2(
+        project_id=project_id,
+        selected_runs=selected_runs,
+        latest_brief=latest_brief,
+        ledger=ledger,
+        traces=traces,
+        project_paper_sources_dir=project_paper_sources_dir,
+        project_paper_path=project_paper_path,
+        project_paper_sources_manifest=project_paper_sources_manifest,
+        project_paper_compile_report=project_paper_compile_report,
+        project_paper_sections=project_paper_sections,
+        project_paper_missing_sections=project_paper_missing_sections,
+        project_paper_revision_actions=project_paper_revision_actions,
+        project_review_findings=project_review_findings,
+        evidence_profile=evidence_profile,
+        literature_support_index=literature_support_index_payload,
+        benchmark_provenance_manifest=benchmark_provenance_manifest_payload,
+        experiment_repair_index=experiment_repair_index_payload,
+        statistics_report=statistics_report_payload,
+        negative_evidence_report=negative_evidence_report_payload,
+        paper_compiler_evidence=paper_compiler_evidence,
+        project_submission_blockers=project_submission_blockers,
+        project_publish_gate_passed=project_publish_gate_passed,
+        claim_index_path=claim_index_path,
+        retrieval_evidence_ledger_path=retrieval_evidence_ledger_path,
+        lineage_archive_path=lineage_archive_path,
+        literature_support_index_path=literature_support_index_path,
+        benchmark_provenance_manifest_path=benchmark_provenance_manifest_path,
+        statistics_report_path=statistics_report_path,
+        experiment_repair_index_path=experiment_repair_index_path,
+        negative_evidence_report_path=negative_evidence_report_path,
+    )
+    checklist_markdown = _project_reproducibility_checklist_markdown(
+        selected_runs=selected_runs,
+        project_paper_sections=project_paper_sections,
+        project_paper_missing_sections=project_paper_missing_sections,
+        project_paper_compile_report=project_paper_compile_report,
+        project_paper_sources_manifest=project_paper_sources_manifest,
+        project_paper_revision_actions=project_paper_revision_actions,
+        project_review_findings=project_review_findings,
+        project_publish_gate_passed=project_publish_gate_passed,
+        project_submission_blockers=project_submission_blockers,
+    )
+    checklist_path.write_text(checklist_markdown, encoding="utf-8")
+    package_output_roles = list(PROJECT_SUBMISSION_PACKAGE_ROLES)
+    offline_publication_case_payload = _project_offline_publication_case_payload(
+        project_id=project_id,
+        latest_brief=latest_brief,
+        selected_runs=selected_runs,
+        evidence_profile=evidence_profile,
+        literature_support_index=literature_support_index_payload,
+        benchmark_card=benchmark_card_payload,
+        benchmark_provenance_manifest=benchmark_provenance_manifest_payload,
+        statistics_report=statistics_report_payload,
+        negative_evidence_report=negative_evidence_report_payload,
+        repair_execution_log=repair_execution_log_payload,
+        package_output_roles=package_output_roles,
+    )
+    offline_publication_case_path.write_text(
+        json.dumps(offline_publication_case_payload, indent=2),
+        encoding="utf-8",
+    )
     project_final_publish_ready_candidate = (
         project_publish_gate_passed
         and reviewer_response_complete
@@ -9562,6 +10308,11 @@ def _materialize_project_submission_package(
         "selected_run_ids": [run.id for run in selected_runs],
         "manuscript_path": str(project_paper_path),
         "paper_sources_dir": str(project_paper_sources_dir),
+        "paper_sources_manifest_path": str(project_paper_sources_dir / PROJECT_PAPER_MANIFEST_FILENAME),
+        "paper_sources_reconstructable": project_paper_sources_manifest.reconstructable,
+        "paper_sources_manifest_fingerprint": project_paper_sources_manifest.manifest_fingerprint,
+        "manuscript_context_path": str(manuscript_context_path),
+        "manuscript_context_fingerprint": manuscript_context_fingerprint,
         "generated_assets": generated_assets[1:],
         "blocked_asset_count": sum(1 for item in generated_assets[1:] if item.get("final_publish_blocking")),
         "final_publish_blocking_asset_roles": [
@@ -9860,6 +10611,13 @@ def _materialize_project_submission_package(
         "project_submission_dir": str(submission_dir),
         "project_submission_manifest": submission_manifest,
         "project_submission_manifest_path": str(manifest_path),
+        "project_paper_sources_manifest": project_paper_sources_manifest.model_dump(mode="json"),
+        "project_paper_sources_manifest_path": str(project_paper_sources_dir / PROJECT_PAPER_MANIFEST_FILENAME),
+        "project_paper_compile_report": project_paper_compile_report.model_dump(mode="json"),
+        "project_paper_compile_report_path": str(project_paper_sources_dir / PROJECT_PAPER_COMPILE_REPORT_FILENAME),
+        "project_manuscript_context_path": str(manuscript_context_path),
+        "project_manuscript_context_complete": manuscript_context_path.is_file(),
+        "project_manuscript_context_fingerprint": manuscript_context_fingerprint,
         "project_reproducibility_checklist_path": str(checklist_path),
         "project_reviewer_response_path": str(reviewer_response_path),
         "project_review_findings_path": str(review_findings_path),
@@ -10399,6 +11157,7 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         project_paper_sections=project_paper_sections,
         project_paper_missing_sections=project_paper_missing_sections,
         project_paper_compile_report=project_paper_compile_report,
+        project_paper_sources_manifest=project_paper_sources_manifest,
         project_paper_revision_actions=project_paper_revision_actions,
         project_review_findings=project_review_findings,
         project_publish_gate_passed=effective_project_publish_gate_passed,

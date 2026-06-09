@@ -54,6 +54,8 @@ from schemas.autoresearch import (
     AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
+    AutoResearchPaperSourceFileRead,
+    AutoResearchPaperSourcesManifestRead,
     AutoResearchArtifactIntegrityAuditRead,
     AutoResearchArtifactIntegrityIssueRead,
     AutoResearchIdeaRequest,
@@ -1020,6 +1022,217 @@ def _publication_compile_report() -> AutoResearchPaperCompileReportRead:
         ready_for_compile=True,
         paper_tier="technical_report",
     )
+
+
+def test_project_paper_source_manifest_blocks_missing_reference_and_artifact(
+    tmp_path: Path,
+) -> None:
+    sources_dir = tmp_path / "paper_sources"
+    sources_dir.mkdir()
+    (sources_dir / "main.tex").write_text("\\section{Abstract}", encoding="utf-8")
+    manifest = AutoResearchPaperSourcesManifestRead(
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        entrypoint="main.tex",
+        bibliography="references.bib",
+        compiler_hint="pdflatex + bibtex",
+        compile_commands=["pdflatex main.tex", "bibtex main"],
+        expected_outputs=["main.pdf", "main.bbl"],
+        files=[
+            AutoResearchPaperSourceFileRead(
+                relative_path="main.tex",
+                kind="latex",
+                description="LaTeX source",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path="references.bib",
+                kind="bibtex",
+                description="BibTeX references",
+            ),
+            AutoResearchPaperSourceFileRead(
+                relative_path="manifest.json",
+                kind="json",
+                description="Source manifest",
+            ),
+        ],
+    )
+    finalized = autoresearch_project_paper_orchestrator._finalize_project_paper_sources_manifest(
+        sources_dir=sources_dir,
+        manifest=manifest,
+        artifact_index_payload={
+            "external_artifacts": [
+                {
+                    "role": "project_claim_evidence_index",
+                    "path": str(tmp_path / "claim_evidence_index.md"),
+                    "exists": False,
+                }
+            ]
+        },
+    )
+    report = autoresearch_project_paper_orchestrator._compile_report_with_source_manifest(
+        compile_report=_publication_compile_report(),
+        manifest=finalized,
+    )
+
+    assert finalized.reconstructable is False
+    assert finalized.source_package_ready is False
+    assert finalized.external_artifacts_complete is False
+    assert finalized.missing_files == ["references.bib", "manifest.json"]
+    assert finalized.missing_external_artifacts == ["project_claim_evidence_index"]
+    assert report.source_package_complete is False
+    assert report.ready_for_compile is False
+    assert "references.bib" in report.missing_required_source_files
+    assert any("missing external artifacts" in item for item in report.evidence_blockers)
+
+
+def _assert_goal5_project_source_package(
+    orchestration,
+    *,
+    expected_run_ids: set[str],
+    expected_claim_ceiling: str | None = None,
+) -> None:
+    assert orchestration.project_paper_sources_dir is not None
+    assert orchestration.project_paper_sources_manifest_path is not None
+    assert orchestration.project_paper_sources_manifest is not None
+    assert orchestration.project_paper_compile_report is not None
+    assert orchestration.project_manuscript_context_path is not None
+    assert orchestration.project_manuscript_context_complete is True
+    sources_dir = Path(orchestration.project_paper_sources_dir)
+    manifest_path = Path(orchestration.project_paper_sources_manifest_path)
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    required_source_files = {
+        "paper.md",
+        "main.tex",
+        "references.bib",
+        "build.sh",
+        "paper_compile_report.json",
+        "paper_compiler_evidence.json",
+        "manuscript_context.json",
+        "artifact_index.json",
+        "claim_evidence_index.json",
+        "figures_tables_metadata.json",
+        "source_fingerprints.json",
+        "project_revision_action_index.json",
+        "project_review_findings.json",
+        "revision_actions.md",
+        "paper_revised.md",
+        "project_revision_application.json",
+        "project_rereview_report.json",
+        "manifest.json",
+    }
+    source_files = {item.relative_path for item in orchestration.project_paper_sources_manifest.files}
+    assert required_source_files == source_files
+    assert all((sources_dir / item).is_file() for item in source_files)
+    assert orchestration.project_paper_sources_manifest.file_count == len(required_source_files)
+    assert orchestration.project_paper_sources_manifest.missing_files == []
+    assert orchestration.project_paper_sources_manifest.reconstructable is True
+    assert orchestration.project_paper_sources_manifest.source_package_ready is True
+    assert orchestration.project_paper_sources_manifest.external_artifacts_complete is True
+    assert orchestration.project_paper_sources_manifest.missing_external_artifacts == []
+    assert orchestration.project_paper_sources_manifest.manifest_fingerprint
+    assert manifest_payload["manifest_fingerprint"] == (
+        orchestration.project_paper_sources_manifest.manifest_fingerprint
+    )
+    assert manifest_payload["source_package_ready"] is True
+    assert manifest_payload["artifact_index"] == "artifact_index.json"
+    assert manifest_payload["claim_evidence_index"] == "claim_evidence_index.json"
+    assert manifest_payload["manuscript_context"] == "manuscript_context.json"
+    assert manifest_payload["figures_tables_metadata"] == "figures_tables_metadata.json"
+    manifest_files = {item["relative_path"]: item for item in manifest_payload["files"]}
+    assert manifest_files["manifest.json"]["sha256"] is None
+    assert manifest_files["manifest.json"]["size_bytes"] is None
+    for relative_path, file_payload in manifest_files.items():
+        if relative_path == "manifest.json":
+            continue
+        assert file_payload["sha256"]
+        assert file_payload["size_bytes"] > 0
+    assert {
+        "paper.md",
+        "main.tex",
+        "paper_compiler_evidence.json",
+        "manuscript_context.json",
+        "claim_evidence_index.json",
+        "artifact_index.json",
+    }.issubset(set(manifest_payload["source_fingerprints"]))
+
+    source_fingerprints = json.loads(
+        (sources_dir / "source_fingerprints.json").read_text(encoding="utf-8")
+    )
+    assert source_fingerprints["ledger_id"] == "project_source_fingerprints_v2"
+    assert "manifest.json" in source_fingerprints["excluded_self_referential_files"]
+    assert "source_fingerprints.json" in source_fingerprints["excluded_self_referential_files"]
+    assert set(source_fingerprints["source_fingerprints"]).issuperset(
+        {"paper.md", "main.tex", "paper_compiler_evidence.json", "manuscript_context.json"}
+    )
+
+    manuscript_context = json.loads(Path(orchestration.project_manuscript_context_path).read_text(encoding="utf-8"))
+    assert manuscript_context["context_id"] == "project_manuscript_context_v2"
+    assert manuscript_context["schema_version"] == "2.0"
+    assert manuscript_context["context_fingerprint"] == orchestration.project_manuscript_context_fingerprint
+    assert set(manuscript_context["selected_run_ids"]) == expected_run_ids
+    for key in (
+        "research_brief",
+        "domain_decision",
+        "domain_template",
+        "literature_support_index",
+        "benchmark_provenance",
+        "experiment_execution_evidence",
+        "evidence_ledger",
+        "negative_evidence",
+        "project_conclusions",
+        "reviewer_revision_state",
+        "readiness_policy",
+        "claim_ceiling",
+    ):
+        assert key in manuscript_context
+    assert manuscript_context["readiness_policy"]["review_ready_distinct_from_final_publish"] is True
+    if expected_claim_ceiling is not None:
+        assert manuscript_context["claim_ceiling"] == expected_claim_ceiling
+    assert manuscript_context["negative_evidence"]["negative_evidence_retained"] is True
+    assert manuscript_context["negative_evidence"]["entry_count"] > 0
+
+    source_claim_index = json.loads(
+        (sources_dir / "claim_evidence_index.json").read_text(encoding="utf-8")
+    )
+    assert source_claim_index["index_id"] == "project_source_claim_evidence_index_v2"
+    assert source_claim_index["core_claim_count"] == orchestration.core_claim_count
+    assert source_claim_index["supported_core_claim_count"] == (
+        orchestration.supported_core_claim_count
+    )
+    assert {item["claim_id"] for item in source_claim_index["claim_traces"]} == {
+        trace.claim_id for trace in orchestration.claim_traces
+    }
+    assert all(item["evidence_refs"] for item in source_claim_index["claim_traces"])
+    assert source_claim_index["complete"] == (orchestration.unsupported_core_claim_count == 0)
+
+    figures_tables = json.loads(
+        (sources_dir / "figures_tables_metadata.json").read_text(encoding="utf-8")
+    )
+    assert figures_tables["metadata_id"] == "project_source_figures_tables_metadata_v2"
+    assert figures_tables["table_count"] >= 1
+    assert figures_tables["complete"] is True
+
+    artifact_index = json.loads((sources_dir / "artifact_index.json").read_text(encoding="utf-8"))
+    assert artifact_index["index_id"] == "project_source_artifact_index_v2"
+    assert artifact_index["complete"] is True
+    assert all(item["exists"] for item in artifact_index["external_artifacts"])
+    assert all(item["sha256"] for item in artifact_index["external_artifacts"])
+    assert {item["role"] for item in artifact_index["external_artifacts"]} >= {
+        "project_claim_evidence_index",
+        "project_retrieval_evidence_ledger",
+        "project_lineage_archive",
+        "project_literature_support_index",
+        "project_benchmark_provenance_manifest",
+        "project_statistics_report",
+        "project_experiment_repair_index",
+        "project_negative_evidence_report",
+    }
+    compiler_evidence = json.loads(Path(orchestration.project_paper_compiler_evidence_path).read_text(encoding="utf-8"))
+    assert compiler_evidence["source_package_manifest_ref"]["relative_path"] == "manifest.json"
+    assert compiler_evidence["manuscript_context_coverage"]["complete"] is True
+    assert compiler_evidence["reproducibility_coverage"]["source_manifest_reconstructable"] is True
+    assert compiler_evidence["reproducibility_coverage"]["source_manifest_ready"] is True
+    assert compiler_evidence["reproducibility_coverage"]["missing_source_files"] == []
+    assert compiler_evidence["reproducibility_coverage"]["missing_external_artifacts"] == []
 
 
 def _publication_claim_matrix(*, partial: bool = False) -> AutoResearchClaimEvidenceMatrixRead:
@@ -8534,24 +8747,11 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert Path(orchestration.project_paper_bibliography_path).is_file()
     assert Path(orchestration.project_paper_build_script_path).is_file()
     assert Path(orchestration.project_paper_build_script_path).stat().st_mode & 0o111
-    assert orchestration.project_paper_sources_manifest is not None
-    source_files = {item.relative_path for item in orchestration.project_paper_sources_manifest.files}
-    assert {
-        "paper.md",
-        "main.tex",
-        "references.bib",
-        "build.sh",
-            "paper_compile_report.json",
-            "paper_compiler_evidence.json",
-            "project_revision_action_index.json",
-            "project_review_findings.json",
-            "revision_actions.md",
-        "paper_revised.md",
-        "project_revision_application.json",
-        "project_rereview_report.json",
-        "manifest.json",
-    } == source_files
-    assert all((sources_dir / item).exists() for item in source_files)
+    _assert_goal5_project_source_package(
+        orchestration,
+        expected_run_ids={run.id},
+        expected_claim_ceiling="technical_report_only",
+    )
     assert orchestration.project_paper_compile_report is not None
     assert orchestration.project_paper_compile_report.source_package_complete is True
     assert orchestration.project_paper_compile_report.missing_required_inputs == []
@@ -10784,6 +10984,11 @@ def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
     assert Path(orchestration.project_paper_sources_dir, "references.bib").is_file()
     assert Path(orchestration.project_paper_sources_dir, "manifest.json").is_file()
     assert Path(orchestration.project_paper_sources_dir, "project_revision_action_index.json").is_file()
+    _assert_goal5_project_source_package(
+        orchestration,
+        expected_run_ids={run.id for run in runs},
+        expected_claim_ceiling="workshop_case_study_claim",
+    )
     assert orchestration.project_paper_compile_report is not None
     assert orchestration.project_paper_compile_report.source_package_complete is True
     assert orchestration.project_paper_revision_action_count >= 3
@@ -10974,6 +11179,25 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert "submission_package_v3_asset_manifest" in claim_evidence_vertical.trace.steps_completed
     assert claim_evidence_vertical.trace.project_paper_path is not None
     assert Path(claim_evidence_vertical.trace.project_paper_path).is_file()
+    assert claim_evidence_vertical.trace.project_paper_sources_manifest_path is not None
+    assert Path(claim_evidence_vertical.trace.project_paper_sources_manifest_path).is_file()
+    assert claim_evidence_vertical.trace.project_paper_sources_reconstructable is True
+    assert claim_evidence_vertical.trace.project_paper_source_package_ready is True
+    assert claim_evidence_vertical.trace.project_paper_missing_source_files == []
+    assert claim_evidence_vertical.trace.project_paper_missing_external_artifacts == []
+    assert claim_evidence_vertical.trace.project_manuscript_context_path is not None
+    assert Path(claim_evidence_vertical.trace.project_manuscript_context_path).is_file()
+    assert claim_evidence_vertical.trace.project_manuscript_context_complete is True
+    assert claim_evidence_vertical.trace.project_manuscript_context_fingerprint
+    vertical_manuscript_context = json.loads(
+        Path(claim_evidence_vertical.trace.project_manuscript_context_path).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert vertical_manuscript_context["context_id"] == "project_manuscript_context_v2"
+    assert vertical_manuscript_context["context_fingerprint"] == (
+        claim_evidence_vertical.trace.project_manuscript_context_fingerprint
+    )
     assert claim_evidence_vertical.trace.project_submission_manifest_path is not None
     assert Path(claim_evidence_vertical.trace.project_submission_manifest_path).is_file()
     assert claim_evidence_vertical.trace.project_publication_manifest_path is not None

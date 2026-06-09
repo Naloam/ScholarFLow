@@ -394,6 +394,52 @@ def _read_json_file(path: str | None) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _project_source_trace_fields(project_paper: Any) -> dict[str, Any]:
+    sources_manifest = getattr(project_paper, "project_paper_sources_manifest", None)
+    manifest_path = getattr(project_paper, "project_paper_sources_manifest_path", None)
+    manifest_payload = (
+        sources_manifest.model_dump(mode="json")
+        if hasattr(sources_manifest, "model_dump")
+        else sources_manifest
+        if isinstance(sources_manifest, dict)
+        else _read_json_file(manifest_path)
+    )
+    if not isinstance(manifest_payload, dict):
+        manifest_payload = {}
+    context_path = getattr(project_paper, "project_manuscript_context_path", None)
+    context_payload = _read_json_file(context_path)
+    context_fingerprint = getattr(project_paper, "project_manuscript_context_fingerprint", None)
+    return {
+        "project_paper_sources_manifest_path": manifest_path,
+        "project_paper_sources_reconstructable": bool(manifest_payload.get("reconstructable")),
+        "project_paper_source_package_ready": bool(manifest_payload.get("source_package_ready")),
+        "project_paper_missing_source_files": [
+            str(item)
+            for item in manifest_payload.get("missing_files", [])
+            if isinstance(item, str)
+        ],
+        "project_paper_missing_external_artifacts": [
+            str(item)
+            for item in manifest_payload.get("missing_external_artifacts", [])
+            if isinstance(item, str)
+        ],
+        "project_manuscript_context_path": context_path,
+        "project_manuscript_context_complete": bool(
+            getattr(project_paper, "project_manuscript_context_complete", False)
+            or context_payload.get("context_id") == "project_manuscript_context_v2"
+        ),
+        "project_manuscript_context_fingerprint": (
+            str(context_fingerprint)
+            if context_fingerprint is not None
+            else (
+                str(context_payload.get("context_fingerprint"))
+                if context_payload.get("context_fingerprint") is not None
+                else None
+            )
+        ),
+    }
+
+
 def _submission_trace_fields(project_paper: Any) -> dict[str, Any]:
     manifest = getattr(project_paper, "project_submission_manifest", None)
     if not isinstance(manifest, dict):
@@ -1185,6 +1231,7 @@ def _blocked_domain_trace(
     )
     task_kind = str(case["task_kind"])
     submission_fields = _submission_trace_fields(project_paper)
+    source_trace_fields = _project_source_trace_fields(project_paper)
     return AutoResearchEvaluationCaseTraceRead(
         idea=scouted.original_idea,
         brief_id=scouted.brief_id,
@@ -1276,6 +1323,7 @@ def _blocked_domain_trace(
         project_negative_evidence_report_path=project_paper.project_negative_evidence_report_path,
         project_offline_publication_case_path=project_paper.project_offline_publication_case_path,
         project_offline_publication_audit_path=project_paper.project_offline_publication_audit_path,
+        **source_trace_fields,
         project_review_bundle_ready=project_paper.project_review_bundle_ready,
         project_final_publish_ready=project_paper.project_final_publish_ready,
         project_revision_action_count=project_paper.project_paper_revision_action_count,
@@ -1435,6 +1483,16 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
     project_negative_evidence_report_path = None
     project_offline_publication_case_path = None
     project_offline_publication_audit_path = None
+    project_source_trace_fields: dict[str, Any] = {
+        "project_paper_sources_manifest_path": None,
+        "project_paper_sources_reconstructable": False,
+        "project_paper_source_package_ready": False,
+        "project_paper_missing_source_files": [],
+        "project_paper_missing_external_artifacts": [],
+        "project_manuscript_context_path": None,
+        "project_manuscript_context_complete": False,
+        "project_manuscript_context_fingerprint": None,
+    }
     project_review_bundle_ready = False
     project_final_publish_ready = False
     project_revision_action_count = 0
@@ -1584,6 +1642,7 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         project_negative_evidence_report_path = project_paper.project_negative_evidence_report_path
         project_offline_publication_case_path = project_paper.project_offline_publication_case_path
         project_offline_publication_audit_path = project_paper.project_offline_publication_audit_path
+        project_source_trace_fields = _project_source_trace_fields(project_paper)
         project_review_bundle_ready = project_paper.project_review_bundle_ready
         project_final_publish_ready = project_paper.project_final_publish_ready
         project_revision_action_count = project_paper.project_paper_revision_action_count
@@ -1992,6 +2051,7 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         project_negative_evidence_report_path = project_paper.project_negative_evidence_report_path
         project_offline_publication_case_path = project_paper.project_offline_publication_case_path
         project_offline_publication_audit_path = project_paper.project_offline_publication_audit_path
+        project_source_trace_fields = _project_source_trace_fields(project_paper)
         project_review_bundle_ready = project_paper.project_review_bundle_ready
         project_final_publish_ready = project_paper.project_final_publish_ready
         project_revision_action_count = project_paper.project_paper_revision_action_count
@@ -2169,6 +2229,7 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         project_negative_evidence_report_path=project_negative_evidence_report_path,
         project_offline_publication_case_path=project_offline_publication_case_path,
         project_offline_publication_audit_path=project_offline_publication_audit_path,
+        **project_source_trace_fields,
         project_review_bundle_ready=project_review_bundle_ready,
         project_final_publish_ready=project_final_publish_ready,
         project_revision_action_count=project_revision_action_count,

@@ -596,6 +596,31 @@ def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicatio
         for item in submission_manifest.get("generated_assets", [])
         if isinstance(item, dict)
     ]
+    archive_manifest = (
+        project_paper.project_submission_archive_manifest.model_dump(mode="json")
+        if project_paper.project_submission_archive_manifest is not None
+        else _read_json(project_paper.project_submission_archive_manifest_path)
+    )
+    reproducibility_checklist = (
+        project_paper.project_reproducibility_checklist.model_dump(mode="json")
+        if project_paper.project_reproducibility_checklist is not None
+        else _read_json(project_paper.project_reproducibility_checklist_json_path)
+    )
+    artifact_integrity_audit = (
+        project_paper.project_artifact_integrity_audit.model_dump(mode="json")
+        if project_paper.project_artifact_integrity_audit is not None
+        else _read_json(project_paper.project_artifact_integrity_audit_path)
+    )
+    final_publish_decision = (
+        project_paper.project_final_publish_decision.model_dump(mode="json")
+        if project_paper.project_final_publish_decision is not None
+        else _read_json(project_paper.project_final_publish_decision_path)
+    )
+    final_publish_failed_check_ids = [
+        str(item.get("check_id"))
+        for item in final_publish_decision.get("failed_checks", [])
+        if isinstance(item, dict) and item.get("check_id")
+    ]
     asset_statuses = [
         {
             "role": item.get("role"),
@@ -659,6 +684,43 @@ def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicatio
             submission_manifest.get("final_publish_blocking_asset_roles", blocked_asset_roles)
         ),
         package_asset_statuses=asset_statuses,
+        submission_archive_manifest_path=project_paper.project_submission_archive_manifest_path,
+        submission_archive_path=project_paper.project_submission_archive_path,
+        submission_archive_complete=bool(archive_manifest.get("complete")),
+        submission_archive_current=bool(archive_manifest.get("current")),
+        submission_archive_ready_for_final_download=bool(
+            archive_manifest.get("ready_for_final_download")
+        ),
+        submission_archive_entry_count=int(archive_manifest.get("entry_count") or 0),
+        submission_archive_missing_required_entry_count=int(
+            archive_manifest.get("missing_required_entry_count") or 0
+        ),
+        submission_archive_hash_mismatch_entry_count=int(
+            archive_manifest.get("hash_mismatch_entry_count") or 0
+        ),
+        submission_archive_stale_entry_count=int(
+            archive_manifest.get("stale_entry_count") or 0
+        ),
+        reproducibility_checklist_json_path=project_paper.project_reproducibility_checklist_json_path,
+        reproducibility_checklist_complete=bool(reproducibility_checklist.get("complete")),
+        reproducibility_checklist_missing_required_count=int(
+            reproducibility_checklist.get("missing_required_count") or 0
+        ),
+        reproducibility_checklist_partial_required_count=int(
+            reproducibility_checklist.get("partial_required_count") or 0
+        ),
+        artifact_integrity_audit_path=project_paper.project_artifact_integrity_audit_path,
+        artifact_integrity_audit_complete=bool(artifact_integrity_audit.get("complete")),
+        artifact_integrity_unresolved_issue_count=int(
+            artifact_integrity_audit.get("unresolved_issue_count") or 0
+        ),
+        final_publish_decision_path=project_paper.project_final_publish_decision_path,
+        final_publish_policy_version=(
+            str(final_publish_decision.get("policy_version"))
+            if final_publish_decision.get("policy_version") is not None
+            else None
+        ),
+        final_publish_failed_check_ids=final_publish_failed_check_ids,
         repair_action_status_counts=repair_status_counts,
         repair_action_recommendations={
             str(key): str(value)

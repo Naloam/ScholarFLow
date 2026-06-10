@@ -7,7 +7,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from schemas.autoresearch import (
     AutoResearchClaimEvidenceEntryRead,
@@ -19,6 +19,9 @@ from schemas.autoresearch import (
     AutoResearchPaperSourceFileRead,
     AutoResearchPaperSourcesManifestRead,
     AutoResearchPaperTier,
+    AutoResearchFinalPublishCheckRead,
+    AutoResearchFinalPublishDecisionRead,
+    AutoResearchProjectArtifactIntegrityAuditRead,
     AutoResearchProjectClaimTraceRead,
     AutoResearchProjectConclusionEntryRead,
     AutoResearchProjectConclusionLedgerRead,
@@ -35,6 +38,11 @@ from schemas.autoresearch import (
     AutoResearchReReviewFindingRead,
     AutoResearchReviewLoopActionRead,
     AutoResearchRunRead,
+    AutoResearchReproducibilityChecklistItemRead,
+    AutoResearchReproducibilityChecklistRead,
+    AutoResearchSubmissionArchiveEntryRead,
+    AutoResearchSubmissionArchiveManifestRead,
+    AutoResearchSubmissionPackageRead,
     LiteratureInsight,
 )
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
@@ -70,7 +78,10 @@ PROJECT_PAPER_REVISION_APPLICATION_FILENAME = "project_revision_application.json
 PROJECT_PAPER_REREVIEW_REPORT_FILENAME = "project_rereview_report.json"
 PROJECT_SUBMISSION_DIRNAME = "submission_package"
 PROJECT_SUBMISSION_MANIFEST_FILENAME = "submission_manifest.json"
+PROJECT_SUBMISSION_ARCHIVE_FILENAME = "submission_archive.zip"
+PROJECT_SUBMISSION_ARCHIVE_MANIFEST_FILENAME = "submission_archive_manifest.json"
 PROJECT_REPRODUCIBILITY_CHECKLIST_FILENAME = "reproducibility_checklist.md"
+PROJECT_REPRODUCIBILITY_CHECKLIST_JSON_FILENAME = "reproducibility_checklist.json"
 PROJECT_REVIEWER_RESPONSE_FILENAME = "reviewer_response.md"
 PROJECT_REPAIR_EXECUTION_LOG_FILENAME = "repair_execution_log.json"
 PROJECT_CLAIM_EVIDENCE_INDEX_FILENAME = "claim_evidence_index.md"
@@ -88,9 +99,15 @@ PROJECT_BENCHMARK_SOURCE_INDEPENDENCE_REPAIR_FILENAME = "benchmark_source_indepe
 PROJECT_STATISTICS_REPORT_FILENAME = "statistics_report.json"
 PROJECT_EXPERIMENT_REPAIR_INDEX_FILENAME = "experiment_repair_index.json"
 PROJECT_NEGATIVE_EVIDENCE_REPORT_FILENAME = "negative_evidence_report.json"
+PROJECT_LIMITATIONS_APPENDIX_FILENAME = "limitations_appendix.json"
+PROJECT_ARTIFACT_INTEGRITY_AUDIT_FILENAME = "artifact_integrity_audit.json"
+PROJECT_FINAL_PUBLISH_DECISION_FILENAME = "final_publish_decision.json"
 PROJECT_OFFLINE_PUBLICATION_CASE_FILENAME = "offline_publication_case.json"
 PROJECT_OFFLINE_PUBLICATION_AUDIT_FILENAME = "offline_publication_audit.json"
 PROJECT_PUBLICATION_MANIFEST_FILENAME = "publication_manifest.json"
+GOAL7_FINAL_PUBLISH_POLICY_VERSION = "goal7_final_publish_policy_v1"
+GOAL7_ARCHIVE_SCHEMA_VERSION = "1.0"
+GOAL7_REPRODUCIBILITY_SCHEMA_VERSION = "1.0"
 FINAL_PUBLISH_CANDIDATE_MIN_DATASET_EXAMPLES = 100
 FINAL_PUBLISH_CANDIDATE_COVERAGE_POLICY = (
     "This stricter coverage is separate from baseline publication_grade_eligible. "
@@ -265,7 +282,9 @@ PROJECT_PAPER_REQUIRED_SECTIONS = [
 
 
 PROJECT_SUBMISSION_PACKAGE_ROLES = [
+    "project_submission_archive_manifest",
     "project_reproducibility_checklist",
+    "project_reproducibility_checklist_json",
     "project_reviewer_response",
     "project_review_findings",
     "project_revision_action_plan",
@@ -292,9 +311,13 @@ PROJECT_SUBMISSION_PACKAGE_ROLES = [
     "project_statistics_report",
     "project_experiment_repair_index",
     "project_negative_evidence_report",
+    "project_limitations_appendix",
+    "project_artifact_integrity_audit",
+    "project_final_publish_decision",
     "project_offline_publication_case",
     "project_offline_publication_audit",
     "project_publication_manifest",
+    "project_submission_archive",
 ]
 
 
@@ -810,6 +833,14 @@ def _project_submission_dir(project_id: str) -> Path:
     return path
 
 
+def _project_submission_archive_path(project_id: str) -> Path:
+    return _project_submission_dir(project_id) / PROJECT_SUBMISSION_ARCHIVE_FILENAME
+
+
+def get_project_submission_archive_path(project_id: str) -> Path:
+    return _project_submission_archive_path(project_id)
+
+
 def _sentence(value: str | None, *, fallback: str) -> str:
     cleaned = " ".join((value or "").split()).strip()
     if not cleaned:
@@ -960,7 +991,9 @@ def _submission_asset_metadata(
 ) -> dict[str, Any]:
     source_action_by_role = {
         "project_submission_manifest": "materialize_submission_package_v3",
+        "project_submission_archive_manifest": "build_goal7_submission_archive_manifest",
         "project_reproducibility_checklist": "build_reproducibility_checklist",
+        "project_reproducibility_checklist_json": "build_goal7_reproducibility_checklist",
         "project_reviewer_response": "build_reviewer_response",
         "project_review_findings": "run_project_reviewer_simulator",
         "project_repair_execution_log": "materialize_repair_execution_log",
@@ -984,11 +1017,17 @@ def _submission_asset_metadata(
         "project_statistics_report": "build_project_statistics_report",
         "project_experiment_repair_index": "execute_experiment_statistics_repair",
         "project_negative_evidence_report": "build_negative_evidence_report",
+        "project_limitations_appendix": "build_goal7_limitations_appendix",
+        "project_artifact_integrity_audit": "build_goal7_artifact_integrity_audit",
+        "project_final_publish_decision": "build_goal7_final_publish_decision",
         "project_offline_publication_case": "define_offline_publication_case",
         "project_offline_publication_audit": "audit_offline_publication_case",
         "project_publication_manifest": "build_publication_manifest",
+        "project_submission_archive": "materialize_goal7_submission_archive",
     }
     evidence_refs_by_role = {
+        "project_submission_archive_manifest": ["project_submission_assets", "project_paper_sources_manifest_json"],
+        "project_reproducibility_checklist_json": ["selected_run_execution_profiles", "project_statistics_report_json", "project_submission_archive_manifest_json"],
         "project_literature_support_index": ["latest_project_research_brief", "project_literature_scout_json"],
         "project_paper_compiler_evidence": ["project_claim_traces", "selected_run_result_artifacts"],
         "project_publication_evidence_index": ["project_claim_traces", "project_paper_compiler_evidence_json"],
@@ -998,6 +1037,9 @@ def _submission_asset_metadata(
         "project_statistics_report": ["selected_run_result_artifacts", "project_paper_compiler_evidence_json"],
         "project_experiment_repair_index": ["selected_run_execution_profiles", "project_statistics_profiles"],
         "project_negative_evidence_report": ["selected_run_result_artifacts", "project_evidence_ledgers", "project_statistics_report_json"],
+        "project_limitations_appendix": ["project_submission_blockers", "project_negative_evidence_report_json"],
+        "project_artifact_integrity_audit": ["project_submission_archive_manifest_json", "project_paper_sources_manifest_json"],
+        "project_final_publish_decision": ["project_submission_archive_manifest_json", "project_reproducibility_checklist_json", "project_artifact_integrity_audit_json", "project_publication_readiness_report_json"],
         "project_retrieval_evidence_ledger": ["selected_run_evidence_ledgers", "selected_run_result_artifacts"],
         "project_offline_publication_case": ["latest_project_research_brief", "selected_run_experiment_specs", "project_submission_assets"],
         "project_offline_publication_audit": ["project_offline_publication_case_json", "project_readiness_report_json", "project_submission_manifest_json"],
@@ -1006,10 +1048,13 @@ def _submission_asset_metadata(
         "project_publication_readiness_report": ["project_publication_evidence_index_json", "project_repair_execution_log_json"],
         "project_lineage_archive": ["selected_run_ids", "project_artifact_paths"],
         "project_claim_evidence_index": ["project_claim_traces"],
+        "project_submission_archive": ["project_submission_archive_manifest_json"],
     }
     readiness_by_role = {
         "project_submission_manifest": "package_index",
+        "project_submission_archive_manifest": "submission_archive",
         "project_reproducibility_checklist": "reproducibility",
+        "project_reproducibility_checklist_json": "reproducibility",
         "project_reviewer_response": "review_bundle",
         "project_review_findings": "review_findings",
         "project_repair_execution_log": "repair_readiness",
@@ -1033,9 +1078,13 @@ def _submission_asset_metadata(
         "project_statistics_report": "statistics_strength",
         "project_experiment_repair_index": "experiment_repair",
         "project_negative_evidence_report": "negative_evidence",
+        "project_limitations_appendix": "limitations_appendix",
+        "project_artifact_integrity_audit": "artifact_integrity",
+        "project_final_publish_decision": "final_publish_decision",
         "project_offline_publication_case": "offline_publication_case",
         "project_offline_publication_audit": "capability_audit",
         "project_publication_manifest": "publication_package",
+        "project_submission_archive": "submission_archive",
     }
     return {
         "source_action": source_action_by_role.get(role, "materialize_project_artifact"),
@@ -1110,11 +1159,20 @@ def _package_asset_blocking_check_ids(asset: dict[str, Any]) -> list[str]:
         "offline_publication_case": ["submission_blockers"],
         "capability_audit": ["submission_blockers"],
         "publication_package": ["project_publish_gate", "submission_blockers"],
+        "submission_archive": ["project_publish_gate", "submission_blockers"],
+        "artifact_integrity": ["project_publish_gate", "submission_blockers"],
+        "limitations_appendix": ["project_publish_gate", "submission_blockers"],
+        "final_publish_decision": ["project_publish_gate", "submission_blockers"],
     }
     role_overrides = {
         "project_publication_readiness_report": ["project_publish_gate", "submission_blockers"],
         "project_publication_manifest": ["project_publish_gate", "submission_blockers"],
         "project_submission_manifest": ["submission_blockers"],
+        "project_submission_archive_manifest": ["project_publish_gate", "submission_blockers"],
+        "project_reproducibility_checklist_json": ["project_publish_gate", "submission_blockers"],
+        "project_artifact_integrity_audit": ["project_publish_gate", "submission_blockers"],
+        "project_final_publish_decision": ["project_publish_gate", "submission_blockers"],
+        "project_submission_archive": ["project_publish_gate", "submission_blockers"],
     }
     return _dedupe([*checks_by_contribution.get(contribution, []), *role_overrides.get(role, [])])
 
@@ -9537,6 +9595,1358 @@ def _materialize_project_code_package(
     return archive_path
 
 
+def _read_json_dict(path: Path | str | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    candidate = Path(path)
+    if not candidate.is_file():
+        return {}
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _content_type(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return "application/json"
+    if suffix == ".md":
+        return "text/markdown"
+    if suffix == ".zip":
+        return "application/zip"
+    if suffix == ".tex":
+        return "text/x-tex"
+    if suffix == ".bib":
+        return "text/plain"
+    if suffix == ".sh":
+        return "text/x-shellscript"
+    return "application/octet-stream"
+
+
+def _project_relative_path(project_id: str, path: Path) -> str:
+    root = _project_paper_dir(project_id)
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _archive_entry_for_file(
+    *,
+    project_id: str,
+    role: str,
+    source_path: Path,
+    logical_suffix: str | None,
+    source_action: str | None,
+    required_for_final_publish: bool,
+) -> AutoResearchSubmissionArchiveEntryRead:
+    exists = source_path.is_file()
+    logical_id = role if logical_suffix is None else f"{role}:{logical_suffix}"
+    blockers = [] if exists else [f"Required archive source artifact is missing: {source_path}"]
+    return AutoResearchSubmissionArchiveEntryRead(
+        logical_id=logical_id,
+        archive_path=_project_relative_path(project_id, source_path),
+        source_artifact_ref=role,
+        source_path=str(source_path),
+        sha256=_file_sha256(source_path),
+        size_bytes=_file_size(source_path),
+        content_type=_content_type(source_path),
+        generated_by=source_action,
+        required_for_final_publish=required_for_final_publish,
+        validation_status="present" if exists else "missing",
+        blockers=blockers,
+    )
+
+
+def _archive_entries_from_assets(
+    *,
+    project_id: str,
+    generated_assets: list[dict[str, Any]],
+) -> list[AutoResearchSubmissionArchiveEntryRead]:
+    entries: list[AutoResearchSubmissionArchiveEntryRead] = []
+    skipped_roles = {
+        "project_submission_archive",
+        "project_submission_archive_manifest",
+        "project_reproducibility_checklist_json",
+        "project_artifact_integrity_audit",
+        "project_final_publish_decision",
+        "project_publication_manifest",
+    }
+    for asset in generated_assets:
+        role = str(asset.get("role") or "")
+        if not role or role in skipped_roles:
+            continue
+        source_path = Path(str(asset.get("path") or ""))
+        source_action = str(asset.get("source_action") or "") or None
+        required = bool(asset.get("required", True))
+        if source_path.is_dir():
+            children = sorted(child for child in source_path.rglob("*") if child.is_file())
+            if not children:
+                entries.append(
+                    AutoResearchSubmissionArchiveEntryRead(
+                        logical_id=role,
+                        archive_path=_project_relative_path(project_id, source_path),
+                        source_artifact_ref=role,
+                        source_path=str(source_path),
+                        content_type="inode/directory",
+                        generated_by=source_action,
+                        required_for_final_publish=required,
+                        validation_status="missing" if required else "present",
+                        blockers=(
+                            [f"Archive source directory is empty or missing: {source_path}"]
+                            if required
+                            else []
+                        ),
+                    )
+                )
+                continue
+            for child in children:
+                try:
+                    suffix = child.relative_to(source_path).as_posix()
+                except ValueError:
+                    suffix = child.name
+                entries.append(
+                    _archive_entry_for_file(
+                        project_id=project_id,
+                        role=role,
+                        source_path=child,
+                        logical_suffix=suffix,
+                        source_action=source_action,
+                        required_for_final_publish=required,
+                    )
+                )
+            continue
+        entries.append(
+            _archive_entry_for_file(
+                project_id=project_id,
+                role=role,
+                source_path=source_path,
+                logical_suffix=None,
+                source_action=source_action,
+                required_for_final_publish=required,
+            )
+        )
+    return entries
+
+
+def _zip_matches_archive_entries(
+    archive_path: Path,
+    entries: list[AutoResearchSubmissionArchiveEntryRead],
+) -> bool:
+    present_entries = [
+        entry for entry in entries if entry.validation_status == "present" and entry.sha256
+    ]
+    if not archive_path.is_file() or not present_entries:
+        return False
+    try:
+        with ZipFile(archive_path) as handle:
+            names = set(handle.namelist())
+            expected_names = {entry.archive_path for entry in present_entries}
+            if names != expected_names:
+                return False
+            for entry in present_entries:
+                digest = hashlib.sha256(handle.read(entry.archive_path)).hexdigest()
+                if digest != entry.sha256:
+                    return False
+    except (BadZipFile, KeyError, OSError):
+        return False
+    return True
+
+
+def _write_project_submission_archive(
+    *,
+    archive_path: Path,
+    entries: list[AutoResearchSubmissionArchiveEntryRead],
+) -> None:
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as handle:
+        added: set[str] = set()
+        for entry in sorted(entries, key=lambda item: item.archive_path):
+            source_path = Path(entry.source_path)
+            if entry.validation_status != "present" or not source_path.is_file():
+                continue
+            if entry.archive_path in added:
+                continue
+            handle.write(source_path, entry.archive_path)
+            added.add(entry.archive_path)
+
+
+def _validated_archive_entries(
+    entries: list[AutoResearchSubmissionArchiveEntryRead],
+) -> list[AutoResearchSubmissionArchiveEntryRead]:
+    validated = []
+    for entry in entries:
+        source_path = Path(entry.source_path)
+        blockers = list(entry.blockers)
+        status = entry.validation_status
+        current_sha = _file_sha256(source_path)
+        if entry.required_for_final_publish and not source_path.is_file():
+            status = "missing"
+            blockers.append(f"Required archive source artifact is missing: {source_path}")
+        elif entry.sha256 and current_sha and current_sha != entry.sha256:
+            status = "hash_mismatch"
+            blockers.append(
+                f"Archive source artifact hash changed for {entry.source_artifact_ref}: {source_path}"
+            )
+        elif source_path.is_file():
+            status = "present"
+        validated.append(
+            entry.model_copy(
+                update={
+                    "sha256": entry.sha256 or current_sha,
+                    "size_bytes": entry.size_bytes or _file_size(source_path),
+                    "validation_status": status,
+                    "blockers": _dedupe(blockers),
+                }
+            )
+        )
+    return validated
+
+
+def _source_manifest_fingerprint_from_path(path: Path | str | None) -> str | None:
+    payload = _read_json_dict(path)
+    value = payload.get("manifest_fingerprint")
+    return str(value) if value else None
+
+
+def _project_submission_archive_manifest_payload(
+    *,
+    project_id: str,
+    project_final_publish_ready: bool,
+    source_package_manifest_path: Path,
+    source_package_fingerprint: str | None,
+    generated_assets: list[dict[str, Any]],
+    write_archive: bool,
+) -> AutoResearchSubmissionArchiveManifestRead:
+    archive_path = _project_submission_archive_path(project_id)
+    entries = _validated_archive_entries(
+        _archive_entries_from_assets(project_id=project_id, generated_assets=generated_assets)
+    )
+    if write_archive:
+        _write_project_submission_archive(archive_path=archive_path, entries=entries)
+    current_source_fingerprint = _source_manifest_fingerprint_from_path(source_package_manifest_path)
+    source_stale = bool(
+        source_package_fingerprint
+        and current_source_fingerprint
+        and current_source_fingerprint != source_package_fingerprint
+    )
+    if source_stale:
+        entries = [
+            entry.model_copy(
+                update={
+                    "validation_status": "stale",
+                    "blockers": _dedupe(
+                        [
+                            *entry.blockers,
+                            "Source package manifest fingerprint changed after archive manifest generation.",
+                        ]
+                    ),
+                }
+            )
+            for entry in entries
+        ]
+    required_entries = [entry for entry in entries if entry.required_for_final_publish]
+    missing_required = [
+        entry for entry in required_entries if entry.validation_status != "present"
+    ]
+    hash_mismatches = [entry for entry in entries if entry.validation_status == "hash_mismatch"]
+    stale_entries = [entry for entry in entries if entry.validation_status == "stale"]
+    complete = bool(entries) and not missing_required and not hash_mismatches and not stale_entries
+    archive_current = complete and _zip_matches_archive_entries(archive_path, entries)
+    blockers = _dedupe(
+        [
+            *[
+                blocker
+                for entry in entries
+                for blocker in entry.blockers
+                if entry.required_for_final_publish
+            ],
+            *(
+                ["Submission archive zip is missing or does not match the archive manifest entries."]
+                if complete and not archive_current
+                else []
+            ),
+            *(
+                ["Submission archive source package fingerprint is stale."]
+                if source_stale
+                else []
+            ),
+        ]
+    )
+    payload = {
+        "manifest_id": f"project_submission_archive_{project_id}",
+        "schema_version": GOAL7_ARCHIVE_SCHEMA_VERSION,
+        "project_id": project_id,
+        "generated_at": _utcnow(),
+        "bundle_kind": "final_publish_bundle" if project_final_publish_ready else "review_bundle",
+        "archive_path": str(archive_path),
+        "archive_sha256": _file_sha256(archive_path),
+        "archive_size_bytes": _file_size(archive_path),
+        "source_package_fingerprint": source_package_fingerprint,
+        "source_package_manifest_ref": str(source_package_manifest_path),
+        "entry_count": len(entries),
+        "required_entry_count": len(required_entries),
+        "present_required_entry_count": len(required_entries) - len(missing_required),
+        "missing_required_entry_count": len(missing_required),
+        "hash_mismatch_entry_count": len(hash_mismatches),
+        "stale_entry_count": len(stale_entries),
+        "complete": complete,
+        "current": archive_current,
+        "ready_for_final_download": bool(project_final_publish_ready and complete and archive_current),
+        "entries": [entry.model_dump(mode="json") for entry in entries],
+        "blockers": blockers,
+        "warnings": [
+            "Archive manifest is a reconstructability ledger; final archive download is separately gated by final_publish_decision.json."
+        ],
+    }
+    return AutoResearchSubmissionArchiveManifestRead(
+        **payload,
+        manifest_fingerprint=_fingerprint(payload),
+    )
+
+
+def _checklist_item(
+    *,
+    item_id: str,
+    category: str,
+    label: str,
+    status: str,
+    required_for_final_publish: bool = True,
+    evidence_refs: list[str] | None = None,
+    artifact_refs: list[str] | None = None,
+    blockers: list[str] | None = None,
+    limitations: list[str] | None = None,
+    details: dict[str, Any] | None = None,
+) -> AutoResearchReproducibilityChecklistItemRead:
+    return AutoResearchReproducibilityChecklistItemRead(
+        item_id=item_id,
+        category=category,
+        label=label,
+        status=status,  # type: ignore[arg-type]
+        required_for_final_publish=required_for_final_publish,
+        evidence_refs=evidence_refs or [],
+        artifact_refs=artifact_refs or [],
+        blockers=_dedupe(blockers or []),
+        limitations=_dedupe(limitations or []),
+        details=details or {},
+    )
+
+
+def _project_reproducibility_checklist_payload(
+    *,
+    project_id: str,
+    selected_runs: list[AutoResearchRunRead],
+    project_paper_compile_report: AutoResearchPaperCompileReportRead,
+    project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+    project_review_findings: dict[str, Any],
+    project_paper_revision_actions: list[AutoResearchReviewLoopActionRead],
+    project_publish_gate_passed: bool,
+    evidence_profile: dict[str, Any],
+    experiment_repair_index: dict[str, Any],
+    statistics_report: dict[str, Any],
+    benchmark_provenance_manifest: dict[str, Any],
+    negative_evidence_report: dict[str, Any],
+    archive_manifest: AutoResearchSubmissionArchiveManifestRead | None,
+    project_submission_blockers: list[str],
+) -> AutoResearchReproducibilityChecklistRead:
+    execution_profiles = [
+        item
+        for item in experiment_repair_index.get("execution_profiles", [])
+        if isinstance(item, dict)
+    ]
+    execution_entries = [
+        item
+        for item in experiment_repair_index.get("execution_evidence_ledger", {}).get(
+            "entries", []
+        )
+        if isinstance(item, dict)
+    ]
+    command_paths = _dedupe(
+        [
+            str(value)
+            for entry in execution_entries
+            for value in entry.get("command_or_import_paths", [])
+        ]
+    )
+    runtime_contracts = [
+        contract
+        for entry in execution_entries
+        for contract in entry.get("runtime_contracts", [])
+        if isinstance(contract, dict)
+    ]
+    environment_manifests = [
+        entry.get("environment_manifest", {})
+        for entry in execution_entries
+        if isinstance(entry.get("environment_manifest"), dict)
+    ]
+    dependency_records = [
+        entry.get("dependency_manifest", {})
+        for entry in execution_entries
+        if isinstance(entry.get("dependency_manifest"), dict)
+    ]
+    benchmark_records = [
+        item
+        for item in benchmark_provenance_manifest.get("benchmark_source_records", [])
+        if isinstance(item, dict)
+    ]
+    sample_counts = [
+        int(record.get("sample_count") or 0)
+        for record in benchmark_records
+        if isinstance(record, dict)
+    ]
+    split_counts = [
+        int(record.get("split_count") or 0)
+        for record in benchmark_records
+        if isinstance(record, dict)
+    ]
+    replication_summary = statistics_report.get("replication_summary", {})
+    if not isinstance(replication_summary, dict):
+        replication_summary = {}
+    metric_coverage = statistics_report.get("metric_coverage", {})
+    if not isinstance(metric_coverage, dict):
+        metric_coverage = {}
+    external_requirements = [
+        blocker
+        for blocker in project_submission_blockers
+        if any(
+            signal in blocker.lower()
+            for signal in ("docker", "bridge", "gpu", "network", "external")
+        )
+    ]
+    pending_revision_actions = [
+        action for action in project_paper_revision_actions if action.status != "completed"
+    ]
+    artifact_hash_refs = (
+        [
+            entry.archive_path
+            for entry in archive_manifest.entries
+            if entry.sha256 and entry.validation_status == "present"
+        ]
+        if archive_manifest is not None
+        else []
+    )
+    items = [
+        _checklist_item(
+            item_id="code_entry_points",
+            category="code",
+            label="Code entry points and generated source package",
+            status="complete" if project_paper_sources_manifest.source_package_ready else "missing",
+            evidence_refs=["paper_sources/manifest.json"],
+            artifact_refs=[item.relative_path for item in project_paper_sources_manifest.files],
+            blockers=project_paper_sources_manifest.missing_files,
+            details={
+                "source_package_complete": project_paper_sources_manifest.source_package_ready,
+                "source_file_count": len(project_paper_sources_manifest.files),
+                "build_script_present": any(
+                    item.relative_path == PROJECT_PAPER_BUILD_SCRIPT_FILENAME
+                    for item in project_paper_sources_manifest.files
+                ),
+            },
+        ),
+        _checklist_item(
+            item_id="commands",
+            category="execution",
+            label="Commands, cwd, and import paths",
+            status="complete" if command_paths else "missing",
+            evidence_refs=["submission_package/experiment_repair_index.json"],
+            artifact_refs=command_paths,
+            blockers=[] if command_paths else ["No command or import path is recorded in execution manifests."],
+            details={"commands_or_import_paths": command_paths},
+        ),
+        _checklist_item(
+            item_id="environment",
+            category="execution",
+            label="Environment manifests",
+            status="complete" if environment_manifests else "partial",
+            evidence_refs=["submission_package/experiment_repair_index.json"],
+            artifact_refs=[
+                str(item.get("artifact_ref"))
+                for item in environment_manifests
+                if item.get("artifact_ref")
+            ],
+            limitations=[] if environment_manifests else ["Execution environment is inferred from run artifacts only."],
+            details={"environment_manifests": environment_manifests},
+        ),
+        _checklist_item(
+            item_id="dependencies",
+            category="execution",
+            label="Dependencies",
+            status=(
+                "complete"
+                if any(item.get("dependencies") for item in dependency_records)
+                else "partial"
+            ),
+            evidence_refs=["submission_package/experiment_repair_index.json"],
+            limitations=[
+                "Dependency manifest is partial or empty; reproduce from source package and execution environment."
+            ]
+            if not any(item.get("dependencies") for item in dependency_records)
+            else [],
+            details={"dependency_manifests": dependency_records},
+        ),
+        _checklist_item(
+            item_id="external_requirements",
+            category="execution",
+            label="External requirements",
+            status="missing" if external_requirements else "not_applicable",
+            evidence_refs=["submission_package/publication_readiness_report.json"],
+            blockers=external_requirements,
+            details={"requirements": external_requirements},
+        ),
+        _checklist_item(
+            item_id="datasets_and_benchmarks",
+            category="benchmark",
+            label="Datasets, benchmark versions, source fingerprints, licenses",
+            status="complete" if benchmark_provenance_manifest.get("complete") else "partial",
+            evidence_refs=["submission_package/benchmark_provenance_manifest.json"],
+            blockers=list(benchmark_provenance_manifest.get("blockers", [])),
+            details={
+                "benchmark_source_records": benchmark_records,
+                "sample_counts": sample_counts,
+                "split_counts": split_counts,
+                "source_independence": benchmark_provenance_manifest.get(
+                    "benchmark_source_independence_audit", {}
+                ),
+            },
+        ),
+        _checklist_item(
+            item_id="metrics",
+            category="statistics",
+            label="Metrics and statistical tests",
+            status="complete" if metric_coverage.get("complete") else "partial",
+            evidence_refs=["submission_package/statistics_report.json"],
+            blockers=list(metric_coverage.get("missing_required_metrics", [])),
+            details={
+                "metric_coverage": metric_coverage,
+                "paired_comparison_count": len(statistics_report.get("paired_comparisons", [])),
+                "confidence_interval_count": len(statistics_report.get("confidence_intervals", [])),
+                "deterministic_equivalent_count": len(
+                    statistics_report.get("deterministic_equivalents", [])
+                ),
+            },
+        ),
+        _checklist_item(
+            item_id="seeds_splits_samples",
+            category="statistics",
+            label="Seeds, splits, sample counts",
+            status=(
+                "complete"
+                if replication_summary.get("final_publish_replication_ready")
+                and sample_counts
+                and split_counts
+                else "partial"
+            ),
+            evidence_refs=[
+                "submission_package/statistics_report.json",
+                "submission_package/benchmark_provenance_manifest.json",
+            ],
+            blockers=list(statistics_report.get("final_publish_statistics_blockers", [])),
+            details={
+                "replication_summary": replication_summary,
+                "sample_counts": sample_counts,
+                "split_counts": split_counts,
+            },
+        ),
+        _checklist_item(
+            item_id="runtime_contract_results",
+            category="execution",
+            label="Runtime contract and output validation results",
+            status=(
+                "complete"
+                if experiment_repair_index.get("execution_coverage_ready") and runtime_contracts
+                else "partial"
+            ),
+            evidence_refs=["submission_package/experiment_repair_index.json"],
+            blockers=list(experiment_repair_index.get("blockers", [])),
+            details={
+                "execution_coverage_ready": experiment_repair_index.get("execution_coverage_ready"),
+                "execution_profiles": execution_profiles,
+                "runtime_contracts": runtime_contracts,
+            },
+        ),
+        _checklist_item(
+            item_id="artifact_hashes",
+            category="archive",
+            label="Artifact hashes",
+            status=(
+                "complete"
+                if archive_manifest is not None and archive_manifest.complete
+                else "missing"
+            ),
+            evidence_refs=["submission_package/submission_archive_manifest.json"],
+            artifact_refs=artifact_hash_refs,
+            blockers=archive_manifest.blockers if archive_manifest is not None else ["Archive manifest is missing."],
+            details={
+                "archive_manifest_fingerprint": (
+                    archive_manifest.manifest_fingerprint if archive_manifest is not None else None
+                ),
+                "hashed_artifact_count": len(artifact_hash_refs),
+            },
+        ),
+        _checklist_item(
+            item_id="negative_evidence",
+            category="evidence",
+            label="Negative evidence retention",
+            status=(
+                "complete"
+                if negative_evidence_report.get("negative_evidence_retained")
+                and negative_evidence_report.get("phase6_coverage_complete")
+                else "partial"
+            ),
+            evidence_refs=["submission_package/negative_evidence_report.json"],
+            blockers=list(negative_evidence_report.get("blockers", [])),
+            details={
+                "entry_count": negative_evidence_report.get("entry_count"),
+                "phase6_coverage_complete": negative_evidence_report.get("phase6_coverage_complete"),
+                "missing_categories": negative_evidence_report.get("phase6_missing_categories", []),
+            },
+        ),
+        _checklist_item(
+            item_id="reviewer_revision_status",
+            category="review",
+            label="Reviewer response and revision terminal status",
+            status="complete" if project_review_findings and not pending_revision_actions else "partial",
+            evidence_refs=[
+                "paper_sources/reviewer_response_dossier.json",
+                "paper_sources/revision_round.json",
+            ],
+            blockers=[
+                f"Pending required revision action: {action.action_id}"
+                for action in pending_revision_actions
+            ],
+            details={
+                "review_fingerprint": project_review_findings.get("review_fingerprint"),
+                "pending_action_count": len(pending_revision_actions),
+            },
+        ),
+        _checklist_item(
+            item_id="known_limitations",
+            category="limitations",
+            label="Known limitations and expected blockers",
+            status="complete" if project_submission_blockers else "not_applicable",
+            required_for_final_publish=False,
+            evidence_refs=[
+                "submission_package/publication_readiness_report.json",
+                "submission_package/negative_evidence_report.json",
+            ],
+            limitations=project_submission_blockers,
+            details={"project_publish_gate_passed": project_publish_gate_passed},
+        ),
+    ]
+    required_items = [item for item in items if item.required_for_final_publish]
+    missing_required = [item for item in required_items if item.status == "missing"]
+    partial_required = [item for item in required_items if item.status == "partial"]
+    blockers = _dedupe(
+        [
+            *[
+                blocker
+                for item in required_items
+                for blocker in item.blockers
+            ],
+            *[
+                f"Required reproducibility item is {item.status}: {item.item_id}"
+                for item in [*missing_required, *partial_required]
+            ],
+        ]
+    )
+    payload = {
+        "checklist_id": "project_reproducibility_checklist_goal7_v1",
+        "schema_version": GOAL7_REPRODUCIBILITY_SCHEMA_VERSION,
+        "project_id": project_id,
+        "generated_at": _utcnow(),
+        "complete": not missing_required and not partial_required,
+        "missing_required_count": len(missing_required),
+        "partial_required_count": len(partial_required),
+        "external_requirement_blocker_count": len(external_requirements),
+        "claim_ceiling": statistics_report.get("claim_ceiling_recommendation"),
+        "items": [item.model_dump(mode="json") for item in items],
+        "blockers": blockers,
+        "limitations": _dedupe(
+            [
+                *project_submission_blockers,
+                *list(statistics_report.get("statistics_limitations", [])),
+            ]
+        ),
+    }
+    return AutoResearchReproducibilityChecklistRead(
+        **payload,
+        checklist_fingerprint=_fingerprint(payload),
+    )
+
+
+def _project_limitations_appendix_payload(
+    *,
+    project_id: str,
+    ledger: AutoResearchProjectConclusionLedgerRead,
+    literature_support_index: dict[str, Any],
+    benchmark_provenance_manifest: dict[str, Any],
+    statistics_report: dict[str, Any],
+    negative_evidence_report: dict[str, Any],
+    project_submission_blockers: list[str],
+) -> dict[str, Any]:
+    payload = {
+        "appendix_id": "project_limitations_appendix_goal7_v1",
+        "project_id": project_id,
+        "generated_at": _utcnow().isoformat(),
+        "ledger_limitations": [item.model_dump(mode="json") for item in ledger.limitations],
+        "literature_limitations": list(literature_support_index.get("limitations", [])),
+        "benchmark_limitations": list(benchmark_provenance_manifest.get("blockers", [])),
+        "statistics_limitations": list(statistics_report.get("statistics_limitations", [])),
+        "negative_evidence_blockers": list(negative_evidence_report.get("blockers", [])),
+        "project_submission_blockers": list(project_submission_blockers),
+        "policy": (
+            "Limitations are retained as package evidence. They can lower the claim ceiling, "
+            "block final publish, or become required follow-ups; they are not hidden during export."
+        ),
+    }
+    return {**payload, "appendix_fingerprint": _fingerprint(payload)}
+
+
+def _project_artifact_integrity_audit_payload(
+    *,
+    project_id: str,
+    archive_manifest: AutoResearchSubmissionArchiveManifestRead,
+    project_paper_sources_manifest: AutoResearchPaperSourcesManifestRead,
+) -> AutoResearchProjectArtifactIntegrityAuditRead:
+    issues: list[dict[str, Any]] = []
+    for entry in archive_manifest.entries:
+        if entry.validation_status == "present":
+            continue
+        issues.append(
+            {
+                "issue_id": f"archive_{_slug(entry.logical_id)}_{entry.validation_status}",
+                "severity": "error" if entry.required_for_final_publish else "warning",
+                "category": "archive",
+                "summary": f"Archive entry {entry.logical_id} is {entry.validation_status}.",
+                "detail": "; ".join(entry.blockers) or entry.source_path,
+                "source_artifact_ref": entry.source_artifact_ref,
+                "path": entry.source_path,
+                "required_for_final_publish": entry.required_for_final_publish,
+            }
+        )
+    for missing_file in project_paper_sources_manifest.missing_files:
+        issues.append(
+            {
+                "issue_id": f"source_manifest_missing_{_slug(missing_file)}",
+                "severity": "error",
+                "category": "source_package",
+                "summary": "Project source package manifest references a missing file.",
+                "detail": missing_file,
+                "path": missing_file,
+                "required_for_final_publish": True,
+            }
+        )
+    for missing_external in project_paper_sources_manifest.missing_external_artifacts:
+        issues.append(
+            {
+                "issue_id": f"source_external_missing_{_slug(missing_external)}",
+                "severity": "error",
+                "category": "source_package",
+                "summary": "Project source package references a missing external artifact.",
+                "detail": missing_external,
+                "path": missing_external,
+                "required_for_final_publish": True,
+            }
+        )
+    if not archive_manifest.current:
+        issues.append(
+            {
+                "issue_id": "archive_current_false",
+                "severity": "error",
+                "category": "archive",
+                "summary": "Submission archive is missing, stale, or not reconstructable from manifest.",
+                "detail": "; ".join(archive_manifest.blockers) or archive_manifest.archive_path,
+                "path": archive_manifest.archive_path,
+                "required_for_final_publish": True,
+            }
+        )
+    unresolved = [item for item in issues if item.get("severity") == "error"]
+    payload = {
+        "audit_id": "project_artifact_integrity_audit_goal7_v1",
+        "project_id": project_id,
+        "generated_at": _utcnow(),
+        "complete": not unresolved,
+        "archive_current": archive_manifest.current,
+        "unresolved_issue_count": len(unresolved),
+        "missing_required_artifact_count": archive_manifest.missing_required_entry_count
+        + len(project_paper_sources_manifest.missing_files)
+        + len(project_paper_sources_manifest.missing_external_artifacts),
+        "hash_mismatch_count": archive_manifest.hash_mismatch_entry_count,
+        "stale_entry_count": archive_manifest.stale_entry_count,
+        "issues": issues,
+        "blockers": _dedupe(
+            [
+                str(item.get("detail") or item.get("summary") or "")
+                for item in unresolved
+            ]
+        ),
+        "warnings": [
+            str(item.get("detail") or item.get("summary") or "")
+            for item in issues
+            if item.get("severity") != "error"
+        ],
+    }
+    return AutoResearchProjectArtifactIntegrityAuditRead(
+        **payload,
+        audit_fingerprint=_fingerprint(payload),
+    )
+
+
+def _final_publish_check(
+    *,
+    check_id: str,
+    passed: bool,
+    evidence_refs: list[str],
+    blockers: list[str] | None = None,
+    warnings: list[str] | None = None,
+    details: dict[str, Any] | None = None,
+) -> AutoResearchFinalPublishCheckRead:
+    return AutoResearchFinalPublishCheckRead(
+        check_id=check_id,
+        passed=passed,
+        evidence_refs=evidence_refs,
+        blockers=_dedupe(blockers or []),
+        warnings=_dedupe(warnings or []),
+        details=details or {},
+    )
+
+
+def _project_final_publish_decision_payload(
+    *,
+    project_id: str,
+    paper_tier: AutoResearchPaperTier,
+    project_publish_gate_passed: bool,
+    reviewer_response_complete: bool,
+    claim_index_complete: bool,
+    project_submission_blockers: list[str],
+    readiness_report: dict[str, Any],
+    literature_support_index: dict[str, Any],
+    benchmark_provenance_manifest: dict[str, Any],
+    experiment_repair_index: dict[str, Any],
+    statistics_report: dict[str, Any],
+    negative_evidence_report: dict[str, Any],
+    archive_manifest: AutoResearchSubmissionArchiveManifestRead,
+    reproducibility_checklist: AutoResearchReproducibilityChecklistRead,
+    integrity_audit: AutoResearchProjectArtifactIntegrityAuditRead,
+    revision_round: AutoResearchRevisionRoundRead,
+    archive_manifest_path: Path,
+    readiness_manifest_path: Path,
+) -> AutoResearchFinalPublishDecisionRead:
+    readiness_checks = {
+        str(item.get("check_id")): item
+        for item in readiness_report.get("checks", [])
+        if isinstance(item, dict)
+    }
+    benchmark_independence = benchmark_provenance_manifest.get(
+        "benchmark_source_independence_audit", {}
+    )
+    if not isinstance(benchmark_independence, dict):
+        benchmark_independence = {}
+    checks = [
+        _final_publish_check(
+            check_id="literature_source_sufficiency",
+            passed=bool(literature_support_index.get("complete")),
+            evidence_refs=["submission_package/literature_support_index.json"],
+            blockers=list(literature_support_index.get("blockers", [])),
+            details={"literature_support_index": literature_support_index},
+        ),
+        _final_publish_check(
+            check_id="benchmark_provenance_and_independence",
+            passed=bool(
+                benchmark_provenance_manifest.get("complete")
+                and benchmark_independence.get("complete")
+                and benchmark_provenance_manifest.get("final_publish_candidate_coverage", {}).get(
+                    "complete"
+                )
+            ),
+            evidence_refs=["submission_package/benchmark_provenance_manifest.json"],
+            blockers=_dedupe(
+                [
+                    *list(benchmark_provenance_manifest.get("blockers", [])),
+                    *list(benchmark_independence.get("blockers", [])),
+                    *list(
+                        benchmark_provenance_manifest.get(
+                            "final_publish_candidate_coverage", {}
+                        ).get("blockers", [])
+                    ),
+                ]
+            ),
+            details={
+                "benchmark_source_independence_audit": benchmark_independence,
+                "final_publish_candidate_coverage": benchmark_provenance_manifest.get(
+                    "final_publish_candidate_coverage", {}
+                ),
+            },
+        ),
+        _final_publish_check(
+            check_id="experiment_evidence_completeness",
+            passed=bool(experiment_repair_index.get("execution_coverage_ready")),
+            evidence_refs=["submission_package/experiment_repair_index.json"],
+            blockers=list(experiment_repair_index.get("blockers", [])),
+            details={
+                "execution_source_counts": experiment_repair_index.get(
+                    "execution_source_counts", {}
+                ),
+                "execution_coverage_ready": experiment_repair_index.get(
+                    "execution_coverage_ready"
+                ),
+            },
+        ),
+        _final_publish_check(
+            check_id="statistics_multi_run_multi_split_sufficiency",
+            passed=bool(
+                statistics_report.get("claim_ceiling_recommendation") == "final_publish_claim"
+                and not statistics_report.get("final_publish_statistics_blockers")
+            ),
+            evidence_refs=["submission_package/statistics_report.json"],
+            blockers=list(statistics_report.get("final_publish_statistics_blockers", [])),
+            details={
+                "claim_ceiling_recommendation": statistics_report.get(
+                    "claim_ceiling_recommendation"
+                ),
+                "replication_summary": statistics_report.get("replication_summary", {}),
+                "metric_coverage": statistics_report.get("metric_coverage", {}),
+            },
+        ),
+        _final_publish_check(
+            check_id="negative_evidence_retention",
+            passed=bool(
+                negative_evidence_report.get("negative_evidence_retained")
+                and negative_evidence_report.get("phase6_coverage_complete")
+            ),
+            evidence_refs=["submission_package/negative_evidence_report.json"],
+            blockers=list(negative_evidence_report.get("blockers", [])),
+            details={
+                "entry_count": negative_evidence_report.get("entry_count"),
+                "phase6_coverage_complete": negative_evidence_report.get(
+                    "phase6_coverage_complete"
+                ),
+                "missing_categories": negative_evidence_report.get(
+                    "phase6_missing_categories", []
+                ),
+            },
+        ),
+        _final_publish_check(
+            check_id="claim_evidence_coverage",
+            passed=bool(
+                claim_index_complete
+                and readiness_checks.get("claim_evidence_index", {}).get("passed", False)
+            ),
+            evidence_refs=["submission_package/claim_evidence_index.md"],
+            blockers=list(readiness_checks.get("claim_evidence_index", {}).get("blockers", [])),
+            details=readiness_checks.get("claim_evidence_index", {}),
+        ),
+        _final_publish_check(
+            check_id="reproducibility_package_completeness",
+            passed=bool(reproducibility_checklist.complete),
+            evidence_refs=["submission_package/reproducibility_checklist.json"],
+            blockers=list(reproducibility_checklist.blockers),
+            details={
+                "missing_required_count": reproducibility_checklist.missing_required_count,
+                "partial_required_count": reproducibility_checklist.partial_required_count,
+            },
+        ),
+        _final_publish_check(
+            check_id="reviewer_revision_terminal_status",
+            passed=bool(
+                reviewer_response_complete
+                and revision_round.terminal_status not in {"needs_revision", "blocked"}
+            ),
+            evidence_refs=[
+                "paper_sources/reviewer_response_dossier.json",
+                "paper_sources/revision_round.json",
+                "submission_package/reviewer_response.md",
+            ],
+            blockers=(
+                []
+                if reviewer_response_complete
+                and revision_round.terminal_status not in {"needs_revision", "blocked"}
+                else [
+                    "Reviewer response or revision round still has unresolved/pending required actions."
+                ]
+            ),
+            details={
+                "reviewer_response_complete": reviewer_response_complete,
+                "revision_terminal_status": revision_round.terminal_status,
+                "revision_pending_action_count": revision_round.pending_action_count,
+            },
+        ),
+        _final_publish_check(
+            check_id="archive_manifest_current_and_complete",
+            passed=bool(archive_manifest.complete and archive_manifest.current),
+            evidence_refs=["submission_package/submission_archive_manifest.json"],
+            blockers=list(archive_manifest.blockers),
+            details={
+                "entry_count": archive_manifest.entry_count,
+                "missing_required_entry_count": archive_manifest.missing_required_entry_count,
+                "hash_mismatch_entry_count": archive_manifest.hash_mismatch_entry_count,
+                "stale_entry_count": archive_manifest.stale_entry_count,
+                "archive_current": archive_manifest.current,
+            },
+        ),
+        _final_publish_check(
+            check_id="artifact_integrity_audit",
+            passed=bool(integrity_audit.complete),
+            evidence_refs=["submission_package/artifact_integrity_audit.json"],
+            blockers=list(integrity_audit.blockers),
+            details={
+                "unresolved_issue_count": integrity_audit.unresolved_issue_count,
+                "missing_required_artifact_count": integrity_audit.missing_required_artifact_count,
+                "hash_mismatch_count": integrity_audit.hash_mismatch_count,
+                "stale_entry_count": integrity_audit.stale_entry_count,
+            },
+        ),
+        _final_publish_check(
+            check_id="project_publish_gate",
+            passed=bool(project_publish_gate_passed and not project_submission_blockers),
+            evidence_refs=["submission_package/publication_readiness_report.json"],
+            blockers=list(project_submission_blockers),
+            details={
+                "project_publish_gate_passed": project_publish_gate_passed,
+                "submission_blocker_count": len(project_submission_blockers),
+            },
+        ),
+    ]
+    passed_checks = [check for check in checks if check.passed]
+    failed_checks = [check for check in checks if not check.passed]
+    blockers = _dedupe(
+        [
+            *project_submission_blockers,
+            *[
+                blocker
+                for check in failed_checks
+                for blocker in check.blockers
+            ],
+            *[
+                f"Final publish policy check failed: {check.check_id}"
+                for check in failed_checks
+                if not check.blockers
+            ],
+        ]
+    )
+    final_ready = not failed_checks and not blockers
+    evidence_refs = _dedupe(
+        [
+            "submission_package/submission_archive_manifest.json",
+            "submission_package/reproducibility_checklist.json",
+            "submission_package/artifact_integrity_audit.json",
+            "submission_package/publication_readiness_report.json",
+            "submission_package/literature_support_index.json",
+            "submission_package/benchmark_provenance_manifest.json",
+            "submission_package/experiment_repair_index.json",
+            "submission_package/statistics_report.json",
+            "submission_package/negative_evidence_report.json",
+            "submission_package/claim_evidence_index.md",
+            "paper_sources/revision_round.json",
+        ]
+    )
+    payload = {
+        "decision_id": f"project_final_publish_decision_{project_id}",
+        "project_id": project_id,
+        "final_publish_ready": final_ready,
+        "paper_tier": paper_tier,
+        "policy_version": GOAL7_FINAL_PUBLISH_POLICY_VERSION,
+        "checked_at": _utcnow(),
+        "passed_checks": [check.model_dump(mode="json") for check in passed_checks],
+        "failed_checks": [check.model_dump(mode="json") for check in failed_checks],
+        "warnings": _dedupe(
+            [
+                *list(readiness_report.get("warnings", [])),
+                *[
+                    warning
+                    for check in checks
+                    for warning in check.warnings
+                ],
+            ]
+        ),
+        "blockers": blockers,
+        "required_followups": _dedupe(
+            [
+                *list(readiness_report.get("required_followups", [])),
+                *[
+                    f"Resolve final publish policy check: {check.check_id}"
+                    for check in failed_checks
+                ],
+            ]
+        ),
+        "claim_ceiling": statistics_report.get("claim_ceiling_recommendation"),
+        "evidence_refs": evidence_refs,
+        "archive_manifest_ref": str(archive_manifest_path),
+        "readiness_manifest_ref": str(readiness_manifest_path),
+        "policy_exceptions": [],
+    }
+    return AutoResearchFinalPublishDecisionRead(
+        **payload,
+        decision_fingerprint=_fingerprint(payload),
+    )
+
+
+def _project_submission_package_read(
+    *,
+    project_id: str,
+    submission_manifest: dict[str, Any],
+    submission_manifest_path: Path,
+    archive_manifest: AutoResearchSubmissionArchiveManifestRead,
+    archive_manifest_path: Path,
+    reproducibility_checklist: AutoResearchReproducibilityChecklistRead,
+    reproducibility_checklist_path: Path,
+    reproducibility_checklist_json_path: Path,
+    integrity_audit: AutoResearchProjectArtifactIntegrityAuditRead,
+    integrity_audit_path: Path,
+    final_publish_decision: AutoResearchFinalPublishDecisionRead,
+    final_publish_decision_path: Path,
+) -> AutoResearchSubmissionPackageRead:
+    payload = {
+        "package_id": str(submission_manifest.get("submission_id") or f"project_submission_{project_id}"),
+        "project_id": project_id,
+        "generated_at": _utcnow(),
+        "bundle_kind": (
+            "final_publish_bundle"
+            if final_publish_decision.final_publish_ready
+            else "review_bundle"
+        ),
+        "review_bundle_ready": bool(submission_manifest.get("review_bundle_ready")),
+        "final_publish_ready": bool(final_publish_decision.final_publish_ready),
+        "submission_manifest_path": str(submission_manifest_path),
+        "archive_manifest_path": str(archive_manifest_path),
+        "archive_path": archive_manifest.archive_path,
+        "reproducibility_checklist_path": str(reproducibility_checklist_path),
+        "reproducibility_checklist_json_path": str(reproducibility_checklist_json_path),
+        "artifact_integrity_audit_path": str(integrity_audit_path),
+        "final_publish_decision_path": str(final_publish_decision_path),
+        "archive_manifest": archive_manifest.model_dump(mode="json"),
+        "reproducibility_checklist": reproducibility_checklist.model_dump(mode="json"),
+        "artifact_integrity_audit": integrity_audit.model_dump(mode="json"),
+        "final_publish_decision": final_publish_decision.model_dump(mode="json"),
+        "blockers": list(final_publish_decision.blockers),
+        "required_followups": list(final_publish_decision.required_followups),
+    }
+    return AutoResearchSubmissionPackageRead(
+        **payload,
+        package_fingerprint=_fingerprint(payload),
+    )
+
+
+def _current_archive_manifest_from_persisted(
+    manifest: AutoResearchSubmissionArchiveManifestRead,
+) -> AutoResearchSubmissionArchiveManifestRead:
+    entries = _validated_archive_entries(manifest.entries)
+    current_source_fingerprint = _source_manifest_fingerprint_from_path(
+        manifest.source_package_manifest_ref
+    )
+    source_stale = bool(
+        manifest.source_package_fingerprint
+        and current_source_fingerprint
+        and current_source_fingerprint != manifest.source_package_fingerprint
+    )
+    if source_stale:
+        entries = [
+            entry.model_copy(
+                update={
+                    "validation_status": "stale",
+                    "blockers": _dedupe(
+                        [
+                            *entry.blockers,
+                            "Source package manifest fingerprint changed after archive manifest generation.",
+                        ]
+                    ),
+                }
+            )
+            for entry in entries
+        ]
+    required_entries = [entry for entry in entries if entry.required_for_final_publish]
+    missing_required = [
+        entry for entry in required_entries if entry.validation_status != "present"
+    ]
+    hash_mismatches = [entry for entry in entries if entry.validation_status == "hash_mismatch"]
+    stale_entries = [entry for entry in entries if entry.validation_status == "stale"]
+    complete = bool(entries) and not missing_required and not hash_mismatches and not stale_entries
+    archive_path = Path(manifest.archive_path)
+    archive_current = complete and _zip_matches_archive_entries(archive_path, entries)
+    blockers = _dedupe(
+        [
+            *[
+                blocker
+                for entry in entries
+                for blocker in entry.blockers
+                if entry.required_for_final_publish
+            ],
+            *(
+                ["Submission archive zip is missing or does not match the archive manifest entries."]
+                if complete and not archive_current
+                else []
+            ),
+            *(
+                ["Submission archive source package fingerprint is stale."]
+                if source_stale
+                else []
+            ),
+        ]
+    )
+    payload = {
+        **manifest.model_dump(mode="json"),
+        "archive_sha256": _file_sha256(archive_path),
+        "archive_size_bytes": _file_size(archive_path),
+        "entry_count": len(entries),
+        "required_entry_count": len(required_entries),
+        "present_required_entry_count": len(required_entries) - len(missing_required),
+        "missing_required_entry_count": len(missing_required),
+        "hash_mismatch_entry_count": len(hash_mismatches),
+        "stale_entry_count": len(stale_entries),
+        "complete": complete,
+        "current": archive_current,
+        "ready_for_final_download": bool(
+            manifest.bundle_kind == "final_publish_bundle" and complete and archive_current
+        ),
+        "entries": [entry.model_dump(mode="json") for entry in entries],
+        "blockers": blockers,
+    }
+    return AutoResearchSubmissionArchiveManifestRead(
+        **{**payload, "manifest_fingerprint": _fingerprint(payload)}
+    )
+
+
+def load_project_submission_package(project_id: str) -> AutoResearchSubmissionPackageRead | None:
+    submission_dir = _project_submission_dir(project_id)
+    submission_manifest_path = submission_dir / PROJECT_SUBMISSION_MANIFEST_FILENAME
+    archive_manifest_path = submission_dir / PROJECT_SUBMISSION_ARCHIVE_MANIFEST_FILENAME
+    checklist_path = submission_dir / PROJECT_REPRODUCIBILITY_CHECKLIST_FILENAME
+    checklist_json_path = submission_dir / PROJECT_REPRODUCIBILITY_CHECKLIST_JSON_FILENAME
+    integrity_audit_path = submission_dir / PROJECT_ARTIFACT_INTEGRITY_AUDIT_FILENAME
+    final_publish_decision_path = submission_dir / PROJECT_FINAL_PUBLISH_DECISION_FILENAME
+    submission_manifest = _read_json_dict(submission_manifest_path)
+    if not submission_manifest:
+        return None
+    archive_manifest_payload = _read_json_dict(archive_manifest_path)
+    checklist_payload = _read_json_dict(checklist_json_path)
+    integrity_payload = _read_json_dict(integrity_audit_path)
+    final_decision_payload = _read_json_dict(final_publish_decision_path)
+    if not (
+        archive_manifest_payload
+        and checklist_payload
+        and integrity_payload
+        and final_decision_payload
+    ):
+        return None
+    archive_manifest = _current_archive_manifest_from_persisted(
+        AutoResearchSubmissionArchiveManifestRead.model_validate(archive_manifest_payload)
+    )
+    reproducibility_checklist = AutoResearchReproducibilityChecklistRead.model_validate(
+        checklist_payload
+    )
+    integrity_audit = AutoResearchProjectArtifactIntegrityAuditRead.model_validate(
+        integrity_payload
+    )
+    source_manifest_payload = _read_json_dict(archive_manifest.source_package_manifest_ref)
+    if source_manifest_payload:
+        try:
+            source_manifest = AutoResearchPaperSourcesManifestRead.model_validate(
+                source_manifest_payload
+            )
+        except ValueError:
+            source_manifest = None
+        if source_manifest is not None:
+            integrity_audit = _project_artifact_integrity_audit_payload(
+                project_id=project_id,
+                archive_manifest=archive_manifest,
+                project_paper_sources_manifest=source_manifest,
+            )
+    final_publish_decision = AutoResearchFinalPublishDecisionRead.model_validate(
+        final_decision_payload
+    )
+    dynamic_failed_checks: list[AutoResearchFinalPublishCheckRead] = []
+    if archive_manifest.blockers or not archive_manifest.current:
+        dynamic_failed_checks.append(
+            _final_publish_check(
+                check_id="archive_manifest_current_and_complete",
+                passed=False,
+                evidence_refs=["submission_package/submission_archive_manifest.json"],
+                blockers=list(archive_manifest.blockers),
+                details={
+                    "entry_count": archive_manifest.entry_count,
+                    "missing_required_entry_count": archive_manifest.missing_required_entry_count,
+                    "hash_mismatch_entry_count": archive_manifest.hash_mismatch_entry_count,
+                    "stale_entry_count": archive_manifest.stale_entry_count,
+                    "archive_current": archive_manifest.current,
+                },
+            )
+        )
+    if not integrity_audit.complete:
+        dynamic_failed_checks.append(
+            _final_publish_check(
+                check_id="artifact_integrity_audit",
+                passed=False,
+                evidence_refs=["submission_package/artifact_integrity_audit.json"],
+                blockers=list(integrity_audit.blockers),
+                details={
+                    "unresolved_issue_count": integrity_audit.unresolved_issue_count,
+                    "missing_required_artifact_count": integrity_audit.missing_required_artifact_count,
+                    "hash_mismatch_count": integrity_audit.hash_mismatch_count,
+                    "stale_entry_count": integrity_audit.stale_entry_count,
+                },
+            )
+        )
+    if dynamic_failed_checks:
+        dynamic_failed_ids = {check.check_id for check in dynamic_failed_checks}
+        payload = final_publish_decision.model_dump(mode="json")
+        payload.update(
+            {
+                "final_publish_ready": False,
+                "passed_checks": [
+                    check
+                    for check in payload.get("passed_checks", [])
+                    if check.get("check_id") not in dynamic_failed_ids
+                ],
+                "failed_checks": [
+                    check
+                    for check in payload.get("failed_checks", [])
+                    if check.get("check_id") not in dynamic_failed_ids
+                ]
+                + [check.model_dump(mode="json") for check in dynamic_failed_checks],
+                "blockers": _dedupe(
+                    [
+                        *list(payload.get("blockers", [])),
+                        *list(archive_manifest.blockers),
+                        *list(integrity_audit.blockers),
+                    ]
+                ),
+                "required_followups": _dedupe(
+                    [
+                        *list(payload.get("required_followups", [])),
+                        "Rebuild the submission archive from the current persisted artifacts.",
+                    ]
+                ),
+            }
+        )
+        final_publish_decision = AutoResearchFinalPublishDecisionRead(
+            **{**payload, "decision_fingerprint": _fingerprint(payload)}
+        )
+    return _project_submission_package_read(
+        project_id=project_id,
+        submission_manifest={
+            **submission_manifest,
+            "final_publish_ready": final_publish_decision.final_publish_ready,
+            "bundle_kind": (
+                "final_publish_bundle"
+                if final_publish_decision.final_publish_ready
+                else "review_bundle"
+            ),
+        },
+        submission_manifest_path=submission_manifest_path,
+        archive_manifest=archive_manifest,
+        archive_manifest_path=archive_manifest_path,
+        reproducibility_checklist=reproducibility_checklist,
+        reproducibility_checklist_path=checklist_path,
+        reproducibility_checklist_json_path=checklist_json_path,
+        integrity_audit=integrity_audit,
+        integrity_audit_path=integrity_audit_path,
+        final_publish_decision=final_publish_decision,
+        final_publish_decision_path=final_publish_decision_path,
+    )
+
+
 def _project_publication_manifest_payload(
     *,
     project_id: str,
@@ -10459,12 +11869,16 @@ def _materialize_project_submission_package(
     reviewer_response_dossier: AutoResearchReviewerResponseDossierRead,
     revision_round: AutoResearchRevisionRoundRead,
     project_publish_gate_passed: bool,
+    paper_tier: AutoResearchPaperTier,
     blockers: list[str],
     warnings: list[str],
 ) -> dict[str, Any]:
     submission_dir = _project_submission_dir(project_id)
     manifest_path = submission_dir / PROJECT_SUBMISSION_MANIFEST_FILENAME
+    archive_path = submission_dir / PROJECT_SUBMISSION_ARCHIVE_FILENAME
+    archive_manifest_path = submission_dir / PROJECT_SUBMISSION_ARCHIVE_MANIFEST_FILENAME
     checklist_path = submission_dir / PROJECT_REPRODUCIBILITY_CHECKLIST_FILENAME
+    checklist_json_path = submission_dir / PROJECT_REPRODUCIBILITY_CHECKLIST_JSON_FILENAME
     reviewer_response_path = submission_dir / PROJECT_REVIEWER_RESPONSE_FILENAME
     review_findings_path = submission_dir / PROJECT_REVIEW_FINDINGS_FILENAME
     revision_action_plan_path = project_paper_sources_dir / PROJECT_REVISION_ACTION_PLAN_FILENAME
@@ -10488,6 +11902,9 @@ def _materialize_project_submission_package(
     statistics_report_path = submission_dir / PROJECT_STATISTICS_REPORT_FILENAME
     experiment_repair_index_path = submission_dir / PROJECT_EXPERIMENT_REPAIR_INDEX_FILENAME
     negative_evidence_report_path = submission_dir / PROJECT_NEGATIVE_EVIDENCE_REPORT_FILENAME
+    limitations_appendix_path = submission_dir / PROJECT_LIMITATIONS_APPENDIX_FILENAME
+    artifact_integrity_audit_path = submission_dir / PROJECT_ARTIFACT_INTEGRITY_AUDIT_FILENAME
+    final_publish_decision_path = submission_dir / PROJECT_FINAL_PUBLISH_DECISION_FILENAME
     offline_publication_case_path = submission_dir / PROJECT_OFFLINE_PUBLICATION_CASE_FILENAME
     offline_publication_audit_path = submission_dir / PROJECT_OFFLINE_PUBLICATION_AUDIT_FILENAME
     publication_manifest_path = submission_dir / PROJECT_PUBLICATION_MANIFEST_FILENAME
@@ -11178,14 +12595,124 @@ def _materialize_project_submission_package(
         publication_manifest_path,
         selected_run_ids=selected_run_ids,
     )
-    project_review_bundle_ready = all(item["exists"] for item in generated_assets)
-    project_final_publish_ready = (
-        project_review_bundle_ready
-        and project_publish_gate_passed
-        and reviewer_response_complete
-        and claim_index_complete
-        and not project_submission_blockers
+    limitations_appendix_payload = _project_limitations_appendix_payload(
+        project_id=project_id,
+        ledger=ledger,
+        literature_support_index=literature_support_index_payload,
+        benchmark_provenance_manifest=benchmark_provenance_manifest_payload,
+        statistics_report=statistics_report_payload,
+        negative_evidence_report=negative_evidence_report_payload,
+        project_submission_blockers=project_submission_blockers,
     )
+    limitations_appendix_path.write_text(
+        json.dumps(limitations_appendix_payload, indent=2),
+        encoding="utf-8",
+    )
+    generated_assets.extend(
+        [
+            _submission_asset_ref(
+                "project_limitations_appendix",
+                limitations_appendix_path,
+                selected_run_ids=selected_run_ids,
+            ),
+        ]
+    )
+    archive_manifest = _project_submission_archive_manifest_payload(
+        project_id=project_id,
+        project_final_publish_ready=False,
+        source_package_manifest_path=project_paper_sources_dir / PROJECT_PAPER_MANIFEST_FILENAME,
+        source_package_fingerprint=project_paper_sources_manifest.manifest_fingerprint,
+        generated_assets=generated_assets[1:],
+        write_archive=True,
+    )
+    archive_manifest_path.write_text(
+        archive_manifest.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    reproducibility_checklist = _project_reproducibility_checklist_payload(
+        project_id=project_id,
+        selected_runs=selected_runs,
+        project_paper_compile_report=project_paper_compile_report,
+        project_paper_sources_manifest=project_paper_sources_manifest,
+        project_review_findings=project_review_findings,
+        project_paper_revision_actions=project_paper_revision_actions,
+        project_publish_gate_passed=project_publish_gate_passed,
+        evidence_profile=evidence_profile,
+        experiment_repair_index=experiment_repair_index_payload,
+        statistics_report=statistics_report_payload,
+        benchmark_provenance_manifest=benchmark_provenance_manifest_payload,
+        negative_evidence_report=negative_evidence_report_payload,
+        archive_manifest=archive_manifest,
+        project_submission_blockers=project_submission_blockers,
+    )
+    checklist_json_path.write_text(
+        reproducibility_checklist.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    artifact_integrity_audit = _project_artifact_integrity_audit_payload(
+        project_id=project_id,
+        archive_manifest=archive_manifest,
+        project_paper_sources_manifest=project_paper_sources_manifest,
+    )
+    artifact_integrity_audit_path.write_text(
+        artifact_integrity_audit.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    final_publish_decision = _project_final_publish_decision_payload(
+        project_id=project_id,
+        paper_tier=paper_tier,
+        project_publish_gate_passed=project_publish_gate_passed,
+        reviewer_response_complete=reviewer_response_complete,
+        claim_index_complete=claim_index_complete,
+        project_submission_blockers=project_submission_blockers,
+        readiness_report=readiness_payload,
+        literature_support_index=literature_support_index_payload,
+        benchmark_provenance_manifest=benchmark_provenance_manifest_payload,
+        experiment_repair_index=experiment_repair_index_payload,
+        statistics_report=statistics_report_payload,
+        negative_evidence_report=negative_evidence_report_payload,
+        archive_manifest=archive_manifest,
+        reproducibility_checklist=reproducibility_checklist,
+        integrity_audit=artifact_integrity_audit,
+        revision_round=revision_round,
+        archive_manifest_path=archive_manifest_path,
+        readiness_manifest_path=publication_readiness_report_path,
+    )
+    final_publish_decision_path.write_text(
+        final_publish_decision.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    generated_assets.extend(
+        [
+            _submission_asset_ref(
+                "project_submission_archive_manifest",
+                archive_manifest_path,
+                selected_run_ids=selected_run_ids,
+            ),
+            _submission_asset_ref(
+                "project_submission_archive",
+                archive_path,
+                selected_run_ids=selected_run_ids,
+            ),
+            _submission_asset_ref(
+                "project_reproducibility_checklist_json",
+                checklist_json_path,
+                selected_run_ids=selected_run_ids,
+            ),
+            _submission_asset_ref(
+                "project_artifact_integrity_audit",
+                artifact_integrity_audit_path,
+                selected_run_ids=selected_run_ids,
+            ),
+            _submission_asset_ref(
+                "project_final_publish_decision",
+                final_publish_decision_path,
+                selected_run_ids=selected_run_ids,
+            ),
+        ]
+    )
+    project_review_bundle_ready = all(item["exists"] for item in generated_assets)
+    project_final_publish_ready = bool(final_publish_decision.final_publish_ready)
     generated_assets = _enrich_submission_asset_statuses(
         generated_assets,
         readiness_report=readiness_payload,
@@ -11208,6 +12735,18 @@ def _materialize_project_submission_package(
         "literature_support_index_path": str(literature_support_index_path),
         "publication_evidence_index_path": str(publication_evidence_index_path),
         "code_package_path": str(code_package_path),
+        "submission_archive_path": str(archive_path),
+        "submission_archive_manifest_path": str(archive_manifest_path),
+        "submission_archive_manifest_fingerprint": archive_manifest.manifest_fingerprint,
+        "reproducibility_checklist_json_path": str(checklist_json_path),
+        "reproducibility_checklist_fingerprint": reproducibility_checklist.checklist_fingerprint,
+        "limitations_appendix_path": str(limitations_appendix_path),
+        "artifact_integrity_audit_path": str(artifact_integrity_audit_path),
+        "artifact_integrity_audit_fingerprint": artifact_integrity_audit.audit_fingerprint,
+        "final_publish_decision_path": str(final_publish_decision_path),
+        "final_publish_decision_fingerprint": final_publish_decision.decision_fingerprint,
+        "final_publish_policy_version": final_publish_decision.policy_version,
+        "final_publish_decision": final_publish_decision.model_dump(mode="json"),
         "benchmark_card_path": str(benchmark_card_path),
         "benchmark_provenance_manifest_path": str(benchmark_provenance_manifest_path),
         "benchmark_provenance_repair_index_path": str(benchmark_provenance_repair_index_path),
@@ -11244,7 +12783,33 @@ def _materialize_project_submission_package(
                 negative_evidence_report_payload.get("phase6_categories")
             ),
             "negative_evidence_report_ref": "submission_package/negative_evidence_report.json",
+            "final_publish_decision_ref": "submission_package/final_publish_decision.json",
+            "final_publish_policy_version": final_publish_decision.policy_version,
+            "final_publish_failed_check_ids": [
+                check.check_id for check in final_publish_decision.failed_checks
+            ],
         },
+        "submission_archive_path": str(archive_path),
+        "submission_archive_sha256": _file_sha256(archive_path),
+        "submission_archive_manifest_path": str(archive_manifest_path),
+        "submission_archive_manifest_sha256": _file_sha256(archive_manifest_path),
+        "submission_archive_manifest_fingerprint": archive_manifest.manifest_fingerprint,
+        "reproducibility_checklist_json_path": str(checklist_json_path),
+        "reproducibility_checklist_json_sha256": _file_sha256(checklist_json_path),
+        "reproducibility_checklist_fingerprint": reproducibility_checklist.checklist_fingerprint,
+        "limitations_appendix_path": str(limitations_appendix_path),
+        "limitations_appendix_sha256": _file_sha256(limitations_appendix_path),
+        "artifact_integrity_audit_path": str(artifact_integrity_audit_path),
+        "artifact_integrity_audit_sha256": _file_sha256(artifact_integrity_audit_path),
+        "artifact_integrity_audit_fingerprint": artifact_integrity_audit.audit_fingerprint,
+        "final_publish_decision_path": str(final_publish_decision_path),
+        "final_publish_decision_ref": "submission_package/final_publish_decision.json",
+        "final_publish_decision_sha256": _file_sha256(final_publish_decision_path),
+        "final_publish_decision_fingerprint": final_publish_decision.decision_fingerprint,
+        "final_publish_policy_version": final_publish_decision.policy_version,
+        "final_publish_failed_check_ids": [
+            check.check_id for check in final_publish_decision.failed_checks
+        ],
         "asset_count": len(generated_assets[1:]),
         "missing_asset_count": sum(1 for item in generated_assets[1:] if item.get("missing_status") != "present"),
         "blocked_asset_count": sum(1 for item in generated_assets[1:] if item.get("final_publish_blocking")),
@@ -11278,15 +12843,36 @@ def _materialize_project_submission_package(
         manifest_path,
         selected_run_ids=selected_run_ids,
     )
-    generated_assets[-1] = _submission_asset_ref(
-        "project_publication_manifest",
-        publication_manifest_path,
-        selected_run_ids=selected_run_ids,
+    for index, asset in enumerate(generated_assets):
+        if asset.get("role") == "project_publication_manifest":
+            generated_assets[index] = _submission_asset_ref(
+                "project_publication_manifest",
+                publication_manifest_path,
+                selected_run_ids=selected_run_ids,
+            )
+            break
+    submission_package_read = _project_submission_package_read(
+        project_id=project_id,
+        submission_manifest=submission_manifest,
+        submission_manifest_path=manifest_path,
+        archive_manifest=archive_manifest,
+        archive_manifest_path=archive_manifest_path,
+        reproducibility_checklist=reproducibility_checklist,
+        reproducibility_checklist_path=checklist_path,
+        reproducibility_checklist_json_path=checklist_json_path,
+        integrity_audit=artifact_integrity_audit,
+        integrity_audit_path=artifact_integrity_audit_path,
+        final_publish_decision=final_publish_decision,
+        final_publish_decision_path=final_publish_decision_path,
     )
     return {
         "project_submission_dir": str(submission_dir),
+        "project_submission_package": submission_package_read.model_dump(mode="json"),
         "project_submission_manifest": submission_manifest,
         "project_submission_manifest_path": str(manifest_path),
+        "project_submission_archive_manifest": archive_manifest.model_dump(mode="json"),
+        "project_submission_archive_manifest_path": str(archive_manifest_path),
+        "project_submission_archive_path": str(archive_path),
         "project_paper_sources_manifest": project_paper_sources_manifest.model_dump(mode="json"),
         "project_paper_sources_manifest_path": str(project_paper_sources_dir / PROJECT_PAPER_MANIFEST_FILENAME),
         "project_paper_compile_report": project_paper_compile_report.model_dump(mode="json"),
@@ -11295,6 +12881,8 @@ def _materialize_project_submission_package(
         "project_manuscript_context_complete": manuscript_context_path.is_file(),
         "project_manuscript_context_fingerprint": manuscript_context_fingerprint,
         "project_reproducibility_checklist_path": str(checklist_path),
+        "project_reproducibility_checklist": reproducibility_checklist.model_dump(mode="json"),
+        "project_reproducibility_checklist_json_path": str(checklist_json_path),
         "project_reviewer_response_path": str(reviewer_response_path),
         "project_review_findings_path": str(review_findings_path),
         "project_repair_execution_log_path": str(repair_execution_log_path),
@@ -11316,6 +12904,11 @@ def _materialize_project_submission_package(
         "project_statistics_report_path": str(statistics_report_path),
         "project_experiment_repair_index_path": str(experiment_repair_index_path),
         "project_negative_evidence_report_path": str(negative_evidence_report_path),
+        "project_limitations_appendix_path": str(limitations_appendix_path),
+        "project_artifact_integrity_audit": artifact_integrity_audit.model_dump(mode="json"),
+        "project_artifact_integrity_audit_path": str(artifact_integrity_audit_path),
+        "project_final_publish_decision": final_publish_decision.model_dump(mode="json"),
+        "project_final_publish_decision_path": str(final_publish_decision_path),
         "project_offline_publication_case_path": str(offline_publication_case_path),
         "project_offline_publication_audit_path": str(offline_publication_audit_path),
         "project_publication_manifest_path": str(publication_manifest_path),
@@ -11344,6 +12937,12 @@ def _materialize_project_submission_package(
         "project_statistics_report_complete": statistics_report_path.is_file(),
         "project_experiment_repair_index_complete": experiment_repair_index_path.is_file(),
         "project_negative_evidence_report_complete": negative_evidence_report_path.is_file(),
+        "project_limitations_appendix_complete": limitations_appendix_path.is_file(),
+        "project_submission_archive_manifest_complete": archive_manifest_path.is_file(),
+        "project_submission_archive_complete": archive_path.is_file(),
+        "project_reproducibility_checklist_json_complete": checklist_json_path.is_file(),
+        "project_artifact_integrity_audit_complete": artifact_integrity_audit_path.is_file(),
+        "project_final_publish_decision_complete": final_publish_decision_path.is_file(),
         "project_offline_publication_case_complete": offline_publication_case_path.is_file(),
         "project_offline_publication_audit_complete": offline_publication_audit_path.is_file(),
         "project_publication_manifest_complete": publication_manifest_path.is_file(),
@@ -11876,6 +13475,7 @@ def build_project_paper_orchestration(project_id: str) -> AutoResearchProjectPap
         reviewer_response_dossier=project_revision_response_dossier,
         revision_round=project_revision_round,
         project_publish_gate_passed=effective_project_publish_gate_passed,
+        paper_tier=_paper_tier_from_decision(effective_paper_decision),
         blockers=_dedupe(blockers),
         warnings=_dedupe(warnings),
     )

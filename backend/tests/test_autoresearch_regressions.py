@@ -9,9 +9,11 @@ from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import api.autoresearch as autoresearch_api
 import services.autoresearch.orchestrator as autoresearch_orchestrator
 import services.autoresearch.console as autoresearch_console
 import services.autoresearch.domain_router as autoresearch_domain_router
@@ -8803,10 +8805,19 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert orchestration.project_review_bundle_ready is True
     assert orchestration.project_final_publish_ready is False
     assert orchestration.project_submission_ready is False
-    assert orchestration.project_submission_asset_count == 31
+    expected_submission_roles = set(
+        autoresearch_project_paper_orchestrator.PROJECT_SUBMISSION_PACKAGE_ROLES
+    )
+    assert orchestration.project_submission_asset_count == len(expected_submission_roles) + 1
     assert orchestration.project_submission_manifest_path is not None
     assert Path(orchestration.project_submission_manifest_path).is_file()
+    assert orchestration.project_submission_archive_manifest_path is not None
+    assert Path(orchestration.project_submission_archive_manifest_path).is_file()
+    assert orchestration.project_submission_archive_path is not None
+    assert Path(orchestration.project_submission_archive_path).is_file()
     assert Path(orchestration.project_reproducibility_checklist_path).is_file()
+    assert orchestration.project_reproducibility_checklist_json_path is not None
+    assert Path(orchestration.project_reproducibility_checklist_json_path).is_file()
     assert Path(orchestration.project_reviewer_response_path).is_file()
     assert Path(orchestration.project_review_findings_path).is_file()
     assert Path(orchestration.project_repair_execution_log_path).is_file()
@@ -8825,6 +8836,9 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert orchestration.project_benchmark_provenance_repair_index_path is not None
     assert orchestration.project_statistics_report_path is not None
     assert orchestration.project_experiment_repair_index_path is not None
+    assert orchestration.project_limitations_appendix_path is not None
+    assert orchestration.project_artifact_integrity_audit_path is not None
+    assert orchestration.project_final_publish_decision_path is not None
     assert orchestration.project_offline_publication_case_path is not None
     assert orchestration.project_offline_publication_audit_path is not None
     assert orchestration.project_publication_manifest_path is not None
@@ -8835,6 +8849,9 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert Path(orchestration.project_statistics_report_path).is_file()
     assert Path(orchestration.project_experiment_repair_index_path).is_file()
     assert Path(orchestration.project_negative_evidence_report_path).is_file()
+    assert Path(orchestration.project_limitations_appendix_path).is_file()
+    assert Path(orchestration.project_artifact_integrity_audit_path).is_file()
+    assert Path(orchestration.project_final_publish_decision_path).is_file()
     assert Path(orchestration.project_offline_publication_case_path).is_file()
     assert Path(orchestration.project_offline_publication_audit_path).is_file()
     assert Path(orchestration.project_publication_manifest_path).is_file()
@@ -8845,6 +8862,12 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert orchestration.project_statistics_report_complete is True
     assert orchestration.project_experiment_repair_index_complete is True
     assert orchestration.project_negative_evidence_report_complete is True
+    assert orchestration.project_limitations_appendix_complete is True
+    assert orchestration.project_submission_archive_manifest_complete is True
+    assert orchestration.project_submission_archive_complete is True
+    assert orchestration.project_reproducibility_checklist_json_complete is True
+    assert orchestration.project_artifact_integrity_audit_complete is True
+    assert orchestration.project_final_publish_decision_complete is True
     assert orchestration.project_offline_publication_case_complete is True
     assert orchestration.project_offline_publication_audit_complete is True
     assert orchestration.project_repair_execution_log_complete is True
@@ -8872,6 +8895,22 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert "project_publication_readiness_report" in submission_manifest["final_publish_blocking_asset_roles"]
     assert all(item["source_run_ids"] == [run.id] for item in submission_manifest["generated_assets"])
     assets_by_role = {item["role"]: item for item in submission_manifest["generated_assets"]}
+    assert set(assets_by_role) == expected_submission_roles
+    assert assets_by_role["project_submission_archive_manifest"]["source_action"] == (
+        "build_goal7_submission_archive_manifest"
+    )
+    assert assets_by_role["project_submission_archive"]["readiness_contribution"] == (
+        "submission_archive"
+    )
+    assert assets_by_role["project_reproducibility_checklist_json"]["source_action"] == (
+        "build_goal7_reproducibility_checklist"
+    )
+    assert assets_by_role["project_artifact_integrity_audit"]["readiness_contribution"] == (
+        "artifact_integrity"
+    )
+    assert assets_by_role["project_final_publish_decision"]["source_action"] == (
+        "build_goal7_final_publish_decision"
+    )
     assert assets_by_role["project_review_findings"]["source_action"] == "run_project_reviewer_simulator"
     assert assets_by_role["project_review_findings"]["readiness_contribution"] == "review_findings"
     assert assets_by_role["project_statistics_report"]["source_action"] == "build_project_statistics_report"
@@ -8899,6 +8938,22 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert submission_manifest["benchmark_provenance_manifest_path"] == orchestration.project_benchmark_provenance_manifest_path
     assert submission_manifest["statistics_report_path"] == orchestration.project_statistics_report_path
     assert submission_manifest["negative_evidence_report_path"] == orchestration.project_negative_evidence_report_path
+    assert submission_manifest["submission_archive_path"] == orchestration.project_submission_archive_path
+    assert submission_manifest["submission_archive_manifest_path"] == (
+        orchestration.project_submission_archive_manifest_path
+    )
+    assert submission_manifest["reproducibility_checklist_json_path"] == (
+        orchestration.project_reproducibility_checklist_json_path
+    )
+    assert submission_manifest["limitations_appendix_path"] == (
+        orchestration.project_limitations_appendix_path
+    )
+    assert submission_manifest["artifact_integrity_audit_path"] == (
+        orchestration.project_artifact_integrity_audit_path
+    )
+    assert submission_manifest["final_publish_decision_path"] == (
+        orchestration.project_final_publish_decision_path
+    )
     assert submission_manifest["offline_publication_case_path"] == orchestration.project_offline_publication_case_path
     assert submission_manifest["offline_publication_audit_path"] == orchestration.project_offline_publication_audit_path
     assert submission_manifest["publication_manifest_path"] == orchestration.project_publication_manifest_path
@@ -8906,6 +8961,102 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert "Project Reproducibility Checklist" in Path(
         orchestration.project_reproducibility_checklist_path
     ).read_text(encoding="utf-8")
+    archive_manifest = orchestration.project_submission_archive_manifest
+    assert archive_manifest is not None
+    assert archive_manifest.bundle_kind == "review_bundle"
+    assert archive_manifest.complete is True
+    assert archive_manifest.current is True
+    assert archive_manifest.ready_for_final_download is False
+    assert archive_manifest.entry_count == archive_manifest.required_entry_count
+    assert archive_manifest.missing_required_entry_count == 0
+    assert archive_manifest.hash_mismatch_entry_count == 0
+    assert archive_manifest.stale_entry_count == 0
+    assert archive_manifest.archive_sha256 is not None
+    assert orchestration.project_paper_sources_manifest is not None
+    assert archive_manifest.source_package_fingerprint == (
+        orchestration.project_paper_sources_manifest.manifest_fingerprint
+    )
+    assert archive_manifest.blockers == []
+    assert all(entry.source_artifact_ref for entry in archive_manifest.entries)
+    assert all(entry.sha256 for entry in archive_manifest.entries)
+    assert all(entry.size_bytes and entry.size_bytes > 0 for entry in archive_manifest.entries)
+    assert all(entry.content_type for entry in archive_manifest.entries)
+    assert all(entry.required_for_final_publish for entry in archive_manifest.entries)
+    assert all(entry.validation_status == "present" for entry in archive_manifest.entries)
+    archived_source_refs = {entry.source_artifact_ref for entry in archive_manifest.entries}
+    assert "project_submission_archive" not in archived_source_refs
+    assert "project_submission_archive_manifest" not in archived_source_refs
+    assert "project_final_publish_decision" not in archived_source_refs
+    assert "project_artifact_integrity_audit" not in archived_source_refs
+    assert "project_publication_manifest" not in archived_source_refs
+    with ZipFile(orchestration.project_submission_archive_path) as archive_zip:
+        assert set(archive_zip.namelist()) == {
+            entry.archive_path for entry in archive_manifest.entries
+        }
+    reproducibility_checklist = orchestration.project_reproducibility_checklist
+    assert reproducibility_checklist is not None
+    assert reproducibility_checklist.complete is False
+    assert reproducibility_checklist.missing_required_count >= 1
+    assert reproducibility_checklist.partial_required_count >= 1
+    checklist_items_by_id = {
+        item.item_id: item for item in reproducibility_checklist.items
+    }
+    assert checklist_items_by_id["artifact_hashes"].status == "complete"
+    assert checklist_items_by_id["commands"].status == "missing"
+    assert checklist_items_by_id["seeds_splits_samples"].status == "partial"
+    assert checklist_items_by_id["known_limitations"].required_for_final_publish is False
+    assert "No command or import path is recorded" in "\n".join(
+        checklist_items_by_id["commands"].blockers
+    )
+    artifact_integrity_audit = orchestration.project_artifact_integrity_audit
+    assert artifact_integrity_audit is not None
+    assert artifact_integrity_audit.complete is True
+    assert artifact_integrity_audit.archive_current is True
+    assert artifact_integrity_audit.unresolved_issue_count == 0
+    assert artifact_integrity_audit.blockers == []
+    final_publish_decision = orchestration.project_final_publish_decision
+    assert final_publish_decision is not None
+    assert final_publish_decision.final_publish_ready is False
+    assert final_publish_decision.policy_version == (
+        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
+    )
+    assert final_publish_decision.paper_tier == "technical_report"
+    failed_final_check_ids = {check.check_id for check in final_publish_decision.failed_checks}
+    assert failed_final_check_ids >= {
+        "literature_source_sufficiency",
+        "benchmark_provenance_and_independence",
+        "statistics_multi_run_multi_split_sufficiency",
+        "negative_evidence_retention",
+        "reproducibility_package_completeness",
+        "reviewer_revision_terminal_status",
+        "project_publish_gate",
+    }
+    assert "archive_manifest_current_and_complete" not in failed_final_check_ids
+    assert "artifact_integrity_audit" not in failed_final_check_ids
+    assert final_publish_decision.archive_manifest_ref == (
+        orchestration.project_submission_archive_manifest_path
+    )
+    assert final_publish_decision.readiness_manifest_ref == (
+        orchestration.project_publication_readiness_report_path
+    )
+    assert final_publish_decision.blockers
+    submission_package = orchestration.project_submission_package
+    assert submission_package is not None
+    assert submission_package.review_bundle_ready is True
+    assert submission_package.final_publish_ready is False
+    assert submission_package.bundle_kind == "review_bundle"
+    assert submission_package.archive_manifest is not None
+    assert submission_package.archive_manifest.current is True
+    assert submission_package.final_publish_decision is not None
+    assert submission_package.final_publish_decision.failed_checks
+    persisted_package = autoresearch_project_paper_orchestrator.load_project_submission_package(
+        project_id
+    )
+    assert persisted_package is not None
+    assert persisted_package.archive_manifest is not None
+    assert persisted_package.archive_manifest.current is True
+    assert persisted_package.final_publish_decision is not None
+    assert persisted_package.final_publish_decision.final_publish_ready is False
     benchmark_card = json.loads(Path(orchestration.project_benchmark_card_path).read_text(encoding="utf-8"))
     assert benchmark_card["card_id"] == "project_benchmark_card_v1"
     assert benchmark_card["selected_run_ids"] == [run.id]
@@ -8977,6 +9128,21 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert publication_manifest["negative_evidence_report_sha256"] is not None
     assert publication_manifest["negative_evidence_report_ref"] == (
         "submission_package/negative_evidence_report.json"
+    )
+    assert publication_manifest["final_publish_decision_ref"] == (
+        "submission_package/final_publish_decision.json"
+    )
+    assert publication_manifest["submission_archive_sha256"] is not None
+    assert publication_manifest["submission_archive_manifest_sha256"] is not None
+    assert publication_manifest["reproducibility_checklist_json_sha256"] is not None
+    assert publication_manifest["limitations_appendix_sha256"] is not None
+    assert publication_manifest["artifact_integrity_audit_sha256"] is not None
+    assert publication_manifest["final_publish_decision_sha256"] is not None
+    assert publication_manifest["final_publish_policy_version"] == (
+        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
+    )
+    assert set(publication_manifest["final_publish_failed_check_ids"]) == (
+        failed_final_check_ids
     )
     assert publication_manifest["phase6_negative_evidence_coverage"] == (
         readiness_decision["phase6_negative_evidence_coverage"]
@@ -9668,6 +9834,11 @@ def test_operator_console_surfaces_offline_publication_case_status(
         "project_retrieval_evidence_ledger",
         "project_statistics_report",
         "project_experiment_repair_index",
+        "project_submission_archive_manifest",
+        "project_submission_archive",
+        "project_reproducibility_checklist_json",
+        "project_artifact_integrity_audit",
+        "project_final_publish_decision",
     }.issubset(roles)
     statuses_by_role = {item["role"]: item for item in publication_case.package_asset_statuses}
     assert statuses_by_role["project_publication_readiness_report"]["blocked_status"] == (
@@ -9676,6 +9847,31 @@ def test_operator_console_surfaces_offline_publication_case_status(
     assert statuses_by_role["project_publication_readiness_report"]["final_publish_blocking"] is True
     assert statuses_by_role["project_publication_readiness_report"]["blocking_check_ids"]
     assert statuses_by_role["project_publication_readiness_report"]["blocking_reasons"]
+    assert publication_case.submission_archive_manifest_path is not None
+    assert Path(publication_case.submission_archive_manifest_path).is_file()
+    assert publication_case.submission_archive_path is not None
+    assert Path(publication_case.submission_archive_path).is_file()
+    assert publication_case.submission_archive_complete is True
+    assert publication_case.submission_archive_current is True
+    assert publication_case.submission_archive_ready_for_final_download is False
+    assert publication_case.submission_archive_entry_count > 0
+    assert publication_case.submission_archive_missing_required_entry_count == 0
+    assert publication_case.submission_archive_hash_mismatch_entry_count == 0
+    assert publication_case.submission_archive_stale_entry_count == 0
+    assert publication_case.reproducibility_checklist_json_path is not None
+    assert Path(publication_case.reproducibility_checklist_json_path).is_file()
+    assert publication_case.reproducibility_checklist_complete is False
+    assert publication_case.reproducibility_checklist_missing_required_count >= 1
+    assert publication_case.artifact_integrity_audit_path is not None
+    assert Path(publication_case.artifact_integrity_audit_path).is_file()
+    assert publication_case.artifact_integrity_audit_complete is True
+    assert publication_case.artifact_integrity_unresolved_issue_count == 0
+    assert publication_case.final_publish_decision_path is not None
+    assert Path(publication_case.final_publish_decision_path).is_file()
+    assert publication_case.final_publish_policy_version == (
+        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
+    )
+    assert "project_publish_gate" in publication_case.final_publish_failed_check_ids
     assert publication_case.repair_action_status_counts
     assert "blocked" in publication_case.repair_action_status_counts
     assert publication_case.review_finding_count > 0
@@ -11133,6 +11329,141 @@ def test_goal6_project_revision_loop_materializes_typed_plan_response_and_rerevi
     assert revision_round.unresolved_blockers
 
 
+def _build_goal7_single_run_project(project_id: str) -> tuple[str, object]:
+    brief = autoresearch_repository.save_research_brief(
+        autoresearch_idea_brief.build_research_brief(
+            project_id=project_id,
+            payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+        )
+    )
+    run = autoresearch_repository.create_run(
+        project_id,
+        "Goal 7 submission package gate",
+        request=AutoResearchRunConfig(task_family_hint="ir_reranking"),
+        brief_id=brief.brief_id,
+        hypothesis_id=brief.selected_hypothesis_id,
+        direction_selection_reason=brief.selection_reason,
+    )
+    autoresearch_repository.save_run(
+        run.model_copy(
+            update={
+                "status": "done",
+                "artifact": _stable_project_artifact(0.72),
+            }
+        )
+    )
+    return run.id, autoresearch_project_paper_orchestrator.build_project_paper_orchestration(
+        project_id
+    )
+
+
+def test_goal7_submission_loader_blocks_archive_hash_mismatch(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "goal7-archive-hash-mismatch"
+    _run_id, orchestration = _build_goal7_single_run_project(project_id)
+    archive_manifest = orchestration.project_submission_archive_manifest
+    assert archive_manifest is not None
+    entry = next(
+        item
+        for item in archive_manifest.entries
+        if item.source_artifact_ref == "project_reviewer_response"
+    )
+    source_path = Path(entry.source_path)
+    source_path.write_text(
+        source_path.read_text(encoding="utf-8") + "\nmutated after archive build\n",
+        encoding="utf-8",
+    )
+
+    package = autoresearch_project_paper_orchestrator.load_project_submission_package(
+        project_id
+    )
+
+    assert package is not None
+    assert package.archive_manifest is not None
+    assert package.archive_manifest.complete is False
+    assert package.archive_manifest.current is False
+    assert package.archive_manifest.ready_for_final_download is False
+    assert package.archive_manifest.hash_mismatch_entry_count >= 1
+    assert any(
+        item.source_artifact_ref == "project_reviewer_response"
+        and item.validation_status == "hash_mismatch"
+        for item in package.archive_manifest.entries
+    )
+    assert package.artifact_integrity_audit is not None
+    assert package.artifact_integrity_audit.complete is False
+    assert package.artifact_integrity_audit.hash_mismatch_count >= 1
+    assert package.artifact_integrity_audit.unresolved_issue_count >= 1
+    assert package.final_publish_decision is not None
+    assert package.final_publish_decision.final_publish_ready is False
+    failed_check_ids = {
+        check.check_id for check in package.final_publish_decision.failed_checks
+    }
+    assert "archive_manifest_current_and_complete" in failed_check_ids
+    assert "artifact_integrity_audit" in failed_check_ids
+
+
+def test_goal7_submission_loader_blocks_stale_source_manifest(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "goal7-stale-source-manifest"
+    _run_id, orchestration = _build_goal7_single_run_project(project_id)
+    archive_manifest = orchestration.project_submission_archive_manifest
+    assert archive_manifest is not None
+    source_manifest_path = Path(archive_manifest.source_package_manifest_ref)
+    source_manifest_payload = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    source_manifest_payload["manifest_fingerprint"] = "changed-after-archive"
+    source_manifest_path.write_text(
+        json.dumps(source_manifest_payload, indent=2),
+        encoding="utf-8",
+    )
+
+    package = autoresearch_project_paper_orchestrator.load_project_submission_package(
+        project_id
+    )
+
+    assert package is not None
+    assert package.archive_manifest is not None
+    assert package.archive_manifest.complete is False
+    assert package.archive_manifest.current is False
+    assert package.archive_manifest.stale_entry_count == package.archive_manifest.entry_count
+    assert package.archive_manifest.blockers
+    assert package.artifact_integrity_audit is not None
+    assert package.artifact_integrity_audit.complete is False
+    assert package.artifact_integrity_audit.stale_entry_count == (
+        package.archive_manifest.entry_count
+    )
+    assert package.final_publish_decision is not None
+    assert package.final_publish_decision.final_publish_ready is False
+    failed_check_ids = {
+        check.check_id for check in package.final_publish_decision.failed_checks
+    }
+    assert "archive_manifest_current_and_complete" in failed_check_ids
+    assert "artifact_integrity_audit" in failed_check_ids
+
+
+def test_goal7_submission_download_endpoint_requires_final_publish_ready(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    project_id = "goal7-download-gated"
+    _run_id, _orchestration = _build_goal7_single_run_project(project_id)
+
+    package = autoresearch_api.get_auto_research_project_submission_package(project_id)
+
+    assert package.review_bundle_ready is True
+    assert package.final_publish_ready is False
+    with pytest.raises(HTTPException) as exc_info:
+        autoresearch_api.download_auto_research_project_submission_archive(project_id)
+    assert exc_info.value.status_code == 409
+    assert "not final-publish-ready" in str(exc_info.value.detail)
+
+
 def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
     monkeypatch,
     tmp_path: Path,
@@ -11222,38 +11553,9 @@ def test_project_paper_orchestrator_allows_project_paper_for_stable_evidence(
     assert submission_manifest["bundle_kind"] == "review_bundle"
     assert submission_manifest["review_bundle_ready"] is True
     assert submission_manifest["final_publish_ready"] is False
-    assert {item["role"] for item in submission_manifest["generated_assets"]} == {
-        "project_reproducibility_checklist",
-        "project_reviewer_response",
-        "project_review_findings",
-        "project_repair_execution_log",
-        "project_claim_evidence_index",
-        "project_retrieval_evidence_ledger",
-        "project_lineage_archive",
-        "project_literature_support_index",
-        "project_paper_compiler_evidence",
-        "project_publication_evidence_index",
-        "project_publication_readiness_report",
-        "project_supplemental_artifacts",
-        "project_manuscript_markdown",
-        "project_paper_sources",
-        "project_revised_manuscript_markdown",
-        "project_revision_action_plan",
-        "project_reviewer_response_dossier",
-        "project_revision_round",
-        "project_revision_application",
-        "project_revision_rereview_report",
-        "project_code_package",
-        "project_benchmark_card",
-        "project_benchmark_provenance_manifest",
-        "project_benchmark_provenance_repair_index",
-        "project_statistics_report",
-        "project_experiment_repair_index",
-        "project_negative_evidence_report",
-        "project_offline_publication_case",
-        "project_offline_publication_audit",
-        "project_publication_manifest",
-    }
+    assert {item["role"] for item in submission_manifest["generated_assets"]} == set(
+        autoresearch_project_paper_orchestrator.PROJECT_SUBMISSION_PACKAGE_ROLES
+    )
     assert Path(orchestration.project_code_package_path).is_file()
     assert Path(orchestration.project_benchmark_card_path).is_file()
     assert Path(orchestration.project_paper_compiler_evidence_path).is_file()
@@ -11400,6 +11702,35 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     )
     assert claim_evidence_vertical.trace.project_submission_manifest_path is not None
     assert Path(claim_evidence_vertical.trace.project_submission_manifest_path).is_file()
+    assert claim_evidence_vertical.trace.project_submission_archive_manifest_path is not None
+    assert Path(claim_evidence_vertical.trace.project_submission_archive_manifest_path).is_file()
+    assert claim_evidence_vertical.trace.project_submission_archive_path is not None
+    assert Path(claim_evidence_vertical.trace.project_submission_archive_path).is_file()
+    assert claim_evidence_vertical.trace.project_submission_archive_complete is True
+    assert claim_evidence_vertical.trace.project_submission_archive_current is True
+    assert (
+        claim_evidence_vertical.trace.project_submission_archive_ready_for_final_download
+        is False
+    )
+    assert claim_evidence_vertical.trace.project_submission_archive_entry_count > 0
+    assert (
+        claim_evidence_vertical.trace.project_submission_archive_missing_required_entry_count
+        == 0
+    )
+    assert claim_evidence_vertical.trace.project_reproducibility_checklist_json_path is not None
+    assert Path(claim_evidence_vertical.trace.project_reproducibility_checklist_json_path).is_file()
+    assert claim_evidence_vertical.trace.project_reproducibility_checklist_complete is False
+    assert claim_evidence_vertical.trace.project_artifact_integrity_audit_path is not None
+    assert Path(claim_evidence_vertical.trace.project_artifact_integrity_audit_path).is_file()
+    assert claim_evidence_vertical.trace.project_artifact_integrity_audit_complete is True
+    assert claim_evidence_vertical.trace.project_final_publish_decision_path is not None
+    assert Path(claim_evidence_vertical.trace.project_final_publish_decision_path).is_file()
+    assert claim_evidence_vertical.trace.project_final_publish_policy_version == (
+        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
+    )
+    assert "project_publish_gate" in (
+        claim_evidence_vertical.trace.project_final_publish_failed_check_ids
+    )
     assert claim_evidence_vertical.trace.project_publication_manifest_path is not None
     assert Path(claim_evidence_vertical.trace.project_publication_manifest_path).is_file()
     assert claim_evidence_vertical.trace.project_publication_readiness_report_path is not None

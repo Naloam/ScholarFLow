@@ -3138,6 +3138,144 @@ class AutoResearchProjectClaimTraceRead(BaseModel):
     strong_claim: bool = False
 
 
+class AutoResearchSubmissionArchiveEntryRead(BaseModel):
+    logical_id: str
+    archive_path: str
+    source_artifact_ref: str
+    source_path: str
+    sha256: str | None = None
+    size_bytes: int | None = None
+    content_type: str = "application/octet-stream"
+    generated_by: str | None = None
+    required_for_final_publish: bool = True
+    validation_status: Literal["present", "missing", "hash_mismatch", "stale"] = "missing"
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchSubmissionArchiveManifestRead(BaseModel):
+    manifest_id: str
+    schema_version: str = "1.0"
+    project_id: str
+    generated_at: datetime
+    bundle_kind: AutoResearchPublishBundleKind = "review_bundle"
+    archive_path: str
+    archive_sha256: str | None = None
+    archive_size_bytes: int | None = None
+    source_package_fingerprint: str | None = None
+    source_package_manifest_ref: str | None = None
+    entry_count: int = 0
+    required_entry_count: int = 0
+    present_required_entry_count: int = 0
+    missing_required_entry_count: int = 0
+    hash_mismatch_entry_count: int = 0
+    stale_entry_count: int = 0
+    complete: bool = False
+    current: bool = False
+    ready_for_final_download: bool = False
+    entries: list[AutoResearchSubmissionArchiveEntryRead] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    manifest_fingerprint: str
+
+
+class AutoResearchReproducibilityChecklistItemRead(BaseModel):
+    item_id: str
+    category: str
+    label: str
+    status: Literal["complete", "partial", "missing", "not_applicable"] = "missing"
+    required_for_final_publish: bool = True
+    evidence_refs: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoResearchReproducibilityChecklistRead(BaseModel):
+    checklist_id: str
+    schema_version: str = "1.0"
+    project_id: str
+    generated_at: datetime
+    complete: bool = False
+    missing_required_count: int = 0
+    partial_required_count: int = 0
+    external_requirement_blocker_count: int = 0
+    claim_ceiling: str | None = None
+    items: list[AutoResearchReproducibilityChecklistItemRead] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    checklist_fingerprint: str
+
+
+class AutoResearchProjectArtifactIntegrityAuditRead(BaseModel):
+    audit_id: str
+    project_id: str
+    generated_at: datetime
+    complete: bool = False
+    archive_current: bool = False
+    unresolved_issue_count: int = 0
+    missing_required_artifact_count: int = 0
+    hash_mismatch_count: int = 0
+    stale_entry_count: int = 0
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    audit_fingerprint: str
+
+
+class AutoResearchFinalPublishCheckRead(BaseModel):
+    check_id: str
+    passed: bool = False
+    required_for_final_publish: bool = True
+    evidence_refs: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoResearchFinalPublishDecisionRead(BaseModel):
+    decision_id: str
+    project_id: str
+    final_publish_ready: bool = False
+    paper_tier: AutoResearchPaperTier = "technical_report"
+    policy_version: str
+    checked_at: datetime
+    passed_checks: list[AutoResearchFinalPublishCheckRead] = Field(default_factory=list)
+    failed_checks: list[AutoResearchFinalPublishCheckRead] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    claim_ceiling: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+    archive_manifest_ref: str | None = None
+    readiness_manifest_ref: str | None = None
+    policy_exceptions: list[dict[str, Any]] = Field(default_factory=list)
+    decision_fingerprint: str
+
+
+class AutoResearchSubmissionPackageRead(BaseModel):
+    package_id: str
+    project_id: str
+    generated_at: datetime
+    bundle_kind: AutoResearchPublishBundleKind = "review_bundle"
+    review_bundle_ready: bool = False
+    final_publish_ready: bool = False
+    submission_manifest_path: str | None = None
+    archive_manifest_path: str | None = None
+    archive_path: str | None = None
+    reproducibility_checklist_path: str | None = None
+    reproducibility_checklist_json_path: str | None = None
+    artifact_integrity_audit_path: str | None = None
+    final_publish_decision_path: str | None = None
+    archive_manifest: AutoResearchSubmissionArchiveManifestRead | None = None
+    reproducibility_checklist: AutoResearchReproducibilityChecklistRead | None = None
+    artifact_integrity_audit: AutoResearchProjectArtifactIntegrityAuditRead | None = None
+    final_publish_decision: AutoResearchFinalPublishDecisionRead | None = None
+    blockers: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    package_fingerprint: str
+
+
 class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     generated_at: datetime
     orchestrator_id: str = "project_paper_orchestrator_v1"
@@ -3214,9 +3352,15 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     project_revision_round: AutoResearchRevisionRoundRead | None = None
     project_revision_round_path: str | None = None
     project_submission_dir: str | None = None
+    project_submission_package: AutoResearchSubmissionPackageRead | None = None
     project_submission_manifest: dict[str, Any] | None = None
     project_submission_manifest_path: str | None = None
+    project_submission_archive_manifest: AutoResearchSubmissionArchiveManifestRead | None = None
+    project_submission_archive_manifest_path: str | None = None
+    project_submission_archive_path: str | None = None
     project_reproducibility_checklist_path: str | None = None
+    project_reproducibility_checklist: AutoResearchReproducibilityChecklistRead | None = None
+    project_reproducibility_checklist_json_path: str | None = None
     project_reviewer_response_path: str | None = None
     project_review_findings_path: str | None = None
     project_repair_execution_log_path: str | None = None
@@ -3237,6 +3381,11 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     project_statistics_report_path: str | None = None
     project_experiment_repair_index_path: str | None = None
     project_negative_evidence_report_path: str | None = None
+    project_limitations_appendix_path: str | None = None
+    project_artifact_integrity_audit: AutoResearchProjectArtifactIntegrityAuditRead | None = None
+    project_artifact_integrity_audit_path: str | None = None
+    project_final_publish_decision: AutoResearchFinalPublishDecisionRead | None = None
+    project_final_publish_decision_path: str | None = None
     project_offline_publication_case_path: str | None = None
     project_offline_publication_audit_path: str | None = None
     project_publication_manifest_path: str | None = None
@@ -3265,6 +3414,12 @@ class AutoResearchProjectPaperOrchestrationRead(BaseModel):
     project_statistics_report_complete: bool = False
     project_experiment_repair_index_complete: bool = False
     project_negative_evidence_report_complete: bool = False
+    project_limitations_appendix_complete: bool = False
+    project_submission_archive_manifest_complete: bool = False
+    project_submission_archive_complete: bool = False
+    project_reproducibility_checklist_json_complete: bool = False
+    project_artifact_integrity_audit_complete: bool = False
+    project_final_publish_decision_complete: bool = False
     project_offline_publication_case_complete: bool = False
     project_offline_publication_audit_complete: bool = False
     project_publication_manifest_complete: bool = False
@@ -3353,6 +3508,11 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     project_negative_evidence_report_path: str | None = None
     project_offline_publication_case_path: str | None = None
     project_offline_publication_audit_path: str | None = None
+    project_submission_archive_manifest_path: str | None = None
+    project_submission_archive_path: str | None = None
+    project_reproducibility_checklist_json_path: str | None = None
+    project_artifact_integrity_audit_path: str | None = None
+    project_final_publish_decision_path: str | None = None
     project_paper_sources_manifest_path: str | None = None
     project_paper_sources_reconstructable: bool = False
     project_paper_source_package_ready: bool = False
@@ -3384,6 +3544,20 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     project_submission_asset_roles: list[str] = Field(default_factory=list)
     project_submission_missing_asset_roles: list[str] = Field(default_factory=list)
     project_submission_required_roles_present: bool = False
+    project_submission_archive_complete: bool = False
+    project_submission_archive_current: bool = False
+    project_submission_archive_ready_for_final_download: bool = False
+    project_submission_archive_entry_count: int = 0
+    project_submission_archive_missing_required_entry_count: int = 0
+    project_submission_archive_hash_mismatch_entry_count: int = 0
+    project_submission_archive_stale_entry_count: int = 0
+    project_reproducibility_checklist_complete: bool = False
+    project_reproducibility_checklist_missing_required_count: int = 0
+    project_reproducibility_checklist_partial_required_count: int = 0
+    project_artifact_integrity_audit_complete: bool = False
+    project_artifact_integrity_unresolved_issue_count: int = 0
+    project_final_publish_policy_version: str | None = None
+    project_final_publish_failed_check_ids: list[str] = Field(default_factory=list)
     project_experiment_execution_source_counts: dict[str, int] = Field(default_factory=dict)
     project_imported_replay_run_ids: list[str] = Field(default_factory=list)
     project_materialized_execution_run_ids: list[str] = Field(default_factory=list)
@@ -4608,6 +4782,25 @@ class AutoResearchOperatorPublicationCaseRead(BaseModel):
     blocked_asset_roles: list[str] = Field(default_factory=list)
     final_publish_blocking_asset_roles: list[str] = Field(default_factory=list)
     package_asset_statuses: list[dict[str, Any]] = Field(default_factory=list)
+    submission_archive_manifest_path: str | None = None
+    submission_archive_path: str | None = None
+    submission_archive_complete: bool = False
+    submission_archive_current: bool = False
+    submission_archive_ready_for_final_download: bool = False
+    submission_archive_entry_count: int = 0
+    submission_archive_missing_required_entry_count: int = 0
+    submission_archive_hash_mismatch_entry_count: int = 0
+    submission_archive_stale_entry_count: int = 0
+    reproducibility_checklist_json_path: str | None = None
+    reproducibility_checklist_complete: bool = False
+    reproducibility_checklist_missing_required_count: int = 0
+    reproducibility_checklist_partial_required_count: int = 0
+    artifact_integrity_audit_path: str | None = None
+    artifact_integrity_audit_complete: bool = False
+    artifact_integrity_unresolved_issue_count: int = 0
+    final_publish_decision_path: str | None = None
+    final_publish_policy_version: str | None = None
+    final_publish_failed_check_ids: list[str] = Field(default_factory=list)
     repair_action_status_counts: dict[str, int] = Field(default_factory=dict)
     repair_action_recommendations: dict[str, str] = Field(default_factory=dict)
     review_finding_count: int = 0

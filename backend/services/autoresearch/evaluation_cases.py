@@ -32,7 +32,10 @@ from services.autoresearch.literature_scout import (
     literature_insights_from_scout,
     scout_and_mine_gaps,
 )
-from services.autoresearch.project_paper_orchestrator import build_project_paper_orchestration
+from services.autoresearch.project_paper_orchestrator import (
+    PROJECT_SUBMISSION_PACKAGE_ROLES,
+    build_project_paper_orchestration,
+)
 from services.autoresearch.repository import (
     save_literature_scout_cache,
     save_research_brief,
@@ -356,28 +359,8 @@ _SCHOLARFLOW_PAPER_MATERIALS = [
     "Failure analysis: repair actions distinguish missing baselines, missing ablations, weak statistics, and failed hypotheses.",
 ]
 
-_OFFLINE_PUBLICATION_CASE_REQUIRED_PACKAGE_ROLES = {
-    "project_reviewer_response",
-    "project_review_findings",
-    "project_repair_execution_log",
-    "project_claim_evidence_index",
-    "project_retrieval_evidence_ledger",
-    "project_lineage_archive",
-    "project_literature_support_index",
-    "project_paper_compiler_evidence",
-    "project_publication_evidence_index",
-    "project_publication_readiness_report",
-    "project_supplemental_artifacts",
-    "project_benchmark_card",
-    "project_benchmark_provenance_manifest",
-    "project_benchmark_provenance_repair_index",
-    "project_statistics_report",
-    "project_experiment_repair_index",
-    "project_negative_evidence_report",
-    "project_offline_publication_case",
-    "project_offline_publication_audit",
-    "project_code_package",
-    "project_publication_manifest",
+_OFFLINE_PUBLICATION_CASE_REQUIRED_PACKAGE_ROLES = set(PROJECT_SUBMISSION_PACKAGE_ROLES) - {
+    "project_submission_manifest",
 }
 
 
@@ -444,6 +427,51 @@ def _submission_trace_fields(project_paper: Any) -> dict[str, Any]:
     manifest = getattr(project_paper, "project_submission_manifest", None)
     if not isinstance(manifest, dict):
         manifest = _read_json_file(getattr(project_paper, "project_submission_manifest_path", None))
+    archive_manifest = getattr(project_paper, "project_submission_archive_manifest", None)
+    if hasattr(archive_manifest, "model_dump"):
+        archive_manifest = archive_manifest.model_dump(mode="json")
+    if not isinstance(archive_manifest, dict):
+        archive_manifest = _read_json_file(
+            getattr(project_paper, "project_submission_archive_manifest_path", None)
+        )
+    reproducibility_checklist = getattr(
+        project_paper,
+        "project_reproducibility_checklist",
+        None,
+    )
+    if hasattr(reproducibility_checklist, "model_dump"):
+        reproducibility_checklist = reproducibility_checklist.model_dump(mode="json")
+    if not isinstance(reproducibility_checklist, dict):
+        reproducibility_checklist = _read_json_file(
+            getattr(project_paper, "project_reproducibility_checklist_json_path", None)
+        )
+    artifact_integrity_audit = getattr(
+        project_paper,
+        "project_artifact_integrity_audit",
+        None,
+    )
+    if hasattr(artifact_integrity_audit, "model_dump"):
+        artifact_integrity_audit = artifact_integrity_audit.model_dump(mode="json")
+    if not isinstance(artifact_integrity_audit, dict):
+        artifact_integrity_audit = _read_json_file(
+            getattr(project_paper, "project_artifact_integrity_audit_path", None)
+        )
+    final_publish_decision = getattr(
+        project_paper,
+        "project_final_publish_decision",
+        None,
+    )
+    if hasattr(final_publish_decision, "model_dump"):
+        final_publish_decision = final_publish_decision.model_dump(mode="json")
+    if not isinstance(final_publish_decision, dict):
+        final_publish_decision = _read_json_file(
+            getattr(project_paper, "project_final_publish_decision_path", None)
+        )
+    failed_check_ids = [
+        str(item.get("check_id"))
+        for item in final_publish_decision.get("failed_checks", [])
+        if isinstance(item, dict) and item.get("check_id")
+    ]
     assets = [
         item
         for item in manifest.get("generated_assets", [])
@@ -561,6 +589,69 @@ def _submission_trace_fields(project_paper: Any) -> dict[str, Any]:
         "project_submission_asset_roles": roles,
         "project_submission_missing_asset_roles": missing_roles,
         "project_submission_required_roles_present": bool(roles) and not missing_roles,
+        "project_submission_archive_manifest_path": getattr(
+            project_paper,
+            "project_submission_archive_manifest_path",
+            None,
+        ),
+        "project_submission_archive_path": getattr(
+            project_paper,
+            "project_submission_archive_path",
+            None,
+        ),
+        "project_reproducibility_checklist_json_path": getattr(
+            project_paper,
+            "project_reproducibility_checklist_json_path",
+            None,
+        ),
+        "project_artifact_integrity_audit_path": getattr(
+            project_paper,
+            "project_artifact_integrity_audit_path",
+            None,
+        ),
+        "project_final_publish_decision_path": getattr(
+            project_paper,
+            "project_final_publish_decision_path",
+            None,
+        ),
+        "project_submission_archive_complete": bool(archive_manifest.get("complete")),
+        "project_submission_archive_current": bool(archive_manifest.get("current")),
+        "project_submission_archive_ready_for_final_download": bool(
+            archive_manifest.get("ready_for_final_download")
+        ),
+        "project_submission_archive_entry_count": int(
+            archive_manifest.get("entry_count") or 0
+        ),
+        "project_submission_archive_missing_required_entry_count": int(
+            archive_manifest.get("missing_required_entry_count") or 0
+        ),
+        "project_submission_archive_hash_mismatch_entry_count": int(
+            archive_manifest.get("hash_mismatch_entry_count") or 0
+        ),
+        "project_submission_archive_stale_entry_count": int(
+            archive_manifest.get("stale_entry_count") or 0
+        ),
+        "project_reproducibility_checklist_complete": bool(
+            reproducibility_checklist.get("complete")
+        ),
+        "project_reproducibility_checklist_missing_required_count": int(
+            reproducibility_checklist.get("missing_required_count") or 0
+        ),
+        "project_reproducibility_checklist_partial_required_count": int(
+            reproducibility_checklist.get("partial_required_count") or 0
+        ),
+        "project_artifact_integrity_audit_complete": bool(
+            artifact_integrity_audit.get("complete")
+        ),
+        "project_artifact_integrity_unresolved_issue_count": int(
+            artifact_integrity_audit.get("unresolved_issue_count") or 0
+        ),
+        "project_final_publish_policy_version": (
+            str(final_publish_decision.get("policy_version"))
+            if final_publish_decision.get("policy_version") is not None
+            else None
+        ),
+        "project_final_publish_failed_check_ids": failed_check_ids,
     }
 
 
@@ -1602,6 +1693,29 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         "project_revision_rereview_regressed_count": 0,
         "project_revision_terminal_status": "needs_revision",
         "project_revision_readiness_impact": None,
+        "project_submission_bundle_kind": None,
+        "project_submission_asset_roles": [],
+        "project_submission_missing_asset_roles": [],
+        "project_submission_required_roles_present": False,
+        "project_submission_archive_manifest_path": None,
+        "project_submission_archive_path": None,
+        "project_reproducibility_checklist_json_path": None,
+        "project_artifact_integrity_audit_path": None,
+        "project_final_publish_decision_path": None,
+        "project_submission_archive_complete": False,
+        "project_submission_archive_current": False,
+        "project_submission_archive_ready_for_final_download": False,
+        "project_submission_archive_entry_count": 0,
+        "project_submission_archive_missing_required_entry_count": 0,
+        "project_submission_archive_hash_mismatch_entry_count": 0,
+        "project_submission_archive_stale_entry_count": 0,
+        "project_reproducibility_checklist_complete": False,
+        "project_reproducibility_checklist_missing_required_count": 0,
+        "project_reproducibility_checklist_partial_required_count": 0,
+        "project_artifact_integrity_audit_complete": False,
+        "project_artifact_integrity_unresolved_issue_count": 0,
+        "project_final_publish_policy_version": None,
+        "project_final_publish_failed_check_ids": [],
     }
     project_review_bundle_ready = False
     project_final_publish_ready = False
@@ -2396,6 +2510,63 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         project_submission_asset_roles=project_submission_asset_roles,
         project_submission_missing_asset_roles=project_submission_missing_asset_roles,
         project_submission_required_roles_present=project_submission_required_roles_present,
+        project_submission_archive_manifest_path=project_submission_trace_fields[
+            "project_submission_archive_manifest_path"
+        ],
+        project_submission_archive_path=project_submission_trace_fields[
+            "project_submission_archive_path"
+        ],
+        project_reproducibility_checklist_json_path=project_submission_trace_fields[
+            "project_reproducibility_checklist_json_path"
+        ],
+        project_artifact_integrity_audit_path=project_submission_trace_fields[
+            "project_artifact_integrity_audit_path"
+        ],
+        project_final_publish_decision_path=project_submission_trace_fields[
+            "project_final_publish_decision_path"
+        ],
+        project_submission_archive_complete=project_submission_trace_fields[
+            "project_submission_archive_complete"
+        ],
+        project_submission_archive_current=project_submission_trace_fields[
+            "project_submission_archive_current"
+        ],
+        project_submission_archive_ready_for_final_download=project_submission_trace_fields[
+            "project_submission_archive_ready_for_final_download"
+        ],
+        project_submission_archive_entry_count=project_submission_trace_fields[
+            "project_submission_archive_entry_count"
+        ],
+        project_submission_archive_missing_required_entry_count=project_submission_trace_fields[
+            "project_submission_archive_missing_required_entry_count"
+        ],
+        project_submission_archive_hash_mismatch_entry_count=project_submission_trace_fields[
+            "project_submission_archive_hash_mismatch_entry_count"
+        ],
+        project_submission_archive_stale_entry_count=project_submission_trace_fields[
+            "project_submission_archive_stale_entry_count"
+        ],
+        project_reproducibility_checklist_complete=project_submission_trace_fields[
+            "project_reproducibility_checklist_complete"
+        ],
+        project_reproducibility_checklist_missing_required_count=project_submission_trace_fields[
+            "project_reproducibility_checklist_missing_required_count"
+        ],
+        project_reproducibility_checklist_partial_required_count=project_submission_trace_fields[
+            "project_reproducibility_checklist_partial_required_count"
+        ],
+        project_artifact_integrity_audit_complete=project_submission_trace_fields[
+            "project_artifact_integrity_audit_complete"
+        ],
+        project_artifact_integrity_unresolved_issue_count=project_submission_trace_fields[
+            "project_artifact_integrity_unresolved_issue_count"
+        ],
+        project_final_publish_policy_version=project_submission_trace_fields[
+            "project_final_publish_policy_version"
+        ],
+        project_final_publish_failed_check_ids=project_submission_trace_fields[
+            "project_final_publish_failed_check_ids"
+        ],
         project_experiment_execution_source_counts=project_experiment_execution_source_counts,
         project_imported_replay_run_ids=project_imported_replay_run_ids,
         project_materialized_execution_run_ids=project_materialized_execution_run_ids,

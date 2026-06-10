@@ -3939,6 +3939,25 @@ export type AutoResearchOperatorPublicationCase = {
   blocked_asset_roles: string[];
   final_publish_blocking_asset_roles: string[];
   package_asset_statuses: Record<string, unknown>[];
+  submission_archive_manifest_path?: string | null;
+  submission_archive_path?: string | null;
+  submission_archive_complete: boolean;
+  submission_archive_current: boolean;
+  submission_archive_ready_for_final_download: boolean;
+  submission_archive_entry_count: number;
+  submission_archive_missing_required_entry_count: number;
+  submission_archive_hash_mismatch_entry_count: number;
+  submission_archive_stale_entry_count: number;
+  reproducibility_checklist_json_path?: string | null;
+  reproducibility_checklist_complete: boolean;
+  reproducibility_checklist_missing_required_count: number;
+  reproducibility_checklist_partial_required_count: number;
+  artifact_integrity_audit_path?: string | null;
+  artifact_integrity_audit_complete: boolean;
+  artifact_integrity_unresolved_issue_count: number;
+  final_publish_decision_path?: string | null;
+  final_publish_policy_version?: string | null;
+  final_publish_failed_check_ids: string[];
   repair_action_status_counts: Record<string, number>;
   repair_action_recommendations: Record<string, string>;
   review_finding_count: number;
@@ -4142,6 +4161,144 @@ export type AutoResearchProjectClaimTrace = {
   strong_claim: boolean;
 };
 
+export type AutoResearchSubmissionArchiveEntry = {
+  logical_id: string;
+  archive_path: string;
+  source_artifact_ref: string;
+  source_path: string;
+  sha256?: string | null;
+  size_bytes?: number | null;
+  content_type: string;
+  generated_by?: string | null;
+  required_for_final_publish: boolean;
+  validation_status: "present" | "missing" | "hash_mismatch" | "stale";
+  blockers: string[];
+};
+
+export type AutoResearchSubmissionArchiveManifest = {
+  manifest_id: string;
+  schema_version: string;
+  project_id: string;
+  generated_at: string;
+  bundle_kind: "review_bundle" | "final_publish_bundle";
+  archive_path: string;
+  archive_sha256?: string | null;
+  archive_size_bytes?: number | null;
+  source_package_fingerprint?: string | null;
+  source_package_manifest_ref?: string | null;
+  entry_count: number;
+  required_entry_count: number;
+  present_required_entry_count: number;
+  missing_required_entry_count: number;
+  hash_mismatch_entry_count: number;
+  stale_entry_count: number;
+  complete: boolean;
+  current: boolean;
+  ready_for_final_download: boolean;
+  entries: AutoResearchSubmissionArchiveEntry[];
+  blockers: string[];
+  warnings: string[];
+  manifest_fingerprint: string;
+};
+
+export type AutoResearchReproducibilityChecklistItem = {
+  item_id: string;
+  category: string;
+  label: string;
+  status: "complete" | "partial" | "missing" | "not_applicable";
+  required_for_final_publish: boolean;
+  evidence_refs: string[];
+  artifact_refs: string[];
+  blockers: string[];
+  limitations: string[];
+  details: Record<string, unknown>;
+};
+
+export type AutoResearchReproducibilityChecklist = {
+  checklist_id: string;
+  schema_version: string;
+  project_id: string;
+  generated_at: string;
+  complete: boolean;
+  missing_required_count: number;
+  partial_required_count: number;
+  external_requirement_blocker_count: number;
+  claim_ceiling?: string | null;
+  items: AutoResearchReproducibilityChecklistItem[];
+  blockers: string[];
+  limitations: string[];
+  checklist_fingerprint: string;
+};
+
+export type AutoResearchProjectArtifactIntegrityAudit = {
+  audit_id: string;
+  project_id: string;
+  generated_at: string;
+  complete: boolean;
+  archive_current: boolean;
+  unresolved_issue_count: number;
+  missing_required_artifact_count: number;
+  hash_mismatch_count: number;
+  stale_entry_count: number;
+  issues: Record<string, unknown>[];
+  blockers: string[];
+  warnings: string[];
+  audit_fingerprint: string;
+};
+
+export type AutoResearchFinalPublishCheck = {
+  check_id: string;
+  passed: boolean;
+  required_for_final_publish: boolean;
+  evidence_refs: string[];
+  blockers: string[];
+  warnings: string[];
+  details: Record<string, unknown>;
+};
+
+export type AutoResearchFinalPublishDecision = {
+  decision_id: string;
+  project_id: string;
+  final_publish_ready: boolean;
+  paper_tier: AutoResearchPaperTier;
+  policy_version: string;
+  checked_at: string;
+  passed_checks: AutoResearchFinalPublishCheck[];
+  failed_checks: AutoResearchFinalPublishCheck[];
+  warnings: string[];
+  blockers: string[];
+  required_followups: string[];
+  claim_ceiling?: string | null;
+  evidence_refs: string[];
+  archive_manifest_ref?: string | null;
+  readiness_manifest_ref?: string | null;
+  policy_exceptions: Record<string, unknown>[];
+  decision_fingerprint: string;
+};
+
+export type AutoResearchSubmissionPackage = {
+  package_id: string;
+  project_id: string;
+  generated_at: string;
+  bundle_kind: "review_bundle" | "final_publish_bundle";
+  review_bundle_ready: boolean;
+  final_publish_ready: boolean;
+  submission_manifest_path?: string | null;
+  archive_manifest_path?: string | null;
+  archive_path?: string | null;
+  reproducibility_checklist_path?: string | null;
+  reproducibility_checklist_json_path?: string | null;
+  artifact_integrity_audit_path?: string | null;
+  final_publish_decision_path?: string | null;
+  archive_manifest?: AutoResearchSubmissionArchiveManifest | null;
+  reproducibility_checklist?: AutoResearchReproducibilityChecklist | null;
+  artifact_integrity_audit?: AutoResearchProjectArtifactIntegrityAudit | null;
+  final_publish_decision?: AutoResearchFinalPublishDecision | null;
+  blockers: string[];
+  required_followups: string[];
+  package_fingerprint: string;
+};
+
 export type AutoResearchProjectPaperOrchestration = {
   generated_at: string;
   orchestrator_id: string;
@@ -4218,9 +4375,15 @@ export type AutoResearchProjectPaperOrchestration = {
   project_revision_round?: AutoResearchRevisionRound | null;
   project_revision_round_path?: string | null;
   project_submission_dir?: string | null;
+  project_submission_package?: AutoResearchSubmissionPackage | null;
   project_submission_manifest?: Record<string, unknown> | null;
   project_submission_manifest_path?: string | null;
+  project_submission_archive_manifest?: AutoResearchSubmissionArchiveManifest | null;
+  project_submission_archive_manifest_path?: string | null;
+  project_submission_archive_path?: string | null;
   project_reproducibility_checklist_path?: string | null;
+  project_reproducibility_checklist?: AutoResearchReproducibilityChecklist | null;
+  project_reproducibility_checklist_json_path?: string | null;
   project_reviewer_response_path?: string | null;
   project_review_findings_path?: string | null;
   project_repair_execution_log_path?: string | null;
@@ -4241,6 +4404,11 @@ export type AutoResearchProjectPaperOrchestration = {
   project_statistics_report_path?: string | null;
   project_experiment_repair_index_path?: string | null;
   project_negative_evidence_report_path?: string | null;
+  project_limitations_appendix_path?: string | null;
+  project_artifact_integrity_audit?: AutoResearchProjectArtifactIntegrityAudit | null;
+  project_artifact_integrity_audit_path?: string | null;
+  project_final_publish_decision?: AutoResearchFinalPublishDecision | null;
+  project_final_publish_decision_path?: string | null;
   project_offline_publication_case_path?: string | null;
   project_offline_publication_audit_path?: string | null;
   project_publication_manifest_path?: string | null;
@@ -4269,6 +4437,12 @@ export type AutoResearchProjectPaperOrchestration = {
   project_statistics_report_complete: boolean;
   project_experiment_repair_index_complete: boolean;
   project_negative_evidence_report_complete: boolean;
+  project_limitations_appendix_complete: boolean;
+  project_submission_archive_manifest_complete: boolean;
+  project_submission_archive_complete: boolean;
+  project_reproducibility_checklist_json_complete: boolean;
+  project_artifact_integrity_audit_complete: boolean;
+  project_final_publish_decision_complete: boolean;
   project_offline_publication_case_complete: boolean;
   project_offline_publication_audit_complete: boolean;
   project_publication_manifest_complete: boolean;
@@ -4357,6 +4531,11 @@ export type AutoResearchEvaluationCaseTrace = {
   project_negative_evidence_report_path?: string | null;
   project_offline_publication_case_path?: string | null;
   project_offline_publication_audit_path?: string | null;
+  project_submission_archive_manifest_path?: string | null;
+  project_submission_archive_path?: string | null;
+  project_reproducibility_checklist_json_path?: string | null;
+  project_artifact_integrity_audit_path?: string | null;
+  project_final_publish_decision_path?: string | null;
   project_paper_sources_manifest_path?: string | null;
   project_paper_sources_reconstructable: boolean;
   project_paper_source_package_ready: boolean;
@@ -4388,6 +4567,20 @@ export type AutoResearchEvaluationCaseTrace = {
   project_submission_asset_roles: string[];
   project_submission_missing_asset_roles: string[];
   project_submission_required_roles_present: boolean;
+  project_submission_archive_complete: boolean;
+  project_submission_archive_current: boolean;
+  project_submission_archive_ready_for_final_download: boolean;
+  project_submission_archive_entry_count: number;
+  project_submission_archive_missing_required_entry_count: number;
+  project_submission_archive_hash_mismatch_entry_count: number;
+  project_submission_archive_stale_entry_count: number;
+  project_reproducibility_checklist_complete: boolean;
+  project_reproducibility_checklist_missing_required_count: number;
+  project_reproducibility_checklist_partial_required_count: number;
+  project_artifact_integrity_audit_complete: boolean;
+  project_artifact_integrity_unresolved_issue_count: number;
+  project_final_publish_policy_version?: string | null;
+  project_final_publish_failed_check_ids: string[];
   project_experiment_execution_source_counts: Record<string, number>;
   project_imported_replay_run_ids: string[];
   project_materialized_execution_run_ids: string[];

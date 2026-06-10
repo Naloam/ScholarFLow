@@ -50,6 +50,7 @@ from schemas.autoresearch import (
     AutoResearchResearchBriefRead,
     AutoResearchRunStatus,
     AutoResearchRunReviewRead,
+    AutoResearchSubmissionPackageRead,
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopAutoApplyRead,
     AutoResearchReviewLoopAutoApplyRequest,
@@ -92,7 +93,11 @@ from services.autoresearch.idea_brief import (
 from services.autoresearch.literature_scout import scout_and_mine_gaps
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
-from services.autoresearch.project_paper_orchestrator import build_project_paper_orchestration
+from services.autoresearch.project_paper_orchestrator import (
+    build_project_paper_orchestration,
+    get_project_submission_archive_path,
+    load_project_submission_package,
+)
 from services.autoresearch.review_publish import (
     build_publish_package,
     build_publication_manifest,
@@ -454,6 +459,54 @@ def get_auto_research_project_paper_orchestration(
 ) -> AutoResearchProjectPaperOrchestrationRead:
     del db
     return build_project_paper_orchestration(project_id)
+
+
+@router.get("/project-paper/submission", response_model=AutoResearchSubmissionPackageRead)
+def get_auto_research_project_submission_package(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchSubmissionPackageRead:
+    del db
+    package = load_project_submission_package(project_id)
+    if package is None:
+        orchestration = build_project_paper_orchestration(project_id)
+        package = orchestration.project_submission_package
+    if package is None:
+        raise HTTPException(status_code=404, detail="Project submission package not found")
+    return package
+
+
+@router.get("/project-paper/submission/download")
+def download_auto_research_project_submission_archive(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    del db
+    package = load_project_submission_package(project_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Project submission package not found")
+    decision = package.final_publish_decision
+    archive_manifest = package.archive_manifest
+    if decision is None or not decision.final_publish_ready:
+        raise HTTPException(
+            status_code=409,
+            detail="Project submission archive is not final-publish-ready",
+        )
+    if archive_manifest is None or not archive_manifest.complete or not archive_manifest.current:
+        raise HTTPException(
+            status_code=409,
+            detail="Project submission archive is incomplete or stale",
+        )
+    archive_path = get_project_submission_archive_path(project_id).resolve()
+    if Path(archive_manifest.archive_path).resolve() != archive_path:
+        raise HTTPException(status_code=409, detail="Project submission archive path is invalid")
+    if not archive_path.is_file():
+        raise HTTPException(status_code=409, detail="Project submission archive is missing")
+    return FileResponse(
+        path=archive_path,
+        filename=archive_path.name,
+        media_type="application/zip",
+    )
 
 
 @router.get("/system-evaluation", response_model=AutoResearchSystemEvaluationRead)

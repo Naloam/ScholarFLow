@@ -4,8 +4,8 @@ ScholarFlow 目标路线图：AI 自动科研 + 写论文系统
 文档状态
 ========
 
-- 更新时间：2026-06-09。
-- 默认下一阶段：Goal 7 - Submission Package And Final Publish Gate。
+- 更新时间：2026-06-10。
+- 默认下一阶段：Goal 8 - Real End-To-End Evaluation And ScholarFlow System Paper Material。
 - 本文件是下一轮 `/goal` 的主要执行依据。
 - `AGENTS.md` 只保留高层协作约束；具体阶段、验收标准、下一轮 prompt 以本文件为准。
 
@@ -47,10 +47,13 @@ user idea
 
 简短结论：
 
-- 已经完成 Goal 1-6：从固定 claim-evidence publication case，推进到受控 domain idea routing、domain evidence package loop、typed experiment execution backend、cached literature/benchmark provenance、project-level manuscript compiler V2、autonomous revision loop。
-- 当前系统已经能从一个受控 domain idea 生成 project-level manuscript/source package 和 evidence-constrained revision round，或者生成可审计 blocker；但还没有完整 final submission archive、系统级 end-to-end evaluation、production operator controls。
-- 以 roadmap 粗略衡量，工程骨架已经过半：Goal 1-6 是“研究事实、论文草稿和审稿修订闭环”，Goal 7-9 是“最终提交、自我评估和生产化操作”。
+- 已经完成 Goal 1-7：从固定 claim-evidence publication case，推进到受控 domain idea routing、domain evidence package loop、typed experiment execution backend、cached literature/benchmark provenance、project-level manuscript compiler V2、autonomous revision loop、reconstructable submission package/final publish gate。
+- 当前系统已经能从一个受控 domain idea 生成 project-level manuscript/source package、evidence-constrained revision round、Goal 7 submission archive/checklist/final decision，或者生成可审计 blocker；但还没有系统级 end-to-end evaluation、production operator controls。
+- 以 roadmap 粗略衡量，工程骨架约完成 70%-75%：Goal 1-7 是“研究事实、论文草稿、审稿修订和最终提交 gate 闭环”，Goal 8-9 是“自我评估和生产化操作”，Goal 10+ 才是“真实外部科研能力、长期运行和多项目推广”。
 - 以最终愿景衡量，距离“可靠 final-publish-ready autonomous scientist”仍然很远，因为 final publish 需要真实、多源、可复现、统计充分、负证据完整、审稿修订闭环完成的 evidence chain。当前大多数 deterministic fixture/local/import replay case 只能支持 review/workshop/case-study 级别，不能升级成 publication-grade claim。
+- 近期最关键差距不是“再写论文文本”，而是把 deterministic evaluation cases 升级成系统级 evidence traces 和 ScholarFlow 系统论文材料，并证明 package/final gate 在 success、blocked、failed execution、revision、unsupported-domain 上都诚实可靠。
+- 中期最关键差距是系统级可评估性：ScholarFlow 必须能用 deterministic cases 证明自己在 success、blocked、failed execution、revision、package readiness、unsupported domain 上都诚实可靠。
+- 长期最关键差距是真实科研能力：live/full-text literature coverage、真实 benchmark/source independence、多环境执行、长期任务恢复、成本/审批、安全沙箱、多项目知识沉淀、最终可提交材料的人工审计接口。
 
 更具体地说：
 
@@ -61,21 +64,21 @@ user idea
 - Benchmark resolver：已有 structured resolver 和 imported benchmark provenance path；source independence、scale/statistics support 仍继续约束 final publish。
 - Experiment protocol：已有 per-domain protocol、typed execution job materialization、deterministic replay/local/import runtime、Docker/bridge structured blockers。
 - Execution/repair：已有 typed runtime validation、environment manifest、failure classifier、repair recommendation 和 bounded blocker 分类；后续真实外部执行能力仍需由具体 bridge/Docker 环境接入。
-- Evidence ledger/readiness：已有 typed execution result 到 run/project/package-level evidence、negative evidence、readiness/package manifest 的映射，并已接入 cached literature / imported benchmark provenance；Goal 5 已在 manuscript compiler/source package 中消费这些 evidence refs，Goal 6 已在 revision action/response/rereview 中保持可追溯，后续 Goal 7 要在 final submission package 中继续保持可追溯。
+- Evidence ledger/readiness：已有 typed execution result 到 run/project/package-level evidence、negative evidence、readiness/package manifest 的映射，并已接入 cached literature / imported benchmark provenance；Goal 5 已在 manuscript compiler/source package 中消费这些 evidence refs，Goal 6 已在 revision action/response/rereview 中保持可追溯，Goal 7 已在 final submission package/archive/checklist/final decision 中继续保持可追溯。
 - Paper/compiler：已有 project orchestrator、versioned/fingerprinted manuscript context、evidence-constrained compiler/source package、claim-evidence index、figures/tables metadata、artifact index、readiness blockers。
 - Reviewer/revision：已有第一版 finding-by-finding autonomous revision action planner、bounded execution、reviewer response dossier、revision round 和 re-review cycle；missing experiment/literature/benchmark evidence 仍保持 blocker/follow-up，不伪造 evidence。
-- Submission/final publish：还没有完整 final submission archive、reproducibility checklist、lineage archive、final publish package gate；`final_publish_ready=true` 只能在后续真实 evidence 满足 publish policy 后出现。
+- Submission/final publish：已有 reconstructable submission archive、archive manifest、reproducibility checklist JSON、limitations appendix、artifact-integrity audit、final publish decision、guarded final archive download；`final_publish_ready=true` 只能在真实 evidence 满足 publish policy 后出现。
 - System evaluation/operator：P14 evaluation cases 还需要升级为真实 end-to-end regression/evaluation suite；Operator Console 还需要 production controls for long-running jobs、budgets、approvals、resumability、artifact lineage inspection。
 
 剩余路线总览
 ============
 
-默认顺序必须是 Goal 7 -> Goal 8 -> Goal 9，不要跳过 Goal 7 直接做 system paper/evaluation，也不要优先做 UI polish。
+默认顺序现在是 Goal 8 -> Goal 9 -> Goal 10 -> Goal 11 -> Goal 12 -> Goal 13。不要跳过 Goal 8 直接做 production UI，也不要优先做 UI polish；Goal 10+ 只有在 package/final gate/evaluation/operator 基础稳定后再做。
 
 1. Goal 7: Submission Package And Final Publish Gate
-   - 生成可重建 submission archive：manuscript、supplemental artifacts、claim-evidence index、reviewer response、lineage archive、benchmark/literature provenance、environment/command manifests、negative evidence appendix、publication readiness manifest。
-   - 生成 reproducibility checklist：commands、environment、dependencies、datasets、benchmark versions、metrics、seeds/splits、artifact hashes、external requirements、known limitations。
-   - 实现 final publish decision：只有 literature/source sufficiency、benchmark provenance/source independence、experiment evidence、statistics、negative evidence、claim coverage、revision status、reproducibility package 全部满足 policy，才允许 `final_publish_ready=true`。
+   - 已完成：可重建 `submission_archive.zip` + `submission_archive_manifest.json`，覆盖 manuscript、supplemental artifacts、claim-evidence index、reviewer response、lineage archive、benchmark/literature provenance、negative evidence appendix、publication readiness manifest。
+   - 已完成：manifest-driven `reproducibility_checklist.json`、`limitations_appendix.json`、`artifact_integrity_audit.json`。
+   - 已完成：`final_publish_decision.json` 和 guarded final archive download；只有 literature/source sufficiency、benchmark provenance/source independence、experiment evidence、statistics、negative evidence、claim coverage、revision status、reproducibility package、archive integrity 全部满足 policy，才允许 `final_publish_ready=true`。
 
 2. Goal 8: Real End-To-End Evaluation And ScholarFlow System Paper Material
    - 将 P14 cases 升级为 deterministic executable evaluation suite。
@@ -86,6 +89,22 @@ user idea
    - 在 backend capability 已存在后补 production controls：long-running job inspection、resume/retry/cancel、approval/budget controls、bridge/import status、artifact lineage browser、repair queue、readiness/publish-gate/package status。
    - UI 必须反映 persisted state，不得把 review-ready 暗示为 final-publish-ready。
    - 这是最后做的 operational layer，不替代 Goal 6-8。
+
+4. Goal 10: Real External Evidence And Execution Hardening
+   - 把 cached/offline connector、import replay、local deterministic execution 扩展为受控 real-world mode：live literature/full-text connector、real benchmark ingestion、Docker/bridge execution、artifact import validation、budget/approval/sandbox policy。
+   - 真实外部能力必须默认受 policy 约束；不可用时仍输出 structured blocker，不得 silent fallback 成 toy evidence。
+
+5. Goal 11: Long-Running Research Reliability
+   - 让多日/多轮 research project 可以 checkpoint、resume、retry、fork direction、compare branch、preserve lineage、roll forward，而不是一次性脚本。
+   - 引入 project-level runbook、budget ledger、attempt ledger、failure taxonomy、stale artifact repair、migration/versioning policy。
+
+6. Goal 12: Multi-Project Knowledge And Literature Memory
+   - 建立跨项目 paper/source/benchmark/method/result memory，支持去重、证据等级、citation graph、known baseline/SOTA registry、negative finding reuse。
+   - Memory 只能作为 candidate evidence discovery；不能直接把历史结论升级为当前项目 claim，必须重新绑定到当前 artifact/evidence ledger。
+
+7. Goal 13: Human Review, Compliance, And Release Packaging
+   - 加入最终人工审查接口、policy exception workflow、license/privacy/compliance checklist、submission venue adapter、release artifact signing/export。
+   - 这是最终交付层，不得绕过 final publish decision 或人工确认。
 
 已完成基线
 ==========
@@ -147,6 +166,13 @@ user idea
    - Claim downgrade / paper-only revisions 可以 deterministic 更新 manuscript/source package 与 source claim-evidence index；experiment/literature/benchmark/provenance/reproducibility evidence-producing actions 在没有 validated artifact refs 时保持 blocked/follow-up，不伪造 evidence。
    - API、frontend types、evaluation traces、docs 和 deterministic regression tests 已同步。
 
+9. Goal 7: Submission Package And Final Publish Gate
+   - 完成提交：本轮 scoped commit `Implement submission package final gate`。
+   - 已实现 typed project submission package、reconstructable `submission_archive.zip`、`submission_archive_manifest.json`、manifest-driven `reproducibility_checklist.json`、`limitations_appendix.json`、`artifact_integrity_audit.json`、`final_publish_decision.json`。
+   - `load_project_submission_package()` 会重新校验 persisted archive/source hashes 和 source-package fingerprint；missing/hash mismatch/stale archive 会阻断 final decision 和 download。
+   - 新增 project-paper submission API 和 guarded download endpoint；review-ready package 仍保持 `final_publish_ready=false`，只有 final policy 全部通过才允许 final archive download。
+   - API、frontend types/client、Operator Console、evaluation traces、docs 和 deterministic regression tests 已同步。
+
 当前不要重做
 ============
 
@@ -157,6 +183,7 @@ user idea
 - 不要重做 Goal 4，除非 cached connector provenance、source sufficiency、extraction limitations、benchmark provenance 或 evaluation trace 回归。
 - 不要重做 Goal 5，除非 manuscript context、source package、claim-evidence index、artifact manifest、readiness blockers 或 docs/schema/tests 出现漂移。
 - 不要重做 Goal 6，除非 revision action plan、bounded execution、reviewer response dossier、revision round、re-review fingerprints/resolution summary、evaluation trace 或 tests 出现漂移。
+- 不要重做 Goal 7，除非 submission archive/checklist/final decision/download gate、archive integrity、evaluation trace 或 tests 出现漂移。
 - 不要为了 demo 降低 publish gates、claim-evidence ledger、artifact lineage、repair safety、negative evidence、readiness blockers。
 - 不要把 fixture/toy/local smoke evidence 宣称为 publication-grade。
 - 不要把 unsupported domain 降级成无关 toy experiment。
@@ -1052,6 +1079,8 @@ Goal 6 完成标准
 Goal 7: Submission Package And Final Publish Gate
 =================================================
 
+状态：已完成于当前本地工作。后续只在 submission archive、reproducibility checklist、artifact-integrity audit、final-publish decision、download gate 或相关 tests 回归时修复；默认下一阶段是 Goal 8。
+
 目标
 ----
 
@@ -1613,28 +1642,678 @@ Goal 9 完成标准
 - Frontend build passes, and E2E runs if operator flows changed materially。
 - `git diff --check` passes。
 
+Goal 10: Real External Evidence And Execution Hardening
+=======================================================
+
+目标
+----
+
+把现有 deterministic/offline/import-replay 能力扩展到受控 real-world mode：真实文献 connector、全文/引用抽取、真实 benchmark/source ingestion、Docker/bridge execution、external artifact import、budget/approval/sandbox policy。
+
+Goal 10 不是把 network/Docker/GPU 打开就算完成。它的核心是让外部证据和外部执行进入同一套 evidence constraint、runtime contract、artifact lineage、approval、budget、failure classification 和 publish gate。
+
+前置条件
+--------
+
+- Goal 7 final submission package 和 final publish decision 已稳定。
+- Goal 8 evaluation suite 能覆盖 success/blocker/failure/package/revision cases。
+- Goal 9 operator controls 能审批、拒绝、暂停、恢复、检查 long-running/external jobs。
+- 如果 Goal 7-9 任一基础回归，先修复，不要直接开始 Goal 10。
+
+非目标
+------
+
+- 不让 live network 成为 regression tests 的必需条件。
+- 不把 abstract-only / metadata-only literature 当作 full evidence。
+- 不把 Docker/bridge/local command failure silent fallback 成 deterministic success。
+- 不把外部导入 artifact 自动信任为 valid evidence。
+- 不为了生成 final-publish-ready case 绕过 benchmark/source independence、statistics、negative evidence 或 reviewer blockers。
+
+Goal 10 Phase 0: External Capability Audit
+------------------------------------------
+
+实现要求：
+
+- 审计已有 connector/runtime/import path：
+  - cached arXiv / Semantic Scholar / Crossref connector；
+  - literature cache schema and source status；
+  - benchmark resolver imported/frozen/remote source classes；
+  - typed experiment execution routes；
+  - Docker/bridge blockers；
+  - external import validation；
+  - package/final gate evidence refs。
+- 明确每类外部能力的 policy：
+  - allowed by default；
+  - requires operator approval；
+  - requires budget approval；
+  - requires sandbox；
+  - disabled in tests；
+  - final-publish eligible only after validation。
+- 审计结论进入 docs、capability manifest、tests 或 readiness artifact。
+
+测试要求：
+
+- Network disabled path remains deterministic。
+- Disabled Docker/bridge remains structured blocker。
+- External import without required provenance fails validation。
+- Capability manifest distinguishes unavailable, disabled, approval_required, and ready。
+
+Goal 10 Phase 1: Real Literature Connector Hardening
+----------------------------------------------------
+
+实现要求：
+
+- 扩展 literature connector contract：
+  - source id；
+  - query；
+  - network/cache mode；
+  - cache key；
+  - request timestamp；
+  - response fingerprint；
+  - rate-limit/error status；
+  - paper metadata；
+  - abstract/full-text availability；
+  - license/open-access status if known；
+  - extraction status；
+  - source sufficiency contribution；
+  - final-publish eligibility contribution。
+- 加入可选 full-text / citation-context extraction path：
+  - PDF/HTML/text source ref；
+  - parser version；
+  - extraction fingerprint；
+  - section coverage；
+  - citation contexts；
+  - method/dataset/metric/result extraction confidence；
+  - limitations。
+- Literature evidence must classify:
+  - metadata_only；
+  - abstract_only；
+  - citation_context_only；
+  - full_text_extracted；
+  - imported_full_text；
+  - unavailable。
+- Related-work / novelty / SOTA claims must not exceed extraction level。
+- Live connector tests must be optional/manual; regression tests use cached fixtures.
+
+测试要求：
+
+- Cached full-text fixture supports method/dataset/metric/result extraction。
+- Metadata-only evidence creates source sufficiency limitation。
+- Connector failure creates blocker/follow-up, not fake papers。
+- Duplicate papers dedupe across source ids while preserving source observations。
+- Live-network flag off prevents network calls。
+
+Goal 10 Phase 2: Real Benchmark And Dataset Ingestion
+-----------------------------------------------------
+
+实现要求：
+
+- Add benchmark ingestion contract for real/imported datasets:
+  - dataset id；
+  - source locator；
+  - version/revision；
+  - license；
+  - source fingerprint；
+  - retrieval/import timestamp；
+  - split definitions；
+  - sample counts；
+  - schema roles；
+  - label space；
+  - task family；
+  - provenance completeness；
+  - source independence relation；
+  - publication eligibility；
+  - final-publish-candidate eligibility。
+- Support imported real benchmark package validation:
+  - manifest；
+  - checksums；
+  - schema；
+  - train/dev/test splits；
+  - examples；
+  - qrels/evidence labels where needed；
+  - license/source file refs。
+- Reject or block:
+  - missing license；
+  - missing source fingerprint；
+  - missing split；
+  - insufficient sample count；
+  - task-schema mismatch；
+  - same-release-only independence when stronger claims require independent source。
+- Preserve frozen/local fixtures as review/evaluation assets, not automatic final evidence。
+
+测试要求：
+
+- Valid imported benchmark fixture passes base publication eligibility。
+- Missing license/fingerprint/split blocks eligibility。
+- Same-source benchmark relation blocks cross-source final claim。
+- Miniature fixture remains review-only by scale policy。
+- Ingested benchmark provenance appears in package/final decision refs。
+
+Goal 10 Phase 3: Docker / Bridge / External Execution Hardening
+---------------------------------------------------------------
+
+实现要求：
+
+- Extend typed execution runtime for approved external execution:
+  - Docker route with image/digest/command/env/mounts/timeouts/resource caps；
+  - bridge route with handoff manifest, expected output schema, callback/import path；
+  - external import route with provenance and artifact package validation。
+- Every execution route must record:
+  - approval state；
+  - budget class；
+  - environment manifest；
+  - runtime contract；
+  - command/import spec；
+  - stdout/stderr refs；
+  - exit code/status；
+  - output validation；
+  - metric schema validation；
+  - artifact hashes；
+  - failure classification；
+  - repair recommendation；
+  - negative evidence。
+- If route is unavailable/unapproved, result must be blocked, not silently rerouted。
+- Any imported result must be traceable to source package hash and manifest fingerprint。
+
+测试要求：
+
+- Docker unavailable produces structured blocker。
+- Approval rejected produces terminal blocker。
+- Bad imported output schema fails validation。
+- Missing expected output produces missing-output failure and negative evidence。
+- Valid external import fixture maps to evidence ledger and package manifest。
+
+Goal 10 Phase 4: External Evidence Policy In Final Gate
+-------------------------------------------------------
+
+实现要求：
+
+- Final publish decision must distinguish:
+  - internal fixture；
+  - deterministic replay；
+  - local smoke；
+  - imported real；
+  - frozen real-source snapshot；
+  - live retrieved source；
+  - Docker/bridge execution；
+  - externally imported execution。
+- Claim ceiling must follow weakest required evidence type.
+- Any external-source uncertainty must become:
+  - limitation；
+  - blocker；
+  - required follow-up；
+  - kill criterion；
+  - policy exception with rationale and evidence refs。
+- Package/archive must include connector/runtime/source manifests and validation reports.
+
+测试要求：
+
+- Fixture/local smoke evidence cannot pass final gate。
+- Imported real evidence can raise readiness only when provenance and validation pass。
+- Missing source independence still blocks final gate。
+- Policy exceptions are explicit and scoped。
+
+Goal 10 完成标准
+----------------
+
+- ScholarFlow can optionally use live/cached/imported external sources without making tests depend on live services。
+- Literature full-text/citation extraction, benchmark ingestion, Docker/bridge/import runtime, and external evidence policy are all artifact-backed。
+- External failures remain blockers or negative evidence, not hidden fallbacks。
+- Final gate understands evidence origin and claim ceiling。
+- Backend tests remain deterministic; optional live smoke tests are documented separately。
+- `git diff --check` passes。
+
+Goal 11: Long-Running Research Reliability
+==========================================
+
+目标
+----
+
+让 ScholarFlow 支持多日、多轮、多分支 research project：checkpoint、resume、retry、fork direction、compare branch、roll forward、preserve old artifacts，而不是一次性 pipeline。
+
+Goal 11 是可靠性和状态演进层。它不新增 scientific claim 能力；它保证系统在长时间运行、失败、暂停、重启、外部导入和多轮修订中不丢失 evidence lineage。
+
+非目标
+------
+
+- 不覆盖旧 artifacts。
+- 不用最新状态重写历史 evidence。
+- 不把 retry 结果和原始失败混在同一个 attempt。
+- 不在没有迁移策略时改动 artifact schema。
+
+Goal 11 Phase 0: Persistence And Version Audit
+----------------------------------------------
+
+实现要求：
+
+- 审计 persisted objects：
+  - project；
+  - idea brief；
+  - literature scout；
+  - hypothesis bank；
+  - experiment protocol；
+  - execution jobs/results；
+  - evidence ledger；
+  - manuscript context；
+  - revision round；
+  - submission archive；
+  - final decision；
+  - operator controls。
+- 为关键 artifact 定义：
+  - schema version；
+  - fingerprint；
+  - parent refs；
+  - created/updated timestamps；
+  - supersedes/superseded_by；
+  - stale detection policy；
+  - migration policy。
+- 审计结论进入 version manifest 或 docs/tests。
+
+测试要求：
+
+- Stale artifact detected after parent fingerprint changes。
+- Schema version missing creates blocker/migration-needed status。
+- Old artifacts remain readable after new attempt。
+
+Goal 11 Phase 1: Research Project Timeline And Runbook
+------------------------------------------------------
+
+实现要求：
+
+- Create project timeline artifact:
+  - event id；
+  - event type；
+  - stage；
+  - status；
+  - actor/system；
+  - input refs；
+  - output refs；
+  - parent event refs；
+  - blockers；
+  - decisions；
+  - timestamps。
+- Create project runbook:
+  - next recommended actions；
+  - required approvals；
+  - blocked actions；
+  - repair candidates；
+  - current claim ceiling；
+  - current package status；
+  - final gate status；
+  - kill criteria。
+- Timeline/runbook must be reconstructable from persisted state where possible.
+
+测试要求：
+
+- Timeline contains idea->brief->experiment->evidence->paper->revision->package events。
+- Blocked unsupported-domain project has clear terminal runbook.
+- Retry creates new event with parent refs。
+
+Goal 11 Phase 2: Branching And Direction Forks
+----------------------------------------------
+
+实现要求：
+
+- Allow project directions to fork:
+  - branch id；
+  - parent brief/hypothesis/direction；
+  - branch rationale；
+  - changed assumptions；
+  - evidence reused；
+  - evidence invalidated；
+  - comparison metrics；
+  - branch status。
+- Compare branches:
+  - evidence strength；
+  - feasibility；
+  - novelty risk；
+  - benchmark availability；
+  - execution cost；
+  - claim ceiling；
+  - publish readiness。
+- Branches must not share claims without explicit evidence refs.
+
+测试要求：
+
+- Forked branch preserves parent lineage。
+- Invalidated evidence cannot support branch claim。
+- Branch comparison is deterministic。
+
+Goal 11 Phase 3: Retry/Resume/Fork Safety
+-----------------------------------------
+
+实现要求：
+
+- Resume must check:
+  - artifact existence；
+  - parent fingerprints；
+  - schema versions；
+  - pending approvals；
+  - stale package/archive；
+  - unresolved blockers。
+- Retry must:
+  - create new attempt id；
+  - preserve old failed output；
+  - attach failure evidence；
+  - update runbook and repair ledger。
+- Fork must:
+  - copy only allowed context；
+  - record inherited evidence scope；
+  - mark unsupported inherited claims as pending validation。
+
+测试要求：
+
+- Resume rejects stale parent fingerprint。
+- Retry preserves old negative evidence。
+- Fork cannot inherit final-publish readiness without revalidation。
+
+Goal 11 完成标准
+----------------
+
+- Long-running projects have versioned timeline, runbook, stale detection, retry/resume/fork semantics。
+- Old evidence and negative evidence remain reconstructable。
+- Branch claims are evidence-scoped。
+- Operator/API can inspect current state without reading raw files only。
+- `git diff --check` passes。
+
+Goal 12: Multi-Project Knowledge And Literature Memory
+======================================================
+
+目标
+----
+
+建立跨项目 memory：papers、methods、datasets、metrics、benchmarks、reported results、negative findings、known blockers、prior project outcomes。Memory 用于 discovery 和 planning，不直接替代当前项目 evidence。
+
+Goal 12 的核心是“可复用知识索引”，不是“全局真理库”。任何跨项目信息进入当前项目 claim 前，都必须重新绑定当前项目 artifact/evidence ledger。
+
+非目标
+------
+
+- 不让历史项目结论自动支持新项目核心 claim。
+- 不把 memory 中的 SOTA/benchmark/result 当成实时事实。
+- 不引入无法解释来源和时间戳的 embedding-only memory。
+- 不依赖 live vector DB 作为 deterministic tests 前提。
+
+Goal 12 Phase 0: Memory Scope And Provenance Audit
+--------------------------------------------------
+
+实现要求：
+
+- 定义 memory item types:
+  - paper；
+  - method；
+  - dataset；
+  - metric；
+  - benchmark source；
+  - reported result；
+  - implementation artifact；
+  - negative finding；
+  - blocker；
+  - project conclusion；
+  - reviewer finding。
+- 每个 memory item 必须记录：
+  - source project id；
+  - source artifact ref；
+  - source fingerprint；
+  - extraction timestamp；
+  - source date/version；
+  - confidence/evidence grade；
+  - limitations；
+  - currentness status；
+  - reuse policy。
+- Memory audit must distinguish source observation from project conclusion.
+
+测试要求：
+
+- Memory item without source artifact ref is rejected or marked unusable。
+- Project conclusion cannot be reused as current evidence without rebinding。
+- Duplicate papers/methods merge while preserving source observations。
+
+Goal 12 Phase 1: Literature And Benchmark Memory Index
+------------------------------------------------------
+
+实现要求：
+
+- Build repository-local deterministic memory index:
+  - paper metadata；
+  - known methods；
+  - known datasets；
+  - known metrics；
+  - reported results；
+  - benchmark provenance；
+  - SOTA hints；
+  - extraction limitations。
+- Support queries from idea/brief/scout:
+  - related systems；
+  - known baselines；
+  - benchmark candidates；
+  - novelty risks；
+  - missing evidence warnings。
+- Memory results must be labeled as discovery hints unless current project validates them.
+
+测试要求：
+
+- Memory returns deterministic related-system hints。
+- Memory source limitations propagate into scout result。
+- Stale memory does not satisfy final gate。
+
+Goal 12 Phase 2: Negative Finding And Blocker Memory
+----------------------------------------------------
+
+实现要求：
+
+- Index negative findings and blockers:
+  - failed hypotheses；
+  - non-improvements；
+  - retrieval misses；
+  - unsupported claims；
+  - benchmark insufficiency；
+  - runtime failures；
+  - unresolved reviewer findings；
+  - final gate blockers。
+- Use memory to warn new projects:
+  - repeated failure pattern；
+  - known impossible source independence；
+  - weak benchmark family；
+  - high-cost execution path；
+  - likely unsupported claim。
+- Warnings must not pre-block a project without current evidence; they can recommend kill criteria or validation steps.
+
+测试要求：
+
+- Prior blocker appears as risk/follow-up, not current evidence。
+- Negative finding memory can add kill criterion。
+- Memory does not hide current positive evidence。
+
+Goal 12 Phase 3: Memory Governance And API
+------------------------------------------
+
+实现要求：
+
+- Add memory rebuild/export/import path:
+  - deterministic local build；
+  - manifest；
+  - item count；
+  - source artifacts；
+  - fingerprints；
+  - schema version。
+- API/schema expose memory query results with source refs and limitations.
+- If vector search is added, keep structured metadata path as source of truth.
+- Memory update must be append-only or versioned.
+
+测试要求：
+
+- Memory rebuild is deterministic。
+- Import validates schema/version/fingerprint。
+- API returns source refs for every memory result。
+
+Goal 12 完成标准
+----------------
+
+- ScholarFlow can reuse cross-project literature/benchmark/method/negative-finding knowledge as discovery hints。
+- Memory items are source-backed, versioned, and limitation-aware。
+- Current project final claims still require current project evidence refs。
+- Deterministic tests do not require external vector DB or live network。
+- `git diff --check` passes。
+
+Goal 13: Human Review, Compliance, And Release Packaging
+========================================================
+
+目标
+----
+
+补齐最终交付前的人类审查、policy exception、license/privacy/compliance、venue adapter、release signing/export。Goal 13 是发布前治理层，不是绕过 final gate 的捷径。
+
+非目标
+------
+
+- 不允许人工 override 隐藏 evidence blocker。
+- 不把 compliance checklist 当作 scientific evidence。
+- 不在未通过 final publish decision 时标记 ready for submission。
+- 不生成无法追溯来源的 release archive。
+
+Goal 13 Phase 0: Human Review Workflow
+--------------------------------------
+
+实现要求：
+
+- Add human review records:
+  - reviewer/operator id or role；
+  - reviewed artifact refs；
+  - checklist status；
+  - comments；
+  - requested changes；
+  - approval/rejection；
+  - timestamp；
+  - policy exceptions；
+  - final decision linkage。
+- Human review can:
+  - approve final package after gate passes；
+  - reject or request revision；
+  - approve scoped policy exception with rationale；
+  - never erase blockers or negative evidence。
+
+测试要求：
+
+- Human approval cannot flip final ready when gate failed。
+- Rejection creates revision/follow-up blocker。
+- Policy exception is visible in final decision。
+
+Goal 13 Phase 1: Compliance Checklist
+-------------------------------------
+
+实现要求：
+
+- Checklist categories:
+  - dataset license；
+  - paper/source license；
+  - code license；
+  - third-party dependency licenses；
+  - privacy/PII；
+  - model/API usage restrictions；
+  - paid service disclosure；
+  - benchmark terms；
+  - venue formatting requirements；
+  - artifact retention policy。
+- Checklist must link to source artifacts/manifests.
+- Missing compliance evidence blocks release/submission, even if scientific final gate passed.
+
+测试要求：
+
+- Missing dataset license blocks release。
+- PII flag blocks release until reviewed。
+- Compliance blocker appears in release manifest。
+
+Goal 13 Phase 2: Venue Adapter And Submission Metadata
+------------------------------------------------------
+
+实现要求：
+
+- Support venue profiles:
+  - workshop；
+  - conference；
+  - arXiv/preprint；
+  - internal technical report。
+- Each profile defines:
+  - required files；
+  - format constraints；
+  - anonymity requirements；
+  - supplemental policy；
+  - checklist requirements；
+  - metadata fields；
+  - export naming。
+- Venue adapter must not weaken evidence gate; it only shapes package format.
+
+测试要求：
+
+- Anonymous venue removes/flags identifying metadata when required。
+- Missing venue-required file blocks venue package。
+- Internal report can export with final_publish_ready=false but clearly labeled non-final。
+
+Goal 13 Phase 3: Release Archive Signing And Export
+---------------------------------------------------
+
+实现要求：
+
+- Release archive includes:
+  - submission archive；
+  - final decision；
+  - human review record；
+  - compliance checklist；
+  - venue metadata；
+  - artifact integrity audit；
+  - hashes/signature manifest；
+  - source package refs；
+  - lineage archive。
+- Export records:
+  - release id；
+  - version；
+  - generated_at；
+  - source package fingerprint；
+  - archive hash；
+  - signature/checksum；
+  - final status；
+  - blockers if non-final。
+- Any rebuild must either reproduce same hash or create a new release version with reason.
+
+测试要求：
+
+- Release hash changes when source package changes。
+- Stale release is detected。
+- Non-final export is labeled non-final。
+- Final release requires scientific gate, compliance, and human approval.
+
+Goal 13 完成标准
+----------------
+
+- Final package can pass through human review, compliance, venue formatting, and signed release export without losing evidence lineage。
+- Human approval cannot hide failed gates。
+- Compliance and venue blockers are explicit。
+- Release archive is reconstructable and hash-verifiable。
+- `git diff --check` passes。
+
 AGENTS.md 和 skills 决策
 ========================
 
 - `AGENTS.md` 应只保持高层 current state、active roadmap、safety constraints。
 - 本文件负责详细 roadmap。
 - 当前不新增 skill。
-- 只有当“domain package verification / publication-case audit / execution backend repair loop / autonomous revision audit”成为跨多轮反复使用的稳定流程时，再考虑创建 repository-local skill。
+- 只有当“final submission package audit / end-to-end evaluation audit / operator safety audit / external evidence hardening audit”成为跨多轮反复使用的稳定流程时，再考虑创建 repository-local skill。
 - 由于 `AGENTS.md` 被 `.gitignore` 忽略，本轮如更新它也只是本地协作说明，不会进入普通 git commit。
 
 下一轮执行建议
 ==============
 
-- 默认执行 Goal 7。
-- 不要一次性做 Goal 8-9。
-- Goal 7 优先顺序：
-  1. Phase 0：审计 existing publish package / manifest / archive export / download gate / artifact integrity，不把 review-ready bundle 改名成 final package。
-  2. Phase 1：submission archive manifest，保证 archive contents 可重建、hash/source fingerprint/current-stale 状态可验证。
-  3. Phase 2：reproducibility checklist，由 execution/runtime/evidence manifests 生成，不手写空壳。
-  4. Phase 3：final publish decision，只有 literature、benchmark、experiment、statistics、negative evidence、claim coverage、revision status、reproducibility package 全部通过 policy 才能 `final_publish_ready=true`。
+- 默认执行 Goal 8。
+- 不要一次性做 Goal 9-10。
+- Goal 8 优先顺序：
+  1. Phase 0：审计 current evaluation cases、trace artifacts、metrics、readiness/failure timeline 和 ScholarFlow system paper material 缺口。
+  2. Phase 1：让 deterministic end-to-end cases 输出完整 trace artifacts，覆盖 success、blocked、failed execution、revision、package readiness、unsupported domain。
+  3. Phase 2：汇总系统级 metrics 和 readiness/failure timelines，所有系统能力 claims 必须绑定 evaluation evidence refs。
+  4. Phase 3：生成 ScholarFlow architecture / case-study / failure-analysis / limitations / reproducibility paper material，不把单个 happy path 写成系统能力证明。
   5. Phase 4：必要 API/schema/frontend/evaluation/docs 同步。
-- 如果 Goal 3/Goal 4/Goal 5/Goal 6 出现回归，先修复 typed runtime / validation / evidence mapping、cached connector / benchmark provenance、manuscript context/source package readiness，或 revision action/response/rereview lineage，再继续 Goal 7。
-- 每完成一个实质子阶段，确认 submission archive entries、artifact integrity audit、reproducibility checklist、negative evidence appendix、reviewer response dossier、lineage archive、final publish decision 和 readiness blockers 进入 artifact 或 tests。
+- 如果 Goal 3/Goal 4/Goal 5/Goal 6/Goal 7 出现回归，先修复 typed runtime、cached connector/provenance、manuscript source package、revision loop，或 submission archive/final gate，再继续 Goal 8。
+- 每完成一个实质子阶段，确认 evaluation trace、metrics、readiness/failure timeline、package/final-gate evidence refs 和 system-paper material 进入 artifact 或 tests。
 
 下一轮可直接使用的 /goal prompt
 ==============================
@@ -1644,21 +2323,21 @@ AGENTS.md 和 skills 决策
 ```text
 接下来请使用 /goal 功能执行 ScholarFlow 的下一阶段目标。
 
-目标：实现 docs/goal.md 中的 Goal 7 - Submission Package And Final Publish Gate。
+目标：实现 docs/goal.md 中的 Goal 8 - Real End-To-End Evaluation And ScholarFlow System Paper Material。
 
 优先完成：
-1. Goal 7 Phase 0: Publish Package Audit
-2. Goal 7 Phase 1: Submission Archive
-3. Goal 7 Phase 2: Reproducibility Checklist
-4. Goal 7 Phase 3: Final Publish Decision
-5. Goal 7 Phase 4: API, Frontend, Docs
+1. Goal 8 Phase 0: Evaluation Case Audit
+2. Goal 8 Phase 1: Deterministic Trace Artifacts
+3. Goal 8 Phase 2: System Metrics And Readiness/Failure Timelines
+4. Goal 8 Phase 3: ScholarFlow System Paper Material
+5. Goal 8 Phase 4: API, Frontend, Docs
 
 开始前请先执行并审计：
 - git status --short --branch
 - git log --oneline -n 8
 - 阅读 docs/goal.md
-- 阅读 docs/goal.md 中 Goal 7 的 phases 和测试要求
-- 阅读 Goal 7 涉及的关键文件：
+- 阅读 docs/goal.md 中 Goal 8 的 phases 和测试要求
+- 阅读 Goal 8 涉及的关键文件：
   - backend/services/autoresearch/review_publish.py
   - backend/services/autoresearch/project_paper_orchestrator.py
   - backend/services/autoresearch/publication_evidence_index.py
@@ -1668,6 +2347,7 @@ AGENTS.md 和 skills 决策
   - backend/services/autoresearch/domain_evidence.py
   - backend/services/autoresearch/meta_analysis.py
   - backend/services/autoresearch/evaluation_cases.py
+  - backend/services/autoresearch/system_evaluation.py
   - backend/api/autoresearch.py
   - backend/schemas/autoresearch.py
   - backend/tests/test_autoresearch_regressions.py
@@ -1684,6 +2364,7 @@ AGENTS.md 和 skills 决策
 - Goal 4 已通过 commit a31322e 完成 cached literature scout and benchmark provenance expansion；除非测试回归，不要重做。
 - Goal 5 已通过 commit 91afa97 完成 Project-Level Manuscript Compiler V2；除非测试回归，不要重做。
 - Goal 6 已完成 Autonomous Revision Loop；除非 revision action plan、bounded execution、reviewer response dossier、revision round、re-review fingerprint/resolution、evaluation trace 或 tests 回归，不要重做。
+- Goal 7 已完成 Submission Package And Final Publish Gate；除非 submission archive、reproducibility checklist、artifact-integrity audit、final-publish decision、download gate、evaluation trace 或 tests 回归，不要重做。
 - 默认分支是 master。
 
 核心要求：
@@ -1694,16 +2375,16 @@ AGENTS.md 和 skills 决策
 - Literature、benchmark、experiment、statistics、negative evidence 和 manuscript claims 必须能通过 artifact lineage 追溯。
 - Review-ready/workshop/case-study package 不能自动升级成 final publish package。
 - Submission archive、reproducibility checklist 和 final publish decision 必须由 persisted artifacts/manifests 驱动，不能手写通过。
+- Goal 8 system-paper material 必须由 deterministic evaluation traces 和 evidence refs 支撑，不能把单个 case 或 unsupported evidence 写成系统能力证明。
 - Tests 必须 deterministic，不能依赖 live network、paid LLM、GPU、Docker daemon、外部 benchmark 在线可用性。
 
-Goal 7 验收标准：
-- At least one case can produce a complete, reconstructable submission archive manifest。
-- Archive entries include source artifact refs、sha256、size、content type、required/final status、validation status、blockers。
-- Reproducibility checklist is generated from artifact/runtime/evidence manifests and exposes commands、environment、datasets、benchmark versions、metrics、seeds/splits、artifact hashes、external requirements、known limitations。
-- `final_publish_ready=true` only appears when all publish-policy evidence is present and no hidden blocker remains。
-- Review/workshop/case-study packages remain explicitly non-final when source sufficiency、benchmark independence、statistics、negative evidence、revision status、reproducibility package, or integrity checks are incomplete。
-- Missing required artifact、hash mismatch、stale archive、missing negative evidence、insufficient benchmark/source independence、unresolved reviewer finding, or pending required revision action blocks final package/readiness。
-- Final publish decision records policy version、passed/failed checks、blockers、required follow-ups、claim ceiling、evidence refs、archive/readiness refs。
+Goal 8 验收标准：
+- Evaluation cases produce persisted trace artifacts for idea/domain/literature/benchmark/execution/evidence/readiness/repair/revision/package/failure-analysis timeline。
+- Metrics cover success, blocked, unsupported-domain, failed execution, package readiness, final-gate correctness, revision honesty, and evidence coverage。
+- ScholarFlow system-paper material includes architecture, case studies, failure modes, limitations, and reproducibility sections backed by trace evidence refs。
+- Evaluation summaries distinguish review-ready, final-publish-ready, blocked, and unsupported cases without weakening Goal 7 final gate。
+- No system-level claim is unsupported by evaluation evidence。
+- Tests remain deterministic and do not require live network、paid LLM、GPU、Docker daemon、external benchmark availability。
 - 新增或更新 deterministic regression tests。
 - 如涉及 API/schema/types，更新 backend schema、frontend types/client、docs，并跑 frontend build。
 

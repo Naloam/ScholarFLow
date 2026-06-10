@@ -30,6 +30,7 @@ import type {
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
   AutoResearchProjectPaperOrchestration,
+  AutoResearchSubmissionPackage,
   AutoResearchPublishExport,
   AutoResearchPublishExportRequest,
   AutoResearchPublishPackage,
@@ -645,6 +646,23 @@ export const api = {
     projectId: string,
   ): Promise<AutoResearchProjectPaperOrchestration> {
     return request(`/api/projects/${projectId}/auto-research/project-paper`);
+  },
+
+  getAutoResearchProjectSubmissionPackage(
+    projectId: string,
+  ): Promise<AutoResearchSubmissionPackage> {
+    return request(
+      `/api/projects/${projectId}/auto-research/project-paper/submission`,
+    );
+  },
+
+  downloadAutoResearchProjectSubmissionArchive(
+    projectId: string,
+  ): Promise<string> {
+    return download(
+      `/api/projects/${projectId}/auto-research/project-paper/submission/download`,
+      `${projectId}-submission_archive.zip`,
+    );
   },
 
   getAutoResearchSystemEvaluation(

@@ -355,6 +355,18 @@ AutoResearchProjectConclusionKind = Literal[
     "limitation",
 ]
 AutoResearchProjectClaimTraceStatus = Literal["supported", "partial", "unsupported"]
+AutoResearchEvaluationStageStatus = Literal[
+    "succeeded",
+    "blocked",
+    "skipped_by_policy",
+    "failed",
+]
+AutoResearchSystemClaimSupportStatus = Literal[
+    "supported",
+    "partial",
+    "unsupported",
+    "future_work",
+]
 AutoResearchEvaluationTaskKind = Literal[
     "toy_task",
     "medium_benchmark_task",
@@ -3450,7 +3462,111 @@ class AutoResearchSystemEvaluationMetricRead(BaseModel):
     rationale: str
 
 
+class AutoResearchEvaluationStageTraceRead(BaseModel):
+    stage_id: str
+    status: AutoResearchEvaluationStageStatus = "skipped_by_policy"
+    deterministic_order: int = 0
+    input_refs: list[str] = Field(default_factory=list)
+    output_refs: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    negative_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    claim_ceiling_impact: str | None = None
+    deterministic_labels: list[str] = Field(default_factory=list)
+    reproducibility_constraints: list[str] = Field(default_factory=list)
+
+
+class AutoResearchEvaluationTimelineEventRead(BaseModel):
+    event_id: str
+    stage_id: str
+    status: AutoResearchEvaluationStageStatus = "skipped_by_policy"
+    deterministic_order: int = 0
+    summary: str
+    artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    negative_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    claim_ceiling_impact: str | None = None
+    package_ready: bool | None = None
+    final_publish_ready: bool | None = None
+
+
+class AutoResearchEvaluationCaseAuditEntryRead(BaseModel):
+    case_id: str
+    task_kind: AutoResearchEvaluationTaskKind
+    idea: str
+    domain: str
+    expected_path: str
+    covered_stages: list[str] = Field(default_factory=list)
+    missing_stages: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    expected_blockers: list[str] = Field(default_factory=list)
+    observed_blockers: list[str] = Field(default_factory=list)
+    claim_ceiling: str | None = None
+    deterministic_labels: list[str] = Field(default_factory=list)
+    audit_conclusion: str
+
+
+class AutoResearchEvaluationCaseAuditRead(BaseModel):
+    generated_at: datetime
+    audit_id: str = "goal8_evaluation_case_audit_v1"
+    project_id: str
+    audited_files: list[str] = Field(default_factory=list)
+    required_case_classes: list[str] = Field(default_factory=list)
+    missing_case_classes: list[str] = Field(default_factory=list)
+    entries: list[AutoResearchEvaluationCaseAuditEntryRead] = Field(default_factory=list)
+    audit_artifact_path: str | None = None
+    audit_artifact_sha256: str | None = None
+    audit_fingerprint: str
+
+
+class AutoResearchSystemPaperClaimRead(BaseModel):
+    claim_id: str
+    claim: str
+    support_status: AutoResearchSystemClaimSupportStatus = "unsupported"
+    evidence_refs: list[str] = Field(default_factory=list)
+    metric_refs: list[str] = Field(default_factory=list)
+    case_ids: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class AutoResearchSystemPaperSectionRead(BaseModel):
+    section_id: str
+    title: str
+    content: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    case_ids: list[str] = Field(default_factory=list)
+
+
+class AutoResearchSystemPaperMaterialRead(BaseModel):
+    generated_at: datetime
+    material_id: str = "scholarflow_system_paper_material_v1"
+    project_id: str
+    label: str = "system_paper_material_not_final_submission"
+    abstract: str
+    intro: str
+    sections: list[AutoResearchSystemPaperSectionRead] = Field(default_factory=list)
+    system_claims: list[AutoResearchSystemPaperClaimRead] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    threats_to_validity: list[str] = Field(default_factory=list)
+    reproducibility_appendix: list[str] = Field(default_factory=list)
+    aris_fars_comparison: list[dict[str, Any]] = Field(default_factory=list)
+    future_work: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    material_artifact_path: str | None = None
+    material_artifact_sha256: str | None = None
+    material_fingerprint: str
+
+
 class AutoResearchEvaluationCaseTraceRead(BaseModel):
+    trace_schema_version: str = "goal8_evaluation_trace_v1"
+    case_id: str | None = None
+    trace_artifact_path: str | None = None
+    trace_artifact_sha256: str | None = None
+    trace_fingerprint: str | None = None
     idea: str
     brief_id: str | None = None
     domain_decision: AutoResearchDomainDecisionRead | None = None
@@ -3599,6 +3715,14 @@ class AutoResearchEvaluationCaseTraceRead(BaseModel):
     project_kill_criteria: list[str] = Field(default_factory=list)
     project_required_followups: list[str] = Field(default_factory=list)
     end_to_end_package_ready: bool = False
+    stage_timeline: list[AutoResearchEvaluationStageTraceRead] = Field(default_factory=list)
+    readiness_timeline: list[AutoResearchEvaluationTimelineEventRead] = Field(default_factory=list)
+    failure_timeline: list[AutoResearchEvaluationTimelineEventRead] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    negative_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    deterministic_labels: list[str] = Field(default_factory=list)
+    reproducibility_constraints: list[str] = Field(default_factory=list)
     architecture_materials: list[str] = Field(default_factory=list)
     case_study_materials: list[str] = Field(default_factory=list)
     failure_analysis_materials: list[str] = Field(default_factory=list)
@@ -3631,6 +3755,14 @@ class AutoResearchEvaluationCaseSuiteRead(BaseModel):
     evaluation_artifact_count: int = 0
     cases: list[AutoResearchEvaluationCaseRead] = Field(default_factory=list)
     metrics: list[AutoResearchSystemEvaluationMetricRead] = Field(default_factory=list)
+    evaluation_case_audit: AutoResearchEvaluationCaseAuditRead | None = None
+    evaluation_case_audit_path: str | None = None
+    trace_artifact_paths: dict[str, str] = Field(default_factory=dict)
+    metrics_artifact_path: str | None = None
+    system_paper_material: AutoResearchSystemPaperMaterialRead | None = None
+    system_paper_material_path: str | None = None
+    readiness_timeline: list[AutoResearchEvaluationTimelineEventRead] = Field(default_factory=list)
+    failure_timeline: list[AutoResearchEvaluationTimelineEventRead] = Field(default_factory=list)
     scholarflow_paper_materials: list[str] = Field(default_factory=list)
     architecture_materials: list[str] = Field(default_factory=list)
     case_study_materials: list[str] = Field(default_factory=list)
@@ -3650,6 +3782,9 @@ class AutoResearchSystemEvaluationRead(BaseModel):
     overall_score: int = 0
     tasks: list[AutoResearchSystemEvaluationTaskRead] = Field(default_factory=list)
     metrics: list[AutoResearchSystemEvaluationMetricRead] = Field(default_factory=list)
+    evaluation_suite_artifact_path: str | None = None
+    evaluation_case_audit_path: str | None = None
+    system_paper_material_path: str | None = None
     scholarflow_paper_materials: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

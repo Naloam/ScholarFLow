@@ -7,14 +7,23 @@ from pathlib import Path
 from typing import Any
 
 from schemas.autoresearch import (
+    AutoResearchEvaluationCaseAuditEntryRead,
+    AutoResearchEvaluationCaseAuditRead,
     AutoResearchEvaluationCaseRead,
     AutoResearchEvaluationCaseSuiteRead,
+    AutoResearchEvaluationStageStatus,
+    AutoResearchEvaluationStageTraceRead,
     AutoResearchEvaluationCaseTraceRead,
+    AutoResearchEvaluationTimelineEventRead,
     AutoResearchIdeaRequest,
     AutoResearchIdeaResourceBudget,
     AutoResearchProjectPaperDecision,
     AutoResearchRunRead,
+    AutoResearchSystemClaimSupportStatus,
     AutoResearchSystemEvaluationMetricRead,
+    AutoResearchSystemPaperClaimRead,
+    AutoResearchSystemPaperMaterialRead,
+    AutoResearchSystemPaperSectionRead,
     BenchmarkSource,
 )
 from services.autoresearch.benchmarks import ResolvedBenchmark, build_experiment_spec, builtin_benchmark
@@ -24,6 +33,7 @@ from services.autoresearch.experiment_factory import (
     execute_toy_experiment_factory,
 )
 from services.autoresearch.experiment_execution import (
+    _base_output_package,
     build_experiment_execution_plan,
     execute_experiment_execution_plan,
 )
@@ -37,9 +47,18 @@ from services.autoresearch.project_paper_orchestrator import (
     build_project_paper_orchestration,
 )
 from services.autoresearch.repository import (
+    evaluation_case_audit_file_path,
+    evaluation_case_suite_file_path,
+    evaluation_metrics_file_path,
+    save_evaluation_case_audit,
+    save_evaluation_case_suite,
+    save_evaluation_case_trace,
+    save_evaluation_metrics,
     save_literature_scout_cache,
     save_research_brief,
     save_run,
+    save_system_paper_material,
+    system_paper_material_file_path,
 )
 
 
@@ -363,6 +382,87 @@ _OFFLINE_PUBLICATION_CASE_REQUIRED_PACKAGE_ROLES = set(PROJECT_SUBMISSION_PACKAG
     "project_submission_manifest",
 }
 
+_GOAL8_REQUIRED_CASE_CLASSES = [
+    "claim-evidence generalized idea case",
+    "RAG/citation faithfulness review case",
+    "lightweight ML/NLP review case",
+    "unsupported domain blocker case",
+    "failed execution or missing-output case",
+    "review/revision blocker case",
+    "final package blocked case",
+]
+
+_GOAL8_STAGE_IDS = [
+    "idea",
+    "domain",
+    "brief",
+    "hypothesis",
+    "literature",
+    "benchmark",
+    "protocol",
+    "execution",
+    "evidence",
+    "readiness",
+    "repair",
+    "revision",
+    "package",
+    "final_gate",
+    "failure",
+]
+
+_GOAL8_STAGE_STEP_ALIASES = {
+    "idea": {"idea"},
+    "domain": {"domain_routing_blocker"},
+    "brief": {"research_brief"},
+    "hypothesis": {"hypothesis_selection"},
+    "literature": {"literature_scout", "gap_mining"},
+    "benchmark": {"experiment_plan", "domain_package_readiness"},
+    "protocol": {"experiment_plan"},
+    "execution": {
+        "toy_execution",
+        "imported_frozen_benchmark_execution",
+        "typed_execution_failed_missing_output",
+    },
+    "evidence": {"evidence_ledger"},
+    "readiness": {
+        "publication_readiness_blocker",
+        "domain_package_readiness",
+        "review_package",
+    },
+    "repair": {"project_revision_actions", "project_revision_action_plan"},
+    "revision": {
+        "project_revision_action_plan",
+        "project_reviewer_response_dossier",
+        "project_rereview",
+    },
+    "package": {
+        "review_package",
+        "project_submission_package",
+        "submission_package_v3_asset_manifest",
+    },
+    "final_gate": {
+        "project_submission_package",
+        "submission_package_v3_asset_manifest",
+        "publication_readiness_blocker",
+    },
+    "failure": {"typed_execution_failed_missing_output", "domain_routing_blocker"},
+}
+
+_GOAL8_AUDITED_FILES = [
+    "docs/goal.md",
+    "backend/services/autoresearch/evaluation_cases.py",
+    "backend/services/autoresearch/system_evaluation.py",
+    "backend/services/autoresearch/project_paper_orchestrator.py",
+    "backend/services/autoresearch/repository.py",
+    "backend/schemas/autoresearch.py",
+    "backend/api/autoresearch.py",
+    "backend/tests/test_autoresearch_regressions.py",
+    "frontend/src/api/types.ts",
+    "frontend/src/api/client.ts",
+    "docs/api-reference.md",
+    "docs/claim-evidence-vertical-loop.md",
+]
+
 
 def _read_json_file(path: str | None) -> dict[str, Any]:
     if not path:
@@ -375,6 +475,629 @@ def _read_json_file(path: str | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _nonempty_refs(*values: Any) -> list[str]:
+    refs: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, list | tuple | set):
+            refs.extend(_nonempty_refs(*value))
+            continue
+        text = str(value)
+        if text:
+            refs.append(text)
+    return _dedupe(refs)
+
+
+def _trace_artifact_refs(trace: AutoResearchEvaluationCaseTraceRead) -> list[str]:
+    return _nonempty_refs(
+        f"brief:{trace.brief_id}" if trace.brief_id else None,
+        (
+            f"domain_decision:{trace.domain_decision.domain_id}"
+            if trace.domain_decision is not None
+            else None
+        ),
+        (
+            f"domain_template:{trace.domain_template.template_id}"
+            if trace.domain_template is not None
+            else None
+        ),
+        (
+            f"literature_strategy:{trace.domain_literature_strategy.strategy_id}"
+            if trace.domain_literature_strategy is not None
+            else None
+        ),
+        (
+            f"literature_result:{trace.domain_literature_result.result_id}"
+            if trace.domain_literature_result is not None
+            else None
+        ),
+        (
+            f"benchmark_resolver:{trace.domain_benchmark_resolver.resolver_id}"
+            if trace.domain_benchmark_resolver is not None
+            else None
+        ),
+        (
+            f"experiment_protocol:{trace.domain_experiment_protocol.protocol_id}"
+            if trace.domain_experiment_protocol is not None
+            else None
+        ),
+        f"hypothesis:{trace.selected_hypothesis_id}" if trace.selected_hypothesis_id else None,
+        f"experiment_plan:{trace.experiment_plan_id}" if trace.experiment_plan_id else None,
+        (
+            f"experiment_execution_plan:{trace.experiment_execution_plan_id}"
+            if trace.experiment_execution_plan_id
+            else None
+        ),
+        f"evidence_ledger:{trace.evidence_ledger_id}" if trace.evidence_ledger_id else None,
+        trace.project_paper_path,
+        trace.project_submission_manifest_path,
+        trace.project_publication_manifest_path,
+        trace.project_publication_readiness_report_path,
+        trace.project_experiment_repair_index_path,
+        trace.project_statistics_report_path,
+        trace.project_repair_execution_log_path,
+        trace.project_review_findings_path,
+        trace.project_retrieval_evidence_ledger_path,
+        trace.project_negative_evidence_report_path,
+        trace.project_offline_publication_case_path,
+        trace.project_offline_publication_audit_path,
+        trace.project_submission_archive_manifest_path,
+        trace.project_submission_archive_path,
+        trace.project_reproducibility_checklist_json_path,
+        trace.project_artifact_integrity_audit_path,
+        trace.project_final_publish_decision_path,
+        trace.project_paper_sources_manifest_path,
+        trace.project_manuscript_context_path,
+    )
+
+
+def _trace_evidence_refs(trace: AutoResearchEvaluationCaseTraceRead) -> list[str]:
+    return _nonempty_refs(
+        f"evidence_ledger:{trace.evidence_ledger_id}" if trace.evidence_ledger_id else None,
+        trace.project_retrieval_evidence_ledger_path,
+        trace.project_negative_evidence_report_path,
+        trace.project_statistics_report_path,
+        trace.project_publication_readiness_report_path,
+        trace.project_final_publish_decision_path,
+        [
+            f"execution_output:{item.output_ref}:{item.validation_status}"
+            for item in trace.experiment_execution_output_validation
+        ],
+        [
+            f"materialized_execution_run:{run_id}"
+            for run_id in trace.project_materialized_execution_run_ids
+        ],
+        [
+            f"imported_replay_run:{run_id}"
+            for run_id in trace.project_imported_replay_run_ids
+        ],
+    )
+
+
+def _trace_negative_evidence(trace: AutoResearchEvaluationCaseTraceRead) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if trace.experiment_execution_status in {"failed", "blocked", "needs_approval"}:
+        items.append(
+            {
+                "category": trace.experiment_execution_failure_classification or "runtime_blocker",
+                "source": "typed_experiment_execution",
+                "blockers": list(trace.experiment_execution_blockers),
+                "claim_ceiling": trace.experiment_execution_claim_ceiling,
+            }
+        )
+    if trace.project_negative_evidence_count > 0:
+        items.append(
+            {
+                "category": "project_negative_evidence",
+                "source": trace.project_negative_evidence_report_path,
+                "count": trace.project_negative_evidence_count,
+                "categories": list(trace.project_phase6_negative_evidence_categories),
+                "claim_ceiling": trace.project_claim_ceiling,
+            }
+        )
+    if trace.project_final_publish_scientific_evidence_gap_count > 0:
+        items.append(
+            {
+                "category": "final_publish_scientific_evidence_gap",
+                "source": trace.project_offline_publication_audit_path,
+                "count": trace.project_final_publish_scientific_evidence_gap_count,
+                "blockers": trace.project_final_publish_scientific_evidence_gaps,
+            }
+        )
+    if trace.domain_readiness_status == "blocked":
+        items.append(
+            {
+                "category": "domain_blocker",
+                "source": "domain_router",
+                "blockers": list(trace.domain_blockers),
+                "claim_ceiling": trace.domain_claim_ceiling,
+            }
+        )
+    return items
+
+
+def _trace_deterministic_labels(trace: AutoResearchEvaluationCaseTraceRead) -> list[str]:
+    labels = ["offline", "deterministic_fixture"]
+    labels.extend(f"typed_route:{route}" for route in trace.experiment_execution_routes)
+    if trace.literature_cache_hit_count:
+        labels.append("cached_literature")
+    if trace.project_imported_replay_run_ids:
+        labels.append("import_replay")
+    if trace.project_materialized_execution_run_ids:
+        labels.append("local_materialized_execution")
+    if trace.project_benchmark_snapshot_artifact_materialized:
+        labels.append("repository_local_benchmark_snapshot")
+    if trace.experiment_execution_status == "failed":
+        labels.append("deterministic_failed_execution")
+    if trace.domain_readiness_status == "blocked":
+        labels.append("unsupported_domain_blocker")
+    return _dedupe(labels)
+
+
+def _trace_reproducibility_constraints(trace: AutoResearchEvaluationCaseTraceRead) -> list[str]:
+    constraints = [
+        "live_network_disabled",
+        "paid_llm_disabled",
+        "gpu_disabled",
+        "docker_daemon_not_required",
+    ]
+    if trace.project_reproducibility_checklist_complete is False:
+        constraints.append("reproducibility_checklist_incomplete_for_final_publish")
+    if trace.project_benchmark_source_independence_ready is False:
+        constraints.append("benchmark_source_independence_not_ready")
+    if trace.project_final_publish_ready is False:
+        constraints.append("final_publish_gate_not_passed")
+    if trace.domain_claim_ceiling:
+        constraints.append(f"claim_ceiling:{trace.domain_claim_ceiling}")
+    if trace.project_claim_ceiling:
+        constraints.append(f"project_claim_ceiling:{trace.project_claim_ceiling}")
+    return _dedupe(constraints)
+
+
+def _stage_status(
+    *,
+    trace: AutoResearchEvaluationCaseTraceRead,
+    stage_id: str,
+    covered: bool,
+) -> AutoResearchEvaluationStageStatus:
+    if stage_id == "domain" and trace.domain_readiness_status == "blocked":
+        return "blocked"
+    if stage_id == "hypothesis" and trace.selected_hypothesis_id is None:
+        return "skipped_by_policy" if trace.domain_readiness_status == "blocked" else "blocked"
+    if stage_id == "execution":
+        if trace.experiment_execution_status == "failed":
+            return "failed"
+        if trace.experiment_execution_status in {"blocked", "needs_approval"}:
+            return "blocked"
+    if stage_id == "final_gate" and trace.project_final_publish_ready is False:
+        return "blocked" if trace.project_final_publish_failed_check_ids or trace.project_submission_blockers else "skipped_by_policy"
+    if stage_id == "package" and not trace.project_review_bundle_ready and not trace.paper_review_package_ready:
+        return "skipped_by_policy" if trace.domain_readiness_status == "blocked" else "blocked"
+    if stage_id == "failure":
+        if trace.experiment_execution_status == "failed" or trace.blockers or trace.negative_evidence:
+            return "failed" if trace.experiment_execution_status == "failed" else "blocked"
+        return "skipped_by_policy"
+    return "succeeded" if covered else "skipped_by_policy"
+
+
+def _stage_refs(
+    trace: AutoResearchEvaluationCaseTraceRead,
+    stage_id: str,
+) -> tuple[list[str], list[str], list[str]]:
+    if stage_id == "idea":
+        return [], [trace.idea], []
+    if stage_id == "domain":
+        return [trace.idea], _nonempty_refs(
+            (
+                f"domain_decision:{trace.domain_decision.domain_id}"
+                if trace.domain_decision is not None
+                else None
+            ),
+            (
+                f"domain_template:{trace.domain_template.template_id}"
+                if trace.domain_template is not None
+                else None
+            ),
+        ), []
+    if stage_id == "brief":
+        return [trace.idea], _nonempty_refs(f"brief:{trace.brief_id}" if trace.brief_id else None), []
+    if stage_id == "hypothesis":
+        return _nonempty_refs(f"brief:{trace.brief_id}" if trace.brief_id else None), _nonempty_refs(
+            f"hypothesis:{trace.selected_hypothesis_id}" if trace.selected_hypothesis_id else None
+        ), []
+    if stage_id == "literature":
+        return _nonempty_refs(f"brief:{trace.brief_id}" if trace.brief_id else None), _nonempty_refs(
+            (
+                f"literature_result:{trace.domain_literature_result.result_id}"
+                if trace.domain_literature_result is not None
+                else None
+            )
+        ), _nonempty_refs(trace.project_publication_readiness_report_path)
+    if stage_id == "benchmark":
+        return _nonempty_refs(f"brief:{trace.brief_id}" if trace.brief_id else None), _nonempty_refs(
+            (
+                f"benchmark_resolver:{trace.domain_benchmark_resolver.resolver_id}"
+                if trace.domain_benchmark_resolver is not None
+                else None
+            )
+        ), _nonempty_refs(trace.project_offline_publication_audit_path)
+    if stage_id == "protocol":
+        return _nonempty_refs(
+            (
+                f"benchmark_resolver:{trace.domain_benchmark_resolver.resolver_id}"
+                if trace.domain_benchmark_resolver is not None
+                else None
+            )
+        ), _nonempty_refs(
+            (
+                f"experiment_protocol:{trace.domain_experiment_protocol.protocol_id}"
+                if trace.domain_experiment_protocol is not None
+                else None
+            )
+        ), []
+    if stage_id == "execution":
+        return _nonempty_refs(
+            f"experiment_plan:{trace.experiment_plan_id}" if trace.experiment_plan_id else None,
+            (
+                f"experiment_execution_plan:{trace.experiment_execution_plan_id}"
+                if trace.experiment_execution_plan_id
+                else None
+            ),
+        ), _nonempty_refs(
+            [f"execution_route:{route}" for route in trace.experiment_execution_routes],
+            [item.output_ref for item in trace.experiment_execution_output_validation],
+        ), _nonempty_refs(trace.project_experiment_repair_index_path)
+    if stage_id == "evidence":
+        return _nonempty_refs(
+            (
+                f"experiment_execution_plan:{trace.experiment_execution_plan_id}"
+                if trace.experiment_execution_plan_id
+                else None
+            )
+        ), _trace_evidence_refs(trace), _nonempty_refs(
+            trace.project_retrieval_evidence_ledger_path,
+            trace.project_negative_evidence_report_path,
+        )
+    if stage_id == "readiness":
+        return _trace_evidence_refs(trace), _nonempty_refs(trace.project_publication_readiness_report_path), []
+    if stage_id == "repair":
+        return _nonempty_refs(trace.project_review_findings_path), _nonempty_refs(
+            trace.project_experiment_repair_index_path,
+            trace.project_repair_execution_log_path,
+            trace.project_revision_action_plan_path,
+        ), []
+    if stage_id == "revision":
+        return _nonempty_refs(trace.project_review_findings_path), _nonempty_refs(
+            trace.project_revision_response_dossier_path,
+            trace.project_revision_round_path,
+        ), []
+    if stage_id == "package":
+        return _nonempty_refs(trace.project_paper_path), _nonempty_refs(
+            trace.project_submission_manifest_path,
+            trace.project_submission_archive_manifest_path,
+            trace.project_submission_archive_path,
+            trace.project_paper_sources_manifest_path,
+            (
+                "review_package:deterministic_trace"
+                if trace.paper_review_package_ready or trace.project_review_bundle_ready
+                else None
+            ),
+        ), []
+    if stage_id == "final_gate":
+        return _nonempty_refs(trace.project_submission_archive_manifest_path), _nonempty_refs(
+            trace.project_final_publish_decision_path
+        ), []
+    return _trace_artifact_refs(trace), [], []
+
+
+def _stage_blockers(
+    trace: AutoResearchEvaluationCaseTraceRead,
+    stage_id: str,
+) -> list[str]:
+    if stage_id == "domain":
+        return list(trace.domain_blockers)
+    if stage_id == "benchmark":
+        blockers = []
+        if trace.domain_benchmark_resolver is not None:
+            blockers.extend(trace.domain_benchmark_resolver.blockers)
+        blockers.extend(trace.project_benchmark_schema_coverage_blockers)
+        blockers.extend(trace.project_benchmark_source_observation_blockers)
+        blockers.extend(trace.project_benchmark_final_publish_candidate_blockers)
+        blockers.extend(trace.project_benchmark_source_independence_blockers)
+        return _dedupe(blockers)
+    if stage_id == "protocol" and trace.domain_experiment_protocol is not None:
+        return _dedupe(
+            [
+                *trace.domain_experiment_protocol.blockers,
+                *trace.domain_experiment_protocol.readiness_blockers,
+            ]
+        )
+    if stage_id == "execution":
+        return list(trace.experiment_execution_blockers)
+    if stage_id == "readiness":
+        return _dedupe(
+            [
+                *trace.project_submission_blockers,
+                *trace.project_required_followups,
+                *trace.project_kill_criteria,
+            ]
+        )
+    if stage_id == "revision":
+        return list(trace.project_revision_blocked_evidence_action_ids)
+    if stage_id == "package":
+        return _dedupe([*trace.project_submission_missing_asset_roles, *trace.project_submission_blockers])
+    if stage_id == "final_gate":
+        return _dedupe([*trace.project_final_publish_failed_check_ids, *trace.project_submission_blockers])
+    if stage_id == "failure":
+        return _dedupe([*trace.blockers, *trace.experiment_execution_blockers])
+    return []
+
+
+def _build_stage_timeline(
+    trace: AutoResearchEvaluationCaseTraceRead,
+) -> list[AutoResearchEvaluationStageTraceRead]:
+    steps = set(trace.steps_completed)
+    negative_evidence = _trace_negative_evidence(trace)
+    timeline: list[AutoResearchEvaluationStageTraceRead] = []
+    for index, stage_id in enumerate(_GOAL8_STAGE_IDS, start=1):
+        aliases = _GOAL8_STAGE_STEP_ALIASES.get(stage_id, {stage_id})
+        covered = bool(aliases & steps)
+        if stage_id == "domain":
+            covered = trace.domain_decision is not None
+        elif stage_id == "benchmark":
+            covered = trace.domain_benchmark_resolver is not None
+        elif stage_id == "protocol":
+            covered = trace.domain_experiment_protocol is not None
+        elif stage_id == "execution":
+            covered = bool(trace.experiment_execution_plan_id or trace.experiment_plan_id)
+        elif stage_id == "evidence":
+            covered = bool(trace.evidence_ledger_id or trace.project_retrieval_evidence_ledger_path)
+        elif stage_id == "readiness":
+            covered = bool(trace.project_publication_readiness_report_path or trace.paper_review_package_ready)
+        elif stage_id == "repair":
+            covered = bool(
+                trace.repair_action_count
+                or trace.project_experiment_repair_index_path
+                or trace.project_revision_action_count
+                or trace.experiment_execution_repair_recommendation not in {None, "none"}
+            )
+        elif stage_id == "revision":
+            covered = bool(trace.project_revision_round_path or trace.project_revision_action_plan_path)
+        elif stage_id == "package":
+            covered = bool(trace.project_submission_manifest_path or trace.paper_review_package_ready)
+        elif stage_id == "final_gate":
+            covered = bool(trace.project_final_publish_decision_path)
+        elif stage_id == "failure":
+            covered = bool(negative_evidence or trace.blockers)
+        input_refs, output_refs, artifact_refs = _stage_refs(trace, stage_id)
+        timeline.append(
+            AutoResearchEvaluationStageTraceRead(
+                stage_id=stage_id,
+                status=_stage_status(trace=trace, stage_id=stage_id, covered=covered),
+                deterministic_order=index,
+                input_refs=input_refs,
+                output_refs=output_refs,
+                artifact_refs=artifact_refs,
+                evidence_refs=(
+                    _trace_evidence_refs(trace)
+                    if stage_id in {
+                        "evidence",
+                        "readiness",
+                        "repair",
+                        "revision",
+                        "package",
+                        "final_gate",
+                        "failure",
+                    }
+                    else []
+                ),
+                negative_evidence=(
+                    negative_evidence
+                    if stage_id in {"execution", "evidence", "readiness", "failure"}
+                    else []
+                ),
+                blockers=_stage_blockers(trace, stage_id),
+                warnings=list(trace.literature_extraction_limitations) if stage_id == "literature" else [],
+                claim_ceiling_impact=(
+                    trace.project_claim_ceiling
+                    or trace.experiment_execution_claim_ceiling
+                    or trace.domain_claim_ceiling
+                ),
+                deterministic_labels=_trace_deterministic_labels(trace),
+                reproducibility_constraints=_trace_reproducibility_constraints(trace),
+            )
+        )
+    return timeline
+
+
+def _build_readiness_timeline(
+    trace: AutoResearchEvaluationCaseTraceRead,
+) -> list[AutoResearchEvaluationTimelineEventRead]:
+    return [
+        AutoResearchEvaluationTimelineEventRead(
+            event_id="domain_readiness",
+            stage_id="domain",
+            status="blocked" if trace.domain_readiness_status == "blocked" else "succeeded",
+            deterministic_order=1,
+            summary=(
+                f"Domain readiness is `{trace.domain_readiness_status}` with claim ceiling "
+                f"`{trace.domain_claim_ceiling or 'none'}`."
+            ),
+            artifact_refs=_nonempty_refs(
+                (
+                    f"domain_decision:{trace.domain_decision.domain_id}"
+                    if trace.domain_decision is not None
+                    else None
+                )
+            ),
+            blockers=list(trace.domain_blockers),
+            claim_ceiling_impact=trace.domain_claim_ceiling,
+        ),
+        AutoResearchEvaluationTimelineEventRead(
+            event_id="review_package_readiness",
+            stage_id="package",
+            status="succeeded" if trace.project_review_bundle_ready or trace.paper_review_package_ready else "blocked",
+            deterministic_order=2,
+            summary=(
+                "Review/package readiness is true only for traces with persisted evidence or "
+                "auditable review bundle artifacts."
+            ),
+            artifact_refs=_nonempty_refs(trace.project_submission_manifest_path, trace.project_paper_path),
+            evidence_refs=_trace_evidence_refs(trace),
+            blockers=list(trace.project_submission_blockers),
+            package_ready=bool(trace.project_review_bundle_ready or trace.paper_review_package_ready),
+            final_publish_ready=trace.project_final_publish_ready,
+        ),
+        AutoResearchEvaluationTimelineEventRead(
+            event_id="final_publish_gate",
+            stage_id="final_gate",
+            status="succeeded" if trace.project_final_publish_ready else "blocked",
+            deterministic_order=3,
+            summary=(
+                "Final publish readiness remains false unless persisted final-gate checks pass; "
+                "review-ready packages are not auto-upgraded."
+            ),
+            artifact_refs=_nonempty_refs(trace.project_final_publish_decision_path),
+            evidence_refs=_trace_evidence_refs(trace),
+            blockers=_dedupe([*trace.project_final_publish_failed_check_ids, *trace.project_submission_blockers]),
+            claim_ceiling_impact=trace.project_claim_ceiling,
+            package_ready=trace.end_to_end_package_ready,
+            final_publish_ready=trace.project_final_publish_ready,
+        ),
+    ]
+
+
+def _build_failure_timeline(
+    trace: AutoResearchEvaluationCaseTraceRead,
+) -> list[AutoResearchEvaluationTimelineEventRead]:
+    events: list[AutoResearchEvaluationTimelineEventRead] = []
+    if trace.experiment_execution_status in {"failed", "blocked", "needs_approval"}:
+        events.append(
+            AutoResearchEvaluationTimelineEventRead(
+                event_id="typed_execution_failure",
+                stage_id="execution",
+                status="failed" if trace.experiment_execution_status == "failed" else "blocked",
+                deterministic_order=1,
+                summary=(
+                    "Typed execution produced a structured non-success result and retained "
+                    "blockers/negative evidence instead of fake outputs."
+                ),
+                artifact_refs=_nonempty_refs(
+                    (
+                        f"experiment_execution_plan:{trace.experiment_execution_plan_id}"
+                        if trace.experiment_execution_plan_id
+                        else None
+                    )
+                ),
+                evidence_refs=_trace_evidence_refs(trace),
+                negative_evidence=_trace_negative_evidence(trace),
+                blockers=list(trace.experiment_execution_blockers),
+                claim_ceiling_impact=trace.experiment_execution_claim_ceiling,
+            )
+        )
+    if trace.domain_readiness_status == "blocked":
+        events.append(
+            AutoResearchEvaluationTimelineEventRead(
+                event_id="unsupported_domain_blocker",
+                stage_id="domain",
+                status="blocked",
+                deterministic_order=2,
+                summary="Unsupported domain stopped before hypothesis selection or fake execution outputs.",
+                artifact_refs=_nonempty_refs(
+                    (
+                        f"domain_decision:{trace.domain_decision.domain_id}"
+                        if trace.domain_decision is not None
+                        else None
+                    )
+                ),
+                negative_evidence=_trace_negative_evidence(trace),
+                blockers=list(trace.domain_blockers),
+                claim_ceiling_impact=trace.domain_claim_ceiling,
+            )
+        )
+    if trace.project_final_publish_ready is False and (
+        trace.project_final_publish_failed_check_ids
+        or trace.project_submission_blockers
+        or trace.project_final_publish_scientific_evidence_gap_count
+    ):
+        events.append(
+            AutoResearchEvaluationTimelineEventRead(
+                event_id="final_publish_blocked",
+                stage_id="final_gate",
+                status="blocked",
+                deterministic_order=3,
+                summary=(
+                    "Final publish gate preserved unsupported or insufficient evidence as "
+                    "blockers rather than promoting a final package."
+                ),
+                artifact_refs=_nonempty_refs(
+                    trace.project_final_publish_decision_path,
+                    trace.project_offline_publication_audit_path,
+                ),
+                evidence_refs=_trace_evidence_refs(trace),
+                negative_evidence=_trace_negative_evidence(trace),
+                blockers=_dedupe(
+                    [
+                        *trace.project_final_publish_failed_check_ids,
+                        *trace.project_submission_blockers,
+                    ]
+                ),
+                claim_ceiling_impact=trace.project_claim_ceiling,
+                package_ready=trace.end_to_end_package_ready,
+                final_publish_ready=trace.project_final_publish_ready,
+            )
+        )
+    return events
+
+
+def _finalize_goal8_trace(
+    *,
+    project_id: str,
+    case_id: str,
+    trace: AutoResearchEvaluationCaseTraceRead,
+) -> AutoResearchEvaluationCaseTraceRead:
+    artifact_refs = _trace_artifact_refs(trace)
+    evidence_refs = _trace_evidence_refs(trace)
+    negative_evidence = _trace_negative_evidence(trace)
+    deterministic_labels = _trace_deterministic_labels(trace)
+    reproducibility_constraints = _trace_reproducibility_constraints(trace)
+    enriched = trace.model_copy(
+        update={
+            "case_id": case_id,
+            "artifact_refs": artifact_refs,
+            "evidence_refs": evidence_refs,
+            "negative_evidence": negative_evidence,
+            "deterministic_labels": deterministic_labels,
+            "reproducibility_constraints": reproducibility_constraints,
+        }
+    )
+    stage_timeline = _build_stage_timeline(enriched)
+    readiness_timeline = _build_readiness_timeline(enriched)
+    failure_timeline = _build_failure_timeline(enriched)
+    payload = {
+        "trace_schema_version": enriched.trace_schema_version,
+        "case_id": case_id,
+        "stage_timeline": [stage.model_dump(mode="json") for stage in stage_timeline],
+        "readiness_timeline": [event.model_dump(mode="json") for event in readiness_timeline],
+        "failure_timeline": [event.model_dump(mode="json") for event in failure_timeline],
+        "artifact_refs": artifact_refs,
+        "evidence_refs": evidence_refs,
+        "negative_evidence": negative_evidence,
+        "deterministic_labels": deterministic_labels,
+        "reproducibility_constraints": reproducibility_constraints,
+    }
+    enriched = enriched.model_copy(
+        update={
+            "stage_timeline": stage_timeline,
+            "readiness_timeline": readiness_timeline,
+            "failure_timeline": failure_timeline,
+            "trace_fingerprint": _goal8_fingerprint(payload),
+        }
+    )
+    return save_evaluation_case_trace(project_id, case_id, enriched)
 
 
 def _project_source_trace_fields(project_paper: Any) -> dict[str, Any]:
@@ -1124,6 +1847,35 @@ def _fingerprint(payload: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_GOAL8_TIMESTAMP_KEYS = {
+    "generated_at",
+    "updated_at",
+    "created_at",
+    "cache_timestamp",
+    "fetched_at",
+    "imported_at",
+    "started_at",
+    "completed_at",
+}
+
+
+def _normalize_goal8_payload(payload: object) -> object:
+    if isinstance(payload, dict):
+        return {
+            key: "2000-01-01T00:00:00"
+            if key in _GOAL8_TIMESTAMP_KEYS
+            else _normalize_goal8_payload(value)
+            for key, value in payload.items()
+        }
+    if isinstance(payload, list):
+        return [_normalize_goal8_payload(item) for item in payload]
+    return payload
+
+
+def _goal8_fingerprint(payload: object) -> str:
+    return _fingerprint(_normalize_goal8_payload(payload))
+
+
 def _dedupe(items: list[str]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -1609,8 +2361,15 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         factory_plan=plan,
         brief=scouted,
     )
+    execution_output_override = None
+    if str(case["case_id"]) == "eval_case_failed_hypothesis_task":
+        execution_output_override = _base_output_package(experiment_execution_plan)
+        if experiment_execution_plan.jobs:
+            expected_output = experiment_execution_plan.jobs[0].expected_output_artifacts[0]
+            execution_output_override.pop(Path(expected_output).stem, None)
     experiment_execution_result = execute_experiment_execution_plan(
-        experiment_execution_plan
+        experiment_execution_plan,
+        output_override=execution_output_override,
     )
 
     scientific_evidence_blockers = list(execution.evidence_ledger.blockers)
@@ -1655,6 +2414,15 @@ def _build_case_trace(project_id: str, case: dict[str, Any]) -> AutoResearchEval
         execution_step,
         "evidence_ledger",
     ]
+    if experiment_execution_result.status == "failed":
+        steps.append("typed_execution_failed_missing_output")
+        failure_analysis_materials.append(
+            (
+                f"{case['task_kind']}: typed execution failure "
+                f"`{experiment_execution_result.failure_classification}` retained "
+                "negative evidence and did not generate final-publish support."
+            )
+        )
     if ready:
         steps.extend(["paper_draft", "review_package"])
     project_paper_path = None
@@ -2719,6 +3487,146 @@ def _case_from_definition(
     )
 
 
+def _build_case_audit(
+    *,
+    project_id: str,
+    definitions: list[dict[str, Any]],
+    cases: list[AutoResearchEvaluationCaseRead],
+) -> AutoResearchEvaluationCaseAuditRead:
+    cases_by_id = {case.case_id: case for case in cases}
+    entries: list[AutoResearchEvaluationCaseAuditEntryRead] = []
+    for definition in definitions:
+        case_id = str(definition["case_id"])
+        case = cases_by_id[case_id]
+        trace = case.trace
+        stage_ids = [stage.stage_id for stage in trace.stage_timeline] if trace is not None else []
+        missing_stages = [stage_id for stage_id in _GOAL8_STAGE_IDS if stage_id not in stage_ids]
+        if definition.get("expected_blocked"):
+            expected_path = "unsupported_domain_blocker"
+        elif case_id == "eval_case_failed_hypothesis_task":
+            expected_path = "failed_execution_or_missing_output_retained_as_negative_evidence"
+        elif definition.get("build_project_package") or str(definition["task_kind"]) == "claim_evidence_vertical_task":
+            expected_path = "review_ready_or_case_study_package_with_final_gate_blocked"
+        else:
+            expected_path = "idea_to_evidence_review_package"
+        expected_blockers = []
+        if definition.get("expected_blocked"):
+            expected_blockers.append("unsupported_domain")
+        if trace is not None and trace.project_final_publish_ready is False and trace.project_final_publish_decision_path:
+            expected_blockers.append("final_publish_gate")
+        if case_id == "eval_case_failed_hypothesis_task":
+            expected_blockers.append("typed_execution_missing_output")
+        observed_blockers = (
+            _dedupe(
+                [
+                    *(trace.blockers if trace is not None else []),
+                    *(trace.domain_blockers if trace is not None else []),
+                    *(trace.experiment_execution_blockers if trace is not None else []),
+                    *(trace.project_submission_blockers if trace is not None else []),
+                    *(trace.project_final_publish_failed_check_ids if trace is not None else []),
+                ]
+            )
+            if trace is not None
+            else []
+        )
+        entries.append(
+            AutoResearchEvaluationCaseAuditEntryRead(
+                case_id=case_id,
+                task_kind=str(definition["task_kind"]),  # type: ignore[arg-type]
+                idea=str(definition["idea"]),
+                domain=str(definition["domain"]),
+                expected_path=expected_path,
+                covered_stages=stage_ids,
+                missing_stages=missing_stages,
+                artifact_refs=list(trace.artifact_refs) if trace is not None else [],
+                evidence_refs=list(trace.evidence_refs) if trace is not None else [],
+                expected_blockers=expected_blockers,
+                observed_blockers=observed_blockers,
+                claim_ceiling=(
+                    trace.project_claim_ceiling or trace.domain_claim_ceiling
+                    if trace is not None
+                    else None
+                ),
+                deterministic_labels=list(trace.deterministic_labels) if trace is not None else [],
+                audit_conclusion=(
+                    "Goal 8 trace records every required stage with explicit status; "
+                    "skipped or blocked stages remain visible instead of being treated as success."
+                    if not missing_stages
+                    else "Goal 8 trace is missing required stage records."
+                ),
+            )
+        )
+    represented_classes = {
+        "claim-evidence generalized idea case"
+        for case in cases
+        if case.case_id == "claim_evidence_generalized_idea"
+    }
+    represented_classes.update(
+        {
+            "RAG/citation faithfulness review case"
+            for case in cases
+            if case.case_id == "rag_citation_faithfulness_review_case"
+        }
+    )
+    represented_classes.update(
+        {
+            "lightweight ML/NLP review case"
+            for case in cases
+            if case.case_id == "lightweight_ml_nlp_review_case"
+        }
+    )
+    represented_classes.update(
+        {
+            "unsupported domain blocker case"
+            for case in cases
+            if case.case_id == "unsupported_domain_case"
+        }
+    )
+    represented_classes.update(
+        {
+            "failed execution or missing-output case"
+            for case in cases
+            if case.case_id == "eval_case_failed_hypothesis_task"
+            and case.trace is not None
+            and case.trace.experiment_execution_status == "failed"
+        }
+    )
+    represented_classes.update(
+        {
+            "review/revision blocker case"
+            for case in cases
+            if case.trace is not None
+            and case.trace.project_revision_blocked_evidence_action_ids
+        }
+    )
+    represented_classes.update(
+        {
+            "final package blocked case"
+            for case in cases
+            if case.trace is not None
+            and case.trace.project_final_publish_ready is False
+            and case.trace.project_final_publish_decision_path is not None
+        }
+    )
+    payload = {
+        "audit_id": "goal8_evaluation_case_audit_v1",
+        "project_id": project_id,
+        "audited_files": _GOAL8_AUDITED_FILES,
+        "required_case_classes": _GOAL8_REQUIRED_CASE_CLASSES,
+        "missing_case_classes": [
+            item for item in _GOAL8_REQUIRED_CASE_CLASSES if item not in represented_classes
+        ],
+        "entries": [entry.model_dump(mode="json") for entry in entries],
+    }
+    return save_evaluation_case_audit(
+        AutoResearchEvaluationCaseAuditRead(
+            generated_at=_utcnow(),
+            audit_fingerprint=_goal8_fingerprint(payload),
+            **payload,
+        )
+    )
+
+
 def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSystemEvaluationMetricRead]:
     traces = [case.trace for case in cases if case.trace is not None]
     successful_cases = [
@@ -2740,7 +3648,7 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
         and case.expected_experiment_design_requirements
         and case.expected_failure_replan_behavior
     )
-    return [
+    base_metrics = [
         _metric(
             metric_id="idea_to_brief_completeness",
             label="Idea-to-Brief Completeness",
@@ -2842,16 +3750,478 @@ def _metrics(cases: list[AutoResearchEvaluationCaseRead]) -> list[AutoResearchSy
             rationale="Counts traces that run idea-to-brief, cached benchmark execution, evidence ledger, project paper, revision actions, and project submission package without live services.",
         ),
     ]
+    total_stage_records = len(traces) * len(_GOAL8_STAGE_IDS)
+    present_stage_records = sum(
+        1
+        for trace in traces
+        for stage in trace.stage_timeline
+        if stage.stage_id in _GOAL8_STAGE_IDS
+        and stage.status in {"succeeded", "blocked", "skipped_by_policy", "failed"}
+    )
+    traces_with_evidence_or_honest_blocker = sum(
+        1
+        for trace in traces
+        if trace.evidence_refs
+        or trace.negative_evidence
+        or trace.domain_readiness_status == "blocked"
+    )
+    unsupported_cases = [
+        case for case in cases if case.case_id == "unsupported_domain_case" and case.trace is not None
+    ]
+    blocker_honest_cases = sum(
+        1
+        for case in cases
+        if case.trace is not None
+        and (
+            case.trace.blockers
+            or case.trace.experiment_execution_blockers
+            or case.trace.project_submission_blockers
+            or case.trace.project_final_publish_failed_check_ids
+            or case.trace.domain_readiness_status != "blocked"
+        )
+    )
+    artifact_lineage_cases = sum(
+        1
+        for trace in traces
+        if trace.artifact_refs
+        and all(
+            stage.output_refs
+            or stage.artifact_refs
+            or stage.evidence_refs
+            or stage.negative_evidence
+            or stage.blockers
+            or stage.status == "skipped_by_policy"
+            for stage in trace.stage_timeline
+        )
+    )
+    negative_evidence_required_traces = [
+        trace
+        for trace in traces
+        if trace.project_negative_evidence_count > 0
+        or trace.experiment_execution_status in {"failed", "blocked", "needs_approval"}
+        or trace.domain_readiness_status == "blocked"
+        or trace.project_final_publish_scientific_evidence_gap_count > 0
+    ]
+    negative_evidence_cases = sum(
+        1
+        for trace in negative_evidence_required_traces
+        if trace.negative_evidence
+    )
+    final_gate_traces = [
+        trace for trace in traces if trace.project_final_publish_decision_path is not None
+    ]
+    final_gate_false_positive_count = sum(
+        1
+        for trace in final_gate_traces
+        if trace.project_final_publish_ready
+        and (
+            trace.project_submission_bundle_kind != "final_publish_bundle"
+            or trace.project_final_publish_failed_check_ids
+            or trace.project_submission_blockers
+        )
+    )
+    revision_traces = [
+        trace
+        for trace in traces
+        if (trace.project_revision_action_plan_path or trace.project_revision_round_path)
+        and trace.project_revision_response_item_count > 0
+    ]
+    revision_resolution_cases = sum(
+        1
+        for trace in revision_traces
+        if trace.project_revision_response_item_count > 0
+        and (
+            trace.project_revision_rereview_resolved_count
+            + trace.project_revision_rereview_partially_resolved_count
+            + trace.project_revision_rereview_unresolved_count
+            + trace.project_revision_rereview_regressed_count
+        )
+        >= trace.project_revision_response_item_count
+    )
+    package_readiness_cases = sum(
+        1
+        for trace in traces
+        if (
+            trace.end_to_end_package_ready
+            or trace.paper_review_package_ready
+            or trace.domain_readiness_status == "blocked"
+        )
+        and not (
+            trace.project_submission_bundle_kind == "review_bundle"
+            and trace.project_final_publish_ready
+        )
+    )
+    goal8_metrics = [
+        _metric(
+            metric_id="stage_completion_coverage",
+            label="Stage Completion Coverage",
+            numerator=present_stage_records,
+            denominator=max(total_stage_records, 1),
+            rationale="Computed from per-case Goal 8 stage timelines; every required stage must carry an explicit succeeded, blocked, skipped, or failed status.",
+        ),
+        _metric(
+            metric_id="evidence_coverage_ratio",
+            label="Evidence Coverage Ratio",
+            numerator=traces_with_evidence_or_honest_blocker,
+            denominator=max(len(traces), 1),
+            rationale="Counts traces that either expose evidence refs or preserve blocker/negative evidence refs instead of unsupported claims.",
+        ),
+        _metric(
+            metric_id="unsupported_domain_honesty",
+            label="Unsupported Domain Honesty",
+            numerator=sum(
+                1
+                for case in unsupported_cases
+                if case.trace is not None
+                and case.trace.domain_readiness_status == "blocked"
+                and case.trace.experiment_job_count == 0
+                and case.trace.evidence_entry_count == 0
+                and case.trace.experiment_execution_status == "blocked"
+            ),
+            denominator=max(len(unsupported_cases), 1),
+            rationale="Unsupported-domain cases must stop with structured blockers and no fake hypothesis, jobs, outputs, or evidence.",
+        ),
+        _metric(
+            metric_id="blocker_honesty",
+            label="Blocker Honesty",
+            numerator=blocker_honest_cases,
+            denominator=max(len(traces), 1),
+            rationale="Counts traces where blocked/failed/final-gate limitations are visible, while non-blocked traces remain scoped by claim ceilings.",
+        ),
+        _metric(
+            metric_id="artifact_lineage_completeness",
+            label="Artifact Lineage Completeness",
+            numerator=artifact_lineage_cases,
+            denominator=max(len(traces), 1),
+            rationale="Computed from trace artifact refs and per-stage output/artifact refs.",
+        ),
+        _metric(
+            metric_id="negative_evidence_retention",
+            label="Negative Evidence Retention",
+            numerator=negative_evidence_cases,
+            denominator=max(len(negative_evidence_required_traces), 1),
+            rationale="Counts traces that retain failed execution, unsupported-domain, final-gate, or project negative-evidence records.",
+        ),
+        AutoResearchSystemEvaluationMetricRead(
+            metric_id="final_gate_false_positive_count",
+            label="Final Gate False-Positive Count",
+            score=100 if final_gate_false_positive_count == 0 else 0,
+            numerator=final_gate_false_positive_count,
+            denominator=max(len(final_gate_traces), 1),
+            rationale="Counts cases where final_publish_ready would be true despite review-only/failing package evidence; expected value is zero.",
+        ),
+        _metric(
+            metric_id="revision_resolution",
+            label="Revision Resolution",
+            numerator=revision_resolution_cases,
+            denominator=max(len(revision_traces), 1),
+            rationale="Computed from persisted revision response and re-review timeline fields.",
+        ),
+        _metric(
+            metric_id="package_readiness",
+            label="Package Readiness",
+            numerator=package_readiness_cases,
+            denominator=max(len(traces), 1),
+            rationale="Counts review/package-ready or honestly blocked traces while ensuring review bundles are not promoted to final publish.",
+        ),
+    ]
+    return [*base_metrics, *goal8_metrics]
+
+
+def _metric_score(metrics: list[AutoResearchSystemEvaluationMetricRead], metric_id: str) -> int:
+    metric = next((item for item in metrics if item.metric_id == metric_id), None)
+    return metric.score if metric is not None else 0
+
+
+def _claim_support(
+    metrics: list[AutoResearchSystemEvaluationMetricRead],
+    metric_id: str,
+) -> AutoResearchSystemClaimSupportStatus:
+    score = _metric_score(metrics, metric_id)
+    if score >= 100:
+        return "supported"
+    if score > 0:
+        return "partial"
+    return "unsupported"
+
+
+def _build_system_paper_material(
+    *,
+    project_id: str,
+    cases: list[AutoResearchEvaluationCaseRead],
+    metrics: list[AutoResearchSystemEvaluationMetricRead],
+    audit: AutoResearchEvaluationCaseAuditRead,
+) -> AutoResearchSystemPaperMaterialRead:
+    traces = [case.trace for case in cases if case.trace is not None]
+    evidence_refs = _dedupe(
+        [
+            ref
+            for trace in traces
+            for ref in [
+                *trace.evidence_refs,
+                *trace.artifact_refs,
+                trace.trace_artifact_path,
+            ]
+            if ref
+        ]
+    )
+    case_ids = [case.case_id for case in cases]
+    claims = [
+        AutoResearchSystemPaperClaimRead(
+            claim_id="goal8_deterministic_trace_coverage",
+            claim="ScholarFlow can produce deterministic evaluation traces for the configured offline cases with explicit stage status, blockers, evidence refs, and package/final-gate state.",
+            support_status=_claim_support(metrics, "stage_completion_coverage"),
+            evidence_refs=[audit.audit_artifact_path or "goal8_evaluation_case_audit_v1"],
+            metric_refs=["stage_completion_coverage", "artifact_lineage_completeness"],
+            case_ids=case_ids,
+            limitations=["The claim is limited to repository-local deterministic cases, not live external research."],
+        ),
+        AutoResearchSystemPaperClaimRead(
+            claim_id="goal8_evidence_constrained_honesty",
+            claim="The deterministic suite distinguishes supported evidence, unsupported domains, failed execution, negative evidence, and final-gate blockers without upgrading review-ready packages to final publish.",
+            support_status=(
+                "supported"
+                if _metric_score(metrics, "unsupported_domain_honesty") == 100
+                and _metric_score(metrics, "negative_evidence_retention") > 0
+                and _metric_score(metrics, "final_gate_false_positive_count") == 100
+                else "partial"
+            ),
+            evidence_refs=[
+                audit.audit_artifact_path or "goal8_evaluation_case_audit_v1",
+                *[
+                    trace.trace_artifact_path or f"trace:{trace.case_id}"
+                    for trace in traces
+                    if trace.failure_timeline or trace.project_final_publish_decision_path
+                ],
+            ],
+            metric_refs=[
+                "unsupported_domain_honesty",
+                "negative_evidence_retention",
+                "final_gate_false_positive_count",
+                "package_readiness",
+            ],
+            case_ids=[
+                case.case_id
+                for case in cases
+                if case.trace is not None
+                and (
+                    case.trace.domain_readiness_status == "blocked"
+                    or case.trace.failure_timeline
+                    or case.trace.project_final_publish_decision_path
+                )
+            ],
+            limitations=["Publication-grade scientific capability remains unproven without independent live evidence, stronger statistics, and human compliance review."],
+        ),
+        AutoResearchSystemPaperClaimRead(
+            claim_id="goal8_revision_and_package_materialization",
+            claim="Goal 8 traces expose project-level revision, reviewer response, re-review, submission archive, reproducibility checklist, artifact-integrity audit, and final decision refs where the underlying package exists.",
+            support_status=_claim_support(metrics, "revision_resolution"),
+            evidence_refs=[
+                trace.trace_artifact_path or f"trace:{trace.case_id}"
+                for trace in traces
+                if trace.project_revision_round_path or trace.project_submission_archive_manifest_path
+            ],
+            metric_refs=["revision_resolution", "package_readiness"],
+            case_ids=[
+                str(trace.case_id)
+                for trace in traces
+                if trace.project_revision_round_path or trace.project_submission_archive_manifest_path
+            ],
+            limitations=["These materials are system evaluation artifacts and are not themselves a final submitted paper."],
+        ),
+        AutoResearchSystemPaperClaimRead(
+            claim_id="future_live_autonomous_scientist",
+            claim="Live external literature/execution, long-running autonomous research reliability, multi-project memory, and compliance-controlled release remain future work.",
+            support_status="future_work",
+            evidence_refs=[audit.audit_artifact_path or "goal8_evaluation_case_audit_v1"],
+            metric_refs=[],
+            case_ids=case_ids,
+            limitations=["This is a limitation/future-work statement, not a demonstrated capability claim."],
+        ),
+    ]
+    sections = [
+        AutoResearchSystemPaperSectionRead(
+            section_id="abstract_intro",
+            title="Abstract And Intro Draft",
+            content=(
+                "ScholarFlow is evaluated as an evidence-constrained autonomous research loop. "
+                "The Goal 8 material reports deterministic offline cases, not a final scientific submission."
+            ),
+            evidence_refs=[audit.audit_artifact_path or "goal8_evaluation_case_audit_v1"],
+            case_ids=case_ids,
+        ),
+        AutoResearchSystemPaperSectionRead(
+            section_id="architecture",
+            title="Architecture Overview",
+            content=(
+                "The evaluated loop routes idea, domain template, brief, hypothesis selection, "
+                "literature/gap validation, benchmark/protocol setup, typed execution, evidence ledger, "
+                "readiness gates, repair/revision, package assembly, and final gate into persisted artifacts."
+            ),
+            evidence_refs=evidence_refs[:20],
+            case_ids=case_ids,
+        ),
+        AutoResearchSystemPaperSectionRead(
+            section_id="evidence_constraints",
+            title="Evidence Constraint Design",
+            content=(
+                "Trace stages preserve claim ceilings, evidence refs, negative evidence, deterministic "
+                "labels, and blockers so unsupported or weak evidence remains visible."
+            ),
+            evidence_refs=[
+                trace.trace_artifact_path or f"trace:{trace.case_id}"
+                for trace in traces
+                if trace.stage_timeline
+            ],
+            case_ids=case_ids,
+        ),
+        AutoResearchSystemPaperSectionRead(
+            section_id="case_studies",
+            title="Case Studies",
+            content=(
+                "The suite includes generalized claim-evidence, RAG citation-faithfulness, lightweight "
+                "ML/NLP, unsupported-domain, missing-output failure, revision, and package/final-gate cases."
+            ),
+            evidence_refs=[audit.audit_artifact_path or "goal8_evaluation_case_audit_v1"],
+            case_ids=case_ids,
+        ),
+        AutoResearchSystemPaperSectionRead(
+            section_id="failure_modes",
+            title="Failure Modes",
+            content=(
+                "Unsupported domains, missing outputs, scientific evidence gaps, source-independence gaps, "
+                "and final publish blockers are represented as trace events and negative evidence."
+            ),
+            evidence_refs=[
+                trace.trace_artifact_path or f"trace:{trace.case_id}"
+                for trace in traces
+                if trace.failure_timeline
+            ],
+            case_ids=[
+                str(trace.case_id)
+                for trace in traces
+                if trace.failure_timeline
+            ],
+        ),
+        AutoResearchSystemPaperSectionRead(
+            section_id="limitations_threats",
+            title="Limitations And Threats To Validity",
+            content=(
+                "Regression evidence is offline and deterministic. It does not establish live source "
+                "coverage, real benchmark independence beyond imported snapshots, production execution, "
+                "or venue-ready final publication."
+            ),
+            evidence_refs=[audit.audit_artifact_path or "goal8_evaluation_case_audit_v1"],
+            case_ids=case_ids,
+        ),
+        AutoResearchSystemPaperSectionRead(
+            section_id="reproducibility_appendix",
+            title="Reproducibility Appendix",
+            content=(
+                "Evaluation artifacts include persisted case traces, an audit artifact, computed metrics, "
+                "system-paper material, package manifests, archive manifests, checksums, and final-gate refs."
+            ),
+            evidence_refs=[
+                evaluation_case_suite_file_path(project_id),
+                evaluation_case_audit_file_path(project_id),
+                evaluation_metrics_file_path(project_id),
+            ],
+            case_ids=case_ids,
+        ),
+        AutoResearchSystemPaperSectionRead(
+            section_id="aris_fars_comparison",
+            title="ARIS/FARS Comparison",
+            content=(
+                "The current system demonstrates evidence-constrained orchestration and honest blockers "
+                "on deterministic cases, while live autonomous discovery, robust external execution, and "
+                "release governance remain future work."
+            ),
+            evidence_refs=[audit.audit_artifact_path or "goal8_evaluation_case_audit_v1"],
+            case_ids=case_ids,
+        ),
+    ]
+    limitations = [
+        "The evaluation suite is deterministic and offline; no live network, paid LLM, GPU, Docker daemon, or online benchmark is required.",
+        "Single-run or fixture/local smoke evidence is not publication-grade system capability proof.",
+        "Review-ready, workshop, and case-study packages remain distinct from final-publish packages.",
+        "Final publish remains blocked when source independence, statistics, negative evidence, or compliance evidence is insufficient.",
+    ]
+    threats = [
+        "Repository-local fixtures may underrepresent real literature and benchmark diversity.",
+        "Metrics are computed from deterministic traces and may not predict long-running production reliability.",
+        "System-paper material is generated from evaluation artifacts and still needs human review before submission.",
+    ]
+    reproducibility = [
+        f"Evaluation suite artifact: {evaluation_case_suite_file_path(project_id)}",
+        f"Evaluation case audit artifact: {evaluation_case_audit_file_path(project_id)}",
+        f"System metrics artifact: {evaluation_metrics_file_path(project_id)}",
+        "Each case trace is persisted under the project evaluation/traces directory with trace and artifact fingerprints.",
+    ]
+    comparison = [
+        {
+            "capability": "idea_to_evidence_loop",
+            "goal8_status": "deterministic_trace_supported",
+            "evidence_refs": ["stage_completion_coverage"],
+            "limitation": "offline deterministic cases only",
+        },
+        {
+            "capability": "publish_gate_honesty",
+            "goal8_status": "supported_for_review_ready_and_blocked_packages",
+            "evidence_refs": ["final_gate_false_positive_count", "package_readiness"],
+            "limitation": "does not prove live final-publish readiness",
+        },
+        {
+            "capability": "real_external_autonomous_science",
+            "goal8_status": "future_work",
+            "evidence_refs": [],
+            "limitation": "requires Goal 10+ hardening",
+        },
+    ]
+    future_work = [
+        "Production operator controls for long-running jobs, retry/resume/cancel, approvals, and budget state.",
+        "Live/full-text literature connectors and real benchmark ingestion under explicit approval policy.",
+        "External Docker/bridge execution hardening with sandbox, artifact import validation, and budget ledgers.",
+        "Long-running project timelines, multi-project memory, human review, compliance, and venue export controls.",
+    ]
+    payload = {
+        "material_id": "scholarflow_system_paper_material_v1",
+        "project_id": project_id,
+        "label": "system_paper_material_not_final_submission",
+        "sections": [section.model_dump(mode="json") for section in sections],
+        "system_claims": [claim.model_dump(mode="json") for claim in claims],
+        "limitations": limitations,
+        "threats_to_validity": threats,
+        "reproducibility_appendix": reproducibility,
+        "aris_fars_comparison": comparison,
+        "future_work": future_work,
+        "evidence_refs": evidence_refs,
+    }
+    material = AutoResearchSystemPaperMaterialRead(
+        generated_at=_utcnow(),
+        abstract=(
+            "ScholarFlow is an evidence-constrained autonomous research system evaluated here "
+            "with deterministic offline traces, metrics, failure timelines, and package refs."
+        ),
+        intro=(
+            "This Goal 8 material summarizes what the deterministic evaluation suite can prove "
+            "and explicitly labels unsupported live-science capabilities as limitations or future work."
+        ),
+        material_fingerprint=_goal8_fingerprint(payload),
+        **payload,
+    )
+    return save_system_paper_material(material)
 
 
 def build_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSuiteRead:
-    traces_by_case_id = {
-        str(definition["case_id"]): _build_case_trace(
-            f"{project_id}_{str(definition['case_id'])}",
-            definition,
+    traces_by_case_id: dict[str, AutoResearchEvaluationCaseTraceRead] = {}
+    for definition in _CASE_DEFINITIONS:
+        case_id = str(definition["case_id"])
+        raw_trace = _build_case_trace(f"{project_id}_{case_id}", definition)
+        traces_by_case_id[case_id] = _finalize_goal8_trace(
+            project_id=project_id,
+            case_id=case_id,
+            trace=raw_trace,
         )
-        for definition in _CASE_DEFINITIONS
-    }
     cases = [
         _case_from_definition(
             definition=definition,
@@ -2860,6 +4230,18 @@ def build_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSu
         for definition in _CASE_DEFINITIONS
     ]
     metrics = _metrics(cases)
+    metrics_artifact_path = save_evaluation_metrics(project_id, metrics)
+    audit = _build_case_audit(
+        project_id=project_id,
+        definitions=_CASE_DEFINITIONS,
+        cases=cases,
+    )
+    system_paper_material = _build_system_paper_material(
+        project_id=project_id,
+        cases=cases,
+        metrics=metrics,
+        audit=audit,
+    )
     traces = [case.trace for case in cases if case.trace is not None]
     successful_cases = [
         case
@@ -2868,11 +4250,31 @@ def build_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSu
     ]
     toy_trace = traces_by_case_id["eval_case_toy_task"]
     toy_ready = toy_trace.paper_review_package_ready and not toy_trace.blockers
+    trace_artifact_paths = {
+        str(trace.case_id): str(trace.trace_artifact_path)
+        for trace in traces
+        if trace.case_id and trace.trace_artifact_path
+    }
+    readiness_timeline = [
+        event
+        for trace in traces
+        for event in trace.readiness_timeline
+    ]
+    failure_timeline = [
+        event
+        for trace in traces
+        for event in trace.failure_timeline
+    ]
     blockers = [
         f"{case.case_id}: " + "; ".join(case.blockers)
         for case in cases
         if case.blockers
     ]
+    if audit.missing_case_classes:
+        blockers.append(
+            "Goal 8 evaluation case audit is missing required classes: "
+            + ", ".join(audit.missing_case_classes)
+        )
     warnings = [] if len(successful_cases) == len(cases) else [
         "One or more deterministic evaluation cases did not reach the required review/package or auditable-blocker state."
     ]
@@ -2908,11 +4310,22 @@ def build_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSu
             if case.trace is not None and case.score >= 60 and not case.blockers
         ),
         "evaluation_artifact_count": sum(
-            trace.experiment_job_count + trace.evidence_entry_count
+            trace.experiment_job_count
+            + trace.experiment_execution_job_count
+            + trace.evidence_entry_count
+            + len(trace.stage_timeline)
             for trace in traces
         ),
         "cases": [case.model_dump(mode="json") for case in cases],
         "metrics": [metric.model_dump(mode="json") for metric in metrics],
+        "evaluation_case_audit": audit.model_dump(mode="json"),
+        "evaluation_case_audit_path": audit.audit_artifact_path,
+        "trace_artifact_paths": trace_artifact_paths,
+        "metrics_artifact_path": metrics_artifact_path,
+        "system_paper_material": system_paper_material.model_dump(mode="json"),
+        "system_paper_material_path": system_paper_material.material_artifact_path,
+        "readiness_timeline": [event.model_dump(mode="json") for event in readiness_timeline],
+        "failure_timeline": [event.model_dump(mode="json") for event in failure_timeline],
         "scholarflow_paper_materials": _SCHOLARFLOW_PAPER_MATERIALS,
         "architecture_materials": architecture_materials,
         "case_study_materials": case_study_materials,
@@ -2921,8 +4334,9 @@ def build_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSu
         "blockers": blockers,
         "warnings": warnings,
     }
-    return AutoResearchEvaluationCaseSuiteRead(
+    suite = AutoResearchEvaluationCaseSuiteRead(
         generated_at=_utcnow(),
-        suite_fingerprint=_fingerprint(payload),
+        suite_fingerprint=_goal8_fingerprint(payload),
         **payload,
     )
+    return save_evaluation_case_suite(suite)

@@ -11,7 +11,16 @@ from schemas.autoresearch import (
     AutoResearchSystemEvaluationTaskRead,
 )
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
-from services.autoresearch.repository import list_runs
+from services.autoresearch.repository import (
+    evaluation_case_audit_file_path,
+    evaluation_case_suite_file_path,
+    load_evaluation_case_audit,
+    load_evaluation_case_suite,
+    load_evaluation_metrics,
+    load_system_paper_material,
+    list_runs,
+    system_paper_material_file_path,
+)
 
 
 def _utcnow() -> datetime:
@@ -53,7 +62,74 @@ def _task(
     )
 
 
+def _suite_tasks(persisted_suite) -> list[AutoResearchSystemEvaluationTaskRead]:
+    titles = {
+        "toy_task": "Toy Task",
+        "medium_benchmark_task": "Medium Benchmark Task",
+        "literature_heavy_task": "Literature-Heavy Task",
+        "claim_evidence_vertical_task": "Claim-Evidence Vertical Task",
+        "ablation_heavy_task": "Ablation-Heavy Task",
+        "failed_hypothesis_task": "Failed-Hypothesis Task",
+    }
+    descriptions = {
+        "toy_task": "Deterministic trace verifies idea-to-evidence review package behavior.",
+        "medium_benchmark_task": "Deterministic trace verifies benchmark/protocol/package readiness behavior.",
+        "literature_heavy_task": "Deterministic trace verifies literature/gap validation and scoped review package behavior.",
+        "claim_evidence_vertical_task": "Deterministic trace verifies claim-evidence vertical, revision, package, and final-gate honesty.",
+        "ablation_heavy_task": "Deterministic trace verifies ablation-heavy planning and claim-ceiling preservation.",
+        "failed_hypothesis_task": "Deterministic trace verifies failed execution or blocker evidence retention.",
+    }
+    capabilities = {
+        "toy_task": ["stage timeline", "evidence ledger", "review package"],
+        "medium_benchmark_task": ["benchmark resolver", "typed execution", "package readiness"],
+        "literature_heavy_task": ["literature scout", "gap validation", "claim ceiling"],
+        "claim_evidence_vertical_task": ["revision loop", "submission package", "final gate"],
+        "ablation_heavy_task": ["ablation planning", "repair readiness", "claim evidence"],
+        "failed_hypothesis_task": ["failure timeline", "negative evidence", "blocker honesty"],
+    }
+    tasks: list[AutoResearchSystemEvaluationTaskRead] = []
+    for task_kind in titles:
+        task_cases = [
+            case for case in persisted_suite.cases if case.task_kind == task_kind
+        ]
+        completed = [
+            case
+            for case in task_cases
+            if case.score >= 100 and not case.blockers and case.trace is not None
+        ]
+        blockers = [
+            f"{case.case_id}: " + "; ".join(case.blockers)
+            for case in task_cases
+            if case.blockers
+        ]
+        tasks.append(
+            _task(
+                task_kind=task_kind,
+                title=titles[task_kind],
+                description=descriptions[task_kind],
+                target_capabilities=capabilities[task_kind],
+                required_artifacts=[
+                    "evaluation_trace_json",
+                    "evaluation_case_audit_json",
+                    "system_metrics_json",
+                ],
+                mapped_run_ids=[
+                    str(case.trace.case_id)
+                    for case in task_cases
+                    if case.trace is not None and case.trace.case_id is not None
+                ],
+                score=_score(len(completed), max(len(task_cases), 1)),
+                blockers=blockers,
+            )
+        )
+    return tasks
+
+
 def build_system_evaluation(project_id: str) -> AutoResearchSystemEvaluationRead:
+    persisted_suite = load_evaluation_case_suite(project_id)
+    persisted_metrics = load_evaluation_metrics(project_id)
+    persisted_audit = load_evaluation_case_audit(project_id)
+    persisted_material = load_system_paper_material(project_id)
     runs = [run for run in list_runs(project_id) if run.status == "done"]
     run_count = len(runs)
     contribution_runs = [run for run in runs if getattr(run, "reviewer_simulation", None) is not None]
@@ -70,7 +146,7 @@ def build_system_evaluation(project_id: str) -> AutoResearchSystemEvaluationRead
     ]
     meta = build_cross_run_meta_analysis(project_id)
 
-    tasks = [
+    legacy_tasks = [
         _task(
             task_kind="toy_task",
             title="Toy Task",
@@ -129,8 +205,9 @@ def build_system_evaluation(project_id: str) -> AutoResearchSystemEvaluationRead
             blockers=[] if failed_signal_runs else ["No completed run currently exercises failed-hypothesis evidence."],
         ),
     ]
+    tasks = _suite_tasks(persisted_suite) if persisted_suite is not None else legacy_tasks
 
-    metrics = [
+    legacy_metrics = [
         AutoResearchSystemEvaluationMetricRead(
             metric_id="contribution_detection_accuracy",
             label="Contribution Detection Accuracy",
@@ -180,20 +257,41 @@ def build_system_evaluation(project_id: str) -> AutoResearchSystemEvaluationRead
             rationale="Counts runs with code and artifact evidence required for reproduction.",
         ),
     ]
+    metrics = persisted_metrics or legacy_metrics
 
     completed = [task for task in tasks if task.score >= 60 and not task.blockers]
     blockers = [blocker for task in tasks for blocker in task.blockers]
+    if persisted_suite is None:
+        blockers.append(
+            "Goal 8 deterministic evaluation suite has not been materialized; run /evaluation-cases first."
+        )
+    elif persisted_audit is not None and persisted_audit.missing_case_classes:
+        blockers.append(
+            "Goal 8 evaluation case audit is missing required classes: "
+            + ", ".join(persisted_audit.missing_case_classes)
+        )
     warnings = []
-    if meta.blockers:
+    if persisted_suite is None and meta.blockers:
         warnings.extend(meta.blockers)
+    if persisted_suite is None:
+        warnings.append(
+            "System-level metrics are using run-level legacy evidence until Goal 8 suite artifacts exist."
+        )
     overall_score = round(sum(metric.score for metric in metrics) / len(metrics)) if metrics else 0
-    materials = [
-        "System architecture",
-        "Autonomous research loop",
-        "Artifact integrity design",
-        "Publish gate",
-        "Case studies",
-    ]
+    materials = (
+        [
+            section.title
+            for section in persisted_material.sections
+        ]
+        if persisted_material is not None
+        else [
+            "System architecture",
+            "Autonomous research loop",
+            "Artifact integrity design",
+            "Publish gate",
+            "Case studies",
+        ]
+    )
     payload = {
         "evaluation_id": "system_level_evaluation_v1",
         "project_id": project_id,
@@ -202,6 +300,27 @@ def build_system_evaluation(project_id: str) -> AutoResearchSystemEvaluationRead
         "overall_score": overall_score,
         "tasks": [task.model_dump(mode="json") for task in tasks],
         "metrics": [metric.model_dump(mode="json") for metric in metrics],
+        "evaluation_suite_artifact_path": (
+            evaluation_case_suite_file_path(project_id) if persisted_suite is not None else None
+        ),
+        "evaluation_case_audit_path": (
+            persisted_audit.audit_artifact_path
+            if persisted_audit is not None
+            else (
+                evaluation_case_audit_file_path(project_id)
+                if persisted_suite is not None
+                else None
+            )
+        ),
+        "system_paper_material_path": (
+            persisted_material.material_artifact_path
+            if persisted_material is not None
+            else (
+                system_paper_material_file_path(project_id)
+                if persisted_suite is not None
+                else None
+            )
+        ),
         "scholarflow_paper_materials": materials,
         "blockers": blockers,
         "warnings": warnings,

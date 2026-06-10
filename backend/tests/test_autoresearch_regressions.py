@@ -33,6 +33,7 @@ import services.autoresearch.publication_repair_execution as publication_repair_
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
 import services.autoresearch.writer as autoresearch_writer
+import services.autoresearch.system_evaluation as autoresearch_system_evaluation
 import services.papers.repository as papers_repository
 import services.llm.client as llm_client
 from config.settings import settings
@@ -11597,6 +11598,15 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         "reviewer_score_improvement",
         "final_publish_correctness",
         "offline_end_to_end_submission_package",
+        "stage_completion_coverage",
+        "evidence_coverage_ratio",
+        "unsupported_domain_honesty",
+        "blocker_honesty",
+        "artifact_lineage_completeness",
+        "negative_evidence_retention",
+        "final_gate_false_positive_count",
+        "revision_resolution",
+        "package_readiness",
     }
 
     assert suite.case_count == 10
@@ -11619,11 +11629,84 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert any("Architecture" in item for item in suite.scholarflow_paper_materials)
     assert any("Claim-evidence vertical package" in item for item in suite.scholarflow_paper_materials)
     assert any("failure" in item.lower() for item in suite.scholarflow_paper_materials)
+    assert suite.evaluation_case_audit is not None
+    assert suite.evaluation_case_audit_path is not None
+    assert Path(suite.evaluation_case_audit_path).is_file()
+    assert suite.evaluation_case_audit.missing_case_classes == []
+    assert suite.trace_artifact_paths
+    assert set(suite.trace_artifact_paths) == expected_case_ids
+    assert all(Path(path).is_file() for path in suite.trace_artifact_paths.values())
+    assert suite.metrics_artifact_path is not None
+    assert Path(suite.metrics_artifact_path).is_file()
+    assert suite.system_paper_material is not None
+    assert suite.system_paper_material_path is not None
+    assert Path(suite.system_paper_material_path).is_file()
+    assert suite.system_paper_material.label == "system_paper_material_not_final_submission"
+    expected_system_sections = {
+        "abstract_intro",
+        "architecture",
+        "evidence_constraints",
+        "case_studies",
+        "failure_modes",
+        "limitations_threats",
+        "reproducibility_appendix",
+        "aris_fars_comparison",
+    }
+    assert {
+        section.section_id for section in suite.system_paper_material.sections
+    } == expected_system_sections
+    assert all(
+        claim.evidence_refs or claim.support_status == "future_work"
+        for claim in suite.system_paper_material.system_claims
+    )
+    assert all(
+        claim.support_status != "supported" or claim.metric_refs
+        for claim in suite.system_paper_material.system_claims
+    )
+    assert any(
+        "not publication-grade" in item
+        for item in suite.system_paper_material.limitations
+    )
+    assert suite.readiness_timeline
+    assert suite.failure_timeline
     assert len(suite.architecture_materials) >= 5
     assert len(suite.case_study_materials) >= 6
     assert len(suite.failure_analysis_materials) >= 5
     assert all(metric.score == 100 for metric in suite.metrics)
     cases_by_id = {case.case_id: case for case in suite.cases}
+    for case in suite.cases:
+        assert case.trace is not None
+        assert case.trace.trace_artifact_path is not None
+        trace_payload = json.loads(
+            Path(case.trace.trace_artifact_path).read_text(encoding="utf-8")
+        )
+        assert trace_payload["trace_schema_version"] == "goal8_evaluation_trace_v1"
+        assert trace_payload["trace_fingerprint"] == case.trace.trace_fingerprint
+        assert trace_payload["trace_artifact_sha256"] == case.trace.trace_artifact_sha256
+        assert {stage.stage_id for stage in case.trace.stage_timeline} == {
+            "idea",
+            "domain",
+            "brief",
+            "hypothesis",
+            "literature",
+            "benchmark",
+            "protocol",
+            "execution",
+            "evidence",
+            "readiness",
+            "repair",
+            "revision",
+            "package",
+            "final_gate",
+            "failure",
+        }
+        assert all(
+            stage.status in {"succeeded", "blocked", "skipped_by_policy", "failed"}
+            for stage in case.trace.stage_timeline
+        )
+        assert case.trace.artifact_refs
+        assert case.trace.deterministic_labels
+        assert "live_network_disabled" in case.trace.reproducibility_constraints
     literature_heavy = cases_by_id["eval_case_literature_heavy_task"]
     assert literature_heavy.trace is not None
     assert any(
@@ -11645,6 +11728,19 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert unsupported.trace.experiment_plan_id is None
     assert unsupported.trace.experiment_job_count == 0
     assert unsupported.trace.evidence_entry_count == 0
+    assert unsupported.trace.experiment_execution_status == "blocked"
+    assert unsupported.trace.experiment_execution_job_count == 0
+    assert unsupported.trace.negative_evidence
+    assert any(
+        event.event_id == "unsupported_domain_blocker"
+        for event in unsupported.trace.failure_timeline
+    )
+    assert next(
+        stage for stage in unsupported.trace.stage_timeline if stage.stage_id == "domain"
+    ).status == "blocked"
+    assert next(
+        stage for stage in unsupported.trace.stage_timeline if stage.stage_id == "hypothesis"
+    ).status == "skipped_by_policy"
     assert unsupported.trace.paper_review_package_ready is False
     assert unsupported.trace.blockers
     assert "domain_routing_blocker" in unsupported.trace.steps_completed
@@ -12903,6 +12999,28 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
         "unsupported-claim detection" in requirement.lower()
         for requirement in claim_evidence_vertical.expected_experiment_design_requirements
     )
+    failed_execution = cases_by_id["eval_case_failed_hypothesis_task"]
+    assert failed_execution.trace is not None
+    assert failed_execution.trace.experiment_execution_status == "failed"
+    assert failed_execution.trace.experiment_execution_failure_classification in {
+        "missing_output",
+        "missing_baseline",
+        "missing_ablation",
+        "insufficient_statistics",
+    }
+    assert failed_execution.trace.experiment_execution_blockers
+    assert failed_execution.trace.negative_evidence
+    assert any(
+        event.event_id == "typed_execution_failure"
+        for event in failed_execution.trace.failure_timeline
+    )
+    assert next(
+        stage
+        for stage in failed_execution.trace.stage_timeline
+        if stage.stage_id == "execution"
+    ).status == "failed"
+    assert "typed_execution_failed_missing_output" in failed_execution.trace.steps_completed
+    assert failed_execution.trace.project_final_publish_ready is False
 
 
 def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:
@@ -12949,6 +13067,32 @@ def test_toy_evaluation_case_runs_idea_to_evidence_package() -> None:
     assert trace.blockers == []
     assert toy.score == 100
     assert toy.expected_paper_tier == "technical_report"
+
+
+def test_system_evaluation_consumes_goal8_persisted_artifacts() -> None:
+    project_id = "project-evaluation-system-goal8"
+    suite = autoresearch_evaluation_cases.build_evaluation_case_suite(project_id)
+    system_evaluation = autoresearch_system_evaluation.build_system_evaluation(project_id)
+
+    assert system_evaluation.evaluation_suite_artifact_path == (
+        autoresearch_repository.evaluation_case_suite_file_path(project_id)
+    )
+    assert system_evaluation.evaluation_case_audit_path == suite.evaluation_case_audit_path
+    assert system_evaluation.system_paper_material_path == suite.system_paper_material_path
+    assert Path(system_evaluation.evaluation_suite_artifact_path).is_file()
+    assert Path(system_evaluation.evaluation_case_audit_path).is_file()
+    assert Path(system_evaluation.system_paper_material_path).is_file()
+    assert {metric.metric_id for metric in system_evaluation.metrics} == {
+        metric.metric_id for metric in suite.metrics
+    }
+    assert "stage_completion_coverage" in {
+        metric.metric_id for metric in system_evaluation.metrics
+    }
+    assert system_evaluation.overall_score == 100
+    assert any(
+        material == "Architecture Overview"
+        for material in system_evaluation.scholarflow_paper_materials
+    )
 
 
 def test_all_evaluation_cases_execute_offline_to_paper_packages() -> None:

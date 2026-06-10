@@ -4473,7 +4473,123 @@ export type AutoResearchSystemEvaluationMetric = {
   rationale: string;
 };
 
+export type AutoResearchEvaluationStageStatus =
+  | "succeeded"
+  | "blocked"
+  | "skipped_by_policy"
+  | "failed";
+
+export type AutoResearchSystemClaimSupportStatus =
+  | "supported"
+  | "partial"
+  | "unsupported"
+  | "future_work";
+
+export type AutoResearchEvaluationStageTrace = {
+  stage_id: string;
+  status: AutoResearchEvaluationStageStatus;
+  deterministic_order: number;
+  input_refs: string[];
+  output_refs: string[];
+  artifact_refs: string[];
+  evidence_refs: string[];
+  negative_evidence: Record<string, unknown>[];
+  blockers: string[];
+  warnings: string[];
+  claim_ceiling_impact?: string | null;
+  deterministic_labels: string[];
+  reproducibility_constraints: string[];
+};
+
+export type AutoResearchEvaluationTimelineEvent = {
+  event_id: string;
+  stage_id: string;
+  status: AutoResearchEvaluationStageStatus;
+  deterministic_order: number;
+  summary: string;
+  artifact_refs: string[];
+  evidence_refs: string[];
+  negative_evidence: Record<string, unknown>[];
+  blockers: string[];
+  claim_ceiling_impact?: string | null;
+  package_ready?: boolean | null;
+  final_publish_ready?: boolean | null;
+};
+
+export type AutoResearchEvaluationCaseAuditEntry = {
+  case_id: string;
+  task_kind: AutoResearchEvaluationTaskKind;
+  idea: string;
+  domain: string;
+  expected_path: string;
+  covered_stages: string[];
+  missing_stages: string[];
+  artifact_refs: string[];
+  evidence_refs: string[];
+  expected_blockers: string[];
+  observed_blockers: string[];
+  claim_ceiling?: string | null;
+  deterministic_labels: string[];
+  audit_conclusion: string;
+};
+
+export type AutoResearchEvaluationCaseAudit = {
+  generated_at: string;
+  audit_id: string;
+  project_id: string;
+  audited_files: string[];
+  required_case_classes: string[];
+  missing_case_classes: string[];
+  entries: AutoResearchEvaluationCaseAuditEntry[];
+  audit_artifact_path?: string | null;
+  audit_artifact_sha256?: string | null;
+  audit_fingerprint: string;
+};
+
+export type AutoResearchSystemPaperClaim = {
+  claim_id: string;
+  claim: string;
+  support_status: AutoResearchSystemClaimSupportStatus;
+  evidence_refs: string[];
+  metric_refs: string[];
+  case_ids: string[];
+  limitations: string[];
+};
+
+export type AutoResearchSystemPaperSection = {
+  section_id: string;
+  title: string;
+  content: string;
+  evidence_refs: string[];
+  case_ids: string[];
+};
+
+export type AutoResearchSystemPaperMaterial = {
+  generated_at: string;
+  material_id: string;
+  project_id: string;
+  label: string;
+  abstract: string;
+  intro: string;
+  sections: AutoResearchSystemPaperSection[];
+  system_claims: AutoResearchSystemPaperClaim[];
+  limitations: string[];
+  threats_to_validity: string[];
+  reproducibility_appendix: string[];
+  aris_fars_comparison: Record<string, unknown>[];
+  future_work: string[];
+  evidence_refs: string[];
+  material_artifact_path?: string | null;
+  material_artifact_sha256?: string | null;
+  material_fingerprint: string;
+};
+
 export type AutoResearchEvaluationCaseTrace = {
+  trace_schema_version: string;
+  case_id?: string | null;
+  trace_artifact_path?: string | null;
+  trace_artifact_sha256?: string | null;
+  trace_fingerprint?: string | null;
   idea: string;
   brief_id?: string | null;
   domain_decision?: AutoResearchDomainDecision | null;
@@ -4622,6 +4738,14 @@ export type AutoResearchEvaluationCaseTrace = {
   project_kill_criteria: string[];
   project_required_followups: string[];
   end_to_end_package_ready: boolean;
+  stage_timeline: AutoResearchEvaluationStageTrace[];
+  readiness_timeline: AutoResearchEvaluationTimelineEvent[];
+  failure_timeline: AutoResearchEvaluationTimelineEvent[];
+  artifact_refs: string[];
+  evidence_refs: string[];
+  negative_evidence: Record<string, unknown>[];
+  deterministic_labels: string[];
+  reproducibility_constraints: string[];
   architecture_materials: string[];
   case_study_materials: string[];
   failure_analysis_materials: string[];
@@ -4654,6 +4778,14 @@ export type AutoResearchEvaluationCaseSuite = {
   evaluation_artifact_count: number;
   cases: AutoResearchEvaluationCase[];
   metrics: AutoResearchSystemEvaluationMetric[];
+  evaluation_case_audit?: AutoResearchEvaluationCaseAudit | null;
+  evaluation_case_audit_path?: string | null;
+  trace_artifact_paths: Record<string, string>;
+  metrics_artifact_path?: string | null;
+  system_paper_material?: AutoResearchSystemPaperMaterial | null;
+  system_paper_material_path?: string | null;
+  readiness_timeline: AutoResearchEvaluationTimelineEvent[];
+  failure_timeline: AutoResearchEvaluationTimelineEvent[];
   scholarflow_paper_materials: string[];
   architecture_materials: string[];
   case_study_materials: string[];
@@ -4673,6 +4805,9 @@ export type AutoResearchSystemEvaluation = {
   overall_score: number;
   tasks: AutoResearchSystemEvaluationTask[];
   metrics: AutoResearchSystemEvaluationMetric[];
+  evaluation_suite_artifact_path?: string | null;
+  evaluation_case_audit_path?: string | null;
+  system_paper_material_path?: string | null;
   scholarflow_paper_materials: string[];
   blockers: string[];
   warnings: string[];

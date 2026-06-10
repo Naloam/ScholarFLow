@@ -5,7 +5,7 @@ ScholarFlow 目标路线图：AI 自动科研 + 写论文系统
 ========
 
 - 更新时间：2026-06-10。
-- 默认下一阶段：Goal 8 - Real End-To-End Evaluation And ScholarFlow System Paper Material。
+- 默认下一阶段：Goal 9 - Operator Console Productionization。
 - 本文件是下一轮 `/goal` 的主要执行依据。
 - `AGENTS.md` 只保留高层协作约束；具体阶段、验收标准、下一轮 prompt 以本文件为准。
 
@@ -47,18 +47,18 @@ user idea
 
 简短结论：
 
-- 已经完成 Goal 1-7：从固定 claim-evidence publication case，推进到受控 domain idea routing、domain evidence package loop、typed experiment execution backend、cached literature/benchmark provenance、project-level manuscript compiler V2、autonomous revision loop、reconstructable submission package/final publish gate。
-- 当前系统已经能从一个受控 domain idea 生成 project-level manuscript/source package、evidence-constrained revision round、Goal 7 submission archive/checklist/final decision，或者生成可审计 blocker；但还没有系统级 end-to-end evaluation、production operator controls。
-- 以 roadmap 粗略衡量，工程骨架约完成 70%-75%：Goal 1-7 是“研究事实、论文草稿、审稿修订和最终提交 gate 闭环”，Goal 8-9 是“自我评估和生产化操作”，Goal 10+ 才是“真实外部科研能力、长期运行和多项目推广”。
+- 已经完成 Goal 1-8：从固定 claim-evidence publication case，推进到受控 domain idea routing、domain evidence package loop、typed experiment execution backend、cached literature/benchmark provenance、project-level manuscript compiler V2、autonomous revision loop、reconstructable submission package/final publish gate，以及 deterministic system evaluation/material package。
+- 当前系统已经能从一个受控 domain idea 生成 project-level manuscript/source package、evidence-constrained revision round、Goal 7 submission archive/checklist/final decision，或者生成可审计 blocker；Goal 8 已补齐 deterministic end-to-end evaluation traces、metrics、readiness/failure timelines 和 system-paper material，下一大缺口是 production operator controls。
+- 以 roadmap 粗略衡量，工程骨架约完成 75%-80%：Goal 1-8 是“研究事实、论文草稿、审稿修订、最终提交 gate 和系统自评闭环”，Goal 9 是“生产化操作”，Goal 10+ 才是“真实外部科研能力、长期运行和多项目推广”。
 - 以最终愿景衡量，距离“可靠 final-publish-ready autonomous scientist”仍然很远，因为 final publish 需要真实、多源、可复现、统计充分、负证据完整、审稿修订闭环完成的 evidence chain。当前大多数 deterministic fixture/local/import replay case 只能支持 review/workshop/case-study 级别，不能升级成 publication-grade claim。
-- 近期最关键差距不是“再写论文文本”，而是把 deterministic evaluation cases 升级成系统级 evidence traces 和 ScholarFlow 系统论文材料，并证明 package/final gate 在 success、blocked、failed execution、revision、unsupported-domain 上都诚实可靠。
-- 中期最关键差距是系统级可评估性：ScholarFlow 必须能用 deterministic cases 证明自己在 success、blocked、failed execution、revision、package readiness、unsupported domain 上都诚实可靠。
+- 近期最关键差距不是“再写论文文本”，而是把已有 deterministic evaluation/final-gate 能力接入 production operator controls，让长任务、审批、预算、retry/resume/cancel、artifact lineage、package/final-gate inspection 都来自 persisted state。
+- 中期最关键差距已从系统级可评估性转向生产操作可控性：ScholarFlow 现在能用 deterministic cases 证明自己在 success、blocked、failed execution、revision、package readiness、unsupported domain 上的受限诚实性；下一步需要 operator 能从 persisted state 管理长任务、审批、重试/恢复/取消和 artifact/package/final-gate inspection。
 - 长期最关键差距是真实科研能力：live/full-text literature coverage、真实 benchmark/source independence、多环境执行、长期任务恢复、成本/审批、安全沙箱、多项目知识沉淀、最终可提交材料的人工审计接口。
 
 当前距离最终目标的更细判断：
 
 - Research-loop 工程骨架：约 70%-75%。idea -> brief -> hypothesis -> protocol -> execution/import -> evidence -> manuscript -> review/revision -> submission/final gate 的主链路已经打通，但很多 evidence 仍来自 deterministic fixture、cached/import replay 或 repository-local frozen snapshot。
-- Deterministic self-evaluation：约 45%-55%。P14 cases 已存在，并且能覆盖多个 domain / blocker / package readiness 场景；但还缺完整 trace artifact、系统级 metric、readiness/failure timeline、以及可直接支撑 ScholarFlow 系统论文 claims 的 evidence refs。
+- Deterministic self-evaluation：约 70%-80%。Goal 8 已将 P14 cases 升级为持久化 evaluation suite，输出 per-case trace artifacts、stage/readiness/failure timelines、trace-derived system metrics、case audit 和 evidence-backed ScholarFlow system-paper material；后续仍需生产环境观测、更多 real-world/live optional cases 和长期运行评估。
 - Operator/production control：约 35%-45%。已有 Operator Console research mode 和部分 queue/control 状态；但还缺 production-grade long-running job inspection、approval/budget controls、retry/resume/cancel safety、artifact lineage browser、repair queue 和 package/final gate inspection UI。
 - Real external evidence/execution：约 25%-35%。已有 cached arXiv / Semantic Scholar / Crossref connector contract、imported benchmark provenance、typed execution routes 和 Docker/bridge blockers；但 live/full-text connector、real benchmark ingestion、Docker/bridge execution hardening、external artifact validation、sandbox/budget policy 仍未生产化。
 - Long-running autonomous research reliability：约 25%-35%。已有 persisted artifacts、fingerprints、revision rounds、submission packages；但还缺 project timeline/runbook、branch/fork semantics、schema migration policy、attempt ledger、stale repair workflow 和 multi-day resume/retry audit。
@@ -79,12 +79,12 @@ user idea
 - Paper/compiler：已有 project orchestrator、versioned/fingerprinted manuscript context、evidence-constrained compiler/source package、claim-evidence index、figures/tables metadata、artifact index、readiness blockers。
 - Reviewer/revision：已有第一版 finding-by-finding autonomous revision action planner、bounded execution、reviewer response dossier、revision round 和 re-review cycle；missing experiment/literature/benchmark evidence 仍保持 blocker/follow-up，不伪造 evidence。
 - Submission/final publish：已有 reconstructable submission archive、archive manifest、reproducibility checklist JSON、limitations appendix、artifact-integrity audit、final publish decision、guarded final archive download；`final_publish_ready=true` 只能在真实 evidence 满足 publish policy 后出现。
-- System evaluation/operator：P14 evaluation cases 还需要升级为真实 end-to-end regression/evaluation suite；Operator Console 还需要 production controls for long-running jobs、budgets、approvals、resumability、artifact lineage inspection。
+- System evaluation/operator：P14 evaluation cases 已升级为 Goal 8 deterministic end-to-end regression/evaluation suite；Operator Console 还需要 production controls for long-running jobs、budgets、approvals、resumability、artifact lineage inspection。
 
 剩余路线总览
 ============
 
-默认顺序现在是 Goal 8 -> Goal 9 -> Goal 10 -> Goal 11 -> Goal 12 -> Goal 13。不要跳过 Goal 8 直接做 production UI，也不要优先做 UI polish；Goal 10+ 只有在 package/final gate/evaluation/operator 基础稳定后再做。
+默认顺序现在是 Goal 9 -> Goal 10 -> Goal 11 -> Goal 12 -> Goal 13。不要跳过 Goal 9 直接做 Goal 10+；Goal 10+ 只有在 package/final gate/evaluation/operator 基础稳定后再做。
 
 1. Goal 7: Submission Package And Final Publish Gate
    - 已完成：可重建 `submission_archive.zip` + `submission_archive_manifest.json`，覆盖 manuscript、supplemental artifacts、claim-evidence index、reviewer response、lineage archive、benchmark/literature provenance、negative evidence appendix、publication readiness manifest。
@@ -92,9 +92,9 @@ user idea
    - 已完成：`final_publish_decision.json` 和 guarded final archive download；只有 literature/source sufficiency、benchmark provenance/source independence、experiment evidence、statistics、negative evidence、claim coverage、revision status、reproducibility package、archive integrity 全部满足 policy，才允许 `final_publish_ready=true`。
 
 2. Goal 8: Real End-To-End Evaluation And ScholarFlow System Paper Material
-   - 将 P14 cases 升级为 deterministic executable evaluation suite。
-   - 每个 case 输出完整 trace：idea/domain/literature/benchmark/execution/evidence/readiness/repair/revision/package/failure-analysis timeline。
-   - 产出 ScholarFlow 自身 architecture、case studies、failure modes、limitations、reproducibility material；所有系统论文 claims 必须由 evaluation evidence 支撑。
+   - 已完成：P14 cases 已升级为 deterministic executable evaluation suite。
+   - 已完成：每个 case 输出持久化 trace：idea/domain/literature/benchmark/execution/evidence/readiness/repair/revision/package/failure-analysis timeline。
+   - 已完成：产出 ScholarFlow 自身 architecture、case studies、failure modes、limitations、reproducibility material；所有系统论文 claims 由 evaluation evidence 支撑。
 
 3. Goal 9: Operator Console Productionization
    - 在 backend capability 已存在后补 production controls：long-running job inspection、resume/retry/cancel、approval/budget controls、bridge/import status、artifact lineage browser、repair queue、readiness/publish-gate/package status。
@@ -120,18 +120,7 @@ user idea
 后续所有工作总清单
 ================
 
-下面是 Goal 8-13 的完整剩余工作列表。后续每一轮都应从最靠前的未完成 goal 开始，不要跳级；如果前序 goal 的 artifact、schema、tests 或 docs 回归，先修复回归。
-
-Goal 8 必须交付：
-
-- Evaluation case audit artifact：列出每个 case 的输入、domain、expected path、covered stages、missing stages、artifact refs、claim ceiling、expected blockers。
-- Per-case trace artifacts：每个 case 持久化 idea/domain/brief/hypothesis/literature/benchmark/protocol/execution/evidence/readiness/repair/revision/package/final-gate/failure timeline。
-- Stage timeline model：每个 stage 至少记录 `stage_id`、status、started/completed timestamps 或 deterministic order、input refs、output refs、blockers、warnings、claim ceiling impact、evidence refs。
-- Readiness/failure timeline：必须能解释 why review-ready、why not final-publish-ready、why blocked、why unsupported、why failed execution。
-- System metrics：从 trace/artifact 计算，而不是手填；至少覆盖 stage coverage、evidence coverage、unsupported-domain honesty、blocker honesty、artifact lineage completeness、negative evidence retention、final gate false-positive count、revision resolution、package readiness。
-- System paper material package：architecture、case studies、failure modes、limitations、threats to validity、reproducibility appendix、ARIS/FARS comparison、future work；每个 system claim 必须指向 evaluation evidence refs。
-- API/schema/frontend/docs sync：如果新增 trace/material endpoints 或 schema，必须同步 backend schema、frontend types/client、docs。
-- Regression tests：deterministic，不依赖 live network、paid LLM、GPU、Docker daemon、external benchmark online availability。
+下面是 Goal 9-13 的完整剩余工作列表。后续每一轮都应从最靠前的未完成 goal 开始，不要跳级；如果前序 goal 的 artifact、schema、tests 或 docs 回归，先修复回归。
 
 Goal 9 必须交付：
 
@@ -250,6 +239,13 @@ Goal 13 必须交付：
    - 新增 project-paper submission API 和 guarded download endpoint；review-ready package 仍保持 `final_publish_ready=false`，只有 final policy 全部通过才允许 final archive download。
    - API、frontend types/client、Operator Console、evaluation traces、docs 和 deterministic regression tests 已同步。
 
+10. Goal 8: Real End-To-End Evaluation And ScholarFlow System Paper Material
+   - 已实现 Goal 8 deterministic evaluation suite：每个 evaluation case 通过 repository helper 持久化 `evaluation/traces/{case_id}.json`，并生成 `evaluation_case_suite.json`、`evaluation_case_audit.json`、`system_metrics.json`、`scholarflow_system_paper_material.json`。
+   - Trace stage timeline 覆盖 idea、domain、brief、hypothesis、literature、benchmark、protocol、execution、evidence、readiness、repair、revision、package、final_gate、failure，并记录 status、deterministic order、input/output refs、artifact/evidence refs、negative evidence、blockers、claim ceiling impact、deterministic labels 和 reproducibility constraints。
+   - System metrics 从 trace/artifact 计算，覆盖 stage/evidence coverage、unsupported-domain honesty、blocker honesty、artifact lineage completeness、negative evidence retention、final gate false-positive count、revision resolution、package readiness。
+   - System-paper material 明确标记为 `system_paper_material_not_final_submission`，包含 architecture、case studies、failure modes、limitations、threats to validity、reproducibility appendix、ARIS/FARS comparison、future work；每条 system claim 指向 evaluation evidence refs 或 metric refs。
+   - Unsupported domain、failed typed execution/missing-output、review/revision blocker、final package blocked case 都作为诚实 evaluation success 被保留，不生成 fake outputs，不把 review-ready package 升级 final publish。
+
 当前不要重做
 ============
 
@@ -261,6 +257,7 @@ Goal 13 必须交付：
 - 不要重做 Goal 5，除非 manuscript context、source package、claim-evidence index、artifact manifest、readiness blockers 或 docs/schema/tests 出现漂移。
 - 不要重做 Goal 6，除非 revision action plan、bounded execution、reviewer response dossier、revision round、re-review fingerprints/resolution summary、evaluation trace 或 tests 出现漂移。
 - 不要重做 Goal 7，除非 submission archive/checklist/final decision/download gate、archive integrity、evaluation trace 或 tests 出现漂移。
+- 不要重做 Goal 8，除非 deterministic trace artifacts、case audit、system metrics、readiness/failure timelines、system-paper material、API/schema/frontend/docs 或 tests 回归。
 - 不要为了 demo 降低 publish gates、claim-evidence ledger、artifact lineage、repair safety、negative evidence、readiness blockers。
 - 不要把 fixture/toy/local smoke evidence 宣称为 publication-grade。
 - 不要把 unsupported domain 降级成无关 toy experiment。
@@ -1156,7 +1153,7 @@ Goal 6 完成标准
 Goal 7: Submission Package And Final Publish Gate
 =================================================
 
-状态：已完成于 `5d0c115 Implement submission package final gate`。后续只在 submission archive、reproducibility checklist、artifact-integrity audit、final-publish decision、download gate 或相关 tests 回归时修复；默认下一阶段是 Goal 8。
+状态：已完成于 `5d0c115 Implement submission package final gate`。后续只在 submission archive、reproducibility checklist、artifact-integrity audit、final-publish decision、download gate 或相关 tests 回归时修复；默认下一阶段是 Goal 9，因为 Goal 8 已完成。
 
 目标
 ----
@@ -1390,6 +1387,8 @@ Goal 7 完成标准
 
 Goal 8: Real End-To-End Evaluation And ScholarFlow System Paper Material
 ========================================================================
+
+状态：已完成。后续只在 deterministic trace artifacts、case audit、system metrics、readiness/failure timelines、system-paper material、API/schema/frontend/docs 或 tests 回归时修复；默认下一阶段是 Goal 9。
 
 目标
 ----
@@ -2381,16 +2380,15 @@ AGENTS.md 和 skills 决策
 下一轮执行建议
 ==============
 
-- 默认执行 Goal 8。
-- 不要一次性做 Goal 9-10。
-- Goal 8 优先顺序：
-  1. Phase 0：审计 current evaluation cases、trace artifacts、metrics、readiness/failure timeline 和 ScholarFlow system paper material 缺口。
-  2. Phase 1：让 deterministic end-to-end cases 输出完整 trace artifacts，覆盖 success、blocked、failed execution、revision、package readiness、unsupported domain。
-  3. Phase 2：汇总系统级 metrics 和 readiness/failure timelines，所有系统能力 claims 必须绑定 evaluation evidence refs。
-  4. Phase 3：生成 ScholarFlow architecture / case-study / failure-analysis / limitations / reproducibility paper material，不把单个 happy path 写成系统能力证明。
-  5. Phase 4：必要 API/schema/frontend/evaluation/docs 同步。
-- 如果 Goal 3/Goal 4/Goal 5/Goal 6/Goal 7 出现回归，先修复 typed runtime、cached connector/provenance、manuscript source package、revision loop，或 submission archive/final gate，再继续 Goal 8。
-- 每完成一个实质子阶段，确认 evaluation trace、metrics、readiness/failure timeline、package/final-gate evidence refs 和 system-paper material 进入 artifact 或 tests。
+- 默认执行 Goal 9。
+- 不要一次性做 Goal 10+。
+- Goal 9 优先顺序：
+  1. Phase 0：审计 run queue、typed jobs、bridge/import、approval/budget、repair/revision、submission archive/final gate、artifact lineage 当前 persisted state。
+  2. Phase 1：补 backend control contracts：long-running job inspection、resume/retry/cancel、approval/rejection、budget state、bridge/import status、repair queue、artifact lineage refs、readiness/package/final-gate status。
+  3. Phase 2：补必要 Operator Console persisted-state UI：timeline/job detail/approval queue/repair queue/revision/package/final gate/artifact lineage。
+  4. Phase 3：补 restart/reload、invalid transition、retry old-artifact preservation、cancel/reject terminal blocker、resume stale fingerprint safety regression。
+- 如果 Goal 3/Goal 4/Goal 5/Goal 6/Goal 7/Goal 8 出现回归，先修复 typed runtime、cached connector/provenance、manuscript source package、revision loop、submission archive/final gate，或 deterministic evaluation trace/material，再继续 Goal 9。
+- 每完成一个实质子阶段，确认 operator state 来自 persisted artifacts/db，UI 不暗示 final readiness，retry/resume/cancel/approval transition 受 backend policy 约束。
 
 下一轮可直接使用的 /goal prompt
 ==============================
@@ -2400,36 +2398,32 @@ AGENTS.md 和 skills 决策
 ```text
 接下来请使用 /goal 功能执行 ScholarFlow 的下一阶段目标。
 
-目标：实现 docs/goal.md 中的 Goal 8 - Real End-To-End Evaluation And ScholarFlow System Paper Material。
+目标：实现 docs/goal.md 中的 Goal 9 - Operator Console Productionization。
 
 优先完成：
-1. Goal 8 Phase 0: Evaluation Case Audit
-2. Goal 8 Phase 1: Deterministic Trace Artifacts
-3. Goal 8 Phase 2: System Metrics And Readiness/Failure Timelines
-4. Goal 8 Phase 3: ScholarFlow System Paper Material
-5. Goal 8 Phase 4: API, Frontend, Docs
+1. Goal 9 Phase 0: Operator Persisted-State Audit
+2. Goal 9 Phase 1: Backend Control Surface
+3. Goal 9 Phase 2: Frontend Operator Console
+4. Goal 9 Phase 3: Resumability And Safety Regression
 
 开始前请先执行并审计：
 - git status --short --branch
 - git log --oneline -n 8
 - 阅读 docs/goal.md
-- 阅读 docs/goal.md 中 Goal 8 的 phases 和测试要求
-- 阅读 Goal 8 涉及的关键文件：
-  - backend/services/autoresearch/review_publish.py
-  - backend/services/autoresearch/project_paper_orchestrator.py
-  - backend/services/autoresearch/publication_evidence_index.py
-  - backend/services/autoresearch/artifact_integrity_audit.py
-  - backend/services/autoresearch/runtime_contract.py
+- 阅读 docs/goal.md 中 Goal 9 的 phases 和测试要求
+- 阅读 Goal 9 涉及的关键文件：
+  - backend/services/autoresearch/console.py
+  - backend/services/autoresearch/execution.py
   - backend/services/autoresearch/experiment_execution.py
-  - backend/services/autoresearch/domain_evidence.py
-  - backend/services/autoresearch/meta_analysis.py
-  - backend/services/autoresearch/evaluation_cases.py
-  - backend/services/autoresearch/system_evaluation.py
+  - backend/services/autoresearch/bridge.py
+  - backend/services/autoresearch/project_paper_orchestrator.py
+  - backend/services/autoresearch/repository.py
   - backend/api/autoresearch.py
   - backend/schemas/autoresearch.py
   - backend/tests/test_autoresearch_regressions.py
   - frontend/src/api/types.ts
   - frontend/src/api/client.ts
+  - frontend/src/components/OperatorConsole/OperatorConsolePanel.tsx
   - docs/api-reference.md
   - docs/claim-evidence-vertical-loop.md
 
@@ -2442,6 +2436,7 @@ AGENTS.md 和 skills 决策
 - Goal 5 已通过 commit 91afa97 完成 Project-Level Manuscript Compiler V2；除非测试回归，不要重做。
 - Goal 6 已完成 Autonomous Revision Loop；除非 revision action plan、bounded execution、reviewer response dossier、revision round、re-review fingerprint/resolution、evaluation trace 或 tests 回归，不要重做。
 - Goal 7 已完成 Submission Package And Final Publish Gate；除非 submission archive、reproducibility checklist、artifact-integrity audit、final-publish decision、download gate、evaluation trace 或 tests 回归，不要重做。
+- Goal 8 已完成 Real End-To-End Evaluation And ScholarFlow System Paper Material；除非 deterministic trace artifacts、case audit、system metrics、readiness/failure timelines、system-paper material、API/schema/frontend/docs 或 tests 回归，不要重做。
 - 默认分支是 master。
 
 核心要求：
@@ -2452,18 +2447,17 @@ AGENTS.md 和 skills 决策
 - Literature、benchmark、experiment、statistics、negative evidence 和 manuscript claims 必须能通过 artifact lineage 追溯。
 - Review-ready/workshop/case-study package 不能自动升级成 final publish package。
 - Submission archive、reproducibility checklist 和 final publish decision 必须由 persisted artifacts/manifests 驱动，不能手写通过。
-- Goal 8 system-paper material 必须由 deterministic evaluation traces 和 evidence refs 支撑，不能把单个 case 或 unsupported evidence 写成系统能力证明。
+- Goal 8 system-paper material 必须继续由 deterministic evaluation traces 和 evidence refs 支撑，不能把单个 case 或 unsupported evidence 写成系统能力证明。
+- Goal 9 operator UI/controls 必须反映 persisted state；不得用前端内存状态绕过 backend policy。
+- Retry/resume/cancel/approval/rejection 必须保留旧 artifacts、negative evidence、revision history 和 final gate blockers。
 - Tests 必须 deterministic，不能依赖 live network、paid LLM、GPU、Docker daemon、外部 benchmark 在线可用性。
 
-Goal 8 验收标准：
-- Evaluation case audit artifact 列出每个 case 的 input、domain、expected path、covered stages、missing stages、artifact refs、claim ceiling、expected blockers。
-- 每个 evaluation case 输出持久化 trace artifact，覆盖 idea/domain/brief/hypothesis/literature/benchmark/protocol/execution/evidence/readiness/repair/revision/package/final-gate/failure timeline。
-- Trace stage 至少记录 stage_id、status、deterministic order 或 started/completed timestamps、input refs、output refs、blockers、warnings、claim ceiling impact、evidence refs、negative evidence、deterministic fixture/import/local/replay labels。
-- Readiness/failure timeline 能解释 why review-ready、why not final-publish-ready、why blocked、why unsupported、why failed execution。
-- System metrics 从 trace/artifact 计算，覆盖 stage coverage、evidence coverage、unsupported-domain honesty、blocker honesty、artifact lineage completeness、negative evidence retention、final gate false-positive count、revision resolution、package readiness。
-- ScholarFlow system-paper material includes architecture, case studies, failure modes, limitations, threats to validity, reproducibility appendix, ARIS/FARS comparison, and future work backed by trace evidence refs。
-- Evaluation summaries distinguish review-ready, final-publish-ready, blocked, and unsupported cases without weakening Goal 7 final gate。
-- No system-level claim is unsupported by evaluation evidence。
+Goal 9 验收标准：
+- Operator state audit artifact 或 regression 覆盖 run queue、typed jobs、bridge/import、approval/budget、repair/revision、submission archive/final gate、artifact lineage。
+- Backend control contracts 暴露 long-running job inspection、resume/retry/cancel、approval/rejection、budget state、bridge/import status、repair queue、artifact lineage refs、readiness/package/final-gate status。
+- Invalid transitions 返回 structured errors；retry 创建新 attempt 并保留旧 artifacts；cancel/reject 创建 terminal blocker；resume 检查 stale fingerprints。
+- Frontend Operator Console 只做必要 operational UI，显示 timeline/job detail/approval queue/repair queue/revision/package/final gate/artifact lineage；按钮在 backend policy 不允许时禁用。
+- Restart/reload 后 console state 只从 persisted artifacts/db 重建；UI 不暗示 final readiness when backend says false。
 - Tests remain deterministic and do not require live network、paid LLM、GPU、Docker daemon、external benchmark availability。
 - 新增或更新 deterministic regression tests。
 - 如涉及 API/schema/types，更新 backend schema、frontend types/client、docs，并跑 frontend build。

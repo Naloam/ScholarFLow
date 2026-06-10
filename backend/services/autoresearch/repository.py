@@ -17,6 +17,9 @@ from schemas.autoresearch import (
     AutoResearchCandidateRegistryFiles,
     AutoResearchCandidateRegistryRead,
     AutoResearchEvidenceLedgerRead,
+    AutoResearchEvaluationCaseAuditRead,
+    AutoResearchEvaluationCaseSuiteRead,
+    AutoResearchEvaluationCaseTraceRead,
     AutoResearchExperimentExecutionPlanRead,
     AutoResearchExperimentExecutionResultRead,
     AutoResearchExperimentFactoryEnvironmentManifestRead,
@@ -38,6 +41,8 @@ from schemas.autoresearch import (
     AutoResearchRunRegistryFiles,
     AutoResearchRunRegistryRead,
     AutoResearchRunRegistryViewsRead,
+    AutoResearchSystemPaperMaterialRead,
+    AutoResearchSystemEvaluationMetricRead,
     BenchmarkSource,
     ExecutionBackendSpec,
     ExperimentSpec,
@@ -110,6 +115,12 @@ PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
 PAPER_COMPILED_PDF_FILENAME = "main.pdf"
 PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME = "main.bbl"
 LITERATURE_SCOUT_CACHE_DIRNAME = "literature_scout_cache"
+EVALUATION_DIRNAME = "evaluation"
+EVALUATION_TRACES_DIRNAME = "traces"
+EVALUATION_CASE_AUDIT_FILENAME = "evaluation_case_audit.json"
+EVALUATION_CASE_SUITE_FILENAME = "evaluation_case_suite.json"
+EVALUATION_METRICS_FILENAME = "system_metrics.json"
+EVALUATION_SYSTEM_PAPER_MATERIAL_FILENAME = "scholarflow_system_paper_material.json"
 BENCHMARK_FILENAME = "benchmark.json"
 BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
@@ -146,6 +157,42 @@ def _literature_scout_cache_dir(project_id: str) -> Path:
     path = autoresearch_dir(project_id) / LITERATURE_SCOUT_CACHE_DIRNAME
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def evaluation_dir(project_id: str) -> Path:
+    path = autoresearch_dir(project_id) / EVALUATION_DIRNAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _evaluation_trace_dir(project_id: str) -> Path:
+    path = evaluation_dir(project_id) / EVALUATION_TRACES_DIRNAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def evaluation_case_trace_file_path(project_id: str, case_id: str) -> str:
+    safe_case_id = "".join(
+        character if character.isalnum() or character in {"_", "-"} else "_"
+        for character in case_id
+    )
+    return str(_evaluation_trace_dir(project_id) / f"{safe_case_id}.json")
+
+
+def evaluation_case_audit_file_path(project_id: str) -> str:
+    return str(evaluation_dir(project_id) / EVALUATION_CASE_AUDIT_FILENAME)
+
+
+def evaluation_case_suite_file_path(project_id: str) -> str:
+    return str(evaluation_dir(project_id) / EVALUATION_CASE_SUITE_FILENAME)
+
+
+def evaluation_metrics_file_path(project_id: str) -> str:
+    return str(evaluation_dir(project_id) / EVALUATION_METRICS_FILENAME)
+
+
+def system_paper_material_file_path(project_id: str) -> str:
+    return str(evaluation_dir(project_id) / EVALUATION_SYSTEM_PAPER_MATERIAL_FILENAME)
 
 
 def _literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
@@ -261,6 +308,174 @@ def _sha256_file(path: Path) -> str | None:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _strip_hash_fields(payload: object, excluded_keys: set[str]) -> object:
+    if isinstance(payload, dict):
+        return {
+            key: _strip_hash_fields(value, excluded_keys)
+            for key, value in payload.items()
+            if key not in excluded_keys
+        }
+    if isinstance(payload, list):
+        return [_strip_hash_fields(item, excluded_keys) for item in payload]
+    return payload
+
+
+_EVALUATION_DETERMINISTIC_TIMESTAMP = "2000-01-01T00:00:00"
+_EVALUATION_TIMESTAMP_KEYS = {
+    "generated_at",
+    "updated_at",
+    "created_at",
+    "cache_timestamp",
+    "fetched_at",
+    "imported_at",
+    "started_at",
+    "completed_at",
+}
+
+
+def _normalize_evaluation_payload(payload: object) -> object:
+    if isinstance(payload, dict):
+        normalized: dict[str, object] = {}
+        for key, value in payload.items():
+            if key in _EVALUATION_TIMESTAMP_KEYS:
+                normalized[key] = _EVALUATION_DETERMINISTIC_TIMESTAMP
+            else:
+                normalized[key] = _normalize_evaluation_payload(value)
+        return normalized
+    if isinstance(payload, list):
+        return [_normalize_evaluation_payload(item) for item in payload]
+    return payload
+
+
+def _payload_sha256_excluding(payload: object, *excluded_keys: str) -> str:
+    encoded = json.dumps(
+        _normalize_evaluation_payload(_strip_hash_fields(payload, set(excluded_keys))),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def save_evaluation_case_trace(
+    project_id: str,
+    case_id: str,
+    trace: AutoResearchEvaluationCaseTraceRead,
+) -> AutoResearchEvaluationCaseTraceRead:
+    path = Path(evaluation_case_trace_file_path(project_id, case_id))
+    payload = trace.model_copy(
+        update={
+            "case_id": case_id,
+            "trace_artifact_path": str(path),
+        }
+    )
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "trace_artifact_sha256")
+    payload = payload.model_copy(update={"trace_artifact_sha256": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_evaluation_case_trace(
+    project_id: str,
+    case_id: str,
+) -> AutoResearchEvaluationCaseTraceRead | None:
+    path = Path(evaluation_case_trace_file_path(project_id, case_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchEvaluationCaseTraceRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_evaluation_case_audit(
+    audit: AutoResearchEvaluationCaseAuditRead,
+) -> AutoResearchEvaluationCaseAuditRead:
+    path = Path(evaluation_case_audit_file_path(audit.project_id))
+    payload = audit.model_copy(update={"audit_artifact_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "audit_artifact_sha256")
+    payload = payload.model_copy(update={"audit_artifact_sha256": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_evaluation_case_audit(project_id: str) -> AutoResearchEvaluationCaseAuditRead | None:
+    path = Path(evaluation_case_audit_file_path(project_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchEvaluationCaseAuditRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_evaluation_metrics(
+    project_id: str,
+    metrics: list[AutoResearchSystemEvaluationMetricRead],
+) -> str:
+    path = Path(evaluation_metrics_file_path(project_id))
+    _write_json(
+        path,
+        _normalize_evaluation_payload([metric.model_dump(mode="json") for metric in metrics]),
+    )
+    return str(path)
+
+
+def load_evaluation_metrics(project_id: str) -> list[AutoResearchSystemEvaluationMetricRead]:
+    path = Path(evaluation_metrics_file_path(project_id))
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            return []
+        return [AutoResearchSystemEvaluationMetricRead.model_validate(item) for item in payload]
+    except Exception:
+        return []
+
+
+def save_system_paper_material(
+    material: AutoResearchSystemPaperMaterialRead,
+) -> AutoResearchSystemPaperMaterialRead:
+    path = Path(system_paper_material_file_path(material.project_id))
+    payload = material.model_copy(update={"material_artifact_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "material_artifact_sha256")
+    payload = payload.model_copy(update={"material_artifact_sha256": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_system_paper_material(project_id: str) -> AutoResearchSystemPaperMaterialRead | None:
+    path = Path(system_paper_material_file_path(project_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchSystemPaperMaterialRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_evaluation_case_suite(
+    suite: AutoResearchEvaluationCaseSuiteRead,
+) -> AutoResearchEvaluationCaseSuiteRead:
+    path = Path(evaluation_case_suite_file_path(suite.project_id))
+    _write_json(path, _normalize_evaluation_payload(suite.model_dump(mode="json")))
+    return suite
+
+
+def load_evaluation_case_suite(project_id: str) -> AutoResearchEvaluationCaseSuiteRead | None:
+    path = Path(evaluation_case_suite_file_path(project_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchEvaluationCaseSuiteRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _model_dump_without_generated_at(model: object) -> dict[str, object] | None:

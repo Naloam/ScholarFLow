@@ -32,7 +32,11 @@ from schemas.autoresearch import (
     AutoResearchLiteratureScoutRequest,
     AutoResearchLiteratureScoutResultRead,
     AutoResearchNoveltyStatus,
+    AutoResearchOperatorActionRequest,
+    AutoResearchOperatorActionResultRead,
     AutoResearchOperatorConsoleRead,
+    AutoResearchOperatorRunStatusRead,
+    AutoResearchOperatorStateAuditRead,
     AutoResearchProjectPaperOrchestrationRead,
     AutoResearchPublicationTier,
     AutoResearchPublicationManifestRead,
@@ -92,6 +96,12 @@ from services.autoresearch.idea_brief import (
 )
 from services.autoresearch.literature_scout import scout_and_mine_gaps
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
+from services.autoresearch.operator_control import (
+    apply_operator_action,
+    build_operator_run_status,
+    build_operator_state_audit,
+    get_or_build_operator_state_audit,
+)
 from services.autoresearch.orchestrator import AutoResearchOrchestrator
 from services.autoresearch.project_paper_orchestrator import (
     build_project_paper_orchestration,
@@ -441,6 +451,16 @@ def get_auto_research_operator_console(
         budget_status=budget_status,
         queue_priority=queue_priority,
     )
+
+
+@router.get("/operator/audit", response_model=AutoResearchOperatorStateAuditRead)
+def get_auto_research_operator_state_audit(
+    project_id: str,
+    rebuild: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> AutoResearchOperatorStateAuditRead:
+    del db
+    return build_operator_state_audit(project_id) if rebuild else get_or_build_operator_state_audit(project_id)
 
 
 @router.get("/meta-analysis", response_model=AutoResearchCrossRunMetaAnalysisRead)
@@ -928,6 +948,47 @@ def get_auto_research_execution(
     return AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
 
 
+@router.get("/{run_id}/operator/status", response_model=AutoResearchOperatorRunStatusRead)
+def get_auto_research_operator_run_status(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchOperatorRunStatusRead:
+    del db
+    try:
+        return build_operator_run_status(project_id, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/operator/actions", response_model=AutoResearchOperatorActionResultRead)
+def apply_auto_research_operator_action(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchOperatorActionRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    identity: AuthIdentity | None = Depends(get_identity),
+) -> AutoResearchOperatorActionResultRead:
+    del db
+    try:
+        result = apply_operator_action(
+            project_id,
+            run_id,
+            payload,
+            background_tasks=background_tasks,
+            identity_user_id=identity.user_id if identity else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not result.accepted and result.policy_error is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=result.policy_error.model_dump(mode="json"),
+        )
+    return result
+
+
 @router.get("/{run_id}/bridge", response_model=AutoResearchExperimentBridgeRead)
 def get_auto_research_bridge(
     project_id: str,
@@ -1411,30 +1472,28 @@ def _queue_existing_run(
     background_tasks: BackgroundTasks,
     identity: AuthIdentity | None,
 ) -> AutoResearchExecutionCommandResponse:
-    run = load_run(project_id, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Auto research run not found")
-    if action == "resume" and bridge_is_waiting_for_result(project_id, run_id):
+    try:
+        result = apply_operator_action(
+            project_id,
+            run_id,
+            AutoResearchOperatorActionRequest(action=action),  # type: ignore[arg-type]
+            background_tasks=background_tasks,
+            identity_user_id=identity.user_id if identity else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result.policy_error is not None:
+        if action == "resume" and bridge_is_waiting_for_result(project_id, run_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Auto research run is waiting for bridge result import before it can resume",
+            )
         raise HTTPException(
             status_code=409,
-            detail="Auto research run is waiting for bridge result import before it can resume",
+            detail=result.policy_error.model_dump(mode="json"),
         )
-    plane = AutoResearchExecutionPlane()
-    if action == "resume" and run.status == "done":
-        execution = plane.get_run_execution(project_id, run_id)
-        latest_job = execution.jobs[-1] if execution.jobs else None
-        return AutoResearchExecutionCommandResponse(
-            run_id=run_id,
-            job_id=latest_job.id if latest_job is not None else None,
-            status="noop",
-            execution=execution,
-        )
-    job, created = plane.enqueue(
-        project_id=project_id,
-        run_id=run_id,
-        action=str(action),
-    )
-    if created:
+    execution = result.execution or AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
+    if result.status == "accepted":
         write_task_audit_log(
             SessionLocal,
             correlation_id=run_id,
@@ -1443,14 +1502,12 @@ def _queue_existing_run(
             action="queued",
             status_code=202,
             user_id=identity.user_id if identity else None,
-            detail=f"job_id={job.id} action={action} topic={run.topic}",
+            detail=f"job_id={result.job_id} action={action}",
         )
-    background_tasks.add_task(plane.drain)
-    execution = plane.get_run_execution(project_id, run_id)
     return AutoResearchExecutionCommandResponse(
         run_id=run_id,
-        job_id=job.id,
-        status="accepted" if created else "noop",
+        job_id=result.job_id,
+        status="accepted" if result.status == "accepted" else "noop",
         execution=execution,
     )
 
@@ -1495,30 +1552,30 @@ def retry_auto_research_run(
 def cancel_auto_research_run(
     project_id: str,
     run_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    identity: AuthIdentity | None = Depends(get_identity),
 ) -> AutoResearchExecutionCommandResponse:
     del db
-    run = load_run(project_id, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Auto research run not found")
     try:
-        execution = AutoResearchExecutionPlane().request_cancel(project_id=project_id, run_id=run_id)
+        result = apply_operator_action(
+            project_id,
+            run_id,
+            AutoResearchOperatorActionRequest(action="cancel"),
+            background_tasks=background_tasks,
+            identity_user_id=identity.user_id if identity else None,
+        )
     except ValueError as exc:
-        if bridge_is_waiting_for_result(project_id, run_id):
-            try:
-                AutoResearchExperimentBridgeService().cancel_waiting_session(
-                    project_id=project_id,
-                    run_id=run_id,
-                )
-            except ValueError as bridge_exc:
-                raise HTTPException(status_code=409, detail=str(bridge_exc)) from bridge_exc
-            execution = AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
-        else:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    latest_job = execution.jobs[-1] if execution.jobs else None
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result.policy_error is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=result.policy_error.model_dump(mode="json"),
+        )
+    execution = result.execution or AutoResearchExecutionPlane().get_run_execution(project_id, run_id)
     return AutoResearchExecutionCommandResponse(
         run_id=run_id,
-        job_id=latest_job.id if latest_job is not None else None,
-        status="accepted",
+        job_id=result.job_id,
+        status="accepted" if result.status == "accepted" else "noop",
         execution=execution,
     )

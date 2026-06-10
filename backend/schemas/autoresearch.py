@@ -43,6 +43,21 @@ AutoResearchWorkerStatus = Literal["idle", "starting", "running", "stopping"]
 AutoResearchQueuePriority = Literal["low", "normal", "high"]
 AutoResearchCommandStatus = Literal["accepted", "noop"]
 AutoResearchRunStatus = Literal["queued", "running", "done", "failed", "canceled"]
+AutoResearchOperatorAction = Literal["approve", "reject", "retry", "resume", "cancel"]
+AutoResearchOperatorApprovalStatus = Literal["not_required", "pending", "approved", "rejected"]
+AutoResearchOperatorBudgetMode = Literal["default", "bounded", "approval_required", "exhausted"]
+AutoResearchOperatorControlState = Literal[
+    "not_started",
+    "pending",
+    "running",
+    "blocked",
+    "failed",
+    "canceled",
+    "completed",
+    "needs_approval",
+    "stale",
+]
+AutoResearchOperatorAuditSourceKind = Literal["database", "repository_artifact", "queue_file", "derived"]
 AutoResearchRegistryAssetKind = Literal["file", "directory"]
 AutoResearchManifestSource = Literal["file", "generated_fallback"]
 AutoResearchBundleAssetRole = Literal[
@@ -4748,6 +4763,270 @@ class AutoResearchExperimentBridgeRead(BaseModel):
     notifications: list[AutoResearchBridgeNotificationRead] = Field(default_factory=list)
 
 
+class AutoResearchOperatorPolicyErrorRead(BaseModel):
+    action: AutoResearchOperatorAction
+    current_state: str
+    reason: str
+    blocker_code: str
+    recoverable: bool = False
+    required_next_action: str | None = None
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorActionPolicyRead(BaseModel):
+    action: AutoResearchOperatorAction
+    allowed: bool = False
+    reason: str
+    blocker_code: str | None = None
+    recoverable: bool = False
+    required_next_action: str | None = None
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorActionRequest(BaseModel):
+    action: AutoResearchOperatorAction
+    target_id: str | None = None
+    approval_id: str | None = None
+    operator_id: str | None = None
+    reason: str | None = None
+    expected_artifact_fingerprints: dict[str, str] = Field(default_factory=dict)
+
+
+class AutoResearchOperatorDecisionEvidenceRead(BaseModel):
+    evidence_id: str
+    action: AutoResearchOperatorAction
+    created_at: datetime
+    reason: str
+    terminal: bool = False
+    blocker_code: str | None = None
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorActionRecordRead(BaseModel):
+    action_id: str
+    project_id: str
+    run_id: str
+    action: AutoResearchOperatorAction
+    requested_at: datetime
+    status: Literal["accepted", "rejected", "noop", "blocked"] = "accepted"
+    operator_id: str | None = None
+    target_id: str | None = None
+    reason: str | None = None
+    job_id: str | None = None
+    attempt_number: int = 0
+    parent_attempt_id: str | None = None
+    preserved_artifact_refs: list[str] = Field(default_factory=list)
+    failure_evidence_refs: list[str] = Field(default_factory=list)
+    negative_evidence_refs: list[str] = Field(default_factory=list)
+    terminal_blocker: AutoResearchOperatorPolicyErrorRead | None = None
+    decision_evidence: AutoResearchOperatorDecisionEvidenceRead | None = None
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorActionLogRead(BaseModel):
+    schema_version: str = "operator_action_log_v1"
+    project_id: str
+    run_id: str
+    generated_at: datetime
+    action_log_path: str | None = None
+    action_log_sha256: str | None = None
+    records: list[AutoResearchOperatorActionRecordRead] = Field(default_factory=list)
+    record_count: int = 0
+
+
+class AutoResearchOperatorStateAuditItemRead(BaseModel):
+    state_id: str
+    category: Literal[
+        "run_queue",
+        "typed_execution_job",
+        "bridge_import",
+        "approval_budget",
+        "repair_revision",
+        "package_final_gate",
+        "artifact_lineage",
+        "evaluation_artifact",
+    ]
+    state_source: AutoResearchOperatorAuditSourceKind
+    state_owner: str
+    current_state: str
+    reconstructable_after_restart: bool
+    allowed_transitions: list[AutoResearchOperatorAction] = Field(default_factory=list)
+    known_blockers: list[str] = Field(default_factory=list)
+    missing_operator_controls: list[str] = Field(default_factory=list)
+    related_artifact_refs: list[str] = Field(default_factory=list)
+    source_path: str | None = None
+
+
+class AutoResearchOperatorStateAuditRead(BaseModel):
+    schema_version: str = "operator_state_audit_v1"
+    project_id: str
+    generated_at: datetime
+    audit_artifact_path: str | None = None
+    audit_artifact_sha256: str | None = None
+    deterministic: bool = True
+    state_items: list[AutoResearchOperatorStateAuditItemRead] = Field(default_factory=list)
+    state_item_count: int = 0
+    case_coverage: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    conclusion: str
+
+
+class AutoResearchOperatorApprovalRead(BaseModel):
+    approval_id: str
+    project_id: str
+    run_id: str
+    job_id: str | None = None
+    required: bool = False
+    status: AutoResearchOperatorApprovalStatus = "not_required"
+    reason: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    related_refs: list[str] = Field(default_factory=list)
+    actions: dict[str, AutoResearchOperatorActionPolicyRead] = Field(default_factory=dict)
+
+
+class AutoResearchOperatorBudgetRead(BaseModel):
+    project_id: str
+    run_id: str
+    mode: AutoResearchOperatorBudgetMode = "default"
+    queue_priority: AutoResearchQueuePriority = "normal"
+    max_rounds: int = 3
+    candidate_execution_limit: int | None = None
+    approval_required: bool = False
+    exhausted: bool = False
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorJobStatusRead(BaseModel):
+    job_id: str
+    project_id: str
+    run_id: str
+    job_source: Literal["execution_queue", "typed_experiment_execution"] = "execution_queue"
+    action: str | None = None
+    job_kind: str | None = None
+    execution_route: AutoResearchExperimentExecutionRoute | None = None
+    status: str
+    approval_state: AutoResearchExperimentExecutionApprovalState | None = None
+    budget_class: str | None = None
+    detail: str | None = None
+    worker_id: str | None = None
+    enqueued_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    attempt_count: int = 0
+    recovery_count: int = 0
+    blockers: list[str] = Field(default_factory=list)
+    lineage_parent_refs: list[str] = Field(default_factory=list)
+    output_artifact_refs: list[str] = Field(default_factory=list)
+    negative_evidence_refs: list[str] = Field(default_factory=list)
+    policy_actions: dict[str, AutoResearchOperatorActionPolicyRead] = Field(default_factory=dict)
+
+
+class AutoResearchOperatorRepairQueueItemRead(BaseModel):
+    repair_id: str
+    source: Literal["publication_repair_plan", "review_loop", "typed_execution_result", "operator_decision"]
+    title: str
+    status: str
+    detail: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    required_action: str | None = None
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorRepairQueueRead(BaseModel):
+    project_id: str
+    run_id: str
+    item_count: int = 0
+    pending_count: int = 0
+    blocked_count: int = 0
+    failed_execution_count: int = 0
+    items: list[AutoResearchOperatorRepairQueueItemRead] = Field(default_factory=list)
+
+
+class AutoResearchOperatorArtifactLineageRead(BaseModel):
+    project_id: str
+    run_id: str
+    selected_artifact_id: str | None = None
+    root_path: str | None = None
+    artifact_refs: list["AutoResearchRegistryAssetRef"] = Field(default_factory=list)
+    lineage_edges: list["AutoResearchLineageEdgeRead"] = Field(default_factory=list)
+    package_refs: list[str] = Field(default_factory=list)
+    final_gate_refs: list[str] = Field(default_factory=list)
+    negative_evidence_refs: list[str] = Field(default_factory=list)
+    missing_refs: list[str] = Field(default_factory=list)
+    stale_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorPackageStatusRead(BaseModel):
+    project_id: str
+    run_id: str
+    publish_status: AutoResearchPublishStatus | None = None
+    publish_ready: bool = False
+    review_bundle_ready: bool = False
+    final_publish_ready: bool = False
+    publication_tier: AutoResearchPublicationTier | None = None
+    archive_ready: bool = False
+    archive_current: bool = False
+    archive_status: str | None = None
+    package_fingerprint: str | None = None
+    package_path: str | None = None
+    final_archive_download_allowed: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchOperatorFinalGateStatusRead(BaseModel):
+    project_id: str
+    run_id: str
+    final_publish_ready: bool = False
+    review_bundle_ready: bool = False
+    paper_tier: AutoResearchPaperTier | None = None
+    policy_version: str | None = None
+    final_publish_decision_path: str | None = None
+    failed_check_ids: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    required_followups: list[str] = Field(default_factory=list)
+    kill_criteria: list[str] = Field(default_factory=list)
+    claim_ceiling: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+    final_archive_download_allowed: bool = False
+
+
+class AutoResearchOperatorRunStatusRead(BaseModel):
+    project_id: str
+    run_id: str
+    run_status: AutoResearchRunStatus
+    control_state: AutoResearchOperatorControlState
+    persisted_reconstructable: bool = True
+    current_attempt: int = 0
+    blockers: list[str] = Field(default_factory=list)
+    stale_refs: list[str] = Field(default_factory=list)
+    missing_refs: list[str] = Field(default_factory=list)
+    timeline: list[dict[str, Any]] = Field(default_factory=list)
+    action_policy: dict[str, AutoResearchOperatorActionPolicyRead] = Field(default_factory=dict)
+    jobs: list[AutoResearchOperatorJobStatusRead] = Field(default_factory=list)
+    approvals: list[AutoResearchOperatorApprovalRead] = Field(default_factory=list)
+    budget: AutoResearchOperatorBudgetRead
+    repair_queue: AutoResearchOperatorRepairQueueRead
+    artifact_lineage: AutoResearchOperatorArtifactLineageRead
+    package_status: AutoResearchOperatorPackageStatusRead
+    final_gate_status: AutoResearchOperatorFinalGateStatusRead
+    action_log: AutoResearchOperatorActionLogRead | None = None
+    audit_artifact_ref: str | None = None
+
+
+class AutoResearchOperatorActionResultRead(BaseModel):
+    project_id: str
+    run_id: str
+    action: AutoResearchOperatorAction
+    accepted: bool = False
+    status: Literal["accepted", "rejected", "noop", "blocked"] = "blocked"
+    job_id: str | None = None
+    action_record: AutoResearchOperatorActionRecordRead | None = None
+    policy_error: AutoResearchOperatorPolicyErrorRead | None = None
+    execution: "AutoResearchRunExecutionRead | None" = None
+    run_status: AutoResearchOperatorRunStatusRead | None = None
+
+
 class AutoResearchOperatorProjectActionsRead(BaseModel):
     start_run: bool = True
     create_idea_brief: bool = True
@@ -4896,6 +5175,7 @@ class AutoResearchOperatorRunDetailRead(BaseModel):
     review_loop: AutoResearchReviewLoopRead | None = None
     publish: AutoResearchPublishPackageRead | None = None
     actions: AutoResearchOperatorRunActionsRead
+    operator_status: AutoResearchOperatorRunStatusRead | None = None
 
 
 class AutoResearchOperatorPublicationCaseRead(BaseModel):
@@ -5024,6 +5304,7 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     meta_analysis: AutoResearchCrossRunMetaAnalysisRead | None = None
     system_evaluation: AutoResearchSystemEvaluationRead | None = None
     publication_case: AutoResearchOperatorPublicationCaseRead | None = None
+    operator_audit: AutoResearchOperatorStateAuditRead | None = None
     runs: list[AutoResearchOperatorRunSummaryRead] = Field(default_factory=list)
     current_run: AutoResearchOperatorRunDetailRead | None = None
 

@@ -28,6 +28,8 @@ from schemas.autoresearch import (
     AutoResearchExperimentFactoryRepairPlanRead,
     AutoResearchResearchBriefRead,
     AutoResearchLineageEdgeRead,
+    AutoResearchOperatorActionLogRead,
+    AutoResearchOperatorStateAuditRead,
     AutoResearchPaperRevisionActionIndexRead,
     AutoResearchPaperRevisionDiffRead,
     AutoResearchPaperSectionRewriteIndexRead,
@@ -121,6 +123,8 @@ EVALUATION_CASE_AUDIT_FILENAME = "evaluation_case_audit.json"
 EVALUATION_CASE_SUITE_FILENAME = "evaluation_case_suite.json"
 EVALUATION_METRICS_FILENAME = "system_metrics.json"
 EVALUATION_SYSTEM_PAPER_MATERIAL_FILENAME = "scholarflow_system_paper_material.json"
+OPERATOR_STATE_AUDIT_FILENAME = "operator_state_audit.json"
+OPERATOR_ACTION_LOG_FILENAME = "operator_action_log.json"
 BENCHMARK_FILENAME = "benchmark.json"
 BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
@@ -193,6 +197,14 @@ def evaluation_metrics_file_path(project_id: str) -> str:
 
 def system_paper_material_file_path(project_id: str) -> str:
     return str(evaluation_dir(project_id) / EVALUATION_SYSTEM_PAPER_MATERIAL_FILENAME)
+
+
+def operator_state_audit_file_path(project_id: str) -> str:
+    return str(evaluation_dir(project_id) / OPERATOR_STATE_AUDIT_FILENAME)
+
+
+def operator_action_log_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / OPERATOR_ACTION_LOG_FILENAME)
 
 
 def _literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
@@ -456,6 +468,58 @@ def load_system_paper_material(project_id: str) -> AutoResearchSystemPaperMateri
         return None
     try:
         return AutoResearchSystemPaperMaterialRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_operator_state_audit(
+    audit: AutoResearchOperatorStateAuditRead,
+) -> AutoResearchOperatorStateAuditRead:
+    path = Path(operator_state_audit_file_path(audit.project_id))
+    payload = audit.model_copy(update={"audit_artifact_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "audit_artifact_sha256")
+    payload = payload.model_copy(update={"audit_artifact_sha256": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_operator_state_audit(project_id: str) -> AutoResearchOperatorStateAuditRead | None:
+    path = Path(operator_state_audit_file_path(project_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchOperatorStateAuditRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_operator_action_log(
+    log: AutoResearchOperatorActionLogRead,
+) -> AutoResearchOperatorActionLogRead:
+    path = Path(operator_action_log_file_path(log.project_id, log.run_id))
+    payload = log.model_copy(
+        update={
+            "action_log_path": str(path),
+            "record_count": len(log.records),
+        }
+    )
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "action_log_sha256")
+    payload = payload.model_copy(update={"action_log_sha256": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_operator_action_log(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchOperatorActionLogRead | None:
+    path = Path(operator_action_log_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchOperatorActionLogRead.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 

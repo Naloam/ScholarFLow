@@ -13,6 +13,7 @@ from schemas.autoresearch import (
     AutoResearchOperatorPublicationCaseRead,
     AutoResearchOperatorRunActionsRead,
     AutoResearchOperatorRunDetailRead,
+    AutoResearchOperatorRunStatusRead,
     AutoResearchOperatorRunSummaryRead,
     AutoResearchPublicationTier,
     AutoResearchPublishStatus,
@@ -29,6 +30,10 @@ from schemas.autoresearch import (
 from services.autoresearch.bridge import build_bridge_state
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
+from services.autoresearch.operator_control import (
+    build_operator_run_status,
+    get_or_build_operator_state_audit,
+)
 from services.autoresearch.project_paper_orchestrator import build_project_paper_orchestration
 from services.autoresearch.publication_repair_plan import (
     repair_plan_allows_paper_pipeline_rebuild,
@@ -85,6 +90,7 @@ def _run_actions(
     review: AutoResearchRunReviewRead | None,
     review_loop: AutoResearchReviewLoopRead | None,
     publish: AutoResearchPublishPackageRead | None,
+    operator_status: AutoResearchOperatorRunStatusRead | None = None,
 ) -> AutoResearchOperatorRunActionsRead:
     active_or_queued = any(job.status in {"queued", "leased", "running"} for job in execution.jobs)
     bridge_waiting = bool(bridge is not None and bridge.current_session is not None and bridge.current_session.status == "waiting_result")
@@ -111,10 +117,25 @@ def _run_actions(
             )
         )
     )
+    resume_allowed = (
+        operator_status.action_policy["resume"].allowed
+        if operator_status is not None and "resume" in operator_status.action_policy
+        else run.status != "done" and not bridge_waiting
+    )
+    retry_allowed = (
+        operator_status.action_policy["retry"].allowed
+        if operator_status is not None and "retry" in operator_status.action_policy
+        else run.status in {"done", "failed", "canceled"}
+    )
+    cancel_allowed = (
+        operator_status.action_policy["cancel"].allowed
+        if operator_status is not None and "cancel" in operator_status.action_policy
+        else (active_or_queued and not execution.cancel_requested) or bridge_waiting
+    )
     return AutoResearchOperatorRunActionsRead(
-        resume=run.status != "done" and not bridge_waiting,
-        retry=run.status in {"done", "failed", "canceled"},
-        cancel=(active_or_queued and not execution.cancel_requested) or bridge_waiting,
+        resume=resume_allowed,
+        retry=retry_allowed,
+        cancel=cancel_allowed,
         refresh_bridge=bool(bridge is not None and bridge.enabled),
         import_bridge_result=bridge_waiting,
         refresh_review=run.status == "done",
@@ -928,6 +949,7 @@ def build_operator_console(
             review = review_by_run[selected_run.id]
             review_loop = review_loop_by_run[selected_run.id]
             publish = publish_by_run[selected_run.id]
+            operator_status = build_operator_run_status(project_id, selected_run.id)
             current_run = AutoResearchOperatorRunDetailRead(
                 run=selected_run,
                 execution=execution,
@@ -944,12 +966,15 @@ def build_operator_console(
                     review=review,
                     review_loop=review_loop,
                     publish=publish,
+                    operator_status=operator_status,
                 ),
+                operator_status=operator_status,
             )
 
     meta_analysis = build_cross_run_meta_analysis(project_id)
     system_evaluation = build_system_evaluation(project_id)
     publication_case = _publication_case_summary(project_id) if runs else None
+    operator_audit = get_or_build_operator_state_audit(project_id) if runs else None
     latest_domain_decision = (
         latest_brief.domain_decision if latest_brief is not None else None
     )
@@ -1043,6 +1068,7 @@ def build_operator_console(
         meta_analysis=meta_analysis,
         system_evaluation=system_evaluation,
         publication_case=publication_case,
+        operator_audit=operator_audit,
         runs=summaries,
         current_run=current_run,
     )

@@ -178,7 +178,36 @@ This document focuses on the current auto-research API surface.
 - surfaces latest idea-brief domain evidence status fields: `latest_brief_domain_literature_status`, `latest_brief_domain_benchmark_status`, `latest_brief_domain_protocol_status`, `latest_brief_domain_claim_ceiling`, `latest_brief_domain_required_followups`, and `latest_brief_domain_kill_criteria`
 - exposes `actions.create_run_from_brief=false` when the latest brief is blocked, lacks a selected hypothesis, or cannot create experiments under its routed domain policy
 - includes `publication_case`, a project-level offline publication-case summary with domain decision/template/literature/resolver/protocol/readiness context, review/final readiness, package asset statuses, blocked asset counts/roles, per-asset final-publish blocking checks/reasons, submission archive current/complete/download-gate status, reproducibility checklist completeness, artifact-integrity audit status, final-publish policy version and failed check ids, review finding count/path, repair action status counts, execution/import replay outputs, literature source coverage, benchmark provenance status, benchmark schema coverage/blockers, benchmark source-observation coverage/blockers, benchmark final-publish-candidate coverage/blockers, benchmark source-independence readiness/blockers, benchmark snapshot materialization status/counts/unmaterialized run ids, statistics claim ceiling, negative evidence counts, Goal 1 Phase 6 covered/missing/required negative-evidence categories, blocked source-independence repair-attempt evidence, final-publish package completeness, engineering-vs-scientific gap counts/classification, rereview recommendations, publish blockers, required follow-ups, kill criteria, and paths to `offline_publication_case.json` / `offline_publication_audit.json`
+- includes `operator_audit`, the persisted operator-state audit for the project, when runs exist
+- includes `current_run.operator_status`, the policy-backed run control surface with persisted job inspection, approval/budget status, repair queue, artifact lineage, package status, final-gate status, action log, stale/missing refs, blockers, and per-action allow/deny reasons
+- `current_run.actions.resume`, `retry`, and `cancel` mirror the backend operator policy instead of being UI-only affordances
 - operators can inspect queue bottlenecks, stale-worker posture, and recent recoveries without reading `queue.json`
+
+### `GET /api/projects/{project_id}/auto-research/operator/audit`
+
+- returns the persisted Goal 9 operator-state audit for the project
+- accepts optional `rebuild=true` to reconstruct and rewrite the audit from persisted run, queue, bridge, review, package, evaluation, and project-paper state
+- persists `operator_state_audit.json` through repository helpers and returns `audit_artifact_path`, `audit_artifact_sha256`, `state_items`, `case_coverage`, blockers, and a conservative conclusion
+- state items cover run queue state, typed experiment jobs, bridge imports, approval/budget controls, repair/revision queues, package/final-gate state, artifact lineage, and evaluation artifacts
+- review-ready, workshop, and case-study package states are represented as blocked or review-ready unless the final-publish gate itself is satisfied
+
+### `GET /api/projects/{project_id}/auto-research/{run_id}/operator/status`
+
+- returns the persisted operator-control status for one run
+- reconstructs state from `run.json`, registry/lineage artifacts, queue state, bridge state, typed experiment execution results, review/publish artifacts, and `operator_action_log.json`
+- response fields include `control_state`, `action_policy`, `jobs`, `approvals`, `budget`, `repair_queue`, `artifact_lineage`, `package_status`, `final_gate_status`, `action_log`, `stale_refs`, `missing_refs`, and a deterministic timeline
+- `action_policy` provides policy-checked `approve`, `reject`, `retry`, `resume`, and `cancel` decisions with blocker codes, recoverability, required next action, and related refs
+- approval state is derived from persisted operator action records after reload; approval does not fabricate experiment output or bypass runtime contracts
+- stale package/archive refs, missing registry refs, pending bridge imports, rejected approvals, and active leased/running queue work block unsafe resume/retry transitions; resume on an already queued run is treated as an idempotent noop
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/operator/actions`
+
+- applies a policy-checked operator action: `approve`, `reject`, `retry`, `resume`, or `cancel`
+- accepts `action`, optional `target_id`, `approval_id`, `operator_id`, `reason`, and optional `expected_artifact_fingerprints` for freshness preconditions
+- returns `AutoResearchOperatorActionResult` with `accepted`, `status`, optional `job_id`, persisted `action_record`, updated `run_status`, and execution state when relevant
+- every accepted, noop, or blocked action appends to `operator_action_log.json` with preserved artifact refs, failure refs, negative-evidence refs, parent attempt/job refs, decision evidence, and terminal blocker evidence where applicable
+- invalid transitions return `409` with structured `AutoResearchOperatorPolicyError` detail instead of silently queuing work
+- `reject` and `cancel` create terminal decision evidence and preserve the prior artifacts/failures; `retry` and `resume` enqueue through the existing execution plane without deleting prior attempt evidence
 
 ### `GET /api/projects/{project_id}/auto-research/project-paper`
 
@@ -495,17 +524,21 @@ This document focuses on the current auto-research API surface.
 
 - enqueues a `resume` job
 - current behavior resumes from persisted checkpoint rather than silently repeating completed candidate/round work
-- now returns `409` while a bridge-backed run is still waiting for external result import
+- routes through the Goal 9 operator policy/action log; if a resume is already queued the command returns a noop instead of adding duplicate work
+- returns the existing string `409` detail while a bridge-backed run is waiting for external result import, and structured policy error detail for other policy blocks such as stale artifacts, missing refs, approval state, or active leased/running work
 
 ### `POST /api/projects/{project_id}/auto-research/{run_id}/retry`
 
 - enqueues a `retry` job for the existing run
+- routes through the Goal 9 operator policy/action log, preserving previous artifacts, failure evidence, negative evidence, and parent attempt refs before a new queued attempt is created
+- returns `409` with structured policy error detail when retry is not currently allowed
 
 ### `POST /api/projects/{project_id}/auto-research/{run_id}/cancel`
 
 - requests cancellation for the current queued or running job
 - also cancels runs that are currently parked on a waiting bridge session
 - canceled runs fall to `canceled` and store a cancellation reason in `error`
+- routes through the Goal 9 operator policy/action log and records terminal operator decision evidence instead of deleting prior queue or bridge state
 
 ## Current Downstream Surfaces
 

@@ -21,6 +21,8 @@ type OperatorConsolePanelProps = {
   onApplyFilters: (filters: AutoResearchOperatorConsoleFilters) => void;
   onClearFilters: () => void;
   onSelectRun: (runId: string) => void;
+  onApprove: () => void;
+  onReject: () => void;
   onResume: () => void;
   onRetry: () => void;
   onCancel: () => void;
@@ -84,6 +86,8 @@ export function OperatorConsolePanel({
   onApplyFilters,
   onClearFilters,
   onSelectRun,
+  onApprove,
+  onReject,
   onResume,
   onRetry,
   onCancel,
@@ -162,6 +166,17 @@ export function OperatorConsolePanel({
     activeConsole?.workers ?? current?.execution.workers ?? [];
   const currentSummary =
     activeConsole?.runs.find((run) => run.run_id === current?.run.id) ?? null;
+  const operatorStatus = current?.operator_status ?? null;
+  const operatorPolicy = operatorStatus?.action_policy ?? {};
+  const pendingApproval =
+    operatorStatus?.approvals.find(
+      (approval) => approval.required && approval.status === "pending",
+    ) ?? null;
+  const operatorAudit = activeConsole?.operator_audit ?? null;
+  const actionAllowed = (action: string, fallback: boolean) =>
+    operatorPolicy[action]?.allowed ?? fallback;
+  const actionReason = (action: string) =>
+    operatorPolicy[action]?.reason ?? "";
   const hasRuns = Boolean(consoleState && consoleState.run_count > 0);
   const hasFilteredRuns = Boolean(
     consoleState && consoleState.filtered_run_count > 0,
@@ -330,8 +345,29 @@ export function OperatorConsolePanel({
             <button
               type="button"
               className="ghost-btn"
+              onClick={onApprove}
+              disabled={disabled || !actionAllowed("approve", false)}
+              title={actionReason("approve")}
+              data-testid="approve-autoresearch-button"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onReject}
+              disabled={disabled || !actionAllowed("reject", false)}
+              title={actionReason("reject")}
+              data-testid="reject-autoresearch-button"
+            >
+              Reject
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
               onClick={onResume}
-              disabled={disabled || !current?.actions.resume}
+              disabled={disabled || !actionAllowed("resume", Boolean(current?.actions.resume))}
+              title={actionReason("resume")}
               data-testid="resume-autoresearch-button"
             >
               {t("operator.resume")}
@@ -340,7 +376,8 @@ export function OperatorConsolePanel({
               type="button"
               className="ghost-btn"
               onClick={onRetry}
-              disabled={disabled || !current?.actions.retry}
+              disabled={disabled || !actionAllowed("retry", Boolean(current?.actions.retry))}
+              title={actionReason("retry")}
               data-testid="retry-autoresearch-button"
             >
               {t("operator.retry")}
@@ -349,7 +386,8 @@ export function OperatorConsolePanel({
               type="button"
               className="ghost-btn"
               onClick={onCancel}
-              disabled={disabled || !current?.actions.cancel}
+              disabled={disabled || !actionAllowed("cancel", Boolean(current?.actions.cancel))}
+              title={actionReason("cancel")}
               data-testid="cancel-autoresearch-button"
             >
               {t("operator.cancel")}
@@ -713,6 +751,50 @@ export function OperatorConsolePanel({
                 {formatLabel(currentSummary.next_research_action)} ·{" "}
                 {currentSummary.next_research_action_detail ?? "n/a"}
               </p>
+            </div>
+          ) : null}
+
+          {operatorStatus ? (
+            <div className="meta-block" data-testid="operator-policy-summary">
+              <span className="meta-label">Operator Policy</span>
+              <p>
+                state={operatorStatus.control_state} attempt=
+                {operatorStatus.current_attempt} reconstructable=
+                {operatorStatus.persisted_reconstructable ? "yes" : "no"}
+              </p>
+              <p>
+                resume={operatorPolicy.resume?.allowed ? "allowed" : "blocked"}{" "}
+                retry={operatorPolicy.retry?.allowed ? "allowed" : "blocked"}{" "}
+                cancel={operatorPolicy.cancel?.allowed ? "allowed" : "blocked"}
+              </p>
+              {[operatorPolicy.resume, operatorPolicy.retry, operatorPolicy.cancel]
+                .filter((policy) => policy && !policy.allowed)
+                .slice(0, 3)
+                .map((policy) => (
+                  <small key={policy.action}>
+                    {policy.action}: {policy.reason}
+                  </small>
+                ))}
+            </div>
+          ) : null}
+
+          {operatorAudit ? (
+            <div className="meta-block" data-testid="operator-audit-summary">
+              <span className="meta-label">Persisted State Audit</span>
+              <p>
+                items={operatorAudit.state_item_count} coverage=
+                {operatorAudit.case_coverage.join(", ") || "none"}
+              </p>
+              <code>{operatorAudit.audit_artifact_path ?? "operator_state_audit.json"}</code>
+              {operatorAudit.blockers.length ? (
+                <ul>
+                  {operatorAudit.blockers.slice(0, 3).map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p>{operatorAudit.conclusion}</p>
+              )}
             </div>
           ) : null}
 
@@ -1108,6 +1190,74 @@ export function OperatorConsolePanel({
             </form>
           )}
 
+          {operatorStatus ? (
+            <div className="summary-banner operator-summary-grid" data-testid="operator-approval-budget">
+              <div>
+                <span className="meta-label">Approval</span>
+                <strong>{pendingApproval?.status ?? operatorStatus.approvals[0]?.status ?? "n/a"}</strong>
+              </div>
+              <div>
+                <span className="meta-label">Budget</span>
+                <strong>{operatorStatus.budget.mode}</strong>
+              </div>
+              <div>
+                <span className="meta-label">Priority</span>
+                <strong>{operatorStatus.budget.queue_priority}</strong>
+              </div>
+              <div>
+                <span className="meta-label">Limits</span>
+                <strong>
+                  {operatorStatus.budget.max_rounds} rounds /{" "}
+                  {operatorStatus.budget.candidate_execution_limit ?? "open"} candidates
+                </strong>
+              </div>
+              <div>
+                <span className="meta-label">Approve</span>
+                <strong>{operatorPolicy.approve?.allowed ? "allowed" : "blocked"}</strong>
+              </div>
+              <div>
+                <span className="meta-label">Reject</span>
+                <strong>{operatorPolicy.reject?.allowed ? "allowed" : "blocked"}</strong>
+              </div>
+            </div>
+          ) : null}
+
+          {operatorStatus && pendingApproval ? (
+            <div className="meta-block" data-testid="operator-approval-queue">
+              <span className="meta-label">Approval Queue</span>
+              <p>{pendingApproval.reason ?? "Approval required by backend policy."}</p>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onApprove}
+                  disabled={disabled || !operatorPolicy.approve?.allowed}
+                  title={operatorPolicy.approve?.reason}
+                  data-testid="operator-approve-action"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={onReject}
+                  disabled={disabled || !operatorPolicy.reject?.allowed}
+                  title={operatorPolicy.reject?.reason}
+                  data-testid="operator-reject-action"
+                >
+                  Reject
+                </button>
+              </div>
+              {pendingApproval.blockers.length ? (
+                <ul>
+                  {pendingApproval.blockers.map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
           {current && (
             <form
               className="stack"
@@ -1286,6 +1436,54 @@ export function OperatorConsolePanel({
                   </div>
                 )}
               </div>
+
+              {operatorStatus ? (
+                <div className="list-block" data-testid="operator-job-detail">
+                  {operatorStatus.jobs.length ? (
+                    operatorStatus.jobs.map((job) => (
+                      <div
+                        key={`${job.job_source}-${job.job_id}`}
+                        className="evidence-card"
+                        data-testid={`operator-job-${job.job_id}`}
+                      >
+                        <strong>
+                          {job.job_id} · {job.job_source} · {job.status}
+                        </strong>
+                        <small>
+                          action={job.action ?? job.job_kind ?? "n/a"} route=
+                          {job.execution_route ?? "n/a"} approval=
+                          {job.approval_state ?? "n/a"} attempts=
+                          {job.attempt_count} recovered={job.recovery_count}
+                        </small>
+                        <small>
+                          worker={job.worker_id ?? "n/a"} queued=
+                          {formatTimestamp(job.enqueued_at)} started=
+                          {formatTimestamp(job.started_at)} finished=
+                          {formatTimestamp(job.finished_at)}
+                        </small>
+                        {job.detail ? <small>{job.detail}</small> : null}
+                        {job.blockers.length ? (
+                          <ul>
+                            {job.blockers.slice(0, 3).map((blocker) => (
+                              <li key={blocker}>{blocker}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        <small>
+                          lineage={job.lineage_parent_refs.length} outputs=
+                          {job.output_artifact_refs.length} negative=
+                          {job.negative_evidence_refs.length}
+                        </small>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty-state">
+                      <p>No persisted jobs</p>
+                      <span>Queue and typed execution jobs will appear here.</span>
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </>
           ) : (
             <div className="empty-state">
@@ -1650,6 +1848,110 @@ export function OperatorConsolePanel({
                   <strong>{reviewLoop?.completed_action_count ?? 0}</strong>
                 </div>
               </div>
+
+              {operatorStatus ? (
+                <div className="summary-banner operator-summary-grid" data-testid="operator-final-gate-status">
+                  <div>
+                    <span className="meta-label">Package</span>
+                    <strong>{operatorStatus.package_status.publish_status ?? "not built"}</strong>
+                  </div>
+                  <div>
+                    <span className="meta-label">Review Bundle</span>
+                    <strong>{operatorStatus.package_status.review_bundle_ready ? "ready" : "blocked"}</strong>
+                  </div>
+                  <div>
+                    <span className="meta-label">Final Publish</span>
+                    <strong>{operatorStatus.final_gate_status.final_publish_ready ? "ready" : "blocked"}</strong>
+                  </div>
+                  <div>
+                    <span className="meta-label">Archive</span>
+                    <strong>
+                      {operatorStatus.package_status.archive_ready ? "ready" : "missing"} /{" "}
+                      {operatorStatus.package_status.archive_current ? "current" : "stale"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="meta-label">Download Gate</span>
+                    <strong>
+                      {operatorStatus.final_gate_status.final_archive_download_allowed
+                        ? "allowed"
+                        : "blocked"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="meta-label">Repair Queue</span>
+                    <strong>
+                      {operatorStatus.repair_queue.pending_count} pending /{" "}
+                      {operatorStatus.repair_queue.blocked_count} blocked
+                    </strong>
+                  </div>
+                </div>
+              ) : null}
+
+              {operatorStatus ? (
+                <div className="meta-block" data-testid="operator-repair-queue">
+                  <span className="meta-label">Repair Queue</span>
+                  <p>
+                    items={operatorStatus.repair_queue.item_count} failed_execution=
+                    {operatorStatus.repair_queue.failed_execution_count}
+                  </p>
+                  {operatorStatus.repair_queue.items.length ? (
+                    <ul>
+                      {operatorStatus.repair_queue.items.slice(0, 5).map((item) => (
+                        <li key={item.repair_id}>
+                          {item.source} · {item.status} · {item.title}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No persisted repair queue items.</p>
+                  )}
+                </div>
+              ) : null}
+
+              {operatorStatus ? (
+                <div className="meta-block" data-testid="operator-final-gate-blockers">
+                  <span className="meta-label">Final Gate</span>
+                  <p>
+                    review_ready={operatorStatus.final_gate_status.review_bundle_ready ? "yes" : "no"}{" "}
+                    final_publish_ready=
+                    {operatorStatus.final_gate_status.final_publish_ready ? "yes" : "no"}
+                  </p>
+                  {operatorStatus.final_gate_status.blockers.length ? (
+                    <ul>
+                      {operatorStatus.final_gate_status.blockers.slice(0, 5).map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No final gate blockers.</p>
+                  )}
+                </div>
+              ) : null}
+
+              {operatorStatus ? (
+                <div className="meta-block" data-testid="operator-artifact-lineage-browser">
+                  <span className="meta-label">Artifact Lineage</span>
+                  <p>
+                    refs={operatorStatus.artifact_lineage.artifact_refs.length} edges=
+                    {operatorStatus.artifact_lineage.lineage_edges.length} package_refs=
+                    {operatorStatus.artifact_lineage.package_refs.length} final_refs=
+                    {operatorStatus.artifact_lineage.final_gate_refs.length}
+                  </p>
+                  <p>
+                    missing={operatorStatus.artifact_lineage.missing_refs.length} stale=
+                    {operatorStatus.artifact_lineage.stale_refs.length} negative=
+                    {operatorStatus.artifact_lineage.negative_evidence_refs.length}
+                  </p>
+                  {operatorStatus.artifact_lineage.package_refs.length ? (
+                    <ul>
+                      {operatorStatus.artifact_lineage.package_refs.slice(0, 5).map((ref) => (
+                        <li key={ref}>{ref}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
 
               {currentSummary ? (
                 <div className="meta-block" data-testid="operator-research-action">

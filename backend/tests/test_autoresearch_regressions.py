@@ -27,6 +27,7 @@ import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_connectors as autoresearch_literature_connectors
 import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.narrative_analyst as narrative_analyst
+import services.autoresearch.operator_control as autoresearch_operator_control
 import services.autoresearch.planner as autoresearch_planner
 import services.autoresearch.project_paper_orchestrator as autoresearch_project_paper_orchestrator
 import services.autoresearch.publication_repair_execution as publication_repair_execution
@@ -54,6 +55,7 @@ from schemas.autoresearch import (
     AutoResearchLineageEdgeRead,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchOperatorConsoleFiltersRead,
+    AutoResearchOperatorActionRequest,
     AutoResearchPaperCompileReportRead,
     AutoResearchPaperPlanRead,
     AutoResearchPaperPlanSectionRead,
@@ -13459,6 +13461,270 @@ def test_goal3_execution_blockers_for_unsupported_docker_and_approval() -> None:
     assert missing_benchmark_plan.status == "blocked"
     assert missing_benchmark_plan.job_count == 0
     assert missing_benchmark_result.failure_classification == "benchmark_mismatch"
+
+
+def _goal9_persisted_run_with_execution(
+    *,
+    project_id: str,
+    run_id: str,
+    tmp_path: Path,
+    approval_required: bool = False,
+    failed: bool = False,
+) -> AutoResearchRunRead:
+    brief, factory_plan = _goal3_factory_plan(project_id=project_id)
+    run = autoresearch_repository.create_run(
+        project_id,
+        brief.polished_idea,
+        brief_id=brief.brief_id,
+        hypothesis_id=brief.selected_hypothesis_id,
+    )
+    run = run.model_copy(update={"id": run_id, "status": "failed" if failed else "done"})
+    factory_plan = factory_plan.model_copy(update={"run_id": run_id})
+    request = AutoResearchExperimentExecutionPlanRequest(
+        execution_route="local_command",
+        budget_class="approval_required" if approval_required else "free",
+    )
+    plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=request,
+    )
+    if failed:
+        output = autoresearch_experiment_execution._base_output_package(plan)
+        output["execution_profile"] = {
+            **output["execution_profile"],
+            "exit_code": 7,
+        }
+        result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+            plan,
+            output_override=output,
+        )
+    else:
+        result = autoresearch_experiment_execution.execute_experiment_execution_plan(plan)
+    return autoresearch_repository.save_run(
+        run.model_copy(
+            update={
+                "status": "failed" if failed else "done",
+                "error": "typed execution failed" if failed else None,
+                "experiment_factory_plan": factory_plan,
+                "experiment_execution_plan": plan,
+                "experiment_execution_result": result,
+                "artifact": result.result_artifact,
+                "evidence_ledger": result.evidence_ledger,
+                "paper_markdown": "# Goal 9 operator run\n\nPersisted state only.",
+            }
+        )
+    )
+
+
+def test_goal9_operator_approval_retry_cancel_and_reload_persist_policy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal9-approval",
+        run_id="run-goal9-approval",
+        tmp_path=tmp_path,
+        approval_required=True,
+    )
+
+    status = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert status.control_state == "needs_approval"
+    assert status.approvals[0].status == "pending"
+    assert status.action_policy["approve"].allowed is True
+    assert status.action_policy["resume"].allowed is False
+
+    rejected = autoresearch_operator_control.apply_operator_action(
+        run.project_id,
+        run.id,
+        AutoResearchOperatorActionRequest(
+            action="reject",
+            reason="Budget rejected for deterministic policy test.",
+        ),
+    )
+    assert rejected.accepted is True
+    assert rejected.action_record is not None
+    assert rejected.action_record.terminal_blocker is not None
+    assert rejected.action_record.preserved_artifact_refs
+    assert rejected.action_record.failure_evidence_refs
+
+    reloaded = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert reloaded.approvals[0].status == "rejected"
+    assert reloaded.action_policy["resume"].allowed is False
+    assert reloaded.action_policy["resume"].required_next_action == "create_new_approved_plan_or_retry"
+    assert reloaded.repair_queue.item_count >= 1
+
+    retry = autoresearch_operator_control.apply_operator_action(
+        run.project_id,
+        run.id,
+        AutoResearchOperatorActionRequest(action="retry"),
+    )
+    assert retry.accepted is True
+    assert retry.job_id is not None
+    retry_log = autoresearch_repository.load_operator_action_log(run.project_id, run.id)
+    assert retry_log is not None
+    retry_record = retry_log.records[-1]
+    assert retry_record.action == "retry"
+    assert retry_record.attempt_number >= 1
+    assert retry_record.preserved_artifact_refs
+    assert retry_record.parent_attempt_id is not None
+
+    cancel = autoresearch_operator_control.apply_operator_action(
+        run.project_id,
+        run.id,
+        AutoResearchOperatorActionRequest(action="cancel", reason="Stop retry attempt."),
+    )
+    assert cancel.accepted is True
+    cancel_log = autoresearch_repository.load_operator_action_log(run.project_id, run.id)
+    assert cancel_log is not None
+    assert cancel_log.records[-1].terminal_blocker is not None
+    execution = cancel.execution
+    assert execution is not None
+    assert execution.jobs[-1].status == "canceled"
+
+
+def test_goal9_resume_refuses_stale_artifact_fingerprint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal9-stale",
+        run_id="run-goal9-stale",
+        tmp_path=tmp_path,
+    )
+    run_json = Path(autoresearch_repository.run_dir(run.project_id, run.id) / "run.json")
+    assert run_json.is_file()
+    stale_result = autoresearch_operator_control.apply_operator_action(
+        run.project_id,
+        run.id,
+        AutoResearchOperatorActionRequest(
+            action="resume",
+            expected_artifact_fingerprints={str(run_json): "not-current"},
+        ),
+    )
+    assert stale_result.accepted is False
+    assert stale_result.policy_error is not None
+    assert stale_result.policy_error.blocker_code == "resume_blocked_by_policy"
+    assert stale_result.policy_error.required_next_action == "refresh_or_rebuild_stale_artifacts"
+    reloaded = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert reloaded.action_log is not None
+    assert reloaded.action_log.records[-1].negative_evidence_refs == []
+    assert reloaded.action_log.records[-1].terminal_blocker is not None
+
+
+def test_goal9_operator_status_surfaces_failed_execution_repair_and_negative_evidence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal9-failed",
+        run_id="run-goal9-failed",
+        tmp_path=tmp_path,
+        failed=True,
+    )
+    status = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert status.control_state == "failed"
+    assert status.repair_queue.failed_execution_count == 1
+    assert any(item.source == "typed_execution_result" for item in status.repair_queue.items)
+    assert status.action_policy["retry"].allowed is True
+    assert any(job.negative_evidence_refs for job in status.jobs)
+
+
+def test_goal9_operator_audit_persists_state_without_marking_missing_cases_success(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal9-audit",
+        run_id="run-goal9-audit",
+        tmp_path=tmp_path,
+    )
+    unsupported_brief = autoresearch_idea_brief.build_research_brief(
+        project_id=run.project_id,
+        payload=AutoResearchIdeaRequest(
+            idea="Run a wet-lab assay requiring physical samples",
+            domain="wet lab biology",
+            allow_web=False,
+            allow_experiments=True,
+        ),
+    )
+    unsupported_plan = autoresearch_experiment_factory.build_experiment_factory_plan(
+        project_id=run.project_id,
+        brief=unsupported_brief,
+    )
+    execution_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=unsupported_plan,
+        brief=unsupported_brief,
+    )
+    unsupported_result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        execution_plan
+    )
+    unsupported_run = autoresearch_repository.create_run(
+        run.project_id,
+        unsupported_brief.polished_idea,
+        brief_id=unsupported_brief.brief_id,
+        hypothesis_id=None,
+    )
+    autoresearch_repository.save_run(
+        unsupported_run.model_copy(
+            update={
+                "status": "failed",
+                "error": "Unsupported domain is a terminal blocker.",
+                "experiment_factory_plan": unsupported_plan,
+                "experiment_execution_plan": execution_plan,
+                "experiment_execution_result": unsupported_result,
+            }
+        )
+    )
+
+    audit = autoresearch_operator_control.build_operator_state_audit(run.project_id)
+    assert audit.audit_artifact_path is not None
+    assert Path(audit.audit_artifact_path).is_file()
+    assert audit.audit_artifact_sha256 is not None
+    categories = {item.category for item in audit.state_items}
+    assert {
+        "run_queue",
+        "typed_execution_job",
+        "approval_budget",
+        "repair_revision",
+        "package_final_gate",
+        "artifact_lineage",
+        "evaluation_artifact",
+    }.issubset(categories)
+    assert "unsupported_domain" in audit.case_coverage
+    assert "failed_execution" in audit.case_coverage
+    assert "revision" in audit.case_coverage
+    loaded = autoresearch_repository.load_operator_state_audit(run.project_id)
+    assert loaded is not None
+    assert loaded.audit_artifact_sha256 == audit.audit_artifact_sha256
+
+
+def test_goal9_operator_invalid_transition_returns_structured_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = autoresearch_repository.create_run(
+        "project-goal9-invalid",
+        "Operator invalid transition",
+    )
+    run = autoresearch_repository.save_run(run.model_copy(update={"status": "done"}))
+    result = autoresearch_operator_control.apply_operator_action(
+        run.project_id,
+        run.id,
+        AutoResearchOperatorActionRequest(action="resume"),
+    )
+    assert result.accepted is False
+    assert result.policy_error is not None
+    assert result.policy_error.action == "resume"
+    assert result.policy_error.blocker_code == "resume_blocked_by_policy"
+    assert result.policy_error.recoverable is True
+    assert result.policy_error.required_next_action
+    assert isinstance(result.policy_error.related_refs, list)
 
 
 def test_goal3_runtime_contract_validation_failure_classes() -> None:

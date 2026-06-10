@@ -201,6 +201,8 @@ type WorkspaceState = {
   startAutoResearch: (
     payload?: Partial<AutoResearchRunRequest>,
   ) => Promise<void>;
+  approveAutoResearchAction: () => Promise<void>;
+  rejectAutoResearchAction: () => Promise<void>;
   resumeAutoResearch: () => Promise<void>;
   retryAutoResearch: () => Promise<void>;
   cancelAutoResearch: () => Promise<void>;
@@ -1130,6 +1132,64 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         set({ notice: `Auto-research run ${response.id} queued` });
       } catch (error) {
         handleActionError(error, "Start auto-research failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async approveAutoResearchAction() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      const approval = autoResearchConsole?.current_run?.operator_status?.approvals.find(
+        (item) => item.required && item.status === "pending",
+      );
+      if (!currentProjectId || !runId || !approval) {
+        set({ notice: "No pending auto-research approval is selected" });
+        return;
+      }
+
+      set({ working: true, notice: `Approving auto-research action for ${runId}...` });
+      try {
+        await api.applyAutoResearchOperatorAction(currentProjectId, runId, {
+          action: "approve",
+          approval_id: approval.approval_id,
+          reason: "Approved from Operator Console",
+        });
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Approval recorded for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Approve auto-research action failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async rejectAutoResearchAction() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      const approval = autoResearchConsole?.current_run?.operator_status?.approvals.find(
+        (item) => item.required && item.status === "pending",
+      );
+      if (!currentProjectId || !runId || !approval) {
+        set({ notice: "No pending auto-research approval is selected" });
+        return;
+      }
+
+      set({ working: true, notice: `Rejecting auto-research action for ${runId}...` });
+      try {
+        await api.applyAutoResearchOperatorAction(currentProjectId, runId, {
+          action: "reject",
+          approval_id: approval.approval_id,
+          reason: "Rejected from Operator Console",
+        });
+        await sleep(400);
+        await get().refreshProject();
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: `Rejection recorded for ${runId}` });
+      } catch (error) {
+        handleActionError(error, "Reject auto-research action failed");
       } finally {
         set({ working: false });
       }

@@ -29,6 +29,10 @@ import type {
   AutoResearchResearchBriefList,
   AutoResearchOperatorConsole,
   AutoResearchOperatorConsoleFilters,
+  AutoResearchOperatorActionRequest,
+  AutoResearchOperatorActionResult,
+  AutoResearchOperatorRunStatus,
+  AutoResearchOperatorStateAudit,
   AutoResearchProjectPaperOrchestration,
   AutoResearchSubmissionPackage,
   AutoResearchPublishExport,
@@ -636,6 +640,20 @@ export const api = {
     return request(`/api/projects/${projectId}/auto-research/console${query}`);
   },
 
+  getAutoResearchOperatorAudit(
+    projectId: string,
+    options?: { rebuild?: boolean },
+  ): Promise<AutoResearchOperatorStateAudit> {
+    const params = new URLSearchParams();
+    if (options?.rebuild !== undefined) {
+      params.set("rebuild", String(options.rebuild));
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return request(
+      `/api/projects/${projectId}/auto-research/operator/audit${query}`,
+    );
+  },
+
   getAutoResearchMetaAnalysis(
     projectId: string,
   ): Promise<AutoResearchCrossRunMetaAnalysis> {
@@ -719,6 +737,29 @@ export const api = {
     runId: string,
   ): Promise<AutoResearchRunReview> {
     return request(`/api/projects/${projectId}/auto-research/${runId}/review`);
+  },
+
+  getAutoResearchOperatorRunStatus(
+    projectId: string,
+    runId: string,
+  ): Promise<AutoResearchOperatorRunStatus> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/operator/status`,
+    );
+  },
+
+  applyAutoResearchOperatorAction(
+    projectId: string,
+    runId: string,
+    payload: AutoResearchOperatorActionRequest,
+  ): Promise<AutoResearchOperatorActionResult> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/operator/actions`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
   },
 
   getAutoResearchReviewLoop(

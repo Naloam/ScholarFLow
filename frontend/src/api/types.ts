@@ -310,6 +310,24 @@ export type AutoResearchExperimentExecutionPlanStatus =
   | "needs_approval"
   | "ready";
 
+export type AutoResearchOperatorAction =
+  | "approve"
+  | "reject"
+  | "retry"
+  | "resume"
+  | "cancel";
+
+export type AutoResearchOperatorControlState =
+  | "not_started"
+  | "pending"
+  | "running"
+  | "blocked"
+  | "failed"
+  | "canceled"
+  | "completed"
+  | "needs_approval"
+  | "stale";
+
 export type AutoResearchExperimentExecutionResultStatus =
   | "succeeded"
   | "failed"
@@ -3759,6 +3777,273 @@ export type AutoResearchOperatorConsoleFilters = {
   queue_priority?: "low" | "normal" | "high" | null;
 };
 
+export type AutoResearchOperatorPolicyError = {
+  action: AutoResearchOperatorAction;
+  current_state: string;
+  reason: string;
+  blocker_code: string;
+  recoverable: boolean;
+  required_next_action?: string | null;
+  related_refs: string[];
+};
+
+export type AutoResearchOperatorActionPolicy = {
+  action: AutoResearchOperatorAction;
+  allowed: boolean;
+  reason: string;
+  blocker_code?: string | null;
+  recoverable: boolean;
+  required_next_action?: string | null;
+  related_refs: string[];
+};
+
+export type AutoResearchOperatorActionRequest = {
+  action: AutoResearchOperatorAction;
+  target_id?: string | null;
+  approval_id?: string | null;
+  operator_id?: string | null;
+  reason?: string | null;
+  expected_artifact_fingerprints?: Record<string, string>;
+};
+
+export type AutoResearchOperatorDecisionEvidence = {
+  evidence_id: string;
+  action: AutoResearchOperatorAction;
+  created_at: string;
+  reason: string;
+  terminal: boolean;
+  blocker_code?: string | null;
+  related_refs: string[];
+};
+
+export type AutoResearchOperatorActionRecord = {
+  action_id: string;
+  project_id: string;
+  run_id: string;
+  action: AutoResearchOperatorAction;
+  requested_at: string;
+  status: "accepted" | "rejected" | "noop" | "blocked";
+  operator_id?: string | null;
+  target_id?: string | null;
+  reason?: string | null;
+  job_id?: string | null;
+  attempt_number: number;
+  parent_attempt_id?: string | null;
+  preserved_artifact_refs: string[];
+  failure_evidence_refs: string[];
+  negative_evidence_refs: string[];
+  terminal_blocker?: AutoResearchOperatorPolicyError | null;
+  decision_evidence?: AutoResearchOperatorDecisionEvidence | null;
+  related_refs: string[];
+};
+
+export type AutoResearchOperatorActionLog = {
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  generated_at: string;
+  action_log_path?: string | null;
+  action_log_sha256?: string | null;
+  records: AutoResearchOperatorActionRecord[];
+  record_count: number;
+};
+
+export type AutoResearchOperatorStateAuditItem = {
+  state_id: string;
+  category:
+    | "run_queue"
+    | "typed_execution_job"
+    | "bridge_import"
+    | "approval_budget"
+    | "repair_revision"
+    | "package_final_gate"
+    | "artifact_lineage"
+    | "evaluation_artifact";
+  state_source: "database" | "repository_artifact" | "queue_file" | "derived";
+  state_owner: string;
+  current_state: string;
+  reconstructable_after_restart: boolean;
+  allowed_transitions: AutoResearchOperatorAction[];
+  known_blockers: string[];
+  missing_operator_controls: string[];
+  related_artifact_refs: string[];
+  source_path?: string | null;
+};
+
+export type AutoResearchOperatorStateAudit = {
+  schema_version: string;
+  project_id: string;
+  generated_at: string;
+  audit_artifact_path?: string | null;
+  audit_artifact_sha256?: string | null;
+  deterministic: boolean;
+  state_items: AutoResearchOperatorStateAuditItem[];
+  state_item_count: number;
+  case_coverage: string[];
+  blockers: string[];
+  conclusion: string;
+};
+
+export type AutoResearchOperatorApproval = {
+  approval_id: string;
+  project_id: string;
+  run_id: string;
+  job_id?: string | null;
+  required: boolean;
+  status: "not_required" | "pending" | "approved" | "rejected";
+  reason?: string | null;
+  blockers: string[];
+  related_refs: string[];
+  actions: Record<string, AutoResearchOperatorActionPolicy>;
+};
+
+export type AutoResearchOperatorBudget = {
+  project_id: string;
+  run_id: string;
+  mode: "default" | "bounded" | "approval_required" | "exhausted";
+  queue_priority: "low" | "normal" | "high";
+  max_rounds: number;
+  candidate_execution_limit?: number | null;
+  approval_required: boolean;
+  exhausted: boolean;
+  blockers: string[];
+};
+
+export type AutoResearchOperatorJobStatus = {
+  job_id: string;
+  project_id: string;
+  run_id: string;
+  job_source: "execution_queue" | "typed_experiment_execution";
+  action?: string | null;
+  job_kind?: string | null;
+  execution_route?: AutoResearchExperimentExecutionRoute | null;
+  status: string;
+  approval_state?: AutoResearchExperimentExecutionApprovalState | null;
+  budget_class?: string | null;
+  detail?: string | null;
+  worker_id?: string | null;
+  enqueued_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  attempt_count: number;
+  recovery_count: number;
+  blockers: string[];
+  lineage_parent_refs: string[];
+  output_artifact_refs: string[];
+  negative_evidence_refs: string[];
+  policy_actions: Record<string, AutoResearchOperatorActionPolicy>;
+};
+
+export type AutoResearchOperatorRepairQueueItem = {
+  repair_id: string;
+  source:
+    | "publication_repair_plan"
+    | "review_loop"
+    | "typed_execution_result"
+    | "operator_decision";
+  title: string;
+  status: string;
+  detail?: string | null;
+  blockers: string[];
+  required_action?: string | null;
+  related_refs: string[];
+};
+
+export type AutoResearchOperatorRepairQueue = {
+  project_id: string;
+  run_id: string;
+  item_count: number;
+  pending_count: number;
+  blocked_count: number;
+  failed_execution_count: number;
+  items: AutoResearchOperatorRepairQueueItem[];
+};
+
+export type AutoResearchOperatorArtifactLineage = {
+  project_id: string;
+  run_id: string;
+  selected_artifact_id?: string | null;
+  root_path?: string | null;
+  artifact_refs: AutoResearchRegistryAssetRef[];
+  lineage_edges: AutoResearchLineageEdge[];
+  package_refs: string[];
+  final_gate_refs: string[];
+  negative_evidence_refs: string[];
+  missing_refs: string[];
+  stale_refs: string[];
+};
+
+export type AutoResearchOperatorPackageStatus = {
+  project_id: string;
+  run_id: string;
+  publish_status?: "publish_ready" | "revision_required" | "blocked" | null;
+  publish_ready: boolean;
+  review_bundle_ready: boolean;
+  final_publish_ready: boolean;
+  publication_tier?: AutoResearchPublicationTier | null;
+  archive_ready: boolean;
+  archive_current: boolean;
+  archive_status?: string | null;
+  package_fingerprint?: string | null;
+  package_path?: string | null;
+  final_archive_download_allowed: boolean;
+  blockers: string[];
+  related_refs: string[];
+};
+
+export type AutoResearchOperatorFinalGateStatus = {
+  project_id: string;
+  run_id: string;
+  final_publish_ready: boolean;
+  review_bundle_ready: boolean;
+  paper_tier?: AutoResearchPaperTier | null;
+  policy_version?: string | null;
+  final_publish_decision_path?: string | null;
+  failed_check_ids: string[];
+  blockers: string[];
+  required_followups: string[];
+  kill_criteria: string[];
+  claim_ceiling?: string | null;
+  evidence_refs: string[];
+  final_archive_download_allowed: boolean;
+};
+
+export type AutoResearchOperatorRunStatus = {
+  project_id: string;
+  run_id: string;
+  run_status: AutoResearchRunStatus;
+  control_state: AutoResearchOperatorControlState;
+  persisted_reconstructable: boolean;
+  current_attempt: number;
+  blockers: string[];
+  stale_refs: string[];
+  missing_refs: string[];
+  timeline: Record<string, unknown>[];
+  action_policy: Record<string, AutoResearchOperatorActionPolicy>;
+  jobs: AutoResearchOperatorJobStatus[];
+  approvals: AutoResearchOperatorApproval[];
+  budget: AutoResearchOperatorBudget;
+  repair_queue: AutoResearchOperatorRepairQueue;
+  artifact_lineage: AutoResearchOperatorArtifactLineage;
+  package_status: AutoResearchOperatorPackageStatus;
+  final_gate_status: AutoResearchOperatorFinalGateStatus;
+  action_log?: AutoResearchOperatorActionLog | null;
+  audit_artifact_ref?: string | null;
+};
+
+export type AutoResearchOperatorActionResult = {
+  project_id: string;
+  run_id: string;
+  action: AutoResearchOperatorAction;
+  accepted: boolean;
+  status: "accepted" | "rejected" | "noop" | "blocked";
+  job_id?: string | null;
+  action_record?: AutoResearchOperatorActionRecord | null;
+  policy_error?: AutoResearchOperatorPolicyError | null;
+  execution?: AutoResearchExecution | null;
+  run_status?: AutoResearchOperatorRunStatus | null;
+};
+
 export type AutoResearchOperatorRunActions = {
   resume: boolean;
   retry: boolean;
@@ -3913,6 +4198,7 @@ export type AutoResearchOperatorRunDetail = {
   review_loop?: AutoResearchReviewLoop | null;
   publish?: AutoResearchPublishPackage | null;
   actions: AutoResearchOperatorRunActions;
+  operator_status?: AutoResearchOperatorRunStatus | null;
 };
 
 export type AutoResearchRunControlUpdate = {
@@ -4046,6 +4332,7 @@ export type AutoResearchOperatorConsole = {
   meta_analysis?: AutoResearchCrossRunMetaAnalysis | null;
   system_evaluation?: AutoResearchSystemEvaluation | null;
   publication_case?: AutoResearchOperatorPublicationCase | null;
+  operator_audit?: AutoResearchOperatorStateAudit | null;
   runs: AutoResearchOperatorRunSummary[];
   current_run?: AutoResearchOperatorRunDetail | null;
 };

@@ -106,6 +106,12 @@ export function WorkspacePage() {
   const resumeAutoResearch = useWorkspaceStore(
     (state) => state.resumeAutoResearch,
   );
+  const approveAutoResearchAction = useWorkspaceStore(
+    (state) => state.approveAutoResearchAction,
+  );
+  const rejectAutoResearchAction = useWorkspaceStore(
+    (state) => state.rejectAutoResearchAction,
+  );
   const retryAutoResearch = useWorkspaceStore(
     (state) => state.retryAutoResearch,
   );
@@ -294,6 +300,8 @@ export function WorkspacePage() {
             onApplyFilters={applyAutoResearchConsoleFilters}
             onClearFilters={clearAutoResearchConsoleFilters}
             onSelectRun={selectAutoResearchRun}
+            onApprove={approveAutoResearchAction}
+            onReject={rejectAutoResearchAction}
             onResume={resumeAutoResearch}
             onRetry={retryAutoResearch}
             onCancel={cancelAutoResearch}

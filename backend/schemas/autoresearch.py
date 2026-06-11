@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 TaskFamily = Literal["text_classification", "tabular_classification", "ir_reranking", "llm_evaluation"]
@@ -393,6 +393,67 @@ AutoResearchLongRunningRepairWorkflow = Literal[
 ]
 AutoResearchLongRunningBranchReadiness = Literal["active", "selected", "blocked", "superseded"]
 AutoResearchPaperEvidenceKind = Literal["artifact", "statistic", "literature", "negative"]
+AutoResearchMemoryItemType = Literal[
+    "paper",
+    "method",
+    "dataset",
+    "metric",
+    "benchmark",
+    "reported_result",
+    "implementation",
+    "negative_finding",
+    "blocker",
+    "project_conclusion",
+    "reviewer_finding",
+    "compliance_release_caveat",
+]
+AutoResearchMemoryEvidenceGrade = Literal[
+    "unsupported",
+    "weak",
+    "review_only",
+    "artifact_supported",
+    "publication_candidate",
+]
+AutoResearchMemorySourceClass = Literal[
+    "literature",
+    "experiment",
+    "benchmark",
+    "project",
+    "review",
+    "runbook",
+    "compliance",
+    "release",
+]
+AutoResearchMemoryExtractionLevel = Literal[
+    "metadata",
+    "abstract",
+    "full_text",
+    "artifact",
+    "ledger",
+    "project_summary",
+]
+AutoResearchMemoryCurrentness = Literal["fresh", "aging", "stale", "unknown", "revoked"]
+AutoResearchMemoryReusePolicy = Literal[
+    "discovery_only",
+    "requires_current_project_revalidation",
+    "internal_only",
+    "blocked",
+    "expired",
+]
+AutoResearchMemoryPrivacyPolicy = Literal["public", "internal", "private", "revoked"]
+AutoResearchMemoryRetentionPolicy = Literal[
+    "retain",
+    "expire_on_source_revocation",
+    "delete_after_project",
+    "review_required",
+]
+AutoResearchMemoryNegativeStatus = Literal[
+    "none",
+    "negative_finding",
+    "blocker",
+    "policy_blocked",
+    "revoked",
+]
 AutoResearchExperimentBaselineType = Literal["naive", "strong_conventional", "candidate_method"]
 AutoResearchStatisticalTestChoice = Literal["paired_t_test", "bootstrap", "permutation_test"]
 AutoResearchExperimentDesignCompleteness = Literal["complete", "partial", "blocked"]
@@ -1154,6 +1215,188 @@ class AutoResearchGapCandidateRead(BaseModel):
     rationale: str
 
 
+class AutoResearchMemorySourceRefRead(BaseModel):
+    source_project_id: str
+    source_run_id: str | None = None
+    source_branch_id: str | None = None
+    source_artifact_ref: str
+    source_fingerprint: str
+    source_date_version: str | None = None
+
+    @field_validator("source_artifact_ref", "source_fingerprint")
+    @classmethod
+    def require_source_anchor(cls, value: str) -> str:
+        cleaned = " ".join(value.split()).strip()
+        if not cleaned:
+            raise ValueError("source_artifact_ref and source_fingerprint are required")
+        return cleaned
+
+
+class AutoResearchMemoryItemRead(BaseModel):
+    memory_id: str
+    schema_version: str = "autoresearch_memory_item_v1"
+    item_type: AutoResearchMemoryItemType
+    title: str
+    summary: str
+    source: AutoResearchMemorySourceRefRead
+    extraction_timestamp: datetime
+    evidence_grade: AutoResearchMemoryEvidenceGrade = "weak"
+    source_class: AutoResearchMemorySourceClass
+    extraction_level: AutoResearchMemoryExtractionLevel = "metadata"
+    currentness: AutoResearchMemoryCurrentness = "unknown"
+    limitations: list[str] = Field(default_factory=list)
+    reuse_policy: AutoResearchMemoryReusePolicy = "requires_current_project_revalidation"
+    privacy_policy: AutoResearchMemoryPrivacyPolicy = "internal"
+    retention_policy: AutoResearchMemoryRetentionPolicy = "retain"
+    negative_status: AutoResearchMemoryNegativeStatus = "none"
+    domains: list[str] = Field(default_factory=list)
+    methods: list[str] = Field(default_factory=list)
+    datasets: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
+    benchmarks: list[str] = Field(default_factory=list)
+    paper_source_ids: list[str] = Field(default_factory=list)
+    claim_result_types: list[str] = Field(default_factory=list)
+    blocker_failure_types: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    text_fingerprint: str
+
+    @model_validator(mode="after")
+    def validate_reuse_policy(self) -> "AutoResearchMemoryItemRead":
+        if self.privacy_policy in {"private", "revoked"} and self.reuse_policy != "blocked":
+            raise ValueError("private or revoked memory must use blocked reuse_policy")
+        if self.currentness == "revoked" and self.reuse_policy != "blocked":
+            raise ValueError("revoked memory must use blocked reuse_policy")
+        return self
+
+
+class AutoResearchMemoryIndexRead(BaseModel):
+    index_id: str = "autoresearch_memory_index_v1"
+    schema_version: str = "autoresearch_memory_index_v1"
+    project_id: str
+    rebuilt_at: datetime
+    item_count: int = 0
+    item_ids: list[str] = Field(default_factory=list)
+    domains: dict[str, list[str]] = Field(default_factory=dict)
+    methods: dict[str, list[str]] = Field(default_factory=dict)
+    datasets: dict[str, list[str]] = Field(default_factory=dict)
+    metrics: dict[str, list[str]] = Field(default_factory=dict)
+    benchmarks: dict[str, list[str]] = Field(default_factory=dict)
+    paper_source_ids: dict[str, list[str]] = Field(default_factory=dict)
+    claim_result_types: dict[str, list[str]] = Field(default_factory=dict)
+    blocker_failure_types: dict[str, list[str]] = Field(default_factory=dict)
+    evidence_grades: dict[str, list[str]] = Field(default_factory=dict)
+    currentness: dict[str, list[str]] = Field(default_factory=dict)
+    reuse_eligibility: dict[str, list[str]] = Field(default_factory=dict)
+    source_projects: dict[str, list[str]] = Field(default_factory=dict)
+    store_path: str | None = None
+    index_path: str | None = None
+    store_fingerprint: str | None = None
+    index_fingerprint: str | None = None
+
+
+class AutoResearchMemoryHintRead(BaseModel):
+    hint_id: str
+    memory_id: str
+    item_type: AutoResearchMemoryItemType
+    source_project_id: str
+    source_run_id: str | None = None
+    source_branch_id: str | None = None
+    source_artifact_ref: str
+    source_fingerprint: str
+    title: str
+    summary: str
+    source_refs: list[str] = Field(default_factory=list)
+    currentness: AutoResearchMemoryCurrentness = "unknown"
+    limitations: list[str] = Field(default_factory=list)
+    reuse_policy: AutoResearchMemoryReusePolicy = "requires_current_project_revalidation"
+    reuse_requirements: list[str] = Field(default_factory=list)
+    required_current_project_validation_actions: list[str] = Field(default_factory=list)
+    evidence_grade: AutoResearchMemoryEvidenceGrade = "weak"
+    source_class: AutoResearchMemorySourceClass
+    extraction_level: AutoResearchMemoryExtractionLevel = "metadata"
+    negative_status: AutoResearchMemoryNegativeStatus = "none"
+    relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    matched_terms: list[str] = Field(default_factory=list)
+    memory_hint_only: bool = True
+
+
+class AutoResearchMemoryQueryRequest(BaseModel):
+    query: str | None = None
+    domain: str | None = None
+    methods: list[str] = Field(default_factory=list)
+    datasets: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
+    benchmarks: list[str] = Field(default_factory=list)
+    source_project_ids: list[str] | None = None
+    exclude_project_ids: list[str] = Field(default_factory=list)
+    item_types: list[AutoResearchMemoryItemType] | None = None
+    include_stale: bool = True
+    include_internal: bool = True
+    include_private: bool = False
+    include_revoked: bool = False
+    limit: int = Field(default=8, ge=1, le=50)
+
+
+class AutoResearchMemoryQueryResultRead(BaseModel):
+    query_id: str
+    project_id: str
+    generated_at: datetime
+    query: AutoResearchMemoryQueryRequest
+    hints: list[AutoResearchMemoryHintRead] = Field(default_factory=list)
+    hint_count: int = 0
+    policy_notes: list[str] = Field(default_factory=list)
+    blocked_memory_ids: list[str] = Field(default_factory=list)
+    result_fingerprint: str
+
+
+class AutoResearchMemoryStoreRead(BaseModel):
+    store_id: str = "autoresearch_memory_store_v1"
+    schema_version: str = "autoresearch_memory_store_v1"
+    project_id: str
+    rebuilt_at: datetime
+    items: list[AutoResearchMemoryItemRead] = Field(default_factory=list)
+    item_count: int = 0
+    store_path: str | None = None
+    store_fingerprint: str | None = None
+
+
+class AutoResearchMemoryRebuildRead(BaseModel):
+    project_id: str
+    rebuilt_at: datetime
+    store: AutoResearchMemoryStoreRead
+    index: AutoResearchMemoryIndexRead
+    extracted_count: int = 0
+    deduped_count: int = 0
+    blocked_count: int = 0
+    policy_notes: list[str] = Field(default_factory=list)
+
+
+class AutoResearchMemoryExportRead(BaseModel):
+    export_id: str = "autoresearch_memory_export_v1"
+    schema_version: str = "autoresearch_memory_export_v1"
+    project_id: str
+    exported_at: datetime
+    items: list[AutoResearchMemoryItemRead] = Field(default_factory=list)
+    item_count: int = 0
+    store_fingerprint: str | None = None
+    export_fingerprint: str
+
+
+class AutoResearchMemoryImportRequest(BaseModel):
+    items: list[AutoResearchMemoryItemRead] = Field(default_factory=list)
+    replace: bool = False
+
+
+class AutoResearchMemoryImportRead(BaseModel):
+    project_id: str
+    imported_at: datetime
+    imported_count: int = 0
+    skipped_count: int = 0
+    store: AutoResearchMemoryStoreRead
+    index: AutoResearchMemoryIndexRead
+    policy_notes: list[str] = Field(default_factory=list)
+
+
 class AutoResearchLiteratureScoutRead(BaseModel):
     scout_id: str = "literature_scout_v1"
     project_id: str
@@ -1172,6 +1415,10 @@ class AutoResearchLiteratureScoutRead(BaseModel):
     datasets: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
     known_sota: list[str] = Field(default_factory=list)
+    memory_hints: list[AutoResearchMemoryHintRead] = Field(default_factory=list)
+    memory_policy_notes: list[str] = Field(default_factory=list)
+    memory_risks: list[str] = Field(default_factory=list)
+    memory_required_followups: list[str] = Field(default_factory=list)
     scout_fingerprint: str
 
 
@@ -1188,6 +1435,8 @@ class AutoResearchGapMinerRead(BaseModel):
     gap_candidates: list[AutoResearchGapCandidateRead] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
+    memory_risks: list[str] = Field(default_factory=list)
+    memory_required_followups: list[str] = Field(default_factory=list)
     miner_fingerprint: str
 
 
@@ -1232,6 +1481,10 @@ class AutoResearchResearchBriefRead(BaseModel):
     hypothesis_count: int = 0
     literature_scout: AutoResearchLiteratureScoutRead | None = None
     gap_miner: AutoResearchGapMinerRead | None = None
+    memory_hints: list[AutoResearchMemoryHintRead] = Field(default_factory=list)
+    memory_policy_notes: list[str] = Field(default_factory=list)
+    memory_required_followups: list[str] = Field(default_factory=list)
+    memory_validation_actions: list[str] = Field(default_factory=list)
     selected_direction_id: str | None = None
     selected_hypothesis_id: str | None = None
     selection_reason: str | None = None
@@ -5322,6 +5575,10 @@ class AutoResearchProjectRunbookRead(BaseModel):
     migration_needed_artifacts: list[str] = Field(default_factory=list)
     owner_refs: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
+    memory_hints: list[AutoResearchMemoryHintRead] = Field(default_factory=list)
+    memory_policy_notes: list[str] = Field(default_factory=list)
+    memory_risks: list[str] = Field(default_factory=list)
+    memory_required_followups: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     runbook_path: str | None = None
     runbook_fingerprint: str | None = None

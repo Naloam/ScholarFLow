@@ -25,6 +25,11 @@ from services.autoresearch.domain_evidence import (
     domain_claim_ceiling,
     domain_readiness_status,
 )
+from services.autoresearch.memory import (
+    memory_followups_from_hints,
+    memory_risks_from_hints,
+    query_memory_for_brief,
+)
 
 
 _STOPWORDS = {
@@ -260,6 +265,9 @@ def build_literature_scout_with_options(
         for error in status.errors
     ]
     cache_hit_count = sum(status.cache_hit_count for status in source_statuses)
+    memory_result = query_memory_for_brief(brief, limit=8)
+    memory_risks = memory_risks_from_hints(memory_result.hints)
+    memory_followups = memory_followups_from_hints(memory_result.hints)
     payload = {
         "scout_id": "literature_scout_v1",
         "project_id": brief.project_id,
@@ -286,6 +294,10 @@ def build_literature_scout_with_options(
         "datasets": _dedupe([dataset for item in papers for dataset in item.datasets]),
         "metrics": _dedupe([metric for item in papers for metric in item.metrics]),
         "known_sota": _dedupe([item.known_sota or "" for item in papers]),
+        "memory_hints": [item.model_dump(mode="json") for item in memory_result.hints],
+        "memory_policy_notes": memory_result.policy_notes,
+        "memory_risks": memory_risks,
+        "memory_required_followups": memory_followups,
     }
     scout = AutoResearchLiteratureScoutRead(
         generated_at=_utcnow(),
@@ -440,6 +452,7 @@ def build_gap_miner(
         warnings.append("The idea appears too broad or highly overlapping before gap narrowing.")
     if restatement:
         warnings.append("The idea may restate an existing baseline; require a changed research question.")
+    warnings.extend(literature_scout.memory_risks)
     if recommended is None:
         blockers.append("No gap candidate is currently tied to executable dataset/metric/baseline evidence.")
     payload = {
@@ -454,6 +467,8 @@ def build_gap_miner(
         "gap_candidates": [item.model_dump(mode="json") for item in gap_candidates],
         "warnings": sorted(set(warnings)),
         "blockers": blockers,
+        "memory_risks": literature_scout.memory_risks,
+        "memory_required_followups": literature_scout.memory_required_followups,
     }
     return AutoResearchGapMinerRead(
         generated_at=_utcnow(),
@@ -512,6 +527,7 @@ def scout_and_mine_gaps(
             "domain_required_followups": _dedupe(
                 [
                     *brief.domain_required_followups,
+                    *scout.memory_required_followups,
                     *(
                         domain_literature_result.required_followups
                         if domain_literature_result is not None
@@ -523,6 +539,10 @@ def scout_and_mine_gaps(
             "domain_kill_criteria": _dedupe(
                 [
                     *brief.domain_kill_criteria,
+                    *[
+                        f"Reframe or stop if current-project validation confirms memory risk: {risk}"
+                        for risk in scout.memory_risks
+                    ],
                     *(
                         domain_literature_result.kill_criteria
                         if domain_literature_result is not None
@@ -532,6 +552,19 @@ def scout_and_mine_gaps(
                 ]
             ),
             "novelty_search_plan": _dedupe([*brief.novelty_search_plan, *scout.search_queries]),
+            "memory_hints": scout.memory_hints,
+            "memory_policy_notes": scout.memory_policy_notes,
+            "memory_required_followups": scout.memory_required_followups,
+            "memory_validation_actions": _dedupe(
+                [
+                    *brief.memory_validation_actions,
+                    *[
+                        action
+                        for hint in scout.memory_hints
+                        for action in hint.required_current_project_validation_actions[:2]
+                    ],
+                ]
+            ),
             "updated_at": _utcnow(),
             "next_action": next_action,
         }

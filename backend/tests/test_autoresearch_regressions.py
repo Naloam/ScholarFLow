@@ -28,6 +28,7 @@ import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_connectors as autoresearch_literature_connectors
 import services.autoresearch.literature_scout as autoresearch_literature_scout
 import services.autoresearch.long_running_reliability as autoresearch_long_running_reliability
+import services.autoresearch.memory as autoresearch_memory
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.operator_control as autoresearch_operator_control
 import services.autoresearch.planner as autoresearch_planner
@@ -67,6 +68,11 @@ from schemas.autoresearch import (
     AutoResearchArtifactIntegrityIssueRead,
     AutoResearchIdeaRequest,
     AutoResearchLiteratureScoutPaperRead,
+    AutoResearchMemoryImportRequest,
+    AutoResearchMemoryItemRead,
+    AutoResearchMemoryQueryRequest,
+    AutoResearchMemorySourceRefRead,
+    AutoResearchMemoryStoreRead,
     AutoResearchPublicationEvidenceIndexRead,
     AutoResearchPublicationRepairExecutionActionRead,
     AutoResearchPublicationRepairExecutionRead,
@@ -14198,6 +14204,213 @@ def test_goal11_branch_state_scopes_final_gate_to_selected_branch(
         and item["evidence_sufficiency"] == "not_selected_for_final_gate"
         for item in branch_state.comparison
     )
+
+
+def _goal12_brief_with_scout(project_id: str):
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id=project_id,
+        payload=AutoResearchIdeaRequest(
+            idea="Improve evidence-aware reranking for claim evidence retrieval with macro F1 diagnostics",
+            domain="scientific document retrieval",
+            allow_web=False,
+            allow_experiments=True,
+            task_family_hint="ir_reranking",
+        ),
+    )
+    brief = autoresearch_literature_scout.scout_and_mine_gaps(brief)
+    saved = autoresearch_repository.save_research_brief(brief)
+    autoresearch_memory.rebuild_project_memory(project_id)
+    return saved
+
+
+def test_goal12_memory_item_requires_source_artifact_and_fingerprint() -> None:
+    with pytest.raises(ValueError):
+        AutoResearchMemorySourceRefRead(
+            source_project_id="project-memory",
+            source_artifact_ref="",
+            source_fingerprint="fingerprint",
+        )
+
+    source = AutoResearchMemorySourceRefRead(
+        source_project_id="project-memory",
+        source_artifact_ref="brief:source",
+        source_fingerprint="sha256-source",
+    )
+    item = AutoResearchMemoryItemRead(
+        memory_id="mem_test",
+        item_type="paper",
+        title="Prior paper",
+        summary="Prior literature signal.",
+        source=source,
+        extraction_timestamp=datetime(2026, 1, 1),
+        evidence_grade="review_only",
+        source_class="literature",
+        extraction_level="abstract",
+        currentness="stale",
+        limitations=["Requires current-project full-paper verification."],
+        text_fingerprint="text-sha",
+    )
+
+    assert item.limitations
+    assert item.currentness == "stale"
+    with pytest.raises(ValueError):
+        AutoResearchMemoryItemRead(
+            memory_id="mem_private",
+            item_type="paper",
+            title="Private paper",
+            summary="Must be blocked.",
+            source=source,
+            extraction_timestamp=datetime(2026, 1, 1),
+            evidence_grade="review_only",
+            source_class="literature",
+            extraction_level="abstract",
+            privacy_policy="private",
+            reuse_policy="requires_current_project_revalidation",
+            text_fingerprint="text-private",
+        )
+
+
+def test_goal12_memory_rebuild_dedupe_export_import_and_query_policy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    source_brief = _goal12_brief_with_scout("project-goal12-source")
+    first = autoresearch_memory.rebuild_project_memory(source_brief.project_id)
+    second = autoresearch_memory.rebuild_project_memory(source_brief.project_id)
+
+    assert first.store.item_count > 0
+    assert first.store.store_fingerprint == second.store.store_fingerprint
+    assert first.index.index_fingerprint == second.index.index_fingerprint
+    assert first.index.item_count == first.store.item_count
+    assert "scientific document retrieval" in first.index.domains
+
+    duplicate = first.store.items[0].model_copy(update={"memory_id": "mem_duplicate"})
+    imported = autoresearch_memory.import_project_memory(
+        "project-goal12-import",
+        AutoResearchMemoryImportRequest(items=[first.store.items[0], duplicate], replace=True),
+    )
+    assert imported.imported_count == 2
+    assert imported.store.item_count == 1
+    assert imported.store.items[0].source.source_artifact_ref
+    assert imported.store.items[0].source.source_fingerprint
+
+    exported = autoresearch_memory.export_project_memory(source_brief.project_id)
+    assert exported.item_count == first.store.item_count
+    assert exported.export_fingerprint
+
+    stale_item = first.store.items[0].model_copy(
+        update={
+            "memory_id": "mem_stale_policy",
+            "currentness": "stale",
+            "limitations": ["Stale cache observation."],
+        }
+    )
+    private_item = first.store.items[0].model_copy(
+        update={
+            "memory_id": "mem_private_policy",
+            "privacy_policy": "private",
+            "reuse_policy": "blocked",
+        }
+    )
+    revoked_item = first.store.items[0].model_copy(
+        update={
+            "memory_id": "mem_revoked_policy",
+            "currentness": "revoked",
+            "privacy_policy": "revoked",
+            "reuse_policy": "blocked",
+        }
+    )
+    autoresearch_repository.save_memory_store(
+        AutoResearchMemoryStoreRead(
+            project_id="project-goal12-source",
+            rebuilt_at=datetime(2026, 1, 1),
+            items=[stale_item, private_item, revoked_item],
+        )
+    )
+
+    query = autoresearch_memory.query_memory(
+        "project-goal12-current",
+        AutoResearchMemoryQueryRequest(
+            query="claim evidence retrieval macro F1",
+            include_stale=True,
+            include_private=False,
+            include_revoked=False,
+            limit=10,
+        ),
+    )
+
+    assert any(hint.memory_id == "mem_stale_policy" for hint in query.hints)
+    stale_hint = next(hint for hint in query.hints if hint.memory_id == "mem_stale_policy")
+    assert stale_hint.memory_hint_only is True
+    assert stale_hint.currentness == "stale"
+    assert any("Refresh or replace" in action for action in stale_hint.required_current_project_validation_actions)
+    assert "mem_private_policy" in query.blocked_memory_ids
+    assert "mem_revoked_policy" in query.blocked_memory_ids
+    assert all(hint.memory_id != "mem_private_policy" for hint in query.hints)
+
+
+def test_goal12_memory_hints_reach_brief_and_scout_without_claim_evidence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    _goal12_brief_with_scout("project-goal12-source-brief")
+
+    current = autoresearch_idea_brief.build_research_brief(
+        project_id="project-goal12-current-brief",
+        payload=AutoResearchIdeaRequest(
+            idea="Evaluate claim evidence retrieval reranking with macro F1 and ablation evidence",
+            domain="scientific document retrieval",
+            allow_web=False,
+            allow_experiments=True,
+            task_family_hint="ir_reranking",
+        ),
+    )
+    assert current.memory_hints
+    assert all(hint.memory_hint_only for hint in current.memory_hints)
+    assert current.memory_validation_actions
+
+    scouted = autoresearch_literature_scout.scout_and_mine_gaps(current)
+    assert scouted.memory_hints
+    assert scouted.literature_scout is not None
+    assert scouted.literature_scout.memory_hints
+    assert scouted.gap_miner is not None
+    assert scouted.gap_miner.memory_required_followups
+    assert scouted.gap_miner.blockers == [] or all(
+        "Memory" not in blocker for blocker in scouted.gap_miner.blockers
+    )
+    assert not hasattr(scouted, "evidence_ledger")
+
+
+def test_goal12_negative_memory_surfaces_runbook_risk_without_final_gate_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal12-source-runbook",
+        run_id="run-goal12-source-runbook",
+        tmp_path=tmp_path,
+        failed=True,
+    )
+    source_status = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert source_status.runbook is not None
+    rebuilt = autoresearch_memory.rebuild_project_memory(run.project_id)
+    assert any(item.negative_status == "blocker" for item in rebuilt.store.items)
+
+    current = _goal9_persisted_run_with_execution(
+        project_id="project-goal12-current-runbook",
+        run_id="run-goal12-current-runbook",
+        tmp_path=tmp_path,
+    )
+    status = autoresearch_operator_control.build_operator_run_status(current.project_id, current.id)
+    assert status.runbook is not None
+    assert status.runbook.memory_hints
+    assert status.runbook.memory_risks
+    assert all(hint.memory_hint_only for hint in status.runbook.memory_hints)
+    if status.runbook.final_gate_status is not None:
+        assert not any("memory" in blocker.lower() for blocker in status.runbook.final_gate_status.blockers)
 
 
 def test_goal3_runtime_contract_validation_failure_classes() -> None:

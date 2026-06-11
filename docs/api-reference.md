@@ -11,6 +11,7 @@ This document focuses on the current auto-research API surface.
 - routes the idea through controlled domain templates for `claim_evidence_retrieval`, `rag_citation_faithfulness`, and `lightweight_ml_nlp_benchmark`
 - returns `domain_decision`, `domain_template`, and `domain_blockers` alongside multiple research directions, selection reasoning, feasibility assessment, and kill criteria
 - supported-domain briefs also return domain evidence context: `domain_literature_strategy`, `domain_literature_result`, `domain_benchmark_resolver`, `domain_experiment_protocol`, `domain_readiness_status`, `domain_claim_ceiling`, `domain_required_followups`, and `domain_kill_criteria`
+- Goal 12 memory is exposed only as discovery context: briefs may include `memory_hints`, `memory_policy_notes`, `memory_required_followups`, and `memory_validation_actions`; memory hints carry source refs/fingerprints/currentness/limitations/reuse requirements, but they never satisfy current-project claim evidence
 - `domain_readiness_status` is intentionally conservative: fixture-only literature, review-only benchmarks, toy execution, unsupported routes, or incomplete protocol coverage keep the status at `limited` or `blocked` and constrain the claim ceiling instead of promoting the idea to final-publish evidence
 - unsupported domains are persisted as auditable blocked briefs with `status=blocked`, `next_action=blocked`, `allow_experiments=false`, zero generated hypotheses/directions, and explicit blockers; unsupported ideas are not downgraded into unrelated toy outputs
 
@@ -43,6 +44,7 @@ This document focuses on the current auto-research API surface.
 - cached connector payloads may include `full_text`, `full_text_by_paper`, or `full_text_by_title` to enrich method/dataset/metric/result extraction without enabling live network access
 - stale cached real connector observations are discovery context only: they do not count toward final-publish source sufficiency, related-system coverage, or fresh novelty/related-work claims until refreshed
 - fixture-only literature is review/evaluation support only; it is preserved as a limitation and final-publish blocker instead of supporting broad novelty claims
+- Goal 12 memory hints are also returned on `literature_scout` and reflected in `gap_miner.memory_risks` / `gap_miner.memory_required_followups`; stale or negative memory becomes risk/follow-up/kill-criterion guidance, not literature evidence
 
 ### `POST /api/projects/{project_id}/auto-research/ideas/{brief_id}/experiment-factory`
 
@@ -74,6 +76,34 @@ This document focuses on the current auto-research API surface.
 ### `GET /api/projects/{project_id}/auto-research`
 
 - lists persisted auto-research runs for the project
+
+### `POST /api/projects/{project_id}/auto-research/memory/rebuild`
+
+- rebuilds the project-local Goal 12 memory store/index from persisted briefs, literature scouts, runs, evidence ledgers, reviewer findings, runbooks, and attempt ledgers
+- writes `memory/memory_store.json` and `memory/memory_index.json` through repository helpers
+- memory item types include paper, method, dataset, metric, benchmark, reported result, implementation, negative finding, blocker, project conclusion, reviewer finding, and compliance/release caveat
+- every stored item has `memory_id`, schema version, source project/run/branch refs, source artifact ref/fingerprint, extraction timestamp, source date/version, evidence grade, source class, extraction level, currentness, limitations, reuse policy, privacy/retention policy, negative/blocker status, and deterministic text fingerprint
+- private/revoked memory is blocked from the persisted usable store; stale/aging/unknown memory is retained only with visible revalidation requirements
+- returns extracted/deduped/blocked counts plus deterministic store/index fingerprints; no vector DB, live network, paid embedding, or external service is required
+
+### `POST /api/projects/{project_id}/auto-research/memory/query`
+
+- queries local memory stores across projects as discovery hints, excluding the current project by default
+- accepts optional query text plus domain/method/dataset/metric/benchmark/source-project/item-type filters and policy flags for stale/internal/private/revoked material
+- returns `hints` labeled with `memory_hint_only=true`, source refs, currentness, limitations, reuse policy, reuse requirements, required current-project validation actions, evidence grade, source class, negative status, matched terms, and relevance score
+- blocked/private/revoked/expired memory ids are surfaced in `blocked_memory_ids` instead of being silently treated as reusable support
+- query results cannot satisfy claim-evidence matrices, final gates, literature sufficiency, benchmark provenance, or evidence-origin policy; current projects must revalidate into their own artifacts/evidence ledgers
+
+### `GET /api/projects/{project_id}/auto-research/memory/export`
+
+- returns an auditable memory export with source refs/hashes/policy fields preserved
+- excludes internal-only/private/revoked material from public-style export behavior
+
+### `POST /api/projects/{project_id}/auto-research/memory/import`
+
+- imports memory items into the project-local store with deterministic dedupe by item type, source project, source fingerprint, and text fingerprint
+- skips private/revoked/blocked material and rebuilds the local index after import
+- imported memory remains discovery-only and still requires current-project validation before any claim use
 
 ### `GET /api/projects/{project_id}/auto-research/{run_id}`
 
@@ -212,7 +242,8 @@ This document focuses on the current auto-research API surface.
 - returns the persisted operator-control status for one run
 - reconstructs state from `run.json`, registry/lineage artifacts, queue state, bridge state, typed experiment execution results, review/publish artifacts, and `operator_action_log.json`
 - response fields include `control_state`, `action_policy`, `jobs`, `approvals`, `budget`, `repair_queue`, `artifact_lineage`, `package_status`, `final_gate_status`, `external_capability_manifest`, `action_log`, `stale_refs`, `missing_refs`, and a deterministic timeline
-- response also includes Goal 11 state: `state_manifest` audits active/stale/superseded/missing/migration-needed artifacts plus unsafe-resume blockers; `runbook` lists next actions, approvals, repair candidates, claim ceiling, final-gate status, kill criteria, and stale/migration inputs; `timeline_state` records versioned project events; `attempt_ledger` records retry/resume/cancel/reject/import attempts without deleting old negative evidence; `branch_state` scopes final-gate evidence to the selected branch
+- response also includes Goal 11/12 state: `state_manifest` audits active/stale/superseded/missing/migration-needed artifacts plus unsafe-resume blockers; `runbook` lists next actions, approvals, repair candidates, claim ceiling, final-gate status, kill criteria, stale/migration inputs, and relevant prior memory risks/follow-ups; `timeline_state` records versioned project events; `attempt_ledger` records retry/resume/cancel/reject/import attempts without deleting old negative evidence; `branch_state` scopes final-gate evidence to the selected branch
+- runbook memory hints surface prior blockers/negative findings as risks or repair suggestions only; they do not directly fail the current run's final gate without current-project evidence
 - `action_policy` provides policy-checked `approve`, `reject`, `retry`, `resume`, and `cancel` decisions with blocker codes, recoverability, required next action, and related refs
 - approval state is derived from persisted operator action records after reload; approval does not fabricate experiment output or bypass runtime contracts
 - stale package/archive refs, missing registry refs, schema-version gaps, fingerprint mismatches, migration-needed artifacts, pending bridge imports, rejected approvals, and active leased/running queue work block unsafe resume/retry transitions; resume on an already queued run is treated as an idempotent noop

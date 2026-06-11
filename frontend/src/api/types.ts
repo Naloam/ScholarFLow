@@ -3015,6 +3015,244 @@ export type AutoResearchLiteratureScoutSource =
   | "semantic_scholar"
   | "crossref";
 
+export type AutoResearchMemoryItemType =
+  | "paper"
+  | "method"
+  | "dataset"
+  | "metric"
+  | "benchmark"
+  | "reported_result"
+  | "implementation"
+  | "negative_finding"
+  | "blocker"
+  | "project_conclusion"
+  | "reviewer_finding"
+  | "compliance_release_caveat";
+
+export type AutoResearchMemoryEvidenceGrade =
+  | "unsupported"
+  | "weak"
+  | "review_only"
+  | "artifact_supported"
+  | "publication_candidate";
+
+export type AutoResearchMemorySourceClass =
+  | "literature"
+  | "experiment"
+  | "benchmark"
+  | "project"
+  | "review"
+  | "runbook"
+  | "compliance"
+  | "release";
+
+export type AutoResearchMemoryExtractionLevel =
+  | "metadata"
+  | "abstract"
+  | "full_text"
+  | "artifact"
+  | "ledger"
+  | "project_summary";
+
+export type AutoResearchMemoryCurrentness =
+  | "fresh"
+  | "aging"
+  | "stale"
+  | "unknown"
+  | "revoked";
+
+export type AutoResearchMemoryReusePolicy =
+  | "discovery_only"
+  | "requires_current_project_revalidation"
+  | "internal_only"
+  | "blocked"
+  | "expired";
+
+export type AutoResearchMemoryPrivacyPolicy =
+  | "public"
+  | "internal"
+  | "private"
+  | "revoked";
+
+export type AutoResearchMemoryRetentionPolicy =
+  | "retain"
+  | "expire_on_source_revocation"
+  | "delete_after_project"
+  | "review_required";
+
+export type AutoResearchMemoryNegativeStatus =
+  | "none"
+  | "negative_finding"
+  | "blocker"
+  | "policy_blocked"
+  | "revoked";
+
+export type AutoResearchMemorySourceRef = {
+  source_project_id: string;
+  source_run_id?: string | null;
+  source_branch_id?: string | null;
+  source_artifact_ref: string;
+  source_fingerprint: string;
+  source_date_version?: string | null;
+};
+
+export type AutoResearchMemoryItem = {
+  memory_id: string;
+  schema_version: string;
+  item_type: AutoResearchMemoryItemType;
+  title: string;
+  summary: string;
+  source: AutoResearchMemorySourceRef;
+  extraction_timestamp: string;
+  evidence_grade: AutoResearchMemoryEvidenceGrade;
+  source_class: AutoResearchMemorySourceClass;
+  extraction_level: AutoResearchMemoryExtractionLevel;
+  currentness: AutoResearchMemoryCurrentness;
+  limitations: string[];
+  reuse_policy: AutoResearchMemoryReusePolicy;
+  privacy_policy: AutoResearchMemoryPrivacyPolicy;
+  retention_policy: AutoResearchMemoryRetentionPolicy;
+  negative_status: AutoResearchMemoryNegativeStatus;
+  domains: string[];
+  methods: string[];
+  datasets: string[];
+  metrics: string[];
+  benchmarks: string[];
+  paper_source_ids: string[];
+  claim_result_types: string[];
+  blocker_failure_types: string[];
+  tags: string[];
+  text_fingerprint: string;
+};
+
+export type AutoResearchMemoryIndex = {
+  index_id: string;
+  schema_version: string;
+  project_id: string;
+  rebuilt_at: string;
+  item_count: number;
+  item_ids: string[];
+  domains: Record<string, string[]>;
+  methods: Record<string, string[]>;
+  datasets: Record<string, string[]>;
+  metrics: Record<string, string[]>;
+  benchmarks: Record<string, string[]>;
+  paper_source_ids: Record<string, string[]>;
+  claim_result_types: Record<string, string[]>;
+  blocker_failure_types: Record<string, string[]>;
+  evidence_grades: Record<string, string[]>;
+  currentness: Record<string, string[]>;
+  reuse_eligibility: Record<string, string[]>;
+  source_projects: Record<string, string[]>;
+  store_path?: string | null;
+  index_path?: string | null;
+  store_fingerprint?: string | null;
+  index_fingerprint?: string | null;
+};
+
+export type AutoResearchMemoryHint = {
+  hint_id: string;
+  memory_id: string;
+  item_type: AutoResearchMemoryItemType;
+  source_project_id: string;
+  source_run_id?: string | null;
+  source_branch_id?: string | null;
+  source_artifact_ref: string;
+  source_fingerprint: string;
+  title: string;
+  summary: string;
+  source_refs: string[];
+  currentness: AutoResearchMemoryCurrentness;
+  limitations: string[];
+  reuse_policy: AutoResearchMemoryReusePolicy;
+  reuse_requirements: string[];
+  required_current_project_validation_actions: string[];
+  evidence_grade: AutoResearchMemoryEvidenceGrade;
+  source_class: AutoResearchMemorySourceClass;
+  extraction_level: AutoResearchMemoryExtractionLevel;
+  negative_status: AutoResearchMemoryNegativeStatus;
+  relevance_score: number;
+  matched_terms: string[];
+  memory_hint_only: boolean;
+};
+
+export type AutoResearchMemoryQueryRequest = {
+  query?: string | null;
+  domain?: string | null;
+  methods?: string[];
+  datasets?: string[];
+  metrics?: string[];
+  benchmarks?: string[];
+  source_project_ids?: string[] | null;
+  exclude_project_ids?: string[];
+  item_types?: AutoResearchMemoryItemType[] | null;
+  include_stale?: boolean;
+  include_internal?: boolean;
+  include_private?: boolean;
+  include_revoked?: boolean;
+  limit?: number;
+};
+
+export type AutoResearchMemoryQueryResult = {
+  query_id: string;
+  project_id: string;
+  generated_at: string;
+  query: AutoResearchMemoryQueryRequest;
+  hints: AutoResearchMemoryHint[];
+  hint_count: number;
+  policy_notes: string[];
+  blocked_memory_ids: string[];
+  result_fingerprint: string;
+};
+
+export type AutoResearchMemoryStore = {
+  store_id: string;
+  schema_version: string;
+  project_id: string;
+  rebuilt_at: string;
+  items: AutoResearchMemoryItem[];
+  item_count: number;
+  store_path?: string | null;
+  store_fingerprint?: string | null;
+};
+
+export type AutoResearchMemoryRebuild = {
+  project_id: string;
+  rebuilt_at: string;
+  store: AutoResearchMemoryStore;
+  index: AutoResearchMemoryIndex;
+  extracted_count: number;
+  deduped_count: number;
+  blocked_count: number;
+  policy_notes: string[];
+};
+
+export type AutoResearchMemoryExport = {
+  export_id: string;
+  schema_version: string;
+  project_id: string;
+  exported_at: string;
+  items: AutoResearchMemoryItem[];
+  item_count: number;
+  store_fingerprint?: string | null;
+  export_fingerprint: string;
+};
+
+export type AutoResearchMemoryImportRequest = {
+  items?: AutoResearchMemoryItem[];
+  replace?: boolean;
+};
+
+export type AutoResearchMemoryImport = {
+  project_id: string;
+  imported_at: string;
+  imported_count: number;
+  skipped_count: number;
+  store: AutoResearchMemoryStore;
+  index: AutoResearchMemoryIndex;
+  policy_notes: string[];
+};
+
 export type AutoResearchLiteratureScoutRequest = {
   sources?: AutoResearchLiteratureScoutSource[] | null;
   limit_per_source?: number;
@@ -3340,6 +3578,10 @@ export type AutoResearchLiteratureScout = {
   datasets: string[];
   metrics: string[];
   known_sota: string[];
+  memory_hints: AutoResearchMemoryHint[];
+  memory_policy_notes: string[];
+  memory_risks: string[];
+  memory_required_followups: string[];
   scout_fingerprint: string;
 };
 
@@ -3356,6 +3598,8 @@ export type AutoResearchGapMiner = {
   gap_candidates: AutoResearchGapCandidate[];
   warnings: string[];
   blockers: string[];
+  memory_risks: string[];
+  memory_required_followups: string[];
   miner_fingerprint: string;
 };
 
@@ -3400,6 +3644,10 @@ export type AutoResearchResearchBrief = {
   hypothesis_count: number;
   literature_scout?: AutoResearchLiteratureScout | null;
   gap_miner?: AutoResearchGapMiner | null;
+  memory_hints: AutoResearchMemoryHint[];
+  memory_policy_notes: string[];
+  memory_required_followups: string[];
+  memory_validation_actions: string[];
   selected_direction_id?: string | null;
   selected_hypothesis_id?: string | null;
   selection_reason?: string | null;
@@ -4236,6 +4484,10 @@ export type AutoResearchProjectRunbook = {
   migration_needed_artifacts: string[];
   owner_refs: string[];
   source_refs: string[];
+  memory_hints: AutoResearchMemoryHint[];
+  memory_policy_notes: string[];
+  memory_risks: string[];
+  memory_required_followups: string[];
   blockers: string[];
   runbook_path?: string | null;
   runbook_fingerprint?: string | null;

@@ -32,6 +32,7 @@ from services.autoresearch.domain_evidence import (
     domain_readiness_status,
     resolve_domain_benchmark,
 )
+from services.autoresearch.memory import attach_memory_hints_to_brief
 
 
 _GENERIC_IDEA_TERMS = {
@@ -778,7 +779,7 @@ def build_research_brief(
             benchmark_source=payload.benchmark,
             brief_fingerprint=_fingerprint(payload_for_fingerprint),
         )
-        return _attach_domain_evidence_context(brief)
+        return attach_memory_hints_to_brief(_attach_domain_evidence_context(brief))
 
     assert domain_template is not None
     family_source = (
@@ -960,7 +961,7 @@ def build_research_brief(
         benchmark_source=payload.benchmark,
         brief_fingerprint=_fingerprint(payload_for_fingerprint),
     )
-    return _attach_domain_evidence_context(brief)
+    return attach_memory_hints_to_brief(_attach_domain_evidence_context(brief))
 
 
 def hypothesis_bank_from_brief(

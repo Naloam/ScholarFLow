@@ -32,6 +32,12 @@ from schemas.autoresearch import (
     AutoResearchHypothesisBankRead,
     AutoResearchLiteratureScoutRequest,
     AutoResearchLiteratureScoutResultRead,
+    AutoResearchMemoryExportRead,
+    AutoResearchMemoryImportRead,
+    AutoResearchMemoryImportRequest,
+    AutoResearchMemoryQueryRequest,
+    AutoResearchMemoryQueryResultRead,
+    AutoResearchMemoryRebuildRead,
     AutoResearchNoveltyStatus,
     AutoResearchOperatorActionRequest,
     AutoResearchOperatorActionResultRead,
@@ -100,6 +106,12 @@ from services.autoresearch.idea_brief import (
     run_request_from_selected_hypothesis,
 )
 from services.autoresearch.literature_scout import scout_and_mine_gaps
+from services.autoresearch.memory import (
+    export_project_memory,
+    import_project_memory,
+    query_memory,
+    rebuild_project_memory,
+)
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.operator_control import (
     apply_operator_action,
@@ -564,6 +576,71 @@ def get_auto_research_evaluation_cases(
 ) -> AutoResearchEvaluationCaseSuiteRead:
     del db
     return build_evaluation_case_suite(project_id)
+
+
+@router.post("/memory/rebuild", response_model=AutoResearchMemoryRebuildRead)
+def rebuild_auto_research_memory(
+    project_id: str,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchMemoryRebuildRead:
+    del db
+    result = rebuild_project_memory(project_id)
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=f"memory:{project_id}",
+        task_name="autoresearch.memory_rebuild",
+        project_id=project_id,
+        action="rebuilt",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=(
+            f"items={result.store.item_count} extracted={result.extracted_count} "
+            f"blocked={result.blocked_count}"
+        ),
+    )
+    return result
+
+
+@router.post("/memory/query", response_model=AutoResearchMemoryQueryResultRead)
+def query_auto_research_memory(
+    project_id: str,
+    payload: AutoResearchMemoryQueryRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchMemoryQueryResultRead:
+    del db
+    return query_memory(project_id, payload)
+
+
+@router.get("/memory/export", response_model=AutoResearchMemoryExportRead)
+def export_auto_research_memory(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchMemoryExportRead:
+    del db
+    return export_project_memory(project_id)
+
+
+@router.post("/memory/import", response_model=AutoResearchMemoryImportRead)
+def import_auto_research_memory(
+    project_id: str,
+    payload: AutoResearchMemoryImportRequest,
+    identity: AuthIdentity | None = Depends(get_identity),
+    db: Session = Depends(get_db),
+) -> AutoResearchMemoryImportRead:
+    del db
+    result = import_project_memory(project_id, payload)
+    write_task_audit_log(
+        SessionLocal,
+        correlation_id=f"memory:{project_id}",
+        task_name="autoresearch.memory_import",
+        project_id=project_id,
+        action="imported",
+        status_code=200,
+        user_id=identity.user_id if identity else None,
+        detail=f"imported={result.imported_count} skipped={result.skipped_count}",
+    )
+    return result
 
 
 @router.get("/{run_id}", response_model=AutoResearchRunRead)

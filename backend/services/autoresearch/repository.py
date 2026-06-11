@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from config.settings import settings
 from schemas.autoresearch import (
     AutoResearchBundleAssetRead,
     AutoResearchBundleIndexRead,
@@ -35,6 +36,8 @@ from schemas.autoresearch import (
     AutoResearchPaperRevisionDiffRead,
     AutoResearchPaperSectionRewriteIndexRead,
     AutoResearchLongRunningAttemptLedgerRead,
+    AutoResearchMemoryIndexRead,
+    AutoResearchMemoryStoreRead,
     AutoResearchRegistryAssetRef,
     AutoResearchReviewerSimulationRead,
     AutoResearchReviewLoopRead,
@@ -123,6 +126,9 @@ PAPER_SOURCES_MANIFEST_FILENAME = "manifest.json"
 PAPER_COMPILED_PDF_FILENAME = "main.pdf"
 PAPER_BIBLIOGRAPHY_OUTPUT_FILENAME = "main.bbl"
 LITERATURE_SCOUT_CACHE_DIRNAME = "literature_scout_cache"
+MEMORY_DIRNAME = "memory"
+MEMORY_STORE_FILENAME = "memory_store.json"
+MEMORY_INDEX_FILENAME = "memory_index.json"
 EVALUATION_DIRNAME = "evaluation"
 EVALUATION_TRACES_DIRNAME = "traces"
 EVALUATION_CASE_AUDIT_FILENAME = "evaluation_case_audit.json"
@@ -173,6 +179,33 @@ def _literature_scout_cache_dir(project_id: str) -> Path:
     path = autoresearch_dir(project_id) / LITERATURE_SCOUT_CACHE_DIRNAME
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def memory_dir(project_id: str) -> Path:
+    path = autoresearch_dir(project_id) / MEMORY_DIRNAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def memory_store_file_path(project_id: str) -> str:
+    return str(memory_dir(project_id) / MEMORY_STORE_FILENAME)
+
+
+def memory_index_file_path(project_id: str) -> str:
+    return str(memory_dir(project_id) / MEMORY_INDEX_FILENAME)
+
+
+def list_autoresearch_project_ids() -> list[str]:
+    root = settings.data_dir / "projects"
+    if not root.exists():
+        return []
+    project_ids: list[str] = []
+    for path in sorted(root.iterdir()):
+        if not path.is_dir():
+            continue
+        if (path / "autorresearch").is_dir():
+            project_ids.append(path.name)
+    return project_ids
 
 
 def evaluation_dir(project_id: str) -> Path:
@@ -375,6 +408,9 @@ _EVALUATION_TIMESTAMP_KEYS = {
     "generated_at",
     "updated_at",
     "created_at",
+    "rebuilt_at",
+    "extraction_timestamp",
+    "exported_at",
     "cache_timestamp",
     "fetched_at",
     "imported_at",
@@ -556,6 +592,59 @@ def load_operator_action_log(
         return None
     try:
         return AutoResearchOperatorActionLogRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_memory_store(store: AutoResearchMemoryStoreRead) -> AutoResearchMemoryStoreRead:
+    path = Path(memory_store_file_path(store.project_id))
+    ordered = sorted(store.items, key=lambda item: item.memory_id)
+    payload = store.model_copy(
+        update={
+            "items": ordered,
+            "item_count": len(ordered),
+            "store_path": str(path),
+        }
+    )
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "store_fingerprint", "rebuilt_at")
+    payload = payload.model_copy(update={"store_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_memory_store(project_id: str) -> AutoResearchMemoryStoreRead | None:
+    path = Path(memory_store_file_path(project_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchMemoryStoreRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_memory_index(index: AutoResearchMemoryIndexRead) -> AutoResearchMemoryIndexRead:
+    path = Path(memory_index_file_path(index.project_id))
+    payload = index.model_copy(
+        update={
+            "item_count": len(index.item_ids),
+            "index_path": str(path),
+            "store_path": memory_store_file_path(index.project_id),
+        }
+    )
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "index_fingerprint", "rebuilt_at")
+    payload = payload.model_copy(update={"index_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_memory_index(project_id: str) -> AutoResearchMemoryIndexRead | None:
+    path = Path(memory_index_file_path(project_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchMemoryIndexRead.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 

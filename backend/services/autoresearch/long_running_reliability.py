@@ -30,6 +30,7 @@ from schemas.autoresearch import (
     AutoResearchRunExecutionRead,
     AutoResearchRunRead,
     AutoResearchRunRegistryRead,
+    AutoResearchMemoryQueryRequest,
 )
 from services.autoresearch.repository import (
     load_long_running_attempt_ledger,
@@ -48,6 +49,11 @@ from services.autoresearch.repository import (
     save_project_runbook,
     save_project_state_manifest,
     save_project_timeline,
+)
+from services.autoresearch.memory import (
+    memory_followups_from_hints,
+    memory_risks_from_hints,
+    query_memory,
 )
 
 
@@ -793,6 +799,27 @@ def build_project_runbook(
         next_actions.append("resolve_final_gate_blockers")
     if run.status in {"failed", "canceled"}:
         next_actions.append("retry_or_fork_direction")
+    memory_result = query_memory(
+        run.project_id,
+        AutoResearchMemoryQueryRequest(
+            item_types=["blocker", "negative_finding"],
+            exclude_project_ids=[run.project_id],
+            include_stale=True,
+            include_internal=True,
+            include_private=False,
+            include_revoked=False,
+            limit=8,
+        ),
+    )
+    blocker_hints = [
+        hint
+        for hint in memory_result.hints
+        if hint.negative_status in {"negative_finding", "blocker", "policy_blocked"}
+    ][:5]
+    memory_risks = memory_risks_from_hints(blocker_hints)
+    memory_followups = memory_followups_from_hints(blocker_hints)
+    if memory_followups:
+        next_actions.extend(memory_followups[:5])
     claim_ceiling = (
         state_manifest.current_final_gate_state.claim_ceiling
         if state_manifest.current_final_gate_state is not None
@@ -832,6 +859,10 @@ def build_project_runbook(
                 ]
             ]
         ),
+        memory_hints=blocker_hints,
+        memory_policy_notes=memory_result.policy_notes,
+        memory_risks=memory_risks,
+        memory_required_followups=memory_followups,
         blockers=state_manifest.unsafe_resume_blockers,
         runbook_path=project_runbook_file_path(run.project_id, run.id),
     )

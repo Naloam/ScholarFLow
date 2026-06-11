@@ -5,10 +5,10 @@ Document Status
 ===============
 
 - Updated: 2026-06-11.
-- Completed and intentionally omitted from this file: Goal 1-11.
-- Default next execution: finish Goal 12, then Goal 13 if the same `/goal` run can do so without weakening gates or skipping tests.
+- Completed and intentionally omitted from this file: Goal 1-12.
+- Default next execution: finish Goal 13 without weakening gates or skipping tests.
 - This file is the roadmap authority for the next `/goal` run.
-- Keep this file focused on future work only. Do not re-add completed Goal 1-11 detail unless a regression in their artifacts, schemas, API/UI contracts, docs, or deterministic tests must be repaired.
+- Keep this file focused on future work only. Do not re-add completed Goal 1-12 detail unless a regression in their artifacts, schemas, API/UI contracts, docs, or deterministic tests must be repaired.
 - `AGENTS.md` holds high-level collaboration and safety constraints. This file holds the detailed active roadmap and the next `/goal` prompt.
 
 Long-Term Target
@@ -50,9 +50,9 @@ How Far We Are From The Target
 
 Short version:
 
-- Goal 1-11 now provide the controlled research-loop skeleton, deterministic evaluation layer, operator control plane, external capability manifest, external evidence provenance, external import validation, runtime hardening, final-gate evidence-origin policy, and long-running reliability state.
+- Goal 1-12 now provide the controlled research-loop skeleton, deterministic evaluation layer, operator control plane, external capability manifest, external evidence provenance, external import validation, runtime hardening, final-gate evidence-origin policy, long-running reliability state, and source-backed multi-project memory.
 - ScholarFlow is roughly 88%-92% complete as an offline, deterministic, evidence-constrained research automation platform.
-- ScholarFlow is roughly 45%-50% complete as a publication-grade autonomous scientist. The remaining gap is not paper text; it is cross-project memory with current-project revalidation, human/compliance review, venue packaging, and release governance.
+- ScholarFlow is roughly 45%-50% complete as a publication-grade autonomous scientist. The remaining gap is not paper text; it is human/compliance review, venue packaging, and release governance.
 
 Current gap estimate:
 
@@ -64,8 +64,8 @@ Current gap estimate:
   The system now has the hardening layer required to avoid fake external evidence: capability state, approval/budget policy, provenance/freshness, benchmark package validation, execution hash/runtime validation, and final-gate origin ceilings. Full live connector coverage, large real benchmarks, and production infrastructure remain outside the deterministic baseline.
 - Long-running reliability: 75%-85%.
   Project state manifest, timeline, runbook, attempt ledger, branch/fork state, stale repair candidates, and migration policy are now typed, persisted, and visible through operator APIs/UI. Production-scale external queues/storage remain outside the deterministic baseline.
-- Multi-project memory: 10%-20%.
-  Cross-project discovery memory, currentness policy, reuse restrictions, privacy/retention handling, and negative finding memory remain future work.
+- Multi-project memory: 75%-85%.
+  Goal 12 added typed source-backed discovery memory, currentness/reuse/privacy policy, deterministic store/index, query hints, and negative blocker memory. Production-scale vector/search services remain outside the deterministic baseline.
 - Human review, compliance, venue, and release governance: 10%-20%.
   Final publish decision exists, but human approval, compliance checklist, venue adapters, signed/verifiable release packages, and final/non-final release controls remain future work.
 
@@ -74,244 +74,9 @@ Remaining Roadmap
 
 Default order:
 
-1. Goal 12: Multi-Project Knowledge And Literature Memory.
-2. Goal 13: Human Review, Compliance, Venue Adapter, And Release Packaging.
+1. Goal 13: Human Review, Compliance, Venue Adapter, And Release Packaging.
 
-The next `/goal` may attempt all remaining goals in one run, but must execute them in order. Do not implement Goal 13 release governance before release inputs from Goal 12 are represented clearly.
-
-Fixed Start Audit For Every `/goal`
-===================================
-
-Every `/goal` session must begin with:
-
-1. `git status --short --branch`
-2. `git log --oneline -n 8`
-3. Read `AGENTS.md`.
-4. Read this file.
-5. Read the active goal's key files.
-6. Identify the boundary between completed Goal 1-11 artifacts and the remaining goal so completed work is not reimplemented.
-
-Audit conclusions must be reflected in code artifacts, evaluation artifacts, readiness reports, docs, or deterministic tests. A chat-only audit is not enough.
-
-Test Rhythm
-===========
-
-- For small backend changes, run `python -m py_compile` and a narrow pytest target first.
-- After shared backend behavior changes, run `cd backend && ../.venv/bin/pytest -q`.
-- After API/schema/frontend type changes, run `cd frontend && npm run build`.
-- After Operator Console, workspace, release, or browser-flow changes, run `cd frontend && npm run e2e` when feasible.
-- Before finishing a goal, run `git diff --check`.
-- Required regression tests must be deterministic. They must not require live network, paid LLM calls, GPUs, Docker daemon availability, external signing services, or external benchmark services.
-
-Global Safety Invariants
-========================
-
-- Do not weaken publish gates, claim-evidence ledger behavior, artifact lineage, negative evidence, readiness blockers, operator policy checks, external capability policy, evidence-origin policy, or persisted artifact state.
-- Do not display review-ready, workshop, case-study, internal-report, or non-final packages as final-publish-ready.
-- Do not treat fixture, toy, local smoke, deterministic replay, stale cache, or policy-blocked evidence as publication-grade evidence.
-- Do not generate fake experiment outputs, fake provenance, fake source independence, fake literature support, fake compliance approval, fake human approval, or fake statistics.
-- Do not downgrade unsupported domains into unrelated toy experiments.
-- Evidence-producing repair actions can be marked completed only after the required artifact is actually produced or imported and validated.
-- Single-run evidence must not be inflated into project-level claims.
-- Every new durable artifact should have schema/version/fingerprint/parent refs, or explicitly document why it does not need them.
-- A failed publication gate is a valid result. Do not bypass it for demo convenience.
-- Operator, human-review, compliance, or venue actions may schedule, block, inspect, label, or record decisions; they must not manufacture evidence or final readiness.
-
-Goal 12: Multi-Project Knowledge And Literature Memory
-======================================================
-
-Objective
----------
-
-Build source-backed cross-project memory as discovery infrastructure. Goal 12 is not a global truth database. Any memory item used to support a current project claim must be revalidated into current-project artifacts and evidence ledgers.
-
-Non-Goals
----------
-
-- Do not let memory directly satisfy current project claim evidence.
-- Do not require a live vector database, paid embedding provider, or external search service for required tests.
-- Do not reuse private, revoked, policy-blocked, or stale project material unless policy allows it and limitations are visible.
-- Do not hide source limitations, negative findings, blockers, or currentness gaps when memory hints are reused.
-- Do not allow memory to bypass Goal 10 evidence-origin or Goal 11 stale/migration policy.
-
-Key Files To Read
------------------
-
-- `backend/services/autoresearch/repository.py`
-- `backend/services/autoresearch/literature_scout.py`
-- `backend/services/autoresearch/literature_connectors.py`
-- `backend/services/autoresearch/domain_evidence.py`
-- `backend/services/autoresearch/project_paper_orchestrator.py`
-- `backend/services/autoresearch/evaluation_cases.py`
-- Goal 10 external evidence/capability services
-- Goal 11 timeline/runbook/attempt services
-- `backend/api/autoresearch.py`
-- `backend/schemas/autoresearch.py`
-- `backend/tests/test_autoresearch_regressions.py`
-- `frontend/src/api/types.ts`
-- `frontend/src/api/client.ts`
-- relevant workspace/operator UI files
-- `docs/api-reference.md`
-
-Phase 0: Memory Scope And Provenance
-------------------------------------
-
-Implementation requirements:
-
-- Define memory item types:
-  - paper;
-  - method;
-  - dataset;
-  - metric;
-  - benchmark;
-  - reported result;
-  - implementation;
-  - negative finding;
-  - blocker;
-  - project conclusion;
-  - reviewer finding;
-  - compliance or release caveat.
-- Each memory item must include:
-  - memory id;
-  - schema version;
-  - source project id;
-  - source run id or branch id when applicable;
-  - source artifact ref;
-  - source fingerprint;
-  - extraction timestamp;
-  - source date/version;
-  - evidence grade;
-  - source class;
-  - extraction level;
-  - currentness status;
-  - limitations;
-  - reuse policy;
-  - privacy/retention policy;
-  - negative/blocker status when relevant.
-- Memory records must preserve source refs and cannot be edited into unsupported conclusions.
-
-Tests:
-
-- Memory item cannot be created without source artifact/fingerprint.
-- Memory item records limitations and currentness.
-- Private or revoked source material is excluded or blocked by policy.
-
-Phase 1: Deterministic Memory Store And Index
----------------------------------------------
-
-Implementation requirements:
-
-- Add repository-local memory store/index that supports deterministic rebuild, export, and import.
-- The required baseline can use structured JSON/index files or existing repository persistence. No external vector DB is required.
-- Index dimensions should include:
-  - domain;
-  - method;
-  - dataset;
-  - metric;
-  - benchmark;
-  - paper/source ids;
-  - claim/result type;
-  - blocker/failure type;
-  - evidence grade;
-  - currentness;
-  - reuse eligibility.
-- Memory export/import must preserve hashes and policy fields.
-- Dedupe should prefer stable source ids/fingerprints over text-only matching.
-
-Tests:
-
-- Rebuild produces stable memory index.
-- Duplicate source fingerprints dedupe deterministically.
-- Export/import preserves source refs and hashes.
-- Memory store works without live network or vector DB.
-
-Phase 2: Memory Query Integration
----------------------------------
-
-Implementation requirements:
-
-- Integrate memory query as discovery hints for:
-  - idea/domain routing;
-  - research brief;
-  - literature scout;
-  - related-system discovery;
-  - baseline/benchmark suggestion;
-  - novelty-risk detection;
-  - method/dataset/metric selection;
-  - reviewer concern prediction.
-- Query results must be labeled as memory hints and include:
-  - source refs;
-  - currentness;
-  - limitations;
-  - reuse requirements;
-  - required current-project validation actions.
-- Current project claims can use memory only after revalidation into current-project literature/benchmark/execution/evidence artifacts.
-
-Tests:
-
-- Memory hint appears in brief/scout without becoming claim evidence.
-- Current-project claim remains unsupported until revalidated evidence exists.
-- Stale memory adds risk/follow-up, not direct support.
-- Memory query output is deterministic.
-
-Phase 3: Currentness, Privacy, And Reuse Policy
------------------------------------------------
-
-Implementation requirements:
-
-- Define memory currentness states:
-  - fresh;
-  - aging;
-  - stale;
-  - revoked;
-  - unknown.
-- Define reuse policy states:
-  - discovery_only;
-  - revalidate_required;
-  - internal_only;
-  - blocked;
-  - expired.
-- Memory query must filter or label items by policy.
-- Literature/source memory must track retrieval/extraction date and source observation fingerprint.
-- Project-private, compliance-blocked, or user-restricted artifacts must not leak into unrelated projects.
-
-Tests:
-
-- Revoked memory is not returned as a usable hint.
-- Stale memory creates revalidation action.
-- Internal-only memory is not exported in public release materials.
-- Policy filtering is deterministic and visible in API output.
-
-Phase 4: Negative Finding And Blocker Memory
---------------------------------------------
-
-Implementation requirements:
-
-- Store prior negative findings and blockers as memory:
-  - failed execution class;
-  - invalid benchmark/source issue;
-  - unsupported domain;
-  - contradictory literature;
-  - insufficient statistics;
-  - final-gate blocker;
-  - compliance/release blocker.
-- Negative memory can warn, add a follow-up, add a kill criterion, or suggest repair.
-- Negative memory cannot silently pre-block a current project without current-project validation.
-- Runbook and reviewer simulation should surface relevant prior blockers as risks, not as current evidence.
-
-Tests:
-
-- Prior blocker becomes risk/follow-up in a related project.
-- Prior blocker does not directly fail current final gate without current evidence.
-- Negative memory is included in memory index and can be filtered by type.
-
-Goal 12 Completion Standard
----------------------------
-
-- Cross-project memory has typed schema, provenance, source refs, currentness, reuse policy, privacy/retention policy, deterministic store/index, API surface, and tests.
-- Memory assists discovery and risk detection but never directly supports current-project claims.
-- Revalidation requirements are explicit and visible in brief/scout/runbook outputs.
-- Negative findings and blockers are preserved as reusable risk signals.
+Goal 12 memory is complete in the deterministic baseline. Do not reimplement it unless a regression breaks its schemas, API/frontend contracts, docs, or tests.
 
 Goal 13: Human Review, Compliance, Venue Adapter, And Release Packaging
 =======================================================================
@@ -518,7 +283,6 @@ Cross-Goal Completion Standard
 
 The remaining roadmap is complete only when all of the following are true:
 
-- Goal 12 memory can provide source-backed discovery hints without becoming direct current-project claim evidence.
 - Goal 13 release governance can export final and non-final packages with correct gates, labels, hashes, compliance, and human review.
 - Backend schemas, frontend types/client, API docs, and operator/release UI are aligned.
 - Deterministic backend tests pass.
@@ -552,15 +316,14 @@ Start by executing:
 4. Read docs/goal.md
 
 Current baseline:
-- Goal 1-11 are complete. Do not reimplement completed goals unless a regression breaks their artifacts, schemas, API/UI contracts, docs, or deterministic tests.
+- Goal 1-12 are complete. Do not reimplement completed goals unless a regression breaks their artifacts, schemas, API/UI contracts, docs, or deterministic tests.
 - Default branch is master.
 - docs/goal.md is the detailed roadmap authority.
 
 Execution order:
-1. Implement Goal 12 - Multi-Project Knowledge And Literature Memory.
-2. If Goal 12 is complete and verified, implement Goal 13 - Human Review, Compliance, Venue Adapter, And Release Packaging.
+1. Implement Goal 13 - Human Review, Compliance, Venue Adapter, And Release Packaging.
 
-Do not skip ahead. If Goal 13 needs an artifact from Goal 12, implement the Goal 12 artifact first. If both remaining goals cannot be completed safely in one run, finish the earliest incomplete goal, update docs/goal.md with only the remaining future work, and commit the completed scope.
+Goal 12 memory is already complete. Do not skip or weaken Goal 13 governance gates; if the goal cannot be completed safely in one run, update docs/goal.md with only the remaining future work and commit the completed scope.
 
 Hard safety rules:
 - Do not weaken publish gates, claim-evidence ledger behavior, artifact lineage, negative evidence, readiness blockers, operator policy checks, external capability policy, evidence-origin policy, or persisted artifact state.
@@ -571,7 +334,6 @@ Hard safety rules:
 - Required tests must be deterministic and must not require live network, paid LLM/API calls, GPUs, Docker daemon, external benchmark services, external vector DB, or external signing services.
 
 Required implementation scope:
-- Goal 12: memory item schema, provenance/currentness/reuse/privacy policy, deterministic memory store/index, memory query integration as discovery hints, negative finding/blocker memory, API/frontend/docs/tests.
 - Goal 13: human review workflow, compliance checklist, venue adapters, release archive hash/signature manifest, release API/operator UI, final/non-final export governance, docs/tests.
 
 Testing rhythm:
@@ -583,7 +345,7 @@ Testing rhythm:
 
 Finish criteria:
 - Update docs/api-reference.md and any relevant project docs for new API/schema/UI behavior.
-- Update docs/goal.md so it contains only still-future work. If Goal 12-13 are all complete, replace the roadmap with a concise completion/future-maintenance note and no stale goal backlog.
+- Update docs/goal.md so it contains only still-future work. If Goal 13 is complete, replace the roadmap with a concise completion/future-maintenance note and no stale goal backlog.
 - Update AGENTS.md only if its current state or active roadmap would mislead the next session.
 - Commit the completed scoped work. If all remaining goals are completed, use a message like Complete remaining research governance roadmap. Otherwise use a message for the completed earliest goal.
 ```

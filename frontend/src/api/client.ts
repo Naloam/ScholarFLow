@@ -26,6 +26,12 @@ import type {
   AutoResearchIdeaRunCreateRequest,
   AutoResearchLiteratureScoutRequest,
   AutoResearchLiteratureScoutResult,
+  AutoResearchMemoryExport,
+  AutoResearchMemoryImport,
+  AutoResearchMemoryImportRequest,
+  AutoResearchMemoryQueryRequest,
+  AutoResearchMemoryQueryResult,
+  AutoResearchMemoryRebuild,
   AutoResearchResearchBrief,
   AutoResearchResearchBriefList,
   AutoResearchOperatorConsole,
@@ -420,6 +426,36 @@ export const api = {
         body: payload ? JSON.stringify(payload) : undefined,
       },
     );
+  },
+
+  rebuildAutoResearchMemory(projectId: string): Promise<AutoResearchMemoryRebuild> {
+    return request(`/api/projects/${projectId}/auto-research/memory/rebuild`, {
+      method: "POST",
+    });
+  },
+
+  queryAutoResearchMemory(
+    projectId: string,
+    payload?: AutoResearchMemoryQueryRequest,
+  ): Promise<AutoResearchMemoryQueryResult> {
+    return request(`/api/projects/${projectId}/auto-research/memory/query`, {
+      method: "POST",
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+  },
+
+  exportAutoResearchMemory(projectId: string): Promise<AutoResearchMemoryExport> {
+    return request(`/api/projects/${projectId}/auto-research/memory/export`);
+  },
+
+  importAutoResearchMemory(
+    projectId: string,
+    payload: AutoResearchMemoryImportRequest,
+  ): Promise<AutoResearchMemoryImport> {
+    return request(`/api/projects/${projectId}/auto-research/memory/import`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   buildAutoResearchIdeaExperimentFactory(

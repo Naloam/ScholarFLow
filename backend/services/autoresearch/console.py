@@ -990,6 +990,11 @@ def build_operator_console(
                     operator_status=operator_status,
                 ),
                 operator_status=operator_status,
+                state_manifest=operator_status.state_manifest,
+                runbook=operator_status.runbook,
+                timeline_state=operator_status.timeline_state,
+                attempt_ledger=operator_status.attempt_ledger,
+                branch_state=operator_status.branch_state,
             )
 
     meta_analysis = build_cross_run_meta_analysis(project_id)

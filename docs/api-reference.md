@@ -185,6 +185,8 @@ This document focuses on the current auto-research API surface.
 - includes `operator_audit`, the persisted operator-state audit for the project, when runs exist
 - includes `external_capability_manifest`, a deterministic project-level manifest of external network, literature, full-text/citation-context extraction, benchmark ingestion, local/Docker/bridge/import execution, budget, approval, and sandbox capabilities
 - includes `current_run.operator_status`, the policy-backed run control surface with persisted job inspection, approval/budget status, repair queue, artifact lineage, package status, final-gate status, external capability manifest, action log, stale/missing refs, blockers, and per-action allow/deny reasons
+- includes Goal 11 long-running reliability state on the current run: `state_manifest`, `runbook`, `timeline_state`, `attempt_ledger`, and `branch_state`
+- the long-running state is rebuilt from repository artifacts and persisted through repository helpers as `project_state_manifest.json`, `project_runbook.json`, `project_timeline.json`, `attempt_ledger.json`, and `branch_state.json`
 - `current_run.actions.resume`, `retry`, and `cancel` mirror the backend operator policy instead of being UI-only affordances
 - operators can inspect queue bottlenecks, stale-worker posture, and recent recoveries without reading `queue.json`
 
@@ -210,9 +212,10 @@ This document focuses on the current auto-research API surface.
 - returns the persisted operator-control status for one run
 - reconstructs state from `run.json`, registry/lineage artifacts, queue state, bridge state, typed experiment execution results, review/publish artifacts, and `operator_action_log.json`
 - response fields include `control_state`, `action_policy`, `jobs`, `approvals`, `budget`, `repair_queue`, `artifact_lineage`, `package_status`, `final_gate_status`, `external_capability_manifest`, `action_log`, `stale_refs`, `missing_refs`, and a deterministic timeline
+- response also includes Goal 11 state: `state_manifest` audits active/stale/superseded/missing/migration-needed artifacts plus unsafe-resume blockers; `runbook` lists next actions, approvals, repair candidates, claim ceiling, final-gate status, kill criteria, and stale/migration inputs; `timeline_state` records versioned project events; `attempt_ledger` records retry/resume/cancel/reject/import attempts without deleting old negative evidence; `branch_state` scopes final-gate evidence to the selected branch
 - `action_policy` provides policy-checked `approve`, `reject`, `retry`, `resume`, and `cancel` decisions with blocker codes, recoverability, required next action, and related refs
 - approval state is derived from persisted operator action records after reload; approval does not fabricate experiment output or bypass runtime contracts
-- stale package/archive refs, missing registry refs, pending bridge imports, rejected approvals, and active leased/running queue work block unsafe resume/retry transitions; resume on an already queued run is treated as an idempotent noop
+- stale package/archive refs, missing registry refs, schema-version gaps, fingerprint mismatches, migration-needed artifacts, pending bridge imports, rejected approvals, and active leased/running queue work block unsafe resume/retry transitions; resume on an already queued run is treated as an idempotent noop
 
 ### `POST /api/projects/{project_id}/auto-research/{run_id}/operator/actions`
 
@@ -220,6 +223,7 @@ This document focuses on the current auto-research API surface.
 - accepts `action`, optional `target_id`, `approval_id`, `operator_id`, `reason`, and optional `expected_artifact_fingerprints` for freshness preconditions
 - returns `AutoResearchOperatorActionResult` with `accepted`, `status`, optional `job_id`, persisted `action_record`, updated `run_status`, and execution state when relevant
 - every accepted, noop, or blocked action appends to `operator_action_log.json` with preserved artifact refs, failure refs, negative-evidence refs, parent attempt/job refs, decision evidence, and terminal blocker evidence where applicable
+- Goal 11 actions also update `attempt_ledger.json`; retry/resume create new attempt records or typed transitions, while cancel/reject become terminal attempt states visible in runbook/operator console
 - invalid transitions return `409` with structured `AutoResearchOperatorPolicyError` detail instead of silently queuing work
 - `reject` and `cancel` create terminal decision evidence and preserve the prior artifacts/failures; `retry` and `resume` enqueue through the existing execution plane without deleting prior attempt evidence
 

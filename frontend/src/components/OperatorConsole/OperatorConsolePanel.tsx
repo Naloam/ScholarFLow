@@ -167,6 +167,15 @@ export function OperatorConsolePanel({
   const currentSummary =
     activeConsole?.runs.find((run) => run.run_id === current?.run.id) ?? null;
   const operatorStatus = current?.operator_status ?? null;
+  const stateManifest =
+    current?.state_manifest ?? operatorStatus?.state_manifest ?? null;
+  const runbook = current?.runbook ?? operatorStatus?.runbook ?? null;
+  const timelineState =
+    current?.timeline_state ?? operatorStatus?.timeline_state ?? null;
+  const attemptLedger =
+    current?.attempt_ledger ?? operatorStatus?.attempt_ledger ?? null;
+  const branchState =
+    current?.branch_state ?? operatorStatus?.branch_state ?? null;
   const operatorPolicy = operatorStatus?.action_policy ?? {};
   const pendingApproval =
     operatorStatus?.approvals.find(
@@ -784,6 +793,40 @@ export function OperatorConsolePanel({
                     {policy.action}: {policy.reason}
                   </small>
                 ))}
+            </div>
+          ) : null}
+
+          {stateManifest || runbook || attemptLedger || timelineState ? (
+            <div className="meta-block" data-testid="operator-long-running-reliability">
+              <span className="meta-label">Long-Running Reliability</span>
+              <p>
+                manifest=
+                {stateManifest
+                  ? `${stateManifest.active_artifacts.length} active / ${stateManifest.migration_needed_artifacts.length} migration / ${stateManifest.missing_artifacts.length} missing`
+                  : "n/a"}{" "}
+                timeline={timelineState?.event_count ?? 0} attempts=
+                {attemptLedger?.attempt_count ?? 0} terminal=
+                {attemptLedger?.terminal_attempt_count ?? 0}
+              </p>
+              <p>
+                branch={branchState?.selected_branch_id ?? "n/a"} final_gate=
+                {runbook?.final_gate_status?.final_publish_ready ? "ready" : "blocked"}
+              </p>
+              {runbook?.next_actions.length ? (
+                <ul>
+                  {runbook.next_actions.slice(0, 3).map((action) => (
+                    <li key={action}>{formatLabel(action)}</li>
+                  ))}
+                </ul>
+              ) : stateManifest?.unsafe_resume_blockers.length ? (
+                <ul>
+                  {stateManifest.unsafe_resume_blockers.slice(0, 3).map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No long-running blockers recorded.</p>
+              )}
             </div>
           ) : null}
 
@@ -1966,6 +2009,37 @@ export function OperatorConsolePanel({
                     </ul>
                   ) : (
                     <p>No final gate blockers.</p>
+                  )}
+                </div>
+              ) : null}
+
+              {stateManifest || branchState ? (
+                <div className="meta-block" data-testid="operator-reliability-lineage">
+                  <span className="meta-label">Resume / Fork Safety</span>
+                  <p>
+                    unsafe_resume={stateManifest?.unsafe_resume_blockers.length ?? 0}{" "}
+                    repair_candidates={stateManifest?.repair_candidates.length ?? 0}{" "}
+                    branches={branchState?.branches.length ?? 0}
+                  </p>
+                  {branchState ? (
+                    <p>
+                      selected={branchState.selected_branch_id} ·{" "}
+                      {branchState.branches
+                        .slice(0, 3)
+                        .map((branch) => `${branch.branch_id}:${branch.branch_readiness}`)
+                        .join(", ")}
+                    </p>
+                  ) : null}
+                  {stateManifest?.migration_needed_artifacts.length ? (
+                    <ul>
+                      {stateManifest.migration_needed_artifacts.slice(0, 4).map((artifact) => (
+                        <li key={artifact.artifact_id}>
+                          {artifact.artifact_kind} · {artifact.status}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No migration-needed artifacts in the selected state.</p>
                   )}
                 </div>
               ) : null}

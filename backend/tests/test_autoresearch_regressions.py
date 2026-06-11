@@ -27,6 +27,7 @@ import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_connectors as autoresearch_literature_connectors
 import services.autoresearch.literature_scout as autoresearch_literature_scout
+import services.autoresearch.long_running_reliability as autoresearch_long_running_reliability
 import services.autoresearch.narrative_analyst as narrative_analyst
 import services.autoresearch.operator_control as autoresearch_operator_control
 import services.autoresearch.planner as autoresearch_planner
@@ -14013,6 +14014,190 @@ def test_goal9_operator_invalid_transition_returns_structured_error(
     assert result.policy_error.recoverable is True
     assert result.policy_error.required_next_action
     assert isinstance(result.policy_error.related_refs, list)
+
+
+def test_goal11_state_manifest_blocks_missing_schema_and_rebuilds_deterministically(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal11-state",
+        run_id="run-goal11-state",
+        tmp_path=tmp_path,
+    )
+
+    status = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert status.state_manifest is not None
+    assert status.runbook is not None
+    assert status.timeline_state is not None
+    assert status.attempt_ledger is not None
+    assert status.branch_state is not None
+    assert status.action_policy["resume"].allowed is False
+    assert status.action_policy["resume"].related_refs
+    assert any("missing schema_version" in item for item in status.state_manifest.unsafe_resume_blockers)
+    assert status.runbook.migration_needed_artifacts
+    assert status.timeline_state.event_count == len(status.timeline_state.events)
+    assert [event.event_id for event in status.timeline_state.events] == sorted(
+        [event.event_id for event in status.timeline_state.events],
+        key=lambda event_id: (
+            next(event.timestamp for event in status.timeline_state.events if event.event_id == event_id),
+            event_id,
+        ),
+    )
+
+    reloaded = autoresearch_repository.load_project_state_manifest(run.project_id, run.id)
+    assert reloaded is not None
+    assert reloaded.manifest_fingerprint == status.state_manifest.manifest_fingerprint
+    rebuilt = autoresearch_long_running_reliability.build_project_state_manifest(
+        run=autoresearch_repository.load_run(run.project_id, run.id),
+        registry=autoresearch_repository.load_run_registry(run.project_id, run.id),
+        package_status=status.package_status,
+        final_gate_status=status.final_gate_status,
+        persist=False,
+    )
+    assert sorted(
+        (item.artifact_kind, item.artifact_ref, item.status, item.schema_version)
+        for item in status.state_manifest.migration_needed_artifacts
+    ) == sorted(
+        (item.artifact_kind, item.artifact_ref, item.status, item.schema_version)
+        for item in rebuilt.migration_needed_artifacts
+    )
+    assert status.state_manifest.unsafe_resume_blockers == rebuilt.unsafe_resume_blockers
+    assert sorted(
+        item.repair_id for item in status.state_manifest.repair_candidates
+    ) == sorted(item.repair_id for item in rebuilt.repair_candidates)
+
+
+def test_goal11_fingerprint_mismatch_blocks_resume_and_final_gate(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal11-fingerprint",
+        run_id="run-goal11-fingerprint",
+        tmp_path=tmp_path,
+    )
+    run_json = Path(autoresearch_repository.run_dir(run.project_id, run.id) / "run.json")
+
+    status = autoresearch_operator_control.build_operator_run_status(
+        run.project_id,
+        run.id,
+        expected_fingerprints={str(run_json): "wrong-fingerprint"},
+    )
+
+    assert status.state_manifest is not None
+    assert any(
+        item.status == "fingerprint_mismatch"
+        for item in status.state_manifest.migration_needed_artifacts
+    )
+    assert status.action_policy["resume"].allowed is False
+    assert status.final_gate_status.final_publish_ready is False
+    assert any("fingerprint mismatch" in item.lower() for item in status.final_gate_status.blockers)
+
+
+def test_goal11_attempt_ledger_preserves_retry_cancel_and_negative_evidence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal11-attempts",
+        run_id="run-goal11-attempts",
+        tmp_path=tmp_path,
+        failed=True,
+    )
+
+    before = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert before.attempt_ledger is not None
+    assert before.attempt_ledger.negative_evidence_refs
+    retry = autoresearch_operator_control.apply_operator_action(
+        run.project_id,
+        run.id,
+        AutoResearchOperatorActionRequest(action="retry"),
+    )
+    assert retry.accepted is True
+    cancel = autoresearch_operator_control.apply_operator_action(
+        run.project_id,
+        run.id,
+        AutoResearchOperatorActionRequest(action="cancel", reason="Stop retry."),
+    )
+    assert cancel.accepted is True
+
+    status = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert status.attempt_ledger is not None
+    ledger = status.attempt_ledger
+    actions = [attempt.action for attempt in ledger.attempts]
+    assert "retry" in actions
+    assert "cancel" in actions
+    assert any(attempt.status == "canceled" for attempt in ledger.attempts)
+    assert before.attempt_ledger.negative_evidence_refs[0] in ledger.negative_evidence_refs
+    assert status.runbook is not None
+    assert any("cancel" in item for item in status.runbook.blocked_actions) or ledger.terminal_attempt_count >= 1
+
+
+def test_goal11_branch_state_scopes_final_gate_to_selected_branch(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal11-branch",
+        run_id="run-goal11-branch",
+        tmp_path=tmp_path,
+    )
+    candidate_a = HypothesisCandidate(
+        id="candidate_a",
+        program_id=run.program.id if run.program is not None else "program",
+        rank=1,
+        title="Selected direction",
+        hypothesis="Selected direction hypothesis.",
+        proposed_method="Method A",
+        rationale="Selected.",
+        status="done",
+        score=0.9,
+    )
+    candidate_b = HypothesisCandidate(
+        id="candidate_b",
+        program_id=run.program.id if run.program is not None else "program",
+        rank=2,
+        title="Forked direction",
+        hypothesis="Forked direction hypothesis.",
+        proposed_method="Method B",
+        rationale="Fork.",
+        status="failed",
+        score=0.1,
+    )
+    portfolio = PortfolioSummary(
+        status="done",
+        total_candidates=2,
+        candidate_rankings=["candidate_a", "candidate_b"],
+        executed_candidate_ids=["candidate_a", "candidate_b"],
+        selected_candidate_id="candidate_a",
+        selection_policy="deterministic_test",
+        decision_summary="Select candidate_a for final-gate scope.",
+        decisions=[],
+    )
+    run = autoresearch_repository.save_run(
+        run.model_copy(update={"candidates": [candidate_a, candidate_b], "portfolio": portfolio})
+    )
+
+    status = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    assert status.branch_state is not None
+    branch_state = status.branch_state
+    assert branch_state.selected_branch_id == "branch:candidate_a"
+    selected = next(item for item in branch_state.branches if item.branch_id == "branch:candidate_a")
+    fork = next(item for item in branch_state.branches if item.branch_id == "branch:candidate_b")
+    assert selected.branch_readiness == "selected"
+    assert selected.branch_specific_artifacts
+    assert fork.branch_readiness == "blocked"
+    assert not fork.branch_specific_artifacts
+    assert any(
+        item["branch_id"] == "branch:candidate_b"
+        and item["evidence_sufficiency"] == "not_selected_for_final_gate"
+        for item in branch_state.comparison
+    )
 
 
 def test_goal3_runtime_contract_validation_failure_classes() -> None:

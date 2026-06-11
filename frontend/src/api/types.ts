@@ -4107,6 +4107,217 @@ export type AutoResearchOperatorFinalGateStatus = {
   final_archive_download_allowed: boolean;
 };
 
+export type AutoResearchLongRunningArtifactStatus =
+  | "active"
+  | "stale"
+  | "superseded"
+  | "missing"
+  | "migration_needed"
+  | "fingerprint_mismatch";
+
+export type AutoResearchLongRunningArtifactState = {
+  artifact_id: string;
+  artifact_kind: string;
+  artifact_ref: string;
+  owning_service: string;
+  status: AutoResearchLongRunningArtifactStatus;
+  schema_version?: string | null;
+  expected_schema_version?: string | null;
+  fingerprint?: string | null;
+  expected_fingerprint?: string | null;
+  parent_refs: string[];
+  supersedes: string[];
+  superseded_by?: string | null;
+  reconstructable_after_restart: boolean;
+  migration_status: string;
+  final_gate_relevance: boolean;
+  evidence_origin?: AutoResearchEvidenceOrigin | null;
+  blockers: string[];
+};
+
+export type AutoResearchLongRunningRepairCandidate = {
+  repair_id: string;
+  artifact_ref: string;
+  workflow:
+    | "revalidate"
+    | "migrate"
+    | "rerun"
+    | "reimport"
+    | "downgrade_claim"
+    | "terminal_blocker";
+  reason: string;
+  required_action: string;
+  status: "pending" | "blocked" | "completed";
+  blockers: string[];
+  related_refs: string[];
+};
+
+export type AutoResearchLongRunningMigrationRecord = {
+  migration_id: string;
+  artifact_ref: string;
+  source_schema_version?: string | null;
+  target_schema_version: string;
+  supported: boolean;
+  status: string;
+  hash_before?: string | null;
+  hash_after?: string | null;
+  migration_artifact_refs: string[];
+  policy_version: string;
+  operator_visible: boolean;
+  reviewer_visible: boolean;
+  blockers: string[];
+};
+
+export type AutoResearchProjectStateManifest = {
+  manifest_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  rebuilt_at: string;
+  policy_version: string;
+  active_artifacts: AutoResearchLongRunningArtifactState[];
+  stale_artifacts: AutoResearchLongRunningArtifactState[];
+  superseded_artifacts: AutoResearchLongRunningArtifactState[];
+  missing_artifacts: AutoResearchLongRunningArtifactState[];
+  migration_needed_artifacts: AutoResearchLongRunningArtifactState[];
+  unsafe_resume_blockers: string[];
+  current_final_gate_state?: AutoResearchOperatorFinalGateStatus | null;
+  current_package_state?: AutoResearchOperatorPackageStatus | null;
+  repair_candidates: AutoResearchLongRunningRepairCandidate[];
+  migration_records: AutoResearchLongRunningMigrationRecord[];
+  manifest_path?: string | null;
+  manifest_fingerprint?: string | null;
+};
+
+export type AutoResearchProjectTimelineEvent = {
+  event_id: string;
+  event_type: string;
+  timestamp: string;
+  actor: string;
+  source: string;
+  artifact_refs: string[];
+  parent_event_refs: string[];
+  policy_version: string;
+  summary: string;
+  status: string;
+  blockers: string[];
+  risks: string[];
+};
+
+export type AutoResearchProjectTimeline = {
+  timeline_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  rebuilt_at: string;
+  policy_version: string;
+  events: AutoResearchProjectTimelineEvent[];
+  event_count: number;
+  timeline_path?: string | null;
+  timeline_fingerprint?: string | null;
+};
+
+export type AutoResearchProjectRunbook = {
+  runbook_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  rebuilt_at: string;
+  policy_version: string;
+  next_actions: string[];
+  required_approvals: string[];
+  blocked_actions: string[];
+  repair_candidates: AutoResearchLongRunningRepairCandidate[];
+  claim_ceiling?: string | null;
+  package_status?: AutoResearchOperatorPackageStatus | null;
+  final_gate_status?: AutoResearchOperatorFinalGateStatus | null;
+  kill_criteria: string[];
+  stale_artifacts: string[];
+  migration_needed_artifacts: string[];
+  owner_refs: string[];
+  source_refs: string[];
+  blockers: string[];
+  runbook_path?: string | null;
+  runbook_fingerprint?: string | null;
+};
+
+export type AutoResearchLongRunningAttemptRecord = {
+  attempt_id: string;
+  parent_attempt_id?: string | null;
+  branch_id?: string | null;
+  action: string;
+  job_id?: string | null;
+  trigger: string;
+  decision?: string | null;
+  approval_state?: "not_required" | "pending" | "approved" | "rejected" | null;
+  budget_state?: "default" | "bounded" | "approval_required" | "exhausted" | null;
+  capability_state_snapshot: Record<string, string>;
+  inputs: string[];
+  outputs: string[];
+  failure_classification?: string | null;
+  repair_action?: string | null;
+  artifact_refs: string[];
+  negative_evidence_refs: string[];
+  stale_detection: string[];
+  status:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "blocked"
+    | "canceled"
+    | "rejected"
+    | "timeout"
+    | "noop";
+  terminal: boolean;
+  timestamp: string;
+  operator_id?: string | null;
+  blockers: string[];
+};
+
+export type AutoResearchLongRunningAttemptLedger = {
+  ledger_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  rebuilt_at: string;
+  policy_version: string;
+  attempts: AutoResearchLongRunningAttemptRecord[];
+  attempt_count: number;
+  terminal_attempt_count: number;
+  negative_evidence_refs: string[];
+  ledger_path?: string | null;
+  ledger_fingerprint?: string | null;
+};
+
+export type AutoResearchProjectBranch = {
+  branch_id: string;
+  parent_branch_id?: string | null;
+  parent_hypothesis_id?: string | null;
+  selected_direction_refs: string[];
+  inherited_evidence_scope: string[];
+  invalidated_evidence: string[];
+  branch_specific_artifacts: string[];
+  branch_readiness: "active" | "selected" | "blocked" | "superseded";
+  claim_ceiling?: string | null;
+  final_gate_blockers: string[];
+  comparison_summary?: string | null;
+};
+
+export type AutoResearchProjectBranchState = {
+  branch_state_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  rebuilt_at: string;
+  policy_version: string;
+  selected_branch_id: string;
+  branches: AutoResearchProjectBranch[];
+  comparison: Record<string, unknown>[];
+  branch_state_path?: string | null;
+  branch_state_fingerprint?: string | null;
+};
+
 export type AutoResearchOperatorRunStatus = {
   project_id: string;
   run_id: string;
@@ -4128,6 +4339,11 @@ export type AutoResearchOperatorRunStatus = {
   final_gate_status: AutoResearchOperatorFinalGateStatus;
   external_capability_manifest?: AutoResearchExternalCapabilityManifest | null;
   action_log?: AutoResearchOperatorActionLog | null;
+  state_manifest?: AutoResearchProjectStateManifest | null;
+  runbook?: AutoResearchProjectRunbook | null;
+  timeline_state?: AutoResearchProjectTimeline | null;
+  attempt_ledger?: AutoResearchLongRunningAttemptLedger | null;
+  branch_state?: AutoResearchProjectBranchState | null;
   audit_artifact_ref?: string | null;
 };
 
@@ -4299,6 +4515,11 @@ export type AutoResearchOperatorRunDetail = {
   publish?: AutoResearchPublishPackage | null;
   actions: AutoResearchOperatorRunActions;
   operator_status?: AutoResearchOperatorRunStatus | null;
+  state_manifest?: AutoResearchProjectStateManifest | null;
+  runbook?: AutoResearchProjectRunbook | null;
+  timeline_state?: AutoResearchProjectTimeline | null;
+  attempt_ledger?: AutoResearchLongRunningAttemptLedger | null;
+  branch_state?: AutoResearchProjectBranchState | null;
 };
 
 export type AutoResearchRunControlUpdate = {

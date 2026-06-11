@@ -34,9 +34,14 @@ from schemas.autoresearch import (
     AutoResearchPaperRevisionActionIndexRead,
     AutoResearchPaperRevisionDiffRead,
     AutoResearchPaperSectionRewriteIndexRead,
+    AutoResearchLongRunningAttemptLedgerRead,
     AutoResearchRegistryAssetRef,
     AutoResearchReviewerSimulationRead,
     AutoResearchReviewLoopRead,
+    AutoResearchProjectBranchStateRead,
+    AutoResearchProjectRunbookRead,
+    AutoResearchProjectStateManifestRead,
+    AutoResearchProjectTimelineRead,
     AutoResearchRegistryViewCounts,
     AutoResearchRegistryViewRead,
     AutoResearchRunRead,
@@ -127,6 +132,11 @@ EVALUATION_SYSTEM_PAPER_MATERIAL_FILENAME = "scholarflow_system_paper_material.j
 OPERATOR_STATE_AUDIT_FILENAME = "operator_state_audit.json"
 OPERATOR_ACTION_LOG_FILENAME = "operator_action_log.json"
 EXTERNAL_CAPABILITY_MANIFEST_FILENAME = "external_capability_manifest.json"
+PROJECT_STATE_MANIFEST_FILENAME = "project_state_manifest.json"
+PROJECT_TIMELINE_FILENAME = "project_timeline.json"
+PROJECT_RUNBOOK_FILENAME = "project_runbook.json"
+LONG_RUNNING_ATTEMPT_LEDGER_FILENAME = "attempt_ledger.json"
+PROJECT_BRANCH_STATE_FILENAME = "branch_state.json"
 BENCHMARK_FILENAME = "benchmark.json"
 BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
@@ -211,6 +221,26 @@ def operator_action_log_file_path(project_id: str, run_id: str) -> str:
 
 def external_capability_manifest_file_path(project_id: str) -> str:
     return str(autoresearch_dir(project_id) / EXTERNAL_CAPABILITY_MANIFEST_FILENAME)
+
+
+def project_state_manifest_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PROJECT_STATE_MANIFEST_FILENAME)
+
+
+def project_timeline_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PROJECT_TIMELINE_FILENAME)
+
+
+def project_runbook_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PROJECT_RUNBOOK_FILENAME)
+
+
+def long_running_attempt_ledger_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / LONG_RUNNING_ATTEMPT_LEDGER_FILENAME)
+
+
+def project_branch_state_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / PROJECT_BRANCH_STATE_FILENAME)
 
 
 def _literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
@@ -392,7 +422,7 @@ def save_evaluation_case_trace(
     dumped = payload.model_dump(mode="json")
     artifact_sha = _payload_sha256_excluding(dumped, "trace_artifact_sha256")
     payload = payload.model_copy(update={"trace_artifact_sha256": artifact_sha})
-    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    _write_json(path, payload.model_dump(mode="json"))
     return payload
 
 
@@ -417,7 +447,7 @@ def save_evaluation_case_audit(
     dumped = payload.model_dump(mode="json")
     artifact_sha = _payload_sha256_excluding(dumped, "audit_artifact_sha256")
     payload = payload.model_copy(update={"audit_artifact_sha256": artifact_sha})
-    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    _write_json(path, payload.model_dump(mode="json"))
     return payload
 
 
@@ -464,7 +494,7 @@ def save_system_paper_material(
     dumped = payload.model_dump(mode="json")
     artifact_sha = _payload_sha256_excluding(dumped, "material_artifact_sha256")
     payload = payload.model_copy(update={"material_artifact_sha256": artifact_sha})
-    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    _write_json(path, payload.model_dump(mode="json"))
     return payload
 
 
@@ -486,7 +516,7 @@ def save_operator_state_audit(
     dumped = payload.model_dump(mode="json")
     artifact_sha = _payload_sha256_excluding(dumped, "audit_artifact_sha256")
     payload = payload.model_copy(update={"audit_artifact_sha256": artifact_sha})
-    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    _write_json(path, payload.model_dump(mode="json"))
     return payload
 
 
@@ -513,7 +543,7 @@ def save_operator_action_log(
     dumped = payload.model_dump(mode="json")
     artifact_sha = _payload_sha256_excluding(dumped, "action_log_sha256")
     payload = payload.model_copy(update={"action_log_sha256": artifact_sha})
-    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    _write_json(path, payload.model_dump(mode="json"))
     return payload
 
 
@@ -526,6 +556,152 @@ def load_operator_action_log(
         return None
     try:
         return AutoResearchOperatorActionLogRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_project_state_manifest(
+    manifest: AutoResearchProjectStateManifestRead,
+) -> AutoResearchProjectStateManifestRead:
+    path = Path(project_state_manifest_file_path(manifest.project_id, manifest.run_id))
+    payload = manifest.model_copy(update={"manifest_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "manifest_fingerprint", "rebuilt_at")
+    payload = payload.model_copy(update={"manifest_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_project_state_manifest(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchProjectStateManifestRead | None:
+    path = Path(project_state_manifest_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchProjectStateManifestRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_project_timeline(
+    timeline: AutoResearchProjectTimelineRead,
+) -> AutoResearchProjectTimelineRead:
+    path = Path(project_timeline_file_path(timeline.project_id, timeline.run_id))
+    ordered = sorted(
+        timeline.events,
+        key=lambda item: (item.timestamp, item.event_id),
+    )
+    payload = timeline.model_copy(
+        update={
+            "events": ordered,
+            "event_count": len(ordered),
+            "timeline_path": str(path),
+        }
+    )
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "timeline_fingerprint", "rebuilt_at")
+    payload = payload.model_copy(update={"timeline_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_project_timeline(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchProjectTimelineRead | None:
+    path = Path(project_timeline_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchProjectTimelineRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_project_runbook(
+    runbook: AutoResearchProjectRunbookRead,
+) -> AutoResearchProjectRunbookRead:
+    path = Path(project_runbook_file_path(runbook.project_id, runbook.run_id))
+    payload = runbook.model_copy(update={"runbook_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "runbook_fingerprint", "rebuilt_at")
+    payload = payload.model_copy(update={"runbook_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_project_runbook(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchProjectRunbookRead | None:
+    path = Path(project_runbook_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchProjectRunbookRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_long_running_attempt_ledger(
+    ledger: AutoResearchLongRunningAttemptLedgerRead,
+) -> AutoResearchLongRunningAttemptLedgerRead:
+    path = Path(long_running_attempt_ledger_file_path(ledger.project_id, ledger.run_id))
+    ordered = sorted(
+        ledger.attempts,
+        key=lambda item: (item.timestamp, item.attempt_id),
+    )
+    payload = ledger.model_copy(
+        update={
+            "attempts": ordered,
+            "attempt_count": len(ordered),
+            "terminal_attempt_count": sum(1 for item in ordered if item.terminal),
+            "ledger_path": str(path),
+        }
+    )
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "ledger_fingerprint", "rebuilt_at")
+    payload = payload.model_copy(update={"ledger_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_long_running_attempt_ledger(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchLongRunningAttemptLedgerRead | None:
+    path = Path(long_running_attempt_ledger_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchLongRunningAttemptLedgerRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_project_branch_state(
+    branch_state: AutoResearchProjectBranchStateRead,
+) -> AutoResearchProjectBranchStateRead:
+    path = Path(project_branch_state_file_path(branch_state.project_id, branch_state.run_id))
+    payload = branch_state.model_copy(update={"branch_state_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "branch_state_fingerprint", "rebuilt_at")
+    payload = payload.model_copy(update={"branch_state_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_project_branch_state(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchProjectBranchStateRead | None:
+    path = Path(project_branch_state_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchProjectBranchStateRead.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 

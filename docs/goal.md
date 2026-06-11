@@ -5,10 +5,10 @@ Document Status
 ===============
 
 - Updated: 2026-06-11.
-- Completed and intentionally omitted from this file: Goal 1-10.
-- Default next execution: finish Goal 11, then Goal 12, then Goal 13 if the same `/goal` run can do so without weakening gates or skipping tests.
+- Completed and intentionally omitted from this file: Goal 1-11.
+- Default next execution: finish Goal 12, then Goal 13 if the same `/goal` run can do so without weakening gates or skipping tests.
 - This file is the roadmap authority for the next `/goal` run.
-- Keep this file focused on future work only. Do not re-add completed Goal 1-10 detail unless a regression in their artifacts, schemas, API/UI contracts, docs, or deterministic tests must be repaired.
+- Keep this file focused on future work only. Do not re-add completed Goal 1-11 detail unless a regression in their artifacts, schemas, API/UI contracts, docs, or deterministic tests must be repaired.
 - `AGENTS.md` holds high-level collaboration and safety constraints. This file holds the detailed active roadmap and the next `/goal` prompt.
 
 Long-Term Target
@@ -50,20 +50,20 @@ How Far We Are From The Target
 
 Short version:
 
-- Goal 1-10 now provide the controlled research-loop skeleton, deterministic evaluation layer, operator control plane, external capability manifest, external evidence provenance, external import validation, runtime hardening, and final-gate evidence-origin policy.
-- ScholarFlow is roughly 85%-90% complete as an offline, deterministic, evidence-constrained research automation platform.
-- ScholarFlow is roughly 40%-45% complete as a publication-grade autonomous scientist. The remaining gap is not paper text; it is long-running reliability, cross-project memory with current-project revalidation, human/compliance review, venue packaging, and release governance.
+- Goal 1-11 now provide the controlled research-loop skeleton, deterministic evaluation layer, operator control plane, external capability manifest, external evidence provenance, external import validation, runtime hardening, final-gate evidence-origin policy, and long-running reliability state.
+- ScholarFlow is roughly 88%-92% complete as an offline, deterministic, evidence-constrained research automation platform.
+- ScholarFlow is roughly 45%-50% complete as a publication-grade autonomous scientist. The remaining gap is not paper text; it is cross-project memory with current-project revalidation, human/compliance review, venue packaging, and release governance.
 
 Current gap estimate:
 
 - Controlled research-loop skeleton: 85%-90%.
   The main chain exists from idea to final publish decision, with evidence ledgers, lineage, reviewer/revision loop, package generation, deterministic evaluation, operator actions, external capability state, and evidence-origin gate policy.
-- Operator and external capability control: 75%-85%.
-  Goal 9 and Goal 10 added persisted operator controls plus capability manifests, provenance, validation, and blocker propagation. Remaining work is long-running attempt history, branch/fork semantics, stale repair, and release governance.
+- Operator, external capability, and long-running reliability control: 85%-90%.
+  Goal 9, Goal 10, and Goal 11 added persisted operator controls, capability manifests, provenance, validation, blocker propagation, project state manifests, timelines, runbooks, attempt ledgers, branch/fork state, stale repair candidates, and migration blockers. Remaining work is release governance.
 - Real external evidence/execution: 55%-65%.
   The system now has the hardening layer required to avoid fake external evidence: capability state, approval/budget policy, provenance/freshness, benchmark package validation, execution hash/runtime validation, and final-gate origin ceilings. Full live connector coverage, large real benchmarks, and production infrastructure remain outside the deterministic baseline.
-- Long-running reliability: 30%-40%.
-  Persistence and fingerprints exist, but project timeline, runbook, attempt ledger, safe resume/retry/fork, stale repair, and migration policy remain future work.
+- Long-running reliability: 75%-85%.
+  Project state manifest, timeline, runbook, attempt ledger, branch/fork state, stale repair candidates, and migration policy are now typed, persisted, and visible through operator APIs/UI. Production-scale external queues/storage remain outside the deterministic baseline.
 - Multi-project memory: 10%-20%.
   Cross-project discovery memory, currentness policy, reuse restrictions, privacy/retention handling, and negative finding memory remain future work.
 - Human review, compliance, venue, and release governance: 10%-20%.
@@ -74,11 +74,10 @@ Remaining Roadmap
 
 Default order:
 
-1. Goal 11: Long-Running Research Reliability.
-2. Goal 12: Multi-Project Knowledge And Literature Memory.
-3. Goal 13: Human Review, Compliance, Venue Adapter, And Release Packaging.
+1. Goal 12: Multi-Project Knowledge And Literature Memory.
+2. Goal 13: Human Review, Compliance, Venue Adapter, And Release Packaging.
 
-The next `/goal` may attempt all remaining goals in one run, but must execute them in order. Do not implement Goal 12 before Goal 11 artifacts exist, and do not implement Goal 13 release governance before release inputs from Goal 11 and Goal 12 are represented clearly.
+The next `/goal` may attempt all remaining goals in one run, but must execute them in order. Do not implement Goal 13 release governance before release inputs from Goal 12 are represented clearly.
 
 Fixed Start Audit For Every `/goal`
 ===================================
@@ -90,7 +89,7 @@ Every `/goal` session must begin with:
 3. Read `AGENTS.md`.
 4. Read this file.
 5. Read the active goal's key files.
-6. Identify the boundary between completed Goal 1-10 artifacts and the remaining goal so completed work is not reimplemented.
+6. Identify the boundary between completed Goal 1-11 artifacts and the remaining goal so completed work is not reimplemented.
 
 Audit conclusions must be reflected in code artifacts, evaluation artifacts, readiness reports, docs, or deterministic tests. A chat-only audit is not enough.
 
@@ -117,243 +116,6 @@ Global Safety Invariants
 - Every new durable artifact should have schema/version/fingerprint/parent refs, or explicitly document why it does not need them.
 - A failed publication gate is a valid result. Do not bypass it for demo convenience.
 - Operator, human-review, compliance, or venue actions may schedule, block, inspect, label, or record decisions; they must not manufacture evidence or final readiness.
-
-Goal 11: Long-Running Research Reliability
-==========================================
-
-Objective
----------
-
-Make multi-day, multi-attempt research projects first-class. Goal 11 does not add scientific claim power. It prevents evidence, lineage, blockers, approvals, capability state, and decisions from being lost during long runs, restarts, retries, resumes, imports, branches, forks, migrations, and revisions.
-
-Non-Goals
----------
-
-- Do not add new claim strength by relabeling old evidence.
-- Do not silently repair stale or incompatible artifacts.
-- Do not make resume/retry/cancel a frontend-only state change.
-- Do not delete old failed attempts, negative evidence, or superseded artifacts.
-- Do not require live network, Docker, paid APIs, external queues, or external storage for required tests.
-
-Key Files To Read
------------------
-
-- `backend/services/autoresearch/repository.py`
-- `backend/services/autoresearch/execution.py`
-- `backend/services/autoresearch/operator_control.py`
-- `backend/services/autoresearch/console.py`
-- `backend/services/autoresearch/experiment_execution.py`
-- `backend/services/autoresearch/project_paper_orchestrator.py`
-- review/revision/submission/package/final-gate services under `backend/services/autoresearch/`
-- Goal 10 external capability/evidence-origin services under `backend/services/autoresearch/`
-- `backend/api/autoresearch.py`
-- `backend/schemas/autoresearch.py`
-- `backend/tests/test_autoresearch_regressions.py`
-- Operator Console frontend files
-- `frontend/src/api/types.ts`
-- `frontend/src/api/client.ts`
-- `docs/api-reference.md`
-
-Phase 0: Persistence And Version Audit
---------------------------------------
-
-Implementation requirements:
-
-- Audit all project/run artifacts for:
-  - schema version;
-  - fingerprint/hash;
-  - parent refs;
-  - supersedes/superseded_by;
-  - owning service;
-  - reconstructability after restart;
-  - migration status;
-  - final-gate relevance;
-  - evidence-origin classification where applicable.
-- Identify artifacts missing version, fingerprint, or lineage.
-- Define stale, migration-needed, fingerprint-mismatch, and unsafe-resume blockers.
-- Add a project-level state manifest listing:
-  - active artifacts;
-  - stale artifacts;
-  - superseded artifacts;
-  - missing artifacts;
-  - migration-needed artifacts;
-  - unsafe-resume blockers;
-  - current final-gate/package state;
-  - rebuild timestamp and policy version.
-- Persist the state manifest through repository helpers. API endpoints must not read/write ad hoc files.
-
-Tests:
-
-- Missing schema version blocks unsafe resume.
-- Fingerprint mismatch blocks package/final gate.
-- Superseded artifact no longer supports new claims but remains in lineage.
-- State manifest rebuild is deterministic from repository artifacts.
-
-Phase 1: Project Timeline And Runbook
--------------------------------------
-
-Implementation requirements:
-
-- Add versioned project timeline events for:
-  - idea;
-  - domain routing;
-  - research brief;
-  - literature scout;
-  - benchmark/source validation;
-  - hypothesis bank;
-  - direction selection;
-  - protocol;
-  - execution/import;
-  - evidence ledger;
-  - manuscript/source package;
-  - review;
-  - revision;
-  - submission package;
-  - final decision;
-  - external capability check;
-  - operator action;
-  - human/compliance placeholder event;
-  - blocker/failure event.
-- Each event must include:
-  - event id;
-  - event type;
-  - timestamp;
-  - actor/source;
-  - artifact refs;
-  - parent event refs;
-  - policy version;
-  - summary/status;
-  - blockers/risks when relevant.
-- Add a project runbook with:
-  - next actions;
-  - required approvals;
-  - blocked actions;
-  - repair candidates;
-  - claim ceiling;
-  - package/final-gate status;
-  - kill criteria;
-  - stale artifacts;
-  - migration-needed artifacts;
-  - owner/source refs.
-- Operator Console should consume timeline/runbook instead of forcing users to infer next steps from raw artifacts.
-
-Tests:
-
-- Timeline deterministic order is stable.
-- Runbook rebuilds from repository artifacts.
-- Blocked project produces actionable next steps without fake evidence.
-- Operator Console displays runbook/final-gate status from backend state.
-
-Phase 2: Attempt Ledger And Retry/Resume Safety
------------------------------------------------
-
-Implementation requirements:
-
-- Add an attempt ledger recording:
-  - attempt id;
-  - parent attempt id;
-  - branch id when applicable;
-  - action/job id;
-  - trigger;
-  - operator/user/system decision;
-  - approval state;
-  - budget state;
-  - capability state snapshot;
-  - inputs;
-  - outputs;
-  - failure classification;
-  - repair action;
-  - artifact refs;
-  - negative evidence refs;
-  - stale detection;
-  - terminal status.
-- Retry/resume must create a new attempt or explicitly update attempt state through a typed transition.
-- Old failure evidence and negative evidence must remain immutable.
-- Resume must validate artifact fingerprints, schema versions, capability state, approval state, budget state, selected branch, and final-gate blockers.
-- Cancel/reject/timeout must become terminal attempt states with visible blockers.
-
-Tests:
-
-- Retry preserves old failed attempt.
-- Resume is refused on stale artifacts or fingerprint mismatch.
-- Cancel/reject appears in attempt ledger and runbook.
-- Attempt ledger feeds operator console and API.
-- Old negative evidence remains available after retry success.
-
-Phase 3: Branching And Direction Forks
---------------------------------------
-
-Implementation requirements:
-
-- Add project branch/fork model:
-  - branch id;
-  - parent branch;
-  - parent hypothesis/direction;
-  - selected direction refs;
-  - inherited evidence scope;
-  - invalidated evidence;
-  - branch-specific artifacts;
-  - branch readiness;
-  - branch claim ceiling;
-  - branch final-gate blockers;
-  - branch comparison summary.
-- Forks must not reuse incompatible parent evidence for new claims.
-- Branch comparison must distinguish:
-  - performance;
-  - evidence sufficiency;
-  - literature/benchmark source sufficiency;
-  - risk;
-  - negative evidence;
-  - claim ceiling;
-  - final-gate blockers.
-- Final gate must only consider selected branch artifacts unless cross-branch evidence has an explicit compatible scope.
-
-Tests:
-
-- Fork from selected direction creates branch lineage.
-- Incompatible evidence is invalidated or downgraded.
-- Branch comparison is deterministic.
-- Final gate only considers selected branch artifacts.
-
-Phase 4: Stale Repair And Migration Policy
-------------------------------------------
-
-Implementation requirements:
-
-- Define stale artifact repair workflows:
-  - revalidate;
-  - migrate;
-  - rerun;
-  - reimport;
-  - downgrade claim;
-  - terminal blocker.
-- Define schema migration policy:
-  - supported migrations;
-  - unsupported migrations;
-  - migration artifact refs;
-  - source/target schema version;
-  - hash before/after;
-  - policy version;
-  - operator/reviewer visibility.
-- Unsupported migration must block resume and final gate.
-- Stale literature, benchmark, execution, package, release input, and paper-source artifacts must produce repair candidates rather than silent success.
-- Migration records must be visible in timeline, runbook, attempt ledger, and package/release lineage.
-
-Tests:
-
-- Supported migration records before/after refs.
-- Unsupported migration blocks resume/final gate.
-- Stale literature/benchmark/execution artifacts produce repair candidates.
-- Migration-needed state appears in operator console/runbook.
-
-Goal 11 Completion Standard
----------------------------
-
-- Project state manifest, timeline, runbook, attempt ledger, branch/fork state, stale repair, and migration policy are typed, persisted, and rebuildable.
-- Retry/resume/fork do not lose old evidence, negative evidence, artifact lineage, blockers, operator decisions, or final-gate decisions.
-- Stale/migration-needed artifacts cannot silently pass readiness or final gate.
-- Operator Console consumes timeline/runbook/attempt ledger for long-running project inspection.
-- Deterministic tests cover restart/reload, stale artifacts, migration blockers, retry/resume/fork safety, branch scoping, and final-gate preservation.
 
 Goal 12: Multi-Project Knowledge And Literature Memory
 ======================================================
@@ -756,7 +518,6 @@ Cross-Goal Completion Standard
 
 The remaining roadmap is complete only when all of the following are true:
 
-- Goal 11 long-running state can be reconstructed after restart from persisted artifacts.
 - Goal 12 memory can provide source-backed discovery hints without becoming direct current-project claim evidence.
 - Goal 13 release governance can export final and non-final packages with correct gates, labels, hashes, compliance, and human review.
 - Backend schemas, frontend types/client, API docs, and operator/release UI are aligned.
@@ -791,16 +552,15 @@ Start by executing:
 4. Read docs/goal.md
 
 Current baseline:
-- Goal 1-10 are complete. Do not reimplement completed goals unless a regression breaks their artifacts, schemas, API/UI contracts, docs, or deterministic tests.
+- Goal 1-11 are complete. Do not reimplement completed goals unless a regression breaks their artifacts, schemas, API/UI contracts, docs, or deterministic tests.
 - Default branch is master.
 - docs/goal.md is the detailed roadmap authority.
 
 Execution order:
-1. Implement Goal 11 - Long-Running Research Reliability.
-2. If Goal 11 is complete and verified, implement Goal 12 - Multi-Project Knowledge And Literature Memory.
-3. If Goal 12 is complete and verified, implement Goal 13 - Human Review, Compliance, Venue Adapter, And Release Packaging.
+1. Implement Goal 12 - Multi-Project Knowledge And Literature Memory.
+2. If Goal 12 is complete and verified, implement Goal 13 - Human Review, Compliance, Venue Adapter, And Release Packaging.
 
-Do not skip ahead. If a later goal needs an artifact from an earlier goal, implement the earlier artifact first. If all three goals cannot be completed safely in one run, finish the earliest incomplete goal, update docs/goal.md with only the remaining future work, and commit the completed scope.
+Do not skip ahead. If Goal 13 needs an artifact from Goal 12, implement the Goal 12 artifact first. If both remaining goals cannot be completed safely in one run, finish the earliest incomplete goal, update docs/goal.md with only the remaining future work, and commit the completed scope.
 
 Hard safety rules:
 - Do not weaken publish gates, claim-evidence ledger behavior, artifact lineage, negative evidence, readiness blockers, operator policy checks, external capability policy, evidence-origin policy, or persisted artifact state.
@@ -811,7 +571,6 @@ Hard safety rules:
 - Required tests must be deterministic and must not require live network, paid LLM/API calls, GPUs, Docker daemon, external benchmark services, external vector DB, or external signing services.
 
 Required implementation scope:
-- Goal 11: project state manifest, timeline, runbook, attempt ledger, retry/resume/fork safety, branch comparison, stale repair, migration policy, API/frontend/docs/tests.
 - Goal 12: memory item schema, provenance/currentness/reuse/privacy policy, deterministic memory store/index, memory query integration as discovery hints, negative finding/blocker memory, API/frontend/docs/tests.
 - Goal 13: human review workflow, compliance checklist, venue adapters, release archive hash/signature manifest, release API/operator UI, final/non-final export governance, docs/tests.
 
@@ -824,7 +583,7 @@ Testing rhythm:
 
 Finish criteria:
 - Update docs/api-reference.md and any relevant project docs for new API/schema/UI behavior.
-- Update docs/goal.md so it contains only still-future work. If Goal 11-13 are all complete, replace the roadmap with a concise completion/future-maintenance note and no stale goal backlog.
+- Update docs/goal.md so it contains only still-future work. If Goal 12-13 are all complete, replace the roadmap with a concise completion/future-maintenance note and no stale goal backlog.
 - Update AGENTS.md only if its current state or active roadmap would mislead the next session.
 - Commit the completed scoped work. If all remaining goals are completed, use a message like Complete remaining research governance roadmap. Otherwise use a message for the completed earliest goal.
 ```

@@ -46,6 +46,10 @@ from services.autoresearch.bridge import (
 )
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.external_capabilities import get_or_build_external_capability_manifest
+from services.autoresearch.long_running_reliability import (
+    build_long_running_state,
+    record_attempt_transition,
+)
 from services.autoresearch.repository import (
     evaluation_case_suite_file_path,
     load_operator_action_log,
@@ -973,7 +977,7 @@ def build_operator_run_status(
         ],
     ]
     timeline.sort(key=lambda item: (str(item.get("timestamp")), str(item.get("event_id"))))
-    return AutoResearchOperatorRunStatusRead(
+    status_read = AutoResearchOperatorRunStatusRead(
         project_id=project_id,
         run_id=run_id,
         run_status=run.status,
@@ -995,6 +999,99 @@ def build_operator_run_status(
         external_capability_manifest=external_capabilities,
         action_log=action_log,
         audit_artifact_ref=operator_state_audit_file_path(project_id),
+    )
+    state_manifest, timeline_state, runbook, attempt_ledger, branch_state = build_long_running_state(
+        run=run,
+        registry=registry,
+        execution=execution,
+        package_status=package,
+        final_gate_status=final_gate,
+        external_capabilities=external_capabilities,
+        operator_status=status_read,
+        expected_fingerprints=expected_fingerprints,
+    )
+    long_running_blockers = [
+        blocker
+        for blocker in state_manifest.unsafe_resume_blockers
+        if blocker not in blockers
+    ]
+    if long_running_blockers:
+        blockers = _dedupe([*blockers, *long_running_blockers])
+        resume_policy = policy.get("resume")
+        if resume_policy is not None:
+            resume_related_refs = _dedupe(
+                [
+                    *resume_policy.related_refs,
+                    state_manifest.manifest_path,
+                    *[
+                        item.artifact_ref
+                        for item in state_manifest.migration_needed_artifacts
+                    ],
+                    *[
+                        item.artifact_ref
+                        for item in state_manifest.missing_artifacts
+                    ],
+                ]
+            )
+            policy = {
+                **policy,
+                "resume": resume_policy.model_copy(
+                    update={
+                        "allowed": False,
+                        "reason": (
+                            "Resume is blocked by long-running state manifest "
+                            "schema, fingerprint, migration, or missing-artifact checks."
+                        )
+                        if resume_policy.allowed
+                        else resume_policy.reason,
+                        "blocker_code": "unsafe_resume_state_manifest"
+                        if resume_policy.allowed
+                        else resume_policy.blocker_code,
+                        "recoverable": True,
+                        "required_next_action": "inspect_project_state_manifest"
+                        if resume_policy.allowed
+                        else resume_policy.required_next_action,
+                        "related_refs": resume_related_refs,
+                    }
+                ),
+            }
+        final_gate = final_gate.model_copy(
+            update={
+                "blockers": _dedupe(
+                    [
+                        *final_gate.blockers,
+                        *long_running_blockers,
+                    ]
+                ),
+                "final_publish_ready": False,
+                "final_archive_download_allowed": False,
+            }
+        )
+        package = package.model_copy(
+            update={
+                "blockers": _dedupe([*package.blockers, *long_running_blockers]),
+                "final_publish_ready": False,
+                "final_archive_download_allowed": False,
+            }
+        )
+        state_manifest = state_manifest.model_copy(
+            update={
+                "current_final_gate_state": final_gate,
+                "current_package_state": package,
+            }
+        )
+    return status_read.model_copy(
+        update={
+            "blockers": blockers,
+            "action_policy": policy,
+            "package_status": package,
+            "final_gate_status": final_gate,
+            "state_manifest": state_manifest,
+            "timeline_state": timeline_state,
+            "runbook": runbook,
+            "attempt_ledger": attempt_ledger,
+            "branch_state": branch_state,
+        }
     )
 
 
@@ -1088,6 +1185,12 @@ def apply_operator_action(
             related_refs=policy.related_refs,
         )
         _append_action_record(project_id=project_id, run_id=run_id, record=record)
+        record_attempt_transition(
+            run=run,
+            record=record,
+            operator_status=status,
+            external_capabilities=status.external_capability_manifest,
+        )
         return AutoResearchOperatorActionResultRead(
             project_id=project_id,
             run_id=run_id,
@@ -1180,6 +1283,12 @@ def apply_operator_action(
         related_refs=policy.related_refs,
     )
     _append_action_record(project_id=project_id, run_id=run_id, record=record)
+    record_attempt_transition(
+        run=run,
+        record=record,
+        operator_status=status,
+        external_capabilities=status.external_capability_manifest,
+    )
     return AutoResearchOperatorActionResultRead(
         project_id=project_id,
         run_id=run_id,

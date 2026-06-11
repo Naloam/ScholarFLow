@@ -333,6 +333,65 @@ AutoResearchBudgetStatus = Literal["default", "constrained"]
 AutoResearchClaimSupportStatus = Literal["supported", "partial", "unsupported"]
 AutoResearchClaimCategory = Literal["problem", "method", "result", "context", "limitation"]
 AutoResearchEvidenceSourceKind = Literal["plan", "portfolio", "artifact", "literature", "attempts"]
+AutoResearchLongRunningArtifactStatus = Literal[
+    "active",
+    "stale",
+    "superseded",
+    "missing",
+    "migration_needed",
+    "fingerprint_mismatch",
+]
+AutoResearchLongRunningMigrationStatus = Literal[
+    "not_required",
+    "needed",
+    "supported",
+    "unsupported",
+    "completed",
+]
+AutoResearchLongRunningTimelineEventType = Literal[
+    "idea",
+    "domain_routing",
+    "research_brief",
+    "literature_scout",
+    "benchmark_source_validation",
+    "hypothesis_bank",
+    "direction_selection",
+    "protocol",
+    "execution_import",
+    "evidence_ledger",
+    "manuscript_source_package",
+    "review",
+    "revision",
+    "submission_package",
+    "final_decision",
+    "external_capability_check",
+    "operator_action",
+    "human_compliance_placeholder",
+    "blocker_failure",
+    "attempt",
+    "branch_fork",
+    "migration",
+]
+AutoResearchLongRunningAttemptStatus = Literal[
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "blocked",
+    "canceled",
+    "rejected",
+    "timeout",
+    "noop",
+]
+AutoResearchLongRunningRepairWorkflow = Literal[
+    "revalidate",
+    "migrate",
+    "rerun",
+    "reimport",
+    "downgrade_claim",
+    "terminal_blocker",
+]
+AutoResearchLongRunningBranchReadiness = Literal["active", "selected", "blocked", "superseded"]
 AutoResearchPaperEvidenceKind = Literal["artifact", "statistic", "literature", "negative"]
 AutoResearchExperimentBaselineType = Literal["naive", "strong_conventional", "candidate_method"]
 AutoResearchStatisticalTestChoice = Literal["paired_t_test", "bootstrap", "permutation_test"]
@@ -5140,7 +5199,200 @@ class AutoResearchOperatorRunStatusRead(BaseModel):
     final_gate_status: AutoResearchOperatorFinalGateStatusRead
     external_capability_manifest: AutoResearchExternalCapabilityManifestRead | None = None
     action_log: AutoResearchOperatorActionLogRead | None = None
+    state_manifest: "AutoResearchProjectStateManifestRead | None" = None
+    runbook: "AutoResearchProjectRunbookRead | None" = None
+    timeline_state: "AutoResearchProjectTimelineRead | None" = None
+    attempt_ledger: "AutoResearchLongRunningAttemptLedgerRead | None" = None
+    branch_state: "AutoResearchProjectBranchStateRead | None" = None
     audit_artifact_ref: str | None = None
+
+
+class AutoResearchLongRunningArtifactStateRead(BaseModel):
+    artifact_id: str
+    artifact_kind: str
+    artifact_ref: str
+    owning_service: str
+    status: AutoResearchLongRunningArtifactStatus = "active"
+    schema_version: str | None = None
+    expected_schema_version: str | None = None
+    fingerprint: str | None = None
+    expected_fingerprint: str | None = None
+    parent_refs: list[str] = Field(default_factory=list)
+    supersedes: list[str] = Field(default_factory=list)
+    superseded_by: str | None = None
+    reconstructable_after_restart: bool = False
+    migration_status: AutoResearchLongRunningMigrationStatus = "not_required"
+    final_gate_relevance: bool = False
+    evidence_origin: AutoResearchEvidenceOrigin | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchLongRunningRepairCandidateRead(BaseModel):
+    repair_id: str
+    artifact_ref: str
+    workflow: AutoResearchLongRunningRepairWorkflow
+    reason: str
+    required_action: str
+    status: Literal["pending", "blocked", "completed"] = "pending"
+    blockers: list[str] = Field(default_factory=list)
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchLongRunningMigrationRecordRead(BaseModel):
+    migration_id: str
+    artifact_ref: str
+    source_schema_version: str | None = None
+    target_schema_version: str
+    supported: bool = False
+    status: AutoResearchLongRunningMigrationStatus = "needed"
+    hash_before: str | None = None
+    hash_after: str | None = None
+    migration_artifact_refs: list[str] = Field(default_factory=list)
+    policy_version: str
+    operator_visible: bool = True
+    reviewer_visible: bool = True
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchProjectStateManifestRead(BaseModel):
+    manifest_id: str
+    schema_version: str = "project_state_manifest_v1"
+    project_id: str
+    run_id: str
+    rebuilt_at: datetime
+    policy_version: str
+    active_artifacts: list[AutoResearchLongRunningArtifactStateRead] = Field(default_factory=list)
+    stale_artifacts: list[AutoResearchLongRunningArtifactStateRead] = Field(default_factory=list)
+    superseded_artifacts: list[AutoResearchLongRunningArtifactStateRead] = Field(default_factory=list)
+    missing_artifacts: list[AutoResearchLongRunningArtifactStateRead] = Field(default_factory=list)
+    migration_needed_artifacts: list[AutoResearchLongRunningArtifactStateRead] = Field(default_factory=list)
+    unsafe_resume_blockers: list[str] = Field(default_factory=list)
+    current_final_gate_state: AutoResearchOperatorFinalGateStatusRead | None = None
+    current_package_state: AutoResearchOperatorPackageStatusRead | None = None
+    repair_candidates: list[AutoResearchLongRunningRepairCandidateRead] = Field(default_factory=list)
+    migration_records: list[AutoResearchLongRunningMigrationRecordRead] = Field(default_factory=list)
+    manifest_path: str | None = None
+    manifest_fingerprint: str | None = None
+
+
+class AutoResearchProjectTimelineEventRead(BaseModel):
+    event_id: str
+    event_type: AutoResearchLongRunningTimelineEventType
+    timestamp: datetime
+    actor: str = "system"
+    source: str
+    artifact_refs: list[str] = Field(default_factory=list)
+    parent_event_refs: list[str] = Field(default_factory=list)
+    policy_version: str
+    summary: str
+    status: str
+    blockers: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+
+
+class AutoResearchProjectTimelineRead(BaseModel):
+    timeline_id: str
+    schema_version: str = "project_timeline_v1"
+    project_id: str
+    run_id: str
+    rebuilt_at: datetime
+    policy_version: str
+    events: list[AutoResearchProjectTimelineEventRead] = Field(default_factory=list)
+    event_count: int = 0
+    timeline_path: str | None = None
+    timeline_fingerprint: str | None = None
+
+
+class AutoResearchProjectRunbookRead(BaseModel):
+    runbook_id: str
+    schema_version: str = "project_runbook_v1"
+    project_id: str
+    run_id: str
+    rebuilt_at: datetime
+    policy_version: str
+    next_actions: list[str] = Field(default_factory=list)
+    required_approvals: list[str] = Field(default_factory=list)
+    blocked_actions: list[str] = Field(default_factory=list)
+    repair_candidates: list[AutoResearchLongRunningRepairCandidateRead] = Field(default_factory=list)
+    claim_ceiling: str | None = None
+    package_status: AutoResearchOperatorPackageStatusRead | None = None
+    final_gate_status: AutoResearchOperatorFinalGateStatusRead | None = None
+    kill_criteria: list[str] = Field(default_factory=list)
+    stale_artifacts: list[str] = Field(default_factory=list)
+    migration_needed_artifacts: list[str] = Field(default_factory=list)
+    owner_refs: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    runbook_path: str | None = None
+    runbook_fingerprint: str | None = None
+
+
+class AutoResearchLongRunningAttemptRecordRead(BaseModel):
+    attempt_id: str
+    parent_attempt_id: str | None = None
+    branch_id: str | None = None
+    action: AutoResearchJobAction | AutoResearchOperatorAction
+    job_id: str | None = None
+    trigger: str
+    decision: str | None = None
+    approval_state: AutoResearchOperatorApprovalStatus | None = None
+    budget_state: AutoResearchOperatorBudgetMode | None = None
+    capability_state_snapshot: dict[str, str] = Field(default_factory=dict)
+    inputs: list[str] = Field(default_factory=list)
+    outputs: list[str] = Field(default_factory=list)
+    failure_classification: str | None = None
+    repair_action: str | None = None
+    artifact_refs: list[str] = Field(default_factory=list)
+    negative_evidence_refs: list[str] = Field(default_factory=list)
+    stale_detection: list[str] = Field(default_factory=list)
+    status: AutoResearchLongRunningAttemptStatus
+    terminal: bool = False
+    timestamp: datetime
+    operator_id: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AutoResearchLongRunningAttemptLedgerRead(BaseModel):
+    ledger_id: str
+    schema_version: str = "attempt_ledger_v1"
+    project_id: str
+    run_id: str
+    rebuilt_at: datetime
+    policy_version: str
+    attempts: list[AutoResearchLongRunningAttemptRecordRead] = Field(default_factory=list)
+    attempt_count: int = 0
+    terminal_attempt_count: int = 0
+    negative_evidence_refs: list[str] = Field(default_factory=list)
+    ledger_path: str | None = None
+    ledger_fingerprint: str | None = None
+
+
+class AutoResearchProjectBranchRead(BaseModel):
+    branch_id: str
+    parent_branch_id: str | None = None
+    parent_hypothesis_id: str | None = None
+    selected_direction_refs: list[str] = Field(default_factory=list)
+    inherited_evidence_scope: list[str] = Field(default_factory=list)
+    invalidated_evidence: list[str] = Field(default_factory=list)
+    branch_specific_artifacts: list[str] = Field(default_factory=list)
+    branch_readiness: AutoResearchLongRunningBranchReadiness = "active"
+    claim_ceiling: str | None = None
+    final_gate_blockers: list[str] = Field(default_factory=list)
+    comparison_summary: str | None = None
+
+
+class AutoResearchProjectBranchStateRead(BaseModel):
+    branch_state_id: str
+    schema_version: str = "project_branch_state_v1"
+    project_id: str
+    run_id: str
+    rebuilt_at: datetime
+    policy_version: str
+    selected_branch_id: str
+    branches: list[AutoResearchProjectBranchRead] = Field(default_factory=list)
+    comparison: list[dict[str, Any]] = Field(default_factory=list)
+    branch_state_path: str | None = None
+    branch_state_fingerprint: str | None = None
 
 
 class AutoResearchOperatorActionResultRead(BaseModel):
@@ -5305,6 +5557,11 @@ class AutoResearchOperatorRunDetailRead(BaseModel):
     publish: AutoResearchPublishPackageRead | None = None
     actions: AutoResearchOperatorRunActionsRead
     operator_status: AutoResearchOperatorRunStatusRead | None = None
+    state_manifest: AutoResearchProjectStateManifestRead | None = None
+    runbook: AutoResearchProjectRunbookRead | None = None
+    timeline_state: AutoResearchProjectTimelineRead | None = None
+    attempt_ledger: AutoResearchLongRunningAttemptLedgerRead | None = None
+    branch_state: AutoResearchProjectBranchStateRead | None = None
 
 
 class AutoResearchOperatorPublicationCaseRead(BaseModel):

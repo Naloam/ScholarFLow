@@ -29,6 +29,7 @@ from schemas.autoresearch import (
 )
 from services.autoresearch.bridge import build_bridge_state
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.external_capabilities import get_or_build_external_capability_manifest
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
 from services.autoresearch.operator_control import (
     build_operator_run_status,
@@ -642,6 +643,23 @@ def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicatio
         for item in final_publish_decision.get("failed_checks", [])
         if isinstance(item, dict) and item.get("check_id")
     ]
+    final_publish_checks = [
+        item
+        for item in [
+            *final_publish_decision.get("passed_checks", []),
+            *final_publish_decision.get("failed_checks", []),
+        ]
+        if isinstance(item, dict)
+    ]
+    evidence_origin_policy = next(
+        (
+            item.get("details", {})
+            for item in final_publish_checks
+            if item.get("check_id") == "evidence_origin_policy"
+            and isinstance(item.get("details", {}), dict)
+        ),
+        {},
+    )
     asset_statuses = [
         {
             "role": item.get("role"),
@@ -742,6 +760,8 @@ def _publication_case_summary(project_id: str) -> AutoResearchOperatorPublicatio
             else None
         ),
         final_publish_failed_check_ids=final_publish_failed_check_ids,
+        evidence_origin_policy=evidence_origin_policy,
+        external_capability_manifest=get_or_build_external_capability_manifest(project_id),
         repair_action_status_counts=repair_status_counts,
         repair_action_recommendations={
             str(key): str(value)
@@ -886,6 +906,7 @@ def build_operator_console(
 ) -> AutoResearchOperatorConsoleRead:
     runs = list_runs(project_id)
     briefs = list_research_briefs(project_id)
+    external_capabilities = get_or_build_external_capability_manifest(project_id)
     latest_brief = briefs[0] if briefs else None
     filters = AutoResearchOperatorConsoleFiltersRead(
         search=search.strip() if search and search.strip() else None,
@@ -1069,6 +1090,7 @@ def build_operator_console(
         system_evaluation=system_evaluation,
         publication_case=publication_case,
         operator_audit=operator_audit,
+        external_capability_manifest=external_capabilities,
         runs=summaries,
         current_run=current_run,
     )

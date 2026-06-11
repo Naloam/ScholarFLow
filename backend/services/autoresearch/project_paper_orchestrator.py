@@ -106,6 +106,7 @@ PROJECT_OFFLINE_PUBLICATION_CASE_FILENAME = "offline_publication_case.json"
 PROJECT_OFFLINE_PUBLICATION_AUDIT_FILENAME = "offline_publication_audit.json"
 PROJECT_PUBLICATION_MANIFEST_FILENAME = "publication_manifest.json"
 GOAL7_FINAL_PUBLISH_POLICY_VERSION = "goal7_final_publish_policy_v1"
+GOAL10_EVIDENCE_ORIGIN_POLICY_VERSION = "goal10_evidence_origin_policy_v1"
 GOAL7_ARCHIVE_SCHEMA_VERSION = "1.0"
 GOAL7_REPRODUCIBILITY_SCHEMA_VERSION = "1.0"
 FINAL_PUBLISH_CANDIDATE_MIN_DATASET_EXAMPLES = 100
@@ -119,6 +120,21 @@ SCHEMA_DERIVED_CONTENT_ORIGINS = {
     "schema_derived",
     "schema_derived_template",
     "template_generated",
+}
+NON_PUBLICATION_EVIDENCE_ORIGINS = {
+    "fixture",
+    "toy",
+    "local_smoke",
+    "deterministic_replay",
+    "stale_cache",
+}
+PUBLICATION_EVIDENCE_ORIGINS = {
+    "fresh_cache",
+    "imported_real_artifact",
+    "frozen_snapshot",
+    "live_source",
+    "docker_execution",
+    "bridge_execution",
 }
 PROJECT_BENCHMARK_SCHEMA_COVERAGE_POLICY = (
     "Final-publish candidate benchmark sources must expose task-aware "
@@ -370,10 +386,12 @@ def _run_has_evidence(run: AutoResearchRunRead) -> bool:
     return bool(_claim_evidence_refs(run))
 
 
-def _dedupe(items: list[str]) -> list[str]:
+def _dedupe(items: list[Any]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
     for item in items:
+        if item is None:
+            continue
         cleaned = " ".join(str(item).split()).strip()
         if not cleaned:
             continue
@@ -1294,11 +1312,14 @@ def _is_real_literature_paper(paper: Any) -> bool:
     return (
         getattr(paper, "source", None) not in {"fixture", "offline_project_context"}
         and getattr(paper, "cache_status", None) in {"cache_hit", "network"}
+        and getattr(paper, "cache_freshness", "fresh") != "stale"
     )
 
 
 def _literature_source_class(paper: Any) -> str:
     if not _is_real_literature_paper(paper):
+        if getattr(paper, "cache_freshness", None) == "stale":
+            return "stale_cached_real_connector"
         return "fixture_or_offline_context"
     if getattr(paper, "cache_status", None) == "network":
         return "network_real_connector"
@@ -1516,6 +1537,14 @@ def _build_project_literature_support_index(
                 "source": paper.source,
                 "source_class": _literature_source_class(paper),
                 "cache_status": paper.cache_status,
+                "cache_freshness": getattr(paper, "cache_freshness", "unknown"),
+                "source_observation_fingerprint": getattr(
+                    paper, "source_observation_fingerprint", None
+                ),
+                "claim_ceiling": getattr(paper, "claim_ceiling", None),
+                "extraction_limitations": list(
+                    getattr(paper, "extraction_limitations", [])
+                ),
                 "year": paper.year,
                 "doi": paper.doi,
                 "arxiv_id": paper.arxiv_id,
@@ -2196,6 +2225,16 @@ def _run_experiment_execution_profile(
         execution_source = "persisted_result_artifact"
     else:
         execution_source = "missing_result_artifact"
+    if typed_result is not None and typed_result.evidence_origin:
+        evidence_origin = typed_result.evidence_origin
+    elif imported:
+        evidence_origin = "imported_real_artifact"
+    elif execution_source in {"materialized_execution", "persisted_multi_seed_result"}:
+        evidence_origin = "local_smoke"
+    elif execution_source == "persisted_result_artifact":
+        evidence_origin = "toy"
+    else:
+        evidence_origin = None
     blockers = _dedupe(
         [
             *(
@@ -2430,6 +2469,7 @@ def _run_experiment_execution_profile(
         "evidence_id": f"{run.id}:execution_evidence_v1",
         "run_id": run.id,
         "execution_source": execution_source,
+        "evidence_origin": evidence_origin,
         "executor_mode": environment.get("factory_executor_mode") or environment.get("executor_mode"),
         "backend": environment.get("backend"),
         "command_or_import_paths": command_or_import_paths,
@@ -2510,6 +2550,7 @@ def _run_experiment_execution_profile(
     return {
         "run_id": run.id,
         "execution_source": execution_source,
+        "evidence_origin": evidence_origin,
         "executor_mode": environment.get("factory_executor_mode") or environment.get("executor_mode"),
         "backend": environment.get("backend"),
         "imported_result_replay": imported,
@@ -2627,6 +2668,16 @@ def _build_project_experiment_repair_index(
         "execution_source_counts": {
             source: sum(1 for item in execution_profiles if item["execution_source"] == source)
             for source in sorted({item["execution_source"] for item in execution_profiles})
+        },
+        "evidence_origin_counts": {
+            origin: sum(1 for item in execution_profiles if item.get("evidence_origin") == origin)
+            for origin in sorted(
+                {
+                    str(item.get("evidence_origin"))
+                    for item in execution_profiles
+                    if item.get("evidence_origin")
+                }
+            )
         },
         "imported_result_replay_run_ids": [item["run_id"] for item in imported_replay_runs],
         "typed_experiment_execution_run_ids": [item["run_id"] for item in typed_execution_runs],
@@ -2766,6 +2817,16 @@ def _project_execution_coverage(
         "execution_profile_count": len(execution_profiles),
         "complete_execution_profile_count": len(complete_profiles),
         "execution_source_counts": source_counts,
+        "evidence_origin_counts": {
+            origin: sum(1 for item in execution_profiles if item.get("evidence_origin") == origin)
+            for origin in sorted(
+                {
+                    str(item.get("evidence_origin"))
+                    for item in execution_profiles
+                    if item.get("evidence_origin")
+                }
+            )
+        },
         "imported_result_replay_run_ids": [
             item["run_id"] for item in execution_profiles if item.get("imported_result_replay")
         ],
@@ -10413,6 +10474,153 @@ def _final_publish_check(
     )
 
 
+def _evidence_origin_policy_payload(
+    *,
+    literature_support_index: dict[str, Any],
+    benchmark_provenance_manifest: dict[str, Any],
+    experiment_repair_index: dict[str, Any],
+    statistics_report: dict[str, Any],
+    negative_evidence_report: dict[str, Any],
+) -> dict[str, Any]:
+    literature_papers = [
+        item
+        for item in literature_support_index.get("papers", [])
+        if isinstance(item, dict)
+    ]
+    stale_literature = [
+        item
+        for item in literature_papers
+        if item.get("cache_freshness") == "stale"
+    ]
+    fresh_real_literature = [
+        item
+        for item in literature_papers
+        if item.get("source_class") in {"network_real_connector", "cached_real_connector"}
+        and item.get("cache_freshness") != "stale"
+    ]
+    benchmark_records = [
+        item
+        for item in benchmark_provenance_manifest.get("benchmark_source_records", [])
+        if isinstance(item, dict)
+    ]
+    benchmark_origin_counts: dict[str, int] = {}
+    for record in benchmark_records:
+        source_class = str(record.get("source_class") or "unknown")
+        origin = (
+            "fixture"
+            if source_class in {"toy_builtin", "cached_fixture"}
+            else "frozen_snapshot"
+            if source_class == "frozen_snapshot"
+            else "imported_real_artifact"
+            if source_class == "imported_real"
+            else "live_source"
+            if source_class == "remote_real"
+            else "fixture"
+        )
+        benchmark_origin_counts[origin] = benchmark_origin_counts.get(origin, 0) + 1
+    execution_profiles = [
+        item
+        for item in experiment_repair_index.get("execution_profiles", [])
+        if isinstance(item, dict)
+    ]
+    execution_origin_counts: dict[str, int] = {}
+    for profile in execution_profiles:
+        origin = profile.get("evidence_origin")
+        if origin is None:
+            entry = profile.get("execution_evidence", {})
+            origin = entry.get("evidence_origin") if isinstance(entry, dict) else None
+        if origin:
+            origin = str(origin)
+            execution_origin_counts[origin] = execution_origin_counts.get(origin, 0) + 1
+
+    origin_counts: dict[str, int] = {}
+    for counts in (
+        benchmark_origin_counts,
+        execution_origin_counts,
+        {"stale_cache": len(stale_literature)} if stale_literature else {},
+        {"fresh_cache": len(fresh_real_literature)} if fresh_real_literature else {},
+    ):
+        for origin, count in counts.items():
+            origin_counts[origin] = origin_counts.get(origin, 0) + count
+
+    disallowed_present = sorted(
+        origin for origin in origin_counts if origin in NON_PUBLICATION_EVIDENCE_ORIGINS
+    )
+    real_origin_present = any(
+        origin_counts.get(origin, 0) > 0 for origin in PUBLICATION_EVIDENCE_ORIGINS
+    )
+    blockers = _dedupe(
+        [
+            *[
+                f"Evidence origin `{origin}` is not publication-grade final evidence."
+                for origin in disallowed_present
+            ],
+            (
+                "No publication-grade real evidence origin is present across literature, benchmark, or execution artifacts."
+                if not real_origin_present
+                else None
+            ),
+            (
+                "Stale cached literature is present and cannot support fresh final-publish related-work or novelty claims."
+                if stale_literature
+                else None
+            ),
+            *(
+                list(benchmark_provenance_manifest.get("blockers", []))
+                if not benchmark_provenance_manifest.get("complete")
+                else []
+            ),
+            *(
+                list(experiment_repair_index.get("blockers", []))
+                if not experiment_repair_index.get("execution_coverage_ready")
+                else []
+            ),
+            *(
+                list(statistics_report.get("final_publish_statistics_blockers", []))
+                if statistics_report.get("claim_ceiling_recommendation") != "final_publish_claim"
+                else []
+            ),
+            *(
+                list(negative_evidence_report.get("blockers", []))
+                if not negative_evidence_report.get("negative_evidence_retained")
+                else []
+            ),
+        ]
+    )
+    return {
+        "policy_version": GOAL10_EVIDENCE_ORIGIN_POLICY_VERSION,
+        "origin_counts": origin_counts,
+        "publication_origins": sorted(PUBLICATION_EVIDENCE_ORIGINS),
+        "non_publication_origins": sorted(NON_PUBLICATION_EVIDENCE_ORIGINS),
+        "literature": {
+            "fresh_real_literature_count": len(fresh_real_literature),
+            "stale_literature_count": len(stale_literature),
+            "source_class_counts": literature_support_index.get("source_class_counts", {}),
+        },
+        "benchmark": {
+            "origin_counts": benchmark_origin_counts,
+            "complete": bool(benchmark_provenance_manifest.get("complete")),
+            "source_independence": benchmark_provenance_manifest.get(
+                "benchmark_source_independence_audit", {}
+            ),
+        },
+        "execution": {
+            "origin_counts": execution_origin_counts,
+            "execution_coverage_ready": bool(
+                experiment_repair_index.get("execution_coverage_ready")
+            ),
+        },
+        "statistics_claim_ceiling": statistics_report.get(
+            "claim_ceiling_recommendation"
+        ),
+        "negative_evidence_retained": bool(
+            negative_evidence_report.get("negative_evidence_retained")
+        ),
+        "passed": not blockers,
+        "blockers": blockers,
+    }
+
+
 def _project_final_publish_decision_payload(
     *,
     project_id: str,
@@ -10444,6 +10652,13 @@ def _project_final_publish_decision_payload(
     )
     if not isinstance(benchmark_independence, dict):
         benchmark_independence = {}
+    evidence_origin_policy = _evidence_origin_policy_payload(
+        literature_support_index=literature_support_index,
+        benchmark_provenance_manifest=benchmark_provenance_manifest,
+        experiment_repair_index=experiment_repair_index,
+        statistics_report=statistics_report,
+        negative_evidence_report=negative_evidence_report,
+    )
     checks = [
         _final_publish_check(
             check_id="literature_source_sufficiency",
@@ -10527,6 +10742,19 @@ def _project_final_publish_decision_payload(
                     "phase6_missing_categories", []
                 ),
             },
+        ),
+        _final_publish_check(
+            check_id="evidence_origin_policy",
+            passed=bool(evidence_origin_policy.get("passed")),
+            evidence_refs=[
+                "submission_package/literature_support_index.json",
+                "submission_package/benchmark_provenance_manifest.json",
+                "submission_package/experiment_repair_index.json",
+                "submission_package/statistics_report.json",
+                "submission_package/negative_evidence_report.json",
+            ],
+            blockers=list(evidence_origin_policy.get("blockers", [])),
+            details=evidence_origin_policy,
         ),
         _final_publish_check(
             check_id="claim_evidence_coverage",
@@ -10638,6 +10866,7 @@ def _project_final_publish_decision_payload(
             "submission_package/experiment_repair_index.json",
             "submission_package/statistics_report.json",
             "submission_package/negative_evidence_report.json",
+            "submission_package/final_publish_decision.json:evidence_origin_policy",
             "submission_package/claim_evidence_index.md",
             "paper_sources/revision_round.json",
         ]
@@ -10647,7 +10876,7 @@ def _project_final_publish_decision_payload(
         "project_id": project_id,
         "final_publish_ready": final_ready,
         "paper_tier": paper_tier,
-        "policy_version": GOAL7_FINAL_PUBLISH_POLICY_VERSION,
+        "policy_version": f"{GOAL7_FINAL_PUBLISH_POLICY_VERSION}+{GOAL10_EVIDENCE_ORIGIN_POLICY_VERSION}",
         "checked_at": _utcnow(),
         "passed_checks": [check.model_dump(mode="json") for check in passed_checks],
         "failed_checks": [check.model_dump(mode="json") for check in failed_checks],

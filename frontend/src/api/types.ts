@@ -328,6 +328,48 @@ export type AutoResearchOperatorControlState =
   | "needs_approval"
   | "stale";
 
+export type AutoResearchExternalCapabilityState =
+  | "disabled"
+  | "not_configured"
+  | "unavailable"
+  | "approval_required"
+  | "ready"
+  | "blocked_by_policy"
+  | "failed_validation";
+
+export type AutoResearchExternalCapabilityId =
+  | "network"
+  | "literature_connectors"
+  | "full_text_extraction"
+  | "citation_context_extraction"
+  | "benchmark_dataset_ingestion"
+  | "local_command_execution"
+  | "docker_execution"
+  | "bridge_execution"
+  | "external_artifact_import"
+  | "budget_policy"
+  | "approval_policy"
+  | "sandbox_policy";
+
+export type AutoResearchEvidenceOrigin =
+  | "fixture"
+  | "toy"
+  | "local_smoke"
+  | "deterministic_replay"
+  | "stale_cache"
+  | "fresh_cache"
+  | "imported_real_artifact"
+  | "frozen_snapshot"
+  | "live_source"
+  | "docker_execution"
+  | "bridge_execution";
+
+export type AutoResearchCacheFreshness =
+  | "fresh"
+  | "stale"
+  | "unknown"
+  | "not_applicable";
+
 export type AutoResearchExperimentExecutionResultStatus =
   | "succeeded"
   | "failed"
@@ -3237,8 +3279,17 @@ export type AutoResearchLiteratureScoutPaper = {
   cache_status: "offline" | "fixture" | "cache_hit" | "network";
   cache_key?: string | null;
   cache_timestamp?: string | null;
+  cache_freshness: AutoResearchCacheFreshness;
+  retrieved_at?: string | null;
+  connector_provider?: string | null;
+  source_observation_fingerprint?: string | null;
   fingerprint?: string | null;
   extraction_status: "limited_metadata" | "metadata_only" | "abstract_only" | "full_text";
+  extraction_limitations: string[];
+  source_sufficiency_status?: string | null;
+  related_system_coverage: string[];
+  contradiction_signals: string[];
+  claim_ceiling?: string | null;
   evidence: string;
 };
 
@@ -3252,6 +3303,10 @@ export type AutoResearchLiteratureScoutSourceStatus = {
   error_count: number;
   availability_status: "available" | "cache_miss" | "unavailable" | "unsupported" | "error";
   unavailable_reason?: string | null;
+  cache_freshness_counts: Record<string, number>;
+  stale_cache_count: number;
+  freshness_policy?: string | null;
+  availability_blockers: string[];
   errors: string[];
 };
 
@@ -3528,6 +3583,7 @@ export type AutoResearchEvidenceLedgerEntry = {
   value?: number | null;
   support_status: "supported" | "partial" | "missing";
   evidence_type?: string | null;
+  evidence_origin?: AutoResearchEvidenceOrigin | null;
   metric_values: Record<string, number>;
   sample_counts: Record<string, number>;
   baseline_comparisons: Record<string, unknown>;
@@ -3630,6 +3686,7 @@ export type AutoResearchExperimentRuntimeContract = {
   requires_gpu: boolean;
   requires_docker_daemon: boolean;
   environment_requirements: Record<string, unknown>;
+  capability_refs: string[];
   blockers: string[];
 };
 
@@ -3645,6 +3702,7 @@ export type AutoResearchExperimentOutputValidation = {
   split_counts: Record<string, number>;
   baseline_references: string[];
   ablation_references: string[];
+  evidence_origin?: AutoResearchEvidenceOrigin | null;
   validation_status: "passed" | "failed" | "blocked";
   blockers: string[];
 };
@@ -3660,6 +3718,13 @@ export type AutoResearchExperimentEnvironmentManifest = {
   python_version?: string | null;
   platform?: string | null;
   environment: Record<string, unknown>;
+  docker_image_digest?: string | null;
+  bridge_target?: string | null;
+  bridge_version?: string | null;
+  bridge_session_id?: string | null;
+  stdout_ref?: string | null;
+  stderr_ref?: string | null;
+  output_hashes: Record<string, string>;
   requirements_recorded: boolean;
   manifest_fingerprint: string;
 };
@@ -3742,6 +3807,7 @@ export type AutoResearchExperimentExecutionResult = {
   status: AutoResearchExperimentExecutionResultStatus;
   job_results: AutoResearchExperimentExecutionJob[];
   execution_profile: Record<string, unknown>;
+  evidence_origin?: AutoResearchEvidenceOrigin | null;
   environment_manifest?: AutoResearchExperimentEnvironmentManifest | null;
   runtime_contract_results: AutoResearchExperimentRuntimeContract[];
   output_validation: AutoResearchExperimentOutputValidation[];
@@ -3750,6 +3816,7 @@ export type AutoResearchExperimentExecutionResult = {
   repair_reasons: string[];
   lineage_refs: string[];
   output_artifact_refs: string[];
+  output_hashes: Record<string, string>;
   negative_evidence: Record<string, unknown>[];
   result_artifact?: AutoResearchResultArtifact | null;
   evidence_ledger?: AutoResearchEvidenceLedger | null;
@@ -3795,6 +3862,38 @@ export type AutoResearchOperatorActionPolicy = {
   recoverable: boolean;
   required_next_action?: string | null;
   related_refs: string[];
+};
+
+export type AutoResearchExternalCapabilityRecord = {
+  capability_id: AutoResearchExternalCapabilityId;
+  provider?: string | null;
+  source?: string | null;
+  config_source: string;
+  checked_at: string;
+  policy_version: string;
+  approval_required: boolean;
+  budget_class: "free" | "bounded" | "approval_required" | "blocked";
+  sandbox_constraints: string[];
+  known_blockers: string[];
+  related_artifact_refs: string[];
+  operator_action_policy?: AutoResearchOperatorActionPolicy | null;
+  state: AutoResearchExternalCapabilityState;
+};
+
+export type AutoResearchExternalCapabilityManifest = {
+  schema_version: string;
+  project_id: string;
+  generated_at: string;
+  policy_version: string;
+  records: AutoResearchExternalCapabilityRecord[];
+  record_count: number;
+  blockers: string[];
+  deterministic: boolean;
+  manifest_fingerprint: string;
+  manifest_path?: string | null;
+  unavailable_count: number;
+  approval_required_count: number;
+  ready_count: number;
 };
 
 export type AutoResearchOperatorActionRequest = {
@@ -4027,6 +4126,7 @@ export type AutoResearchOperatorRunStatus = {
   artifact_lineage: AutoResearchOperatorArtifactLineage;
   package_status: AutoResearchOperatorPackageStatus;
   final_gate_status: AutoResearchOperatorFinalGateStatus;
+  external_capability_manifest?: AutoResearchExternalCapabilityManifest | null;
   action_log?: AutoResearchOperatorActionLog | null;
   audit_artifact_ref?: string | null;
 };
@@ -4244,6 +4344,8 @@ export type AutoResearchOperatorPublicationCase = {
   final_publish_decision_path?: string | null;
   final_publish_policy_version?: string | null;
   final_publish_failed_check_ids: string[];
+  evidence_origin_policy: Record<string, unknown>;
+  external_capability_manifest?: AutoResearchExternalCapabilityManifest | null;
   repair_action_status_counts: Record<string, number>;
   repair_action_recommendations: Record<string, string>;
   review_finding_count: number;
@@ -4333,6 +4435,7 @@ export type AutoResearchOperatorConsole = {
   system_evaluation?: AutoResearchSystemEvaluation | null;
   publication_case?: AutoResearchOperatorPublicationCase | null;
   operator_audit?: AutoResearchOperatorStateAudit | null;
+  external_capability_manifest?: AutoResearchExternalCapabilityManifest | null;
   runs: AutoResearchOperatorRunSummary[];
   current_run?: AutoResearchOperatorRunDetail | null;
 };

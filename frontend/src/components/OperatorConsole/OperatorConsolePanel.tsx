@@ -173,6 +173,15 @@ export function OperatorConsolePanel({
       (approval) => approval.required && approval.status === "pending",
     ) ?? null;
   const operatorAudit = activeConsole?.operator_audit ?? null;
+  const capabilityManifest =
+    operatorStatus?.external_capability_manifest ??
+    activeConsole?.external_capability_manifest ??
+    activeConsole?.publication_case?.external_capability_manifest ??
+    null;
+  const capabilityIssues =
+    capabilityManifest?.records
+      .filter((record) => record.state !== "ready")
+      .slice(0, 5) ?? [];
   const actionAllowed = (action: string, fallback: boolean) =>
     operatorPolicy[action]?.allowed ?? fallback;
   const actionReason = (action: string) =>
@@ -775,6 +784,38 @@ export function OperatorConsolePanel({
                     {policy.action}: {policy.reason}
                   </small>
                 ))}
+            </div>
+          ) : null}
+
+          {capabilityManifest ? (
+            <div className="meta-block" data-testid="operator-external-capabilities">
+              <span className="meta-label">External Capabilities</span>
+              <p>
+                ready={capabilityManifest.ready_count}/{capabilityManifest.record_count}{" "}
+                approval={capabilityManifest.approval_required_count} unavailable=
+                {capabilityManifest.unavailable_count}
+              </p>
+              <code>
+                {capabilityManifest.manifest_fingerprint.slice(0, 12)} ·{" "}
+                {capabilityManifest.manifest_path ?? "external_capability_manifest.json"}
+              </code>
+              {capabilityManifest.blockers.length ? (
+                <ul>
+                  {capabilityManifest.blockers.slice(0, 3).map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              ) : capabilityIssues.length ? (
+                <ul>
+                  {capabilityIssues.map((record) => (
+                    <li key={record.capability_id}>
+                      {formatLabel(record.capability_id)}: {formatLabel(record.state)}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>All declared capabilities are ready.</p>
+              )}
             </div>
           ) : null}
 

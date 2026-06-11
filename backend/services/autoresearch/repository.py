@@ -20,6 +20,7 @@ from schemas.autoresearch import (
     AutoResearchEvaluationCaseAuditRead,
     AutoResearchEvaluationCaseSuiteRead,
     AutoResearchEvaluationCaseTraceRead,
+    AutoResearchExternalCapabilityManifestRead,
     AutoResearchExperimentExecutionPlanRead,
     AutoResearchExperimentExecutionResultRead,
     AutoResearchExperimentFactoryEnvironmentManifestRead,
@@ -125,6 +126,7 @@ EVALUATION_METRICS_FILENAME = "system_metrics.json"
 EVALUATION_SYSTEM_PAPER_MATERIAL_FILENAME = "scholarflow_system_paper_material.json"
 OPERATOR_STATE_AUDIT_FILENAME = "operator_state_audit.json"
 OPERATOR_ACTION_LOG_FILENAME = "operator_action_log.json"
+EXTERNAL_CAPABILITY_MANIFEST_FILENAME = "external_capability_manifest.json"
 BENCHMARK_FILENAME = "benchmark.json"
 BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
@@ -205,6 +207,10 @@ def operator_state_audit_file_path(project_id: str) -> str:
 
 def operator_action_log_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / OPERATOR_ACTION_LOG_FILENAME)
+
+
+def external_capability_manifest_file_path(project_id: str) -> str:
+    return str(autoresearch_dir(project_id) / EXTERNAL_CAPABILITY_MANIFEST_FILENAME)
 
 
 def _literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
@@ -3005,6 +3011,27 @@ def save_benchmark_snapshot(project_id: str, run_id: str, payload: dict) -> str:
 def load_benchmark_snapshot(project_id: str, run_id: str) -> dict | None:
     payload = _read_json(_run_path(project_id, run_id) / BENCHMARK_FILENAME)
     return payload if isinstance(payload, dict) else None
+
+
+def save_external_capability_manifest(
+    manifest: AutoResearchExternalCapabilityManifestRead,
+) -> str:
+    path = Path(external_capability_manifest_file_path(manifest.project_id))
+    payload = manifest.model_dump(mode="json")
+    payload["manifest_path"] = str(path)
+    _write_json(path, payload)
+    return str(path)
+
+
+def load_external_capability_manifest(
+    project_id: str,
+) -> AutoResearchExternalCapabilityManifestRead | None:
+    path = Path(external_capability_manifest_file_path(project_id))
+    payload = _read_json(path)
+    if not isinstance(payload, dict):
+        return None
+    payload.setdefault("manifest_path", str(path))
+    return AutoResearchExternalCapabilityManifestRead.model_validate(payload)
 
 
 def load_candidate_manifest(

@@ -17,6 +17,7 @@ from schemas.autoresearch import (
     AutoResearchCrossRunMetaAnalysisRead,
     AutoResearchExecutionCommandResponse,
     AutoResearchEvaluationCaseSuiteRead,
+    AutoResearchExternalCapabilityManifestRead,
     AutoResearchExperimentBridgeRead,
     AutoResearchExperimentExecutionImportRequest,
     AutoResearchExperimentExecutionPlanRead,
@@ -77,6 +78,10 @@ from services.autoresearch.bridge import (
 from services.autoresearch.console import build_operator_console
 from services.autoresearch.execution import AutoResearchExecutionPlane
 from services.autoresearch.evaluation_cases import build_evaluation_case_suite
+from services.autoresearch.external_capabilities import (
+    build_external_capability_manifest,
+    get_or_build_external_capability_manifest,
+)
 from services.autoresearch.experiment_factory import (
     build_experiment_factory_plan,
     execute_imported_experiment_factory,
@@ -461,6 +466,20 @@ def get_auto_research_operator_state_audit(
 ) -> AutoResearchOperatorStateAuditRead:
     del db
     return build_operator_state_audit(project_id) if rebuild else get_or_build_operator_state_audit(project_id)
+
+
+@router.get("/external-capabilities", response_model=AutoResearchExternalCapabilityManifestRead)
+def get_auto_research_external_capabilities(
+    project_id: str,
+    rebuild: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> AutoResearchExternalCapabilityManifestRead:
+    del db
+    return (
+        build_external_capability_manifest(project_id)
+        if rebuild
+        else get_or_build_external_capability_manifest(project_id)
+    )
 
 
 @router.get("/meta-analysis", response_model=AutoResearchCrossRunMetaAnalysisRead)

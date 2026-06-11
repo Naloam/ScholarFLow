@@ -8,7 +8,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -51,6 +51,7 @@ _ARXIV_NS = {
 _DEFAULT_CONNECTOR_TIMEOUT_SECONDS = 15.0
 _DEFAULT_CONNECTOR_RETRIES = 2
 _DEFAULT_CONNECTOR_RETRY_BACKOFF_SECONDS = 0.25
+_DEFAULT_CACHE_FRESHNESS_DAYS = 30
 
 _STOPWORDS = {
     "about",
@@ -159,6 +160,56 @@ def _stable_id(prefix: str, value: str) -> str:
 def _fingerprint(payload: object) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _parse_datetime(value: datetime | str | None) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    cleaned = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed
+
+
+def _cache_freshness(cache_status: str, cache_timestamp: datetime | str | None) -> str:
+    if cache_status in {"offline", "fixture"}:
+        return "not_applicable"
+    if cache_status == "network":
+        return "fresh"
+    parsed = _parse_datetime(cache_timestamp)
+    if parsed is None:
+        return "unknown"
+    freshness_days = _env_positive_int(
+        "LITERATURE_SCOUT_CACHE_FRESHNESS_DAYS",
+        _DEFAULT_CACHE_FRESHNESS_DAYS,
+    )
+    if _utcnow() - parsed > timedelta(days=freshness_days):
+        return "stale"
+    return "fresh"
+
+
+def _claim_ceiling_for_source(
+    *,
+    source: str,
+    cache_status: str,
+    cache_freshness: str,
+    extraction_status: str,
+) -> str:
+    if source in _SYNTHETIC_SOURCES or cache_status in {"offline", "fixture"}:
+        return "discovery_context_only"
+    if cache_freshness == "stale":
+        return "stale_cache_discovery_only"
+    if cache_freshness == "unknown":
+        return "unverified_cache_review_only"
+    if extraction_status in {"limited_metadata", "metadata_only", "abstract_only"}:
+        return "metadata_or_abstract_review_only"
+    return "source_context_review_only"
 
 
 def _terms(*texts: str | None) -> set[str]:
@@ -388,6 +439,8 @@ def _make_paper(
         if authors or year or venue or url or doi or arxiv_id
         else "limited_metadata"
     )
+    parsed_cache_timestamp = _parse_datetime(cache_timestamp)
+    cache_freshness = _cache_freshness(cache_status, cache_timestamp)
     text = " ".join(part for part in [title, abstract or "", full_text_excerpt or "", venue or ""] if part)
     shared_terms = sorted(_terms(_brief_text(brief), query or "") & _terms(text))
     methods = _dedupe([*(provided_methods or []), *_extract_methods(text, brief)])
@@ -410,6 +463,56 @@ def _make_paper(
         f"shared_terms={', '.join(shared_terms[:6])}" if shared_terms else None,
     ]
     cleaned_source_id = _norm(source_id) or _norm(arxiv_id) or _norm(doi) or paper_id
+    extraction_limitations = _dedupe(
+        [
+            "Only limited metadata was available from the connector."
+            if extraction_status == "limited_metadata"
+            else None,
+            "Only bibliographic metadata was available from the connector."
+            if extraction_status == "metadata_only"
+            else None,
+            "Only abstract-level text was available; full-paper verification is required."
+            if extraction_status == "abstract_only"
+            else None,
+            "Cached source observation is stale and cannot support fresh literature claims."
+            if cache_freshness == "stale"
+            else None,
+            "Cached source observation has unknown freshness."
+            if cache_freshness == "unknown"
+            else None,
+        ]
+    )
+    source_sufficiency_status = (
+        "synthetic"
+        if source in _SYNTHETIC_SOURCES or cache_status in {"offline", "fixture"}
+        else "real_stale"
+        if cache_freshness == "stale"
+        else "real_unknown_freshness"
+        if cache_freshness == "unknown"
+        else "real_fresh"
+    )
+    source_observation_fingerprint = _fingerprint(
+        {
+            "source": source,
+            "source_id": cleaned_source_id,
+            "title": _norm(title),
+            "url": _norm(url),
+            "doi": _norm(doi).lower(),
+            "arxiv_id": _norm(arxiv_id),
+            "cache_status": cache_status,
+            "cache_key": cache_key,
+            "cache_timestamp": parsed_cache_timestamp.isoformat()
+            if parsed_cache_timestamp is not None
+            else None,
+            "extraction_status": extraction_status,
+        }
+    )
+    claim_ceiling = _claim_ceiling_for_source(
+        source=source,
+        cache_status=cache_status,
+        cache_freshness=cache_freshness,
+        extraction_status=extraction_status,
+    )
     paper_fingerprint = _fingerprint(
         {
             "source": source,
@@ -459,10 +562,26 @@ def _make_paper(
         source_query=query,
         cache_status=cache_status,  # type: ignore[arg-type]
         cache_key=cache_key,
-        cache_timestamp=cache_timestamp,
+        cache_timestamp=parsed_cache_timestamp,
+        cache_freshness=cache_freshness,  # type: ignore[arg-type]
+        retrieved_at=parsed_cache_timestamp if cache_status in {"cache_hit", "network"} else None,
+        connector_provider=source,
+        source_observation_fingerprint=source_observation_fingerprint,
         fingerprint=paper_fingerprint,
         extraction_status=extraction_status,  # type: ignore[arg-type]
-        evidence="; ".join(part for part in evidence_parts if part) + ".",
+        extraction_limitations=extraction_limitations,
+        source_sufficiency_status=source_sufficiency_status,
+        related_system_coverage=[],
+        contradiction_signals=[],
+        claim_ceiling=claim_ceiling,
+        evidence="; ".join(
+            [
+                *(part for part in evidence_parts if part),
+                f"cache_freshness={cache_freshness}",
+                f"claim_ceiling={claim_ceiling}",
+            ]
+        )
+        + ".",
     )
 
 
@@ -1002,6 +1121,25 @@ def _merge_duplicate_papers(
         > extraction_rank.get(existing.extraction_level, 0)
         else existing.extraction_level
     )
+    freshness_rank = {"not_applicable": 0, "unknown": 1, "stale": 2, "fresh": 3}
+    cache_freshness = (
+        incoming.cache_freshness
+        if freshness_rank.get(incoming.cache_freshness, 0)
+        > freshness_rank.get(existing.cache_freshness, 0)
+        else existing.cache_freshness
+    )
+    source_sufficiency_rank = {
+        "synthetic": 0,
+        "real_stale": 1,
+        "real_unknown_freshness": 2,
+        "real_fresh": 3,
+    }
+    source_sufficiency_status = (
+        incoming.source_sufficiency_status
+        if source_sufficiency_rank.get(incoming.source_sufficiency_status or "", 0)
+        > source_sufficiency_rank.get(existing.source_sufficiency_status or "", 0)
+        else existing.source_sufficiency_status or incoming.source_sufficiency_status
+    )
     return existing.model_copy(
         update={
             "paper_id": incoming.paper_id if prefer_incoming_identity else existing.paper_id,
@@ -1044,6 +1182,16 @@ def _merge_duplicate_papers(
             "cache_status": incoming.cache_status if prefer_incoming_identity else existing.cache_status,
             "cache_key": incoming.cache_key if prefer_incoming_identity else existing.cache_key or incoming.cache_key,
             "cache_timestamp": incoming.cache_timestamp if prefer_incoming_identity else existing.cache_timestamp or incoming.cache_timestamp,
+            "cache_freshness": cache_freshness,
+            "retrieved_at": incoming.retrieved_at if prefer_incoming_identity else existing.retrieved_at or incoming.retrieved_at,
+            "connector_provider": incoming.connector_provider if prefer_incoming_identity else existing.connector_provider or incoming.connector_provider,
+            "source_observation_fingerprint": _fingerprint(
+                {
+                    "existing": existing.source_observation_fingerprint,
+                    "incoming": incoming.source_observation_fingerprint,
+                    "cache_freshness": cache_freshness,
+                }
+            ),
             "fingerprint": _fingerprint(
                 {
                     "existing": existing.fingerprint,
@@ -1064,6 +1212,17 @@ def _merge_duplicate_papers(
                 if existing.extraction_status != "limited_metadata"
                 else incoming.extraction_status
             ),
+            "extraction_limitations": _dedupe(
+                [*existing.extraction_limitations, *incoming.extraction_limitations]
+            ),
+            "source_sufficiency_status": source_sufficiency_status,
+            "related_system_coverage": _dedupe(
+                [*existing.related_system_coverage, *incoming.related_system_coverage]
+            ),
+            "contradiction_signals": _dedupe(
+                [*existing.contradiction_signals, *incoming.contradiction_signals]
+            ),
+            "claim_ceiling": incoming.claim_ceiling if prefer_incoming_identity else existing.claim_ceiling or incoming.claim_ceiling,
             "evidence": f"{existing.evidence} Duplicate metadata also found via {incoming.source}.",
         }
     )
@@ -1143,6 +1302,8 @@ def search_literature_connectors(
             status.query_count = 1
             fixture_papers = fixture_literature_papers(brief, query=queries[0] if queries else None)
             status.paper_count = len(fixture_papers)
+            status.cache_freshness_counts = {"not_applicable": len(fixture_papers)}
+            status.freshness_policy = "fixture/offline records are deterministic discovery context only."
             papers.extend(fixture_papers)
             statuses.append(status)
             continue
@@ -1210,6 +1371,12 @@ def search_literature_connectors(
                 query=query,
                 brief=brief,
             )
+            for paper in parsed:
+                status.cache_freshness_counts[paper.cache_freshness] = (
+                    status.cache_freshness_counts.get(paper.cache_freshness, 0) + 1
+                )
+                if paper.cache_freshness == "stale":
+                    status.stale_cache_count += 1
             status.paper_count += len(parsed)
             papers.extend(parsed)
         if status.error_count:
@@ -1217,14 +1384,23 @@ def search_literature_connectors(
             status.unavailable_reason = "; ".join(status.errors[:3])
         elif status.paper_count > 0:
             status.availability_status = "available"
+            status.freshness_policy = (
+                f"Cache entries older than {_env_positive_int('LITERATURE_SCOUT_CACHE_FRESHNESS_DAYS', _DEFAULT_CACHE_FRESHNESS_DAYS)} days are stale and cannot support fresh final-publish literature claims."
+            )
+            if status.stale_cache_count:
+                status.availability_blockers.append(
+                    f"{status.stale_cache_count} cached {source} record(s) are stale."
+                )
         elif status.cache_miss_count and not network_enabled:
             status.availability_status = "cache_miss"
             status.unavailable_reason = (
                 f"No cached {source} connector responses were available for this deterministic scout."
             )
+            status.availability_blockers.append(status.unavailable_reason)
         else:
             status.availability_status = "unavailable"
             status.unavailable_reason = f"No {source} literature records were available."
+            status.availability_blockers.append(status.unavailable_reason)
         statuses.append(status)
 
     return deduplicate_literature_papers(papers), statuses

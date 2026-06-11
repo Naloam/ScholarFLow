@@ -45,6 +45,7 @@ from services.autoresearch.bridge import (
     build_bridge_state,
 )
 from services.autoresearch.execution import AutoResearchExecutionPlane
+from services.autoresearch.external_capabilities import get_or_build_external_capability_manifest
 from services.autoresearch.repository import (
     evaluation_case_suite_file_path,
     load_operator_action_log,
@@ -363,6 +364,8 @@ def _final_gate_status(
     project_id: str,
     run_id: str,
     publish: AutoResearchPublishPackageRead | None,
+    external_capability_manifest_path: str | None = None,
+    external_capability_blockers: list[str] | None = None,
 ) -> AutoResearchOperatorFinalGateStatusRead:
     return AutoResearchOperatorFinalGateStatusRead(
         project_id=project_id,
@@ -373,10 +376,15 @@ def _final_gate_status(
         policy_version=None,
         final_publish_decision_path=None,
         failed_check_ids=[],
-        blockers=list(
-            publish.final_blockers
-            if publish is not None
-            else ["Run publish package has not been built."]
+        blockers=_dedupe(
+            [
+                *list(
+                    publish.final_blockers
+                    if publish is not None
+                    else ["Run publish package has not been built."]
+                ),
+                *(external_capability_blockers or []),
+            ]
         ),
         required_followups=list(publish.revision_actions if publish is not None else []),
         kill_criteria=[],
@@ -387,6 +395,7 @@ def _final_gate_status(
                 publish.publication_evidence_index_path if publish is not None else None,
                 publish.claim_evidence_index_path if publish is not None else None,
                 publish.lineage_archive_path if publish is not None else None,
+                external_capability_manifest_path,
             ]
         ),
         final_archive_download_allowed=bool(
@@ -867,6 +876,7 @@ def build_operator_run_status(
     review_loop = build_review_loop(project_id, run_id) if run.status == "done" else None
     result = run.experiment_execution_result
     action_log = load_operator_action_log(project_id, run_id)
+    external_capabilities = get_or_build_external_capability_manifest(project_id)
     approval_record = _latest_approval_record(action_log)
     stale = _stale_refs(publish=publish, expected_fingerprints=expected_fingerprints)
     policy = _build_action_policy(
@@ -888,7 +898,13 @@ def build_operator_run_status(
     )
     lineage = lineage.model_copy(update={"stale_refs": stale})
     package = _package_status(project_id=project_id, run_id=run_id, publish=publish)
-    final_gate = _final_gate_status(project_id=project_id, run_id=run_id, publish=publish)
+    final_gate = _final_gate_status(
+        project_id=project_id,
+        run_id=run_id,
+        publish=publish,
+        external_capability_manifest_path=external_capabilities.manifest_path,
+        external_capability_blockers=external_capabilities.blockers,
+    )
     budget = _budget_status(run, result)
     approvals = _approval_status(
         run=run,
@@ -921,6 +937,7 @@ def build_operator_run_status(
             *package.blockers,
             *final_gate.blockers,
             *budget.blockers,
+            *external_capabilities.blockers,
         ]
     )
     timeline = [
@@ -975,6 +992,7 @@ def build_operator_run_status(
         artifact_lineage=lineage,
         package_status=package,
         final_gate_status=final_gate,
+        external_capability_manifest=external_capabilities,
         action_log=action_log,
         audit_artifact_ref=operator_state_audit_file_path(project_id),
     )

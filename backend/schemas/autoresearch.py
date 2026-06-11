@@ -57,6 +57,43 @@ AutoResearchOperatorControlState = Literal[
     "needs_approval",
     "stale",
 ]
+AutoResearchExternalCapabilityState = Literal[
+    "disabled",
+    "not_configured",
+    "unavailable",
+    "approval_required",
+    "ready",
+    "blocked_by_policy",
+    "failed_validation",
+]
+AutoResearchExternalCapabilityId = Literal[
+    "network",
+    "literature_connectors",
+    "full_text_extraction",
+    "citation_context_extraction",
+    "benchmark_dataset_ingestion",
+    "local_command_execution",
+    "docker_execution",
+    "bridge_execution",
+    "external_artifact_import",
+    "budget_policy",
+    "approval_policy",
+    "sandbox_policy",
+]
+AutoResearchEvidenceOrigin = Literal[
+    "fixture",
+    "toy",
+    "local_smoke",
+    "deterministic_replay",
+    "stale_cache",
+    "fresh_cache",
+    "imported_real_artifact",
+    "frozen_snapshot",
+    "live_source",
+    "docker_execution",
+    "bridge_execution",
+]
+AutoResearchCacheFreshness = Literal["fresh", "stale", "unknown", "not_applicable"]
 AutoResearchOperatorAuditSourceKind = Literal["database", "repository_artifact", "queue_file", "derived"]
 AutoResearchRegistryAssetKind = Literal["file", "directory"]
 AutoResearchManifestSource = Literal["file", "generated_fallback"]
@@ -589,6 +626,40 @@ class BenchmarkSource(BaseModel):
     relevant_ids_field: str | None = None
 
 
+class AutoResearchBenchmarkPackageValidationIssueRead(BaseModel):
+    issue_id: str
+    severity: Literal["error", "warning"] = "error"
+    detail: str
+    field: str | None = None
+    blocker: bool = True
+
+
+class AutoResearchBenchmarkPackageValidationRead(BaseModel):
+    validation_id: str = "benchmark_package_validation_v1"
+    schema_version: str = "benchmark_package_manifest_v1"
+    dataset_id: str | None = None
+    source_locator: str | None = None
+    source_revision: str | None = None
+    source_license: str | None = None
+    package_sha256: str | None = None
+    expected_sha256: str | None = None
+    source_fingerprint: str | None = None
+    source_content_origin: str | None = None
+    split_counts: dict[str, int] = Field(default_factory=dict)
+    sample_count: int = 0
+    label_schema: dict[str, Any] = Field(default_factory=dict)
+    query_document_evidence_schema: dict[str, Any] = Field(default_factory=dict)
+    metric_compatibility: dict[str, Any] = Field(default_factory=dict)
+    source_independence: dict[str, Any] = Field(default_factory=dict)
+    publication_grade_eligible: bool = False
+    final_candidate_eligible: bool = False
+    valid: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    issues: list[AutoResearchBenchmarkPackageValidationIssueRead] = Field(default_factory=list)
+    validation_fingerprint: str
+
+
 class AutoResearchRunRequest(BaseModel):
     topic: str
     task_family_hint: TaskFamily | None = None
@@ -981,8 +1052,17 @@ class AutoResearchLiteratureScoutPaperRead(BaseModel):
     cache_status: Literal["offline", "fixture", "cache_hit", "network"] = "offline"
     cache_key: str | None = None
     cache_timestamp: datetime | None = None
+    cache_freshness: AutoResearchCacheFreshness = "unknown"
+    retrieved_at: datetime | None = None
+    connector_provider: str | None = None
+    source_observation_fingerprint: str | None = None
     fingerprint: str | None = None
     extraction_status: Literal["limited_metadata", "metadata_only", "abstract_only", "full_text"] = "metadata_only"
+    extraction_limitations: list[str] = Field(default_factory=list)
+    source_sufficiency_status: str | None = None
+    related_system_coverage: list[str] = Field(default_factory=list)
+    contradiction_signals: list[str] = Field(default_factory=list)
+    claim_ceiling: str | None = None
     evidence: str
 
 
@@ -996,6 +1076,10 @@ class AutoResearchLiteratureScoutSourceStatusRead(BaseModel):
     error_count: int = 0
     availability_status: Literal["available", "cache_miss", "unavailable", "unsupported", "error"] = "available"
     unavailable_reason: str | None = None
+    cache_freshness_counts: dict[str, int] = Field(default_factory=dict)
+    stale_cache_count: int = 0
+    freshness_policy: str | None = None
+    availability_blockers: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
 
@@ -1320,6 +1404,7 @@ class AutoResearchEvidenceLedgerEntryRead(BaseModel):
     value: float | None = None
     support_status: Literal["supported", "partial", "missing"] = "supported"
     evidence_type: str | None = None
+    evidence_origin: AutoResearchEvidenceOrigin | None = None
     metric_values: dict[str, float] = Field(default_factory=dict)
     sample_counts: dict[str, int] = Field(default_factory=dict)
     baseline_comparisons: dict[str, Any] = Field(default_factory=dict)
@@ -1401,6 +1486,7 @@ class AutoResearchExperimentRuntimeContractRead(BaseModel):
     requires_gpu: bool = False
     requires_docker_daemon: bool = False
     environment_requirements: dict[str, Any] = Field(default_factory=dict)
+    capability_refs: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
 
 
@@ -1416,6 +1502,7 @@ class AutoResearchExperimentOutputValidationRead(BaseModel):
     split_counts: dict[str, int] = Field(default_factory=dict)
     baseline_references: list[str] = Field(default_factory=list)
     ablation_references: list[str] = Field(default_factory=list)
+    evidence_origin: AutoResearchEvidenceOrigin | None = None
     validation_status: Literal["passed", "failed", "blocked"] = "failed"
     blockers: list[str] = Field(default_factory=list)
 
@@ -1431,6 +1518,13 @@ class AutoResearchExperimentEnvironmentManifestRead(BaseModel):
     python_version: str | None = None
     platform: str | None = None
     environment: dict[str, Any] = Field(default_factory=dict)
+    docker_image_digest: str | None = None
+    bridge_target: str | None = None
+    bridge_version: str | None = None
+    bridge_session_id: str | None = None
+    stdout_ref: str | None = None
+    stderr_ref: str | None = None
+    output_hashes: dict[str, str] = Field(default_factory=dict)
     requirements_recorded: bool = True
     manifest_fingerprint: str
 
@@ -1516,6 +1610,7 @@ class AutoResearchExperimentExecutionResultRead(BaseModel):
     status: AutoResearchExperimentExecutionResultStatus
     job_results: list[AutoResearchExperimentExecutionJobRead] = Field(default_factory=list)
     execution_profile: dict[str, Any] = Field(default_factory=dict)
+    evidence_origin: AutoResearchEvidenceOrigin | None = None
     environment_manifest: AutoResearchExperimentEnvironmentManifestRead | None = None
     runtime_contract_results: list[AutoResearchExperimentRuntimeContractRead] = Field(default_factory=list)
     output_validation: list[AutoResearchExperimentOutputValidationRead] = Field(default_factory=list)
@@ -1524,6 +1619,7 @@ class AutoResearchExperimentExecutionResultRead(BaseModel):
     repair_reasons: list[str] = Field(default_factory=list)
     lineage_refs: list[str] = Field(default_factory=list)
     output_artifact_refs: list[str] = Field(default_factory=list)
+    output_hashes: dict[str, str] = Field(default_factory=dict)
     negative_evidence: list[dict[str, Any]] = Field(default_factory=list)
     result_artifact: ResultArtifact | None = None
     evidence_ledger: AutoResearchEvidenceLedgerRead | None = None
@@ -4871,6 +4967,38 @@ class AutoResearchOperatorStateAuditRead(BaseModel):
     conclusion: str
 
 
+class AutoResearchExternalCapabilityRecordRead(BaseModel):
+    capability_id: AutoResearchExternalCapabilityId
+    provider: str | None = None
+    source: str | None = None
+    config_source: str = "default_policy"
+    checked_at: datetime
+    policy_version: str
+    approval_required: bool = False
+    budget_class: Literal["free", "bounded", "approval_required", "blocked"] = "free"
+    sandbox_constraints: list[str] = Field(default_factory=list)
+    known_blockers: list[str] = Field(default_factory=list)
+    related_artifact_refs: list[str] = Field(default_factory=list)
+    operator_action_policy: AutoResearchOperatorActionPolicyRead | None = None
+    state: AutoResearchExternalCapabilityState = "not_configured"
+
+
+class AutoResearchExternalCapabilityManifestRead(BaseModel):
+    schema_version: str = "external_capability_manifest_v1"
+    project_id: str
+    generated_at: datetime
+    policy_version: str
+    records: list[AutoResearchExternalCapabilityRecordRead] = Field(default_factory=list)
+    record_count: int = 0
+    blockers: list[str] = Field(default_factory=list)
+    deterministic: bool = True
+    manifest_fingerprint: str
+    manifest_path: str | None = None
+    unavailable_count: int = 0
+    approval_required_count: int = 0
+    ready_count: int = 0
+
+
 class AutoResearchOperatorApprovalRead(BaseModel):
     approval_id: str
     project_id: str
@@ -5010,6 +5138,7 @@ class AutoResearchOperatorRunStatusRead(BaseModel):
     artifact_lineage: AutoResearchOperatorArtifactLineageRead
     package_status: AutoResearchOperatorPackageStatusRead
     final_gate_status: AutoResearchOperatorFinalGateStatusRead
+    external_capability_manifest: AutoResearchExternalCapabilityManifestRead | None = None
     action_log: AutoResearchOperatorActionLogRead | None = None
     audit_artifact_ref: str | None = None
 
@@ -5216,6 +5345,8 @@ class AutoResearchOperatorPublicationCaseRead(BaseModel):
     final_publish_decision_path: str | None = None
     final_publish_policy_version: str | None = None
     final_publish_failed_check_ids: list[str] = Field(default_factory=list)
+    evidence_origin_policy: dict[str, Any] = Field(default_factory=dict)
+    external_capability_manifest: AutoResearchExternalCapabilityManifestRead | None = None
     repair_action_status_counts: dict[str, int] = Field(default_factory=dict)
     repair_action_recommendations: dict[str, str] = Field(default_factory=dict)
     review_finding_count: int = 0
@@ -5305,6 +5436,7 @@ class AutoResearchOperatorConsoleRead(BaseModel):
     system_evaluation: AutoResearchSystemEvaluationRead | None = None
     publication_case: AutoResearchOperatorPublicationCaseRead | None = None
     operator_audit: AutoResearchOperatorStateAuditRead | None = None
+    external_capability_manifest: AutoResearchExternalCapabilityManifestRead | None = None
     runs: list[AutoResearchOperatorRunSummaryRead] = Field(default_factory=list)
     current_run: AutoResearchOperatorRunDetailRead | None = None
 

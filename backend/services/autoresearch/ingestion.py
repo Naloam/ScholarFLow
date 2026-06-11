@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path, PurePosixPath
@@ -9,7 +10,12 @@ from urllib.parse import urlencode
 
 import httpx
 
-from schemas.autoresearch import BenchmarkSource, TaskFamily
+from schemas.autoresearch import (
+    AutoResearchBenchmarkPackageValidationIssueRead,
+    AutoResearchBenchmarkPackageValidationRead,
+    BenchmarkSource,
+    TaskFamily,
+)
 from services.autoresearch.benchmarks import ResolvedBenchmark, builtin_benchmark, infer_task_family
 
 
@@ -61,6 +67,244 @@ def _dedupe(items: list[str]) -> list[str]:
         seen.add(key)
         deduped.append(cleaned)
     return deduped
+
+
+def _fingerprint(payload: object) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sha256_text(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _validation_issue(
+    issue_id: str,
+    detail: str,
+    *,
+    field: str | None = None,
+    severity: str = "error",
+    blocker: bool = True,
+) -> AutoResearchBenchmarkPackageValidationIssueRead:
+    return AutoResearchBenchmarkPackageValidationIssueRead(
+        issue_id=issue_id,
+        detail=detail,
+        field=field,
+        severity=severity,  # type: ignore[arg-type]
+        blocker=blocker,
+    )
+
+
+def _package_manifest_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    manifest = payload.get("benchmark_package_manifest") or payload.get("package_manifest")
+    if not isinstance(manifest, dict) and payload.get("schema_version") == "benchmark_package_manifest_v1":
+        manifest = payload
+    benchmark_payload = payload.get("benchmark") or payload.get("payload") or payload.get("dataset")
+    if not isinstance(benchmark_payload, dict):
+        benchmark_payload = payload
+    return manifest if isinstance(manifest, dict) else None, benchmark_payload
+
+
+def _split_count_from_manifest(value: Any) -> int:
+    if isinstance(value, dict):
+        try:
+            return int(value.get("count") or value.get("sample_count") or 0)
+        except (TypeError, ValueError):
+            return 0
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def validate_benchmark_package_contract(
+    payload: dict[str, Any],
+    *,
+    raw_text: str | None = None,
+    source: BenchmarkSource | None = None,
+    task_family: TaskFamily | None = None,
+) -> AutoResearchBenchmarkPackageValidationRead:
+    manifest, benchmark_payload = _package_manifest_payload(payload)
+    if manifest is None:
+        issue = _validation_issue(
+            "missing_package_manifest",
+            "Benchmark package validation requires benchmark_package_manifest or schema_version=benchmark_package_manifest_v1.",
+            field="benchmark_package_manifest",
+        )
+        validation_payload = {
+            "schema_version": "benchmark_package_manifest_v1",
+            "issues": [issue.model_dump(mode="json")],
+            "blockers": [issue.detail],
+        }
+        return AutoResearchBenchmarkPackageValidationRead(
+            issues=[issue],
+            blockers=[issue.detail],
+            validation_fingerprint=_fingerprint(validation_payload),
+        )
+
+    issues: list[AutoResearchBenchmarkPackageValidationIssueRead] = []
+    schema_version = str(manifest.get("schema_version") or payload.get("schema_version") or "")
+    if schema_version != "benchmark_package_manifest_v1":
+        issues.append(
+            _validation_issue(
+                "unsupported_schema_version",
+                "Benchmark package manifest schema_version must be benchmark_package_manifest_v1.",
+                field="schema_version",
+            )
+        )
+    dataset_id = str(manifest.get("dataset_id") or payload.get("dataset_id") or (source.dataset_id if source else "") or "")
+    source_locator = str(
+        manifest.get("source_locator")
+        or manifest.get("source_url")
+        or payload.get("source_locator")
+        or payload.get("source_url")
+        or (source.file_path if source and source.file_path else "")
+        or (source.url if source and source.url else "")
+        or ""
+    )
+    source_revision = str(manifest.get("revision") or manifest.get("source_revision") or payload.get("revision") or (source.revision if source else "") or "")
+    source_license = str(manifest.get("license") or manifest.get("source_license") or payload.get("license") or (source.license if source else "") or "")
+    for field, value, detail in [
+        ("dataset_id", dataset_id, "Benchmark package requires dataset_id."),
+        ("source_locator", source_locator, "Benchmark package requires source locator or frozen local file path."),
+        ("revision", source_revision, "Benchmark package requires source revision/version."),
+        ("license", source_license, "Benchmark package requires license or terms."),
+    ]:
+        if not value:
+            issues.append(_validation_issue(f"missing_{field}", detail, field=field))
+
+    expected_sha = str(
+        manifest.get("content_sha256")
+        or manifest.get("benchmark_sha256")
+        or manifest.get("expected_content_sha256")
+        or ""
+    )
+    actual_content_sha = _fingerprint(benchmark_payload)
+    if expected_sha and expected_sha != actual_content_sha:
+        issues.append(
+            _validation_issue(
+                "checksum_mismatch",
+                "Benchmark package content checksum does not match the declared manifest hash.",
+                field="content_sha256",
+            )
+        )
+    package_sha = str(manifest.get("package_sha256") or "")
+    raw_sha = _sha256_text(raw_text) if raw_text is not None else None
+    if package_sha and raw_sha is not None and package_sha != raw_sha:
+        issues.append(
+            _validation_issue(
+                "package_checksum_mismatch",
+                "Benchmark package file checksum does not match package_sha256.",
+                field="package_sha256",
+            )
+        )
+
+    declared_splits = manifest.get("splits") or manifest.get("split_definitions") or {}
+    declared_split_counts = {
+        str(key): _split_count_from_manifest(value)
+        for key, value in declared_splits.items()
+    } if isinstance(declared_splits, dict) else {}
+    actual_split_counts = {
+        split: len(benchmark_payload.get(split, []))
+        for split in ("train", "test", "validation", "dev")
+        if isinstance(benchmark_payload.get(split), list)
+    }
+    split_counts = declared_split_counts or actual_split_counts
+    if not actual_split_counts.get("train") or not (
+        actual_split_counts.get("test")
+        or actual_split_counts.get("validation")
+        or actual_split_counts.get("dev")
+    ):
+        issues.append(
+            _validation_issue(
+                "missing_train_test_splits",
+                "Benchmark package must include non-empty train and test/validation/dev splits.",
+                field="splits",
+            )
+        )
+    for split, declared_count in declared_split_counts.items():
+        if split in actual_split_counts and declared_count != actual_split_counts[split]:
+            issues.append(
+                _validation_issue(
+                    f"{split}_split_count_mismatch",
+                    f"Declared {split} split count does not match package records.",
+                    field=f"splits.{split}.count",
+                )
+            )
+
+    label_schema = manifest.get("label_schema") or payload.get("label_schema") or {}
+    query_schema = (
+        manifest.get("query_document_evidence_schema")
+        or payload.get("query_document_evidence_schema")
+        or {}
+    )
+    metric_compatibility = manifest.get("metric_compatibility") or {}
+    source_independence = manifest.get("source_independence") or {}
+    if not isinstance(label_schema, dict) or not label_schema:
+        issues.append(
+            _validation_issue(
+                "missing_label_schema",
+                "Benchmark package requires an explicit label/target schema.",
+                field="label_schema",
+            )
+        )
+    if task_family == "ir_reranking" and (not isinstance(query_schema, dict) or not query_schema):
+        issues.append(
+            _validation_issue(
+                "missing_query_document_evidence_schema",
+                "IR benchmark packages require query/document/evidence schema coverage.",
+                field="query_document_evidence_schema",
+            )
+        )
+    if not isinstance(metric_compatibility, dict) or not metric_compatibility:
+        issues.append(
+            _validation_issue(
+                "missing_metric_compatibility",
+                "Benchmark package requires metric compatibility metadata.",
+                field="metric_compatibility",
+            )
+        )
+    if not isinstance(source_independence, dict) or "ready" not in source_independence:
+        issues.append(
+            _validation_issue(
+                "missing_source_independence",
+                "Benchmark package requires source-independence metadata, even when not ready.",
+                field="source_independence",
+            )
+        )
+
+    blockers = [issue.detail for issue in issues if issue.blocker and issue.severity == "error"]
+    warnings = [issue.detail for issue in issues if issue.severity == "warning"]
+    sample_count = sum(actual_split_counts.values())
+    validation_payload = {
+        "schema_version": schema_version or "benchmark_package_manifest_v1",
+        "dataset_id": dataset_id,
+        "source_locator": source_locator,
+        "source_revision": source_revision,
+        "source_license": source_license,
+        "package_sha256": raw_sha or package_sha or actual_content_sha,
+        "expected_sha256": expected_sha or package_sha or None,
+        "source_fingerprint": str(manifest.get("source_fingerprint") or actual_content_sha),
+        "source_content_origin": str(manifest.get("source_content_origin") or payload.get("source_content_origin") or "imported_real"),
+        "split_counts": split_counts,
+        "sample_count": sample_count,
+        "label_schema": label_schema if isinstance(label_schema, dict) else {},
+        "query_document_evidence_schema": query_schema if isinstance(query_schema, dict) else {},
+        "metric_compatibility": metric_compatibility if isinstance(metric_compatibility, dict) else {},
+        "source_independence": source_independence if isinstance(source_independence, dict) else {},
+        "publication_grade_eligible": not blockers and sample_count >= 20,
+        "final_candidate_eligible": not blockers and sample_count >= 100 and bool(
+            source_independence.get("ready") if isinstance(source_independence, dict) else False
+        ),
+        "valid": not blockers,
+        "blockers": blockers,
+        "warnings": warnings,
+        "issues": [issue.model_dump(mode="json") for issue in issues],
+    }
+    return AutoResearchBenchmarkPackageValidationRead(
+        **validation_payload,
+        validation_fingerprint=_fingerprint(validation_payload),
+    )
 
 
 def _rows_from_csv(text: str) -> list[dict[str, Any]]:
@@ -769,12 +1013,48 @@ class RemoteFileAdapter:
             raw = _fetch_remote_text(source.url or "")
         name = _default_name(source)
         parsed = self.parser(raw)
+        benchmark_package_validation: AutoResearchBenchmarkPackageValidationRead | None = None
+        if isinstance(parsed, dict):
+            manifest, benchmark_payload = _package_manifest_payload(parsed)
+            if manifest is not None:
+                benchmark_package_validation = validate_benchmark_package_contract(
+                    parsed,
+                    raw_text=raw,
+                    source=source,
+                    task_family=task_family,
+                )
+                if not benchmark_package_validation.valid:
+                    raise BenchmarkIngestionError(
+                        "Benchmark package validation failed: "
+                        + "; ".join(benchmark_package_validation.blockers)
+                    )
+                parsed = {
+                    **benchmark_payload,
+                    "dataset_id": benchmark_package_validation.dataset_id,
+                    "revision": benchmark_package_validation.source_revision,
+                    "license": benchmark_package_validation.source_license,
+                    "source_locator": benchmark_package_validation.source_locator,
+                    "source_fingerprint": benchmark_package_validation.source_fingerprint,
+                    "source_content_origin": benchmark_package_validation.source_content_origin
+                    or "imported_real",
+                    "source_class": "imported_real" if source.file_path else "remote_real",
+                    "query_document_evidence_schema": benchmark_package_validation.query_document_evidence_schema,
+                    "publication_grade": benchmark_package_validation.publication_grade_eligible,
+                    "publication_grade_eligibility": benchmark_package_validation.model_dump(mode="json"),
+                    "publication_grade_blockers": list(benchmark_package_validation.blockers),
+                    "final_publish_candidate_eligible": benchmark_package_validation.final_candidate_eligible,
+                    "final_publish_candidate_blockers": []
+                    if benchmark_package_validation.final_candidate_eligible
+                    else ["Benchmark package is not final-publish-candidate eligible."],
+                }
         if self.kind == "beir_json":
             payload = _normalize_beir_payload(source, parsed, name)
         elif self.kind == "scifact_json":
             payload = _normalize_scifact_payload(source, parsed, name)
         else:
             payload = _normalize_dataset_payload(source, task_family, parsed, name)
+        if benchmark_package_validation is not None:
+            payload["benchmark_package_validation"] = benchmark_package_validation.model_dump(mode="json")
 
         return ResolvedBenchmark(
             source=source,

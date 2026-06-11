@@ -206,8 +206,17 @@ def _offline_papers(brief: AutoResearchResearchBriefRead) -> list[AutoResearchLi
                         "direction_id": direction.direction_id,
                     }
                 ),
+                cache_freshness="not_applicable",
+                connector_provider="offline_project_context",
+                source_observation_fingerprint=_fingerprint(paper_payload),
                 fingerprint=_fingerprint(paper_payload),
                 extraction_status="abstract_only",
+                extraction_limitations=[
+                    "Offline project-context signal is not an external literature observation.",
+                    "Live or cached external literature must verify novelty before final-publish claims.",
+                ],
+                source_sufficiency_status="synthetic",
+                claim_ceiling="discovery_context_only",
                 evidence=(
                     "Offline scout synthesized this risk from the brief's benchmark, baseline, "
                     "metric, and method obligations; live literature is still required before publish claims."

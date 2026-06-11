@@ -81,7 +81,11 @@ def _tokens(*texts: str | None) -> set[str]:
 
 def _literature_source_class(paper: AutoResearchLiteratureScoutPaperRead) -> str:
     if paper.source in _REAL_LITERATURE_SOURCES:
-        return "real_cached_or_network"
+        if paper.cache_freshness == "stale":
+            return "real_stale_cache"
+        if paper.cache_freshness == "unknown":
+            return "real_unknown_freshness"
+        return "real_fresh_cached_or_network"
     if paper.source in _SYNTHETIC_LITERATURE_SOURCES or paper.cache_status in {"offline", "fixture"}:
         return "fixture_or_offline"
     return "unknown"
@@ -248,15 +252,22 @@ def build_domain_literature_result(
         return None
     papers = list(scout.similar_papers)
     real_papers = [paper for paper in papers if paper.source in _REAL_LITERATURE_SOURCES]
+    stale_real_papers = [paper for paper in real_papers if paper.cache_freshness == "stale"]
+    sufficient_real_papers = [
+        paper
+        for paper in real_papers
+        if paper.cache_freshness != "stale"
+    ]
     source_classes: dict[str, int] = {}
     for paper in papers:
         source_class = _literature_source_class(paper)
         source_classes[source_class] = source_classes.get(source_class, 0) + 1
-    real_sources = sorted({paper.source for paper in real_papers})
+    real_sources = sorted({paper.source for paper in sufficient_real_papers})
+    observed_real_sources = sorted({paper.source for paper in real_papers})
     required_present = [
         source
         for source in strategy.required_source_classes
-        if scout.source_counts.get(source, 0) > 0
+        if source in real_sources
     ]
     missing_required_sources = [
         source
@@ -269,7 +280,7 @@ def build_domain_literature_result(
     )
     fixture_only = bool(papers) and not real_papers
     coverage = [
-        _coverage_for_expectation(expectation, real_papers)
+        _coverage_for_expectation(expectation, sufficient_real_papers)
         for expectation in strategy.related_system_coverage_expectations
     ]
     coverage_complete = bool(coverage) and all(item.covered for item in coverage)
@@ -278,6 +289,11 @@ def build_domain_literature_result(
             *[item.limitation for item in coverage if item.limitation],
             "Literature scout metadata is abstract-level; full-paper verification is required before final-publish positioning.",
             strategy.fixture_only_limitation_policy if fixture_only else None,
+            (
+                f"{len(stale_real_papers)} real literature source observation(s) came from stale cache and are discovery context only."
+                if stale_real_papers
+                else None
+            ),
         ]
     )
     extraction_limitations = _dedupe(
@@ -288,6 +304,10 @@ def build_domain_literature_result(
             )
             for paper in papers
             if paper.extraction_status in {"limited_metadata", "metadata_only", "abstract_only"}
+        ]
+        + [
+            f"Paper `{paper.paper_id}` uses stale cached {paper.source} metadata; refresh before final-publish literature claims."
+            for paper in stale_real_papers
         ]
     )
     blockers = _dedupe(
@@ -312,6 +332,11 @@ def build_domain_literature_result(
             (
                 "Literature source sufficiency policy is not satisfied for final-publish novelty claims."
                 if not source_sufficiency_ready
+                else None
+            ),
+            (
+                f"{len(stale_real_papers)} real literature source observation(s) are stale and do not count toward final-publish source sufficiency."
+                if stale_real_papers
                 else None
             ),
             (
@@ -355,6 +380,8 @@ def build_domain_literature_result(
         "source_sufficiency_policy": {
             "minimum_real_source_count": strategy.minimum_real_source_count,
             "real_source_count": len(real_sources),
+            "observed_real_source_count": len(observed_real_sources),
+            "stale_real_source_observation_count": len(stale_real_papers),
             "required_source_classes": list(strategy.required_source_classes),
             "required_source_classes_present": required_present,
             "missing_required_source_classes": missing_required_sources,

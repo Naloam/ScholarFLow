@@ -11,6 +11,7 @@ import type {
   AutoResearchExecution,
   AutoResearchExecutionCommandResponse,
   AutoResearchEvaluationCaseSuite,
+  AutoResearchExternalCapabilityManifest,
   AutoResearchExperimentBridge,
   AutoResearchExperimentExecutionImportRequest,
   AutoResearchExperimentExecutionPlan,
@@ -651,6 +652,20 @@ export const api = {
     const query = params.size > 0 ? `?${params.toString()}` : "";
     return request(
       `/api/projects/${projectId}/auto-research/operator/audit${query}`,
+    );
+  },
+
+  getAutoResearchExternalCapabilities(
+    projectId: string,
+    options?: { rebuild?: boolean },
+  ): Promise<AutoResearchExternalCapabilityManifest> {
+    const params = new URLSearchParams();
+    if (options?.rebuild !== undefined) {
+      params.set("rebuild", String(options.rebuild));
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return request(
+      `/api/projects/${projectId}/auto-research/external-capabilities${query}`,
     );
   },
 

@@ -22,6 +22,7 @@ import services.autoresearch.bridge as autoresearch_bridge
 import services.autoresearch.evaluation_cases as autoresearch_evaluation_cases
 import services.autoresearch.experiment_execution as autoresearch_experiment_execution
 import services.autoresearch.experiment_factory as autoresearch_experiment_factory
+import services.autoresearch.external_capabilities as autoresearch_external_capabilities
 import services.autoresearch.idea_brief as autoresearch_idea_brief
 import services.autoresearch.ingestion as autoresearch_ingestion
 import services.autoresearch.literature_connectors as autoresearch_literature_connectors
@@ -621,6 +622,60 @@ def test_scifact_json_adapter_records_frozen_snapshot_metadata_without_promoting
     assert "Benchmark has fewer than 20 normalized examples." in spec.dataset.publication_grade_blockers
     assert spec.dataset.publication_grade_eligibility["checks"]["not_internal_fixture"] is True
     assert spec.dataset.publication_grade_eligibility["checks"]["meets_min_examples"] is False
+
+
+def test_goal10_benchmark_package_manifest_rejects_checksum_mismatch(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "benchmark_package_manifest": {
+            "schema_version": "benchmark_package_manifest_v1",
+            "dataset_id": "external/claim-evidence-mini",
+            "source_locator": "s3://benchmarks/claim-evidence-mini.json",
+            "revision": "2026-06-01",
+            "license": "cc-by-4.0",
+            "content_sha256": "not-the-content-hash",
+            "splits": {"train": {"count": 1}, "test": {"count": 1}},
+            "label_schema": {"label_field": "label", "labels": ["support", "refute"]},
+            "query_document_evidence_schema": {
+                "query_field": "query",
+                "document_field": "document",
+                "evidence_field": "evidence",
+                "relevance_field": "label",
+            },
+            "metric_compatibility": {"primary_metric": "accuracy", "metrics": ["accuracy"]},
+            "source_independence": {"ready": True, "independent_source_count": 2},
+            "source_content_origin": "imported_real",
+        },
+        "benchmark": {
+            "train": [
+                {"query": "q1", "document": "d1", "evidence": "e1", "label": "support"}
+            ],
+            "test": [
+                {"query": "q2", "document": "d2", "evidence": "e2", "label": "refute"}
+            ],
+        },
+    }
+
+    validation = autoresearch_ingestion.validate_benchmark_package_contract(
+        payload,
+        raw_text=json.dumps(payload),
+        task_family="ir_reranking",
+    )
+    assert validation.valid is False
+    assert any(issue.issue_id == "checksum_mismatch" for issue in validation.issues)
+    assert any("checksum" in blocker.lower() for blocker in validation.blockers)
+
+    package_path = tmp_path / "benchmark_package.json"
+    package_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(autoresearch_ingestion.BenchmarkIngestionError) as exc:
+        autoresearch_ingestion.resolve_benchmark(
+            topic="claim evidence retrieval for scientific writing agents",
+            task_family_hint="ir_reranking",
+            benchmark_source=BenchmarkSource(kind="remote_json", file_path=str(package_path)),
+        )
+    assert "Benchmark package validation failed" in str(exc.value)
+    assert "checksum" in str(exc.value).lower()
 
 
 def test_imported_scifact_vertical_snapshot_is_repository_local_and_adapter_readable(
@@ -7317,6 +7372,57 @@ def test_literature_connectors_parse_cached_sources_without_network(
     assert all(status.availability_status == "available" for status in statuses)
 
 
+def test_goal10_stale_cached_literature_is_discovery_only(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-goal10-stale-literature",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    query = _cached_literature_query(brief)
+    autoresearch_repository.save_literature_scout_cache(
+        brief.project_id,
+        source="arxiv",
+        query=query,
+        limit=3,
+        payload={"raw": _arxiv_cache_fixture(), "fetched_at": "2020-01-01T00:00:00"},
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("stale-cache regression must not use network")
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fail_fetch)
+
+    scouted = autoresearch_literature_scout.build_literature_scout_with_options(
+        brief,
+        sources=["arxiv"],
+        network_enabled=False,
+    )
+
+    paper = next(item for item in scouted.similar_papers if item.source == "arxiv")
+    assert paper.cache_freshness == "stale"
+    assert paper.claim_ceiling == "stale_cache_discovery_only"
+    assert "stale" in " ".join(paper.extraction_limitations).lower()
+    assert scouted.source_statuses[0].cache_freshness_counts["stale"] == 1
+    assert scouted.source_statuses[0].stale_cache_count == 1
+    assert scouted.domain_literature_result is not None
+    assert scouted.domain_literature_result.real_source_count == 0
+    assert scouted.domain_literature_result.source_sufficiency_ready is False
+    assert scouted.domain_literature_result.source_class_counts["real_stale_cache"] == 1
+    assert (
+        scouted.domain_literature_result.source_sufficiency_policy[
+            "stale_real_source_observation_count"
+        ]
+        == 1
+    )
+    assert any(
+        "stale" in blocker.lower()
+        for blocker in scouted.domain_literature_result.blockers
+    )
+
+
 def test_literature_connectors_record_cache_miss_without_fake_papers(
     monkeypatch,
     tmp_path: Path,
@@ -9020,9 +9126,11 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     final_publish_decision = orchestration.project_final_publish_decision
     assert final_publish_decision is not None
     assert final_publish_decision.final_publish_ready is False
-    assert final_publish_decision.policy_version == (
-        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
+    expected_final_policy_version = (
+        f"{autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION}"
+        f"+{autoresearch_project_paper_orchestrator.GOAL10_EVIDENCE_ORIGIN_POLICY_VERSION}"
     )
+    assert final_publish_decision.policy_version == expected_final_policy_version
     assert final_publish_decision.paper_tier == "technical_report"
     failed_final_check_ids = {check.check_id for check in final_publish_decision.failed_checks}
     assert failed_final_check_ids >= {
@@ -9030,6 +9138,7 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
         "benchmark_provenance_and_independence",
         "statistics_multi_run_multi_split_sufficiency",
         "negative_evidence_retention",
+        "evidence_origin_policy",
         "reproducibility_package_completeness",
         "reviewer_revision_terminal_status",
         "project_publish_gate",
@@ -9141,9 +9250,7 @@ def test_project_paper_orchestrator_keeps_single_run_to_technical_report(
     assert publication_manifest["limitations_appendix_sha256"] is not None
     assert publication_manifest["artifact_integrity_audit_sha256"] is not None
     assert publication_manifest["final_publish_decision_sha256"] is not None
-    assert publication_manifest["final_publish_policy_version"] == (
-        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
-    )
+    assert publication_manifest["final_publish_policy_version"] == expected_final_policy_version
     assert set(publication_manifest["final_publish_failed_check_ids"]) == (
         failed_final_check_ids
     )
@@ -9871,9 +9978,12 @@ def test_operator_console_surfaces_offline_publication_case_status(
     assert publication_case.artifact_integrity_unresolved_issue_count == 0
     assert publication_case.final_publish_decision_path is not None
     assert Path(publication_case.final_publish_decision_path).is_file()
-    assert publication_case.final_publish_policy_version == (
-        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
+    expected_final_policy_version = (
+        f"{autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION}"
+        f"+{autoresearch_project_paper_orchestrator.GOAL10_EVIDENCE_ORIGIN_POLICY_VERSION}"
     )
+    assert publication_case.final_publish_policy_version == expected_final_policy_version
+    assert publication_case.evidence_origin_policy
     assert "project_publish_gate" in publication_case.final_publish_failed_check_ids
     assert publication_case.repair_action_status_counts
     assert "blocked" in publication_case.repair_action_status_counts
@@ -11824,7 +11934,8 @@ def test_evaluation_cases_include_required_internal_cases_and_metrics() -> None:
     assert claim_evidence_vertical.trace.project_final_publish_decision_path is not None
     assert Path(claim_evidence_vertical.trace.project_final_publish_decision_path).is_file()
     assert claim_evidence_vertical.trace.project_final_publish_policy_version == (
-        autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION
+        f"{autoresearch_project_paper_orchestrator.GOAL7_FINAL_PUBLISH_POLICY_VERSION}"
+        f"+{autoresearch_project_paper_orchestrator.GOAL10_EVIDENCE_ORIGIN_POLICY_VERSION}"
     )
     assert "project_publish_gate" in (
         claim_evidence_vertical.trace.project_final_publish_failed_check_ids
@@ -13295,9 +13406,17 @@ def test_goal3_local_and_import_runtime_success_preserves_review_claim_ceiling()
     assert local_plan.status == "ready"
     assert all(job.execution_route == "local_command" for job in local_plan.jobs)
     assert all(job.command[:3] == ["scholarflow", "experiment-execution", "local-fixture"] for job in local_plan.jobs)
+    assert all(
+        "external_capability:local_command_execution" in job.runtime_contract.capability_refs
+        for job in local_plan.jobs
+    )
     assert local_result.status == "succeeded"
+    assert local_result.evidence_origin == "local_smoke"
     assert local_result.claim_ceiling == "review_only_engineering_validation_claim"
+    assert local_result.output_hashes
+    assert all(item.evidence_origin == "local_smoke" for item in local_result.output_validation)
     assert local_result.evidence_ledger is not None
+    assert {entry.evidence_origin for entry in local_result.evidence_ledger.entries} == {"local_smoke"}
     assert any(
         "review-only engineering validation" in blocker
         for blocker in local_result.evidence_ledger.blockers
@@ -13345,12 +13464,118 @@ def test_goal3_local_and_import_runtime_success_preserves_review_claim_ceiling()
     )
 
     assert import_result.status == "succeeded"
+    assert import_result.evidence_origin == "fixture"
     assert all(job.status == "imported" for job in import_result.job_results)
     assert import_result.output_validation
     assert import_result.result_artifact is not None
     assert import_result.result_artifact.outputs["import_provenance"]["source_package_ref"] == (
         "offline-fixture://citation-faithfulness"
     )
+
+
+def test_goal10_imported_execution_hash_mismatch_keeps_origin_and_negative_evidence() -> None:
+    brief, factory_plan = _goal3_factory_plan(
+        project_id="project-goal10-import-hash",
+        idea="Evaluate RAG citation faithfulness for knowledge intensive QA with grounded source attributions",
+        domain="citation faithfulness",
+    )
+    import_plan = autoresearch_experiment_execution.build_experiment_execution_plan(
+        factory_plan=factory_plan,
+        brief=brief,
+        request=AutoResearchExperimentExecutionPlanRequest(execution_route="external_import"),
+    )
+    imported_package = autoresearch_experiment_execution._base_output_package(import_plan)
+
+    result = autoresearch_experiment_execution.execute_experiment_execution_plan(
+        import_plan,
+        import_request=AutoResearchExperimentExecutionImportRequest(
+            summary="Imported real artifact with mismatched declared hash.",
+            artifact_package=imported_package,
+            source_package_ref="s3://benchmarks/real-citation-faithfulness-result.json",
+            provenance={"expected_artifact_sha256": "not-the-imported-package-hash"},
+        ),
+    )
+
+    assert result.status == "failed"
+    assert result.failure_classification == "environment_mismatch"
+    assert result.evidence_origin == "imported_real_artifact"
+    assert result.output_hashes
+    assert any("sha256" in reason.lower() for reason in result.repair_reasons)
+    assert result.negative_evidence
+    assert all(item["evidence_origin"] == "imported_real_artifact" for item in result.negative_evidence)
+    assert result.evidence_ledger is not None
+    assert {
+        entry.evidence_origin for entry in result.evidence_ledger.entries
+    } == {"imported_real_artifact"}
+
+
+def test_goal10_final_gate_evidence_origin_policy_blocks_non_publication_origins() -> None:
+    blocked = autoresearch_project_paper_orchestrator._evidence_origin_policy_payload(
+        literature_support_index={
+            "papers": [
+                {
+                    "paper_id": "arxiv:old",
+                    "source_class": "cached_real_connector",
+                    "cache_freshness": "stale",
+                }
+            ],
+            "source_class_counts": {"cached_real_connector": 1},
+        },
+        benchmark_provenance_manifest={
+            "complete": True,
+            "benchmark_source_records": [{"source_class": "cached_fixture"}],
+            "benchmark_source_independence_audit": {"complete": True},
+        },
+        experiment_repair_index={
+            "execution_coverage_ready": True,
+            "execution_profiles": [{"evidence_origin": "local_smoke"}],
+        },
+        statistics_report={
+            "claim_ceiling_recommendation": "final_publish_claim",
+            "final_publish_statistics_blockers": [],
+        },
+        negative_evidence_report={"negative_evidence_retained": True},
+    )
+
+    assert blocked["passed"] is False
+    assert blocked["origin_counts"]["stale_cache"] == 1
+    assert blocked["origin_counts"]["fixture"] == 1
+    assert blocked["origin_counts"]["local_smoke"] == 1
+    assert any("stale" in blocker.lower() for blocker in blocked["blockers"])
+    assert any("local_smoke" in blocker for blocker in blocked["blockers"])
+
+    passing = autoresearch_project_paper_orchestrator._evidence_origin_policy_payload(
+        literature_support_index={
+            "papers": [
+                {
+                    "paper_id": "arxiv:fresh",
+                    "source_class": "cached_real_connector",
+                    "cache_freshness": "fresh",
+                }
+            ],
+            "source_class_counts": {"cached_real_connector": 1},
+        },
+        benchmark_provenance_manifest={
+            "complete": True,
+            "benchmark_source_records": [{"source_class": "frozen_snapshot"}],
+            "benchmark_source_independence_audit": {"complete": True},
+        },
+        experiment_repair_index={
+            "execution_coverage_ready": True,
+            "execution_profiles": [{"evidence_origin": "bridge_execution"}],
+        },
+        statistics_report={
+            "claim_ceiling_recommendation": "final_publish_claim",
+            "final_publish_statistics_blockers": [],
+        },
+        negative_evidence_report={"negative_evidence_retained": True},
+    )
+
+    assert passing["passed"] is True
+    assert passing["blockers"] == []
+    assert passing["origin_counts"]["fresh_cache"] == 1
+    assert passing["origin_counts"]["frozen_snapshot"] == 1
+    assert passing["origin_counts"]["bridge_execution"] == 1
 
 
 def test_goal3_execution_blockers_for_unsupported_docker_and_approval() -> None:
@@ -13514,6 +13739,69 @@ def _goal9_persisted_run_with_execution(
                 "paper_markdown": "# Goal 9 operator run\n\nPersisted state only.",
             }
         )
+    )
+
+
+def test_goal10_external_capability_manifest_is_persisted_and_visible(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    for name in [
+        "SCHOLARFLOW_EXTERNAL_NETWORK_APPROVED",
+        "SCHOLARFLOW_DOCKER_AVAILABLE",
+        "SCHOLARFLOW_BRIDGE_AVAILABLE",
+        "SCHOLARFLOW_FULL_TEXT_EXTRACTION_ENABLED",
+        "SCHOLARFLOW_CITATION_CONTEXT_ENABLED",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(settings, "semantic_scholar_api_key", None)
+    monkeypatch.setattr(settings, "crossref_api_key", None)
+    monkeypatch.setattr(settings, "arxiv_api_key", None)
+
+    run = _goal9_persisted_run_with_execution(
+        project_id="project-goal10-capabilities",
+        run_id="run-goal10-capabilities",
+        tmp_path=tmp_path,
+        approval_required=True,
+    )
+
+    manifest = autoresearch_external_capabilities.build_external_capability_manifest(
+        run.project_id
+    )
+    loaded = autoresearch_repository.load_external_capability_manifest(run.project_id)
+    rebuilt = autoresearch_external_capabilities.build_external_capability_manifest(
+        run.project_id
+    )
+    records = {record.capability_id: record for record in manifest.records}
+
+    assert loaded is not None
+    assert loaded.manifest_fingerprint == manifest.manifest_fingerprint
+    assert rebuilt.manifest_fingerprint == manifest.manifest_fingerprint
+    assert manifest.record_count == len(manifest.records)
+    assert manifest.manifest_path is not None
+    assert Path(manifest.manifest_path).is_file()
+    assert records["network"].state == "disabled"
+    assert records["docker_execution"].state == "unavailable"
+    assert records["local_command_execution"].state == "ready"
+    assert records["external_artifact_import"].state == "approval_required"
+    assert records["external_artifact_import"].operator_action_policy is not None
+    assert records["approval_policy"].state == "ready"
+    assert manifest.ready_count >= 4
+    assert manifest.unavailable_count >= 1
+    assert manifest.approval_required_count >= 1
+
+    status = autoresearch_operator_control.build_operator_run_status(run.project_id, run.id)
+    console = autoresearch_console.build_operator_console(run.project_id, run_id=run.id)
+    assert status.external_capability_manifest is not None
+    assert status.external_capability_manifest.manifest_fingerprint == rebuilt.manifest_fingerprint
+    assert console.external_capability_manifest is not None
+    assert console.external_capability_manifest.manifest_fingerprint == rebuilt.manifest_fingerprint
+    assert console.current_run is not None
+    assert console.current_run.operator_status is not None
+    assert (
+        console.current_run.operator_status.external_capability_manifest.manifest_fingerprint
+        == rebuilt.manifest_fingerprint
     )
 
 

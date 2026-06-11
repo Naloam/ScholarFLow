@@ -36,6 +36,13 @@ from schemas.autoresearch import (
 
 
 APPROVED_LOCAL_COMMAND = ["scholarflow", "experiment-execution", "local-fixture"]
+_ROUTE_CAPABILITY_REF = {
+    "deterministic_replay": "external_capability:benchmark_dataset_ingestion",
+    "local_command": "external_capability:local_command_execution",
+    "docker": "external_capability:docker_execution",
+    "external_import": "external_capability:external_artifact_import",
+    "bridge_import": "external_capability:bridge_execution",
+}
 
 
 def _utcnow() -> datetime:
@@ -64,6 +71,44 @@ def _dedupe(items: list[Any]) -> list[str]:
         seen.add(key)
         deduped.append(cleaned)
     return deduped
+
+
+def _evidence_origin_for_route(
+    route: AutoResearchExperimentExecutionRoute,
+    *,
+    import_request: AutoResearchExperimentExecutionImportRequest | None = None,
+) -> str:
+    if route == "deterministic_replay":
+        return "deterministic_replay"
+    if route == "local_command":
+        return "local_smoke"
+    if route == "docker":
+        return "docker_execution"
+    if route == "bridge_import":
+        return "bridge_execution"
+    provenance = import_request.provenance if import_request is not None else {}
+    source_ref = (import_request.source_package_ref if import_request is not None else "") or ""
+    origin = str(provenance.get("source_content_origin") or provenance.get("evidence_origin") or "").lower()
+    if any(signal in origin for signal in {"fixture", "toy", "synthetic"}) or any(
+        signal in source_ref.lower() for signal in {"fixture", "toy", "synthetic"}
+    ):
+        return "fixture"
+    return "imported_real_artifact"
+
+
+def _expected_import_sha(import_request: AutoResearchExperimentExecutionImportRequest | None) -> str | None:
+    if import_request is None:
+        return None
+    for key in (
+        "expected_artifact_sha256",
+        "artifact_sha256",
+        "source_package_sha256",
+        "content_sha256",
+    ):
+        value = import_request.provenance.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _blocker(
@@ -140,7 +185,7 @@ def _contract_for_job(
         contract_id=f"experiment_runtime_contract_{_slug(job.job_id)}",
         execution_route=route,
         deterministic=bool(requirements.get("deterministic", True)),
-        allowed_command=route != "local_command" or job.command.startswith("scholarflow toy-run"),
+        allowed_command=route != "local_command" or job.command.startswith(" ".join(APPROVED_LOCAL_COMMAND)),
         required_inputs=list(job.inputs),
         expected_outputs=list(job.expected_outputs),
         metric_schema=list(protocol.metric_schema if protocol is not None else []),
@@ -156,6 +201,7 @@ def _contract_for_job(
             "docker_image": plan.execution_backend.docker_image,
             "gpu_required": plan.execution_backend.gpu_required,
         },
+        capability_refs=[_ROUTE_CAPABILITY_REF[route]],
     )
 
 
@@ -458,13 +504,19 @@ def _base_output_package(
     metric_values = _metric_values(first_job.metric_schema, domain_id=first_job.domain_id)
     primary_metric = next(iter(metric_values))
     is_import = import_request is not None
+    evidence_origin = _evidence_origin_for_route(
+        first_job.execution_route,
+        import_request=import_request,
+    )
     package: dict[str, Any] = {
         "schema_version": "experiment_execution_result_v1",
         "domain_id": first_job.domain_id,
         "protocol_id": first_job.protocol_id,
         "benchmark_resolver_ref": first_job.benchmark_resolver_ref,
+        "evidence_origin": evidence_origin,
         "execution_profile": {
             "route": first_job.execution_route,
+            "evidence_origin": evidence_origin,
             "command": first_job.command,
             "cwd": ".",
             "timeout_seconds": first_job.runtime_contract.timeout_seconds,
@@ -477,6 +529,8 @@ def _base_output_package(
             "requires_paid_llm": False,
             "requires_gpu": False,
             "requires_docker_daemon": first_job.execution_route == "docker",
+            "docker_image_digest": first_job.environment_requirements.get("docker_image_digest"),
+            "bridge_target": first_job.import_spec.get("bridge_target") if first_job.import_spec else None,
         },
         "benchmark_resolver_ref": first_job.benchmark_resolver_ref,
         "deterministic_fingerprint": _fingerprint(
@@ -541,13 +595,22 @@ def _base_output_package(
         )
     if import_request is not None:
         package.update(import_request.artifact_package)
+        artifact_sha = _fingerprint(import_request.artifact_package)
         package["import_provenance"] = {
             "source_package_ref": import_request.source_package_ref,
-            "source_package_sha256": _fingerprint(import_request.artifact_package),
+            "source_package_sha256": artifact_sha,
+            "expected_artifact_sha256": _expected_import_sha(import_request),
             "schema_version": import_request.schema_version,
             "imported_at": _utcnow().isoformat(),
             "provenance": import_request.provenance,
         }
+        package["evidence_origin"] = evidence_origin
+        if isinstance(package.get("execution_profile"), dict):
+            package["execution_profile"] = {
+                **package["execution_profile"],
+                "route": first_job.execution_route,
+                "evidence_origin": evidence_origin,
+            }
     if is_import:
         return package
     for output in _dedupe([output for job in plan.jobs for output in job.expected_output_artifacts]):
@@ -592,7 +655,10 @@ def _validate_output_package(
     failure: AutoResearchExperimentExecutionFailureClass = "none"
     blockers: list[str] = []
     execution_profile = package.get("execution_profile")
+    evidence_origin = str(package.get("evidence_origin") or "")
     if isinstance(execution_profile, dict):
+        if not evidence_origin:
+            evidence_origin = str(execution_profile.get("evidence_origin") or "")
         try:
             exit_code = int(execution_profile.get("exit_code") or 0)
         except (TypeError, ValueError):
@@ -629,6 +695,16 @@ def _validate_output_package(
     if package.get("benchmark_resolver_ref") != first_job.benchmark_resolver_ref:
         failure = "benchmark_mismatch" if failure == "none" else failure
         blockers.append("Benchmark resolver reference in output package does not match the typed job.")
+    import_provenance = package.get("import_provenance")
+    if isinstance(import_provenance, dict):
+        actual_sha = str(import_provenance.get("source_package_sha256") or "")
+        expected_sha = str(import_provenance.get("expected_artifact_sha256") or "")
+        if expected_sha and actual_sha != expected_sha:
+            failure = "environment_mismatch" if failure == "none" else failure
+            blockers.append("Imported artifact package sha256 does not match declared provenance hash.")
+        if import_provenance.get("schema_version") != package.get("schema_version"):
+            failure = "environment_mismatch" if failure == "none" else failure
+            blockers.append("Imported artifact schema version does not match the output package schema_version.")
     env = package.get("environment_manifest")
     if not isinstance(env, dict):
         failure = "environment_mismatch" if failure == "none" else failure
@@ -686,6 +762,7 @@ def _validate_output_package(
                     for job in plan.jobs
                     if job.job_kind == "ablation"
                 ],
+                evidence_origin=evidence_origin or None,  # type: ignore[arg-type]
                 validation_status="passed" if exists and not output_blockers else "failed",
                 blockers=output_blockers,
             )
@@ -701,6 +778,21 @@ def _environment_manifest(
 ) -> AutoResearchExperimentEnvironmentManifestRead:
     first_job = plan.jobs[0]
     profile = package.get("execution_profile") if isinstance(package.get("execution_profile"), dict) else {}
+    raw_env = package.get("environment_manifest") if isinstance(package.get("environment_manifest"), dict) else {}
+    output_hashes = {
+        key: _content_sha(value)
+        for key, value in package.items()
+        if key
+        in {
+            "metrics",
+            "method_outputs",
+            "baseline_comparison",
+            "retrieval_evidence_ledger",
+            "claim_verification_metrics",
+            "citation_support_scores",
+            "classification_predictions",
+        }
+    }
     payload = {
         "manifest_id": "experiment_execution_environment_v1",
         "execution_route": first_job.execution_route,
@@ -710,7 +802,14 @@ def _environment_manifest(
         "timeout_seconds": first_job.runtime_contract.timeout_seconds,
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
-        "environment": package.get("environment_manifest") if isinstance(package.get("environment_manifest"), dict) else {},
+        "environment": raw_env,
+        "docker_image_digest": raw_env.get("docker_image_digest"),
+        "bridge_target": raw_env.get("bridge_target"),
+        "bridge_version": raw_env.get("bridge_version"),
+        "bridge_session_id": raw_env.get("bridge_session_id"),
+        "stdout_ref": profile.get("stdout_ref"),
+        "stderr_ref": profile.get("stderr_ref"),
+        "output_hashes": output_hashes,
         "requirements_recorded": True,
     }
     return AutoResearchExperimentEnvironmentManifestRead(
@@ -809,6 +908,7 @@ def _evidence_ledger_from_result(
     failure: AutoResearchExperimentExecutionFailureClass,
     blockers: list[str],
     lineage_refs: list[str],
+    evidence_origin: str | None = None,
 ) -> AutoResearchEvidenceLedgerRead:
     entries: list[AutoResearchEvidenceLedgerEntryRead] = []
     if artifact is not None:
@@ -819,6 +919,7 @@ def _evidence_ledger_from_result(
                     source_job_id=plan.jobs[0].job_id if plan.jobs else None,
                     evidence_kind="metric",
                     evidence_type="experiment_execution_metric",
+                    evidence_origin=evidence_origin,  # type: ignore[arg-type]
                     claim=f"{result.system} produced typed execution metrics under route `{plan.jobs[0].execution_route if plan.jobs else 'unknown'}`.",
                     artifact_ref="experiment_execution_result_json",
                     metric=artifact.primary_metric,
@@ -856,6 +957,7 @@ def _evidence_ledger_from_result(
                 source_job_id=job.job_id,
                 evidence_kind=job.job_kind if job.job_kind in {"baseline", "ablation", "seed", "sweep"} else "artifact",  # type: ignore[arg-type]
                 evidence_type="experiment_execution_job",
+                evidence_origin=evidence_origin,  # type: ignore[arg-type]
                 claim=f"Typed execution job `{job.job_id}` recorded route `{job.execution_route}` and status `{job.status}`.",
                 artifact_ref="experiment_execution_plan_json",
                 failure_classifications=[item.failure_classification for item in job.blockers if item.failure_classification != "none"],
@@ -871,6 +973,7 @@ def _evidence_ledger_from_result(
                 evidence_id="execution_output_validation",
                 evidence_kind="artifact",
                 evidence_type="experiment_output_validation",
+                evidence_origin=evidence_origin,  # type: ignore[arg-type]
                 claim="Typed execution output validation recorded expected outputs, hashes, metric schema, sample counts, and blockers.",
                 artifact_ref="experiment_execution_result_json:output_validation",
                 failure_classifications=[] if failure == "none" else [failure],
@@ -952,6 +1055,11 @@ def execute_experiment_execution_plan(
             *[ref for job in plan.jobs for ref in job.lineage_parent_refs],
         ]
     )
+    evidence_origin = (
+        _evidence_origin_for_route(plan.jobs[0].execution_route, import_request=import_request)
+        if plan.jobs
+        else None
+    )
     plan_blockers = list(plan.blockers)
     job_blockers = [blocker for job in plan.jobs for blocker in job.blockers]
     if plan.status == "needs_approval" or any(
@@ -971,6 +1079,7 @@ def execute_experiment_execution_plan(
             "plan_id": plan.plan_id,
             "status": "needs_approval",
             "job_results": [job.model_copy(update={"status": "needs_approval"}).model_dump(mode="json") for job in plan.jobs],
+            "evidence_origin": evidence_origin,
             "failure_classification": failure,
             "repair_recommendation": repair,
             "repair_reasons": [blocker.reason for blocker in blockers],
@@ -1003,6 +1112,7 @@ def execute_experiment_execution_plan(
             "plan_id": plan.plan_id,
             "status": "blocked",
             "job_results": [job.model_copy(update={"status": "blocked"}).model_dump(mode="json") for job in plan.jobs],
+            "evidence_origin": evidence_origin,
             "failure_classification": failure,
             "repair_recommendation": repair,
             "repair_reasons": [blocker.reason for blocker in blockers],
@@ -1012,6 +1122,7 @@ def execute_experiment_execution_plan(
                     "category": failure,
                     "reason": blocker.reason,
                     "claim_ceiling": plan.claim_ceiling,
+                    "evidence_origin": evidence_origin,
                 }
                 for blocker in blockers
             ],
@@ -1040,11 +1151,12 @@ def execute_experiment_execution_plan(
             "plan_id": plan.plan_id,
             "status": "blocked",
             "job_results": [job.model_copy(update={"status": "blocked"}).model_dump(mode="json") for job in plan.jobs],
+            "evidence_origin": evidence_origin,
             "failure_classification": failure,
             "repair_recommendation": "requires_imported_artifact",
             "repair_reasons": [blocker.reason],
             "lineage_refs": lineage_refs,
-            "negative_evidence": [{"category": failure, "reason": blocker.reason}],
+            "negative_evidence": [{"category": failure, "reason": blocker.reason, "evidence_origin": evidence_origin}],
             "blockers": [blocker.model_dump(mode="json")],
             "claim_ceiling": plan.claim_ceiling,
         }
@@ -1055,6 +1167,13 @@ def execute_experiment_execution_plan(
         )
 
     package = output_override or _base_output_package(plan, import_request=import_request)
+    if evidence_origin is not None and not package.get("evidence_origin"):
+        package["evidence_origin"] = evidence_origin
+        if isinstance(package.get("execution_profile"), dict):
+            package["execution_profile"] = {
+                **package["execution_profile"],
+                "evidence_origin": evidence_origin,
+            }
     validations, failure, validation_blockers = _validate_output_package(plan=plan, package=package)
     status = "succeeded" if failure == "none" else "failed"
     artifact = _result_artifact_from_package(plan=plan, package=package, status=status)
@@ -1076,6 +1195,7 @@ def execute_experiment_execution_plan(
         failure=failure,
         blockers=validation_blockers,
         lineage_refs=lineage_refs,
+        evidence_origin=evidence_origin,
     )
     output_refs = _dedupe(
         [
@@ -1084,6 +1204,11 @@ def execute_experiment_execution_plan(
             if item.exists
         ]
     )
+    output_hashes = {
+        item.output_ref: item.sha256
+        for item in validations
+        if item.exists and item.sha256
+    }
     succeeded_status = "imported" if import_request is not None else "succeeded"
     job_results = [
         job.model_copy(update={"status": succeeded_status if failure == "none" else "failed"})
@@ -1112,6 +1237,7 @@ def execute_experiment_execution_plan(
         "status": status,
         "job_results": [job.model_dump(mode="json") for job in job_results],
         "execution_profile": package.get("execution_profile") if isinstance(package.get("execution_profile"), dict) else {},
+        "evidence_origin": evidence_origin,
         "environment_manifest": environment_manifest.model_dump(mode="json"),
         "runtime_contract_results": [job.runtime_contract.model_dump(mode="json") for job in plan.jobs],
         "output_validation": [item.model_dump(mode="json") for item in validations],
@@ -1120,12 +1246,14 @@ def execute_experiment_execution_plan(
         "repair_reasons": validation_blockers,
         "lineage_refs": lineage_refs,
         "output_artifact_refs": output_refs,
+        "output_hashes": output_hashes,
         "negative_evidence": [
             {
                 "category": failure,
                 "reason": reason,
                 "claim_ceiling": plan.claim_ceiling,
                 "source_job_id": plan.jobs[0].job_id if plan.jobs else None,
+                "evidence_origin": evidence_origin,
             }
             for reason in validation_blockers
         ],
@@ -1135,8 +1263,10 @@ def execute_experiment_execution_plan(
             "experiment_execution_plan_path": "experiment_execution_plan.json",
             "experiment_execution_result_path": "experiment_execution_result.json",
             "output_artifact_refs": output_refs,
+            "output_hashes": output_hashes,
             "lineage_refs": lineage_refs,
             "claim_ceiling": plan.claim_ceiling,
+            "evidence_origin": evidence_origin,
             "final_publish_ready": False,
         },
         "claim_ceiling": plan.claim_ceiling,

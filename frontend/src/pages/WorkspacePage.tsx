@@ -142,6 +142,15 @@ export function WorkspacePage() {
   const exportAutoResearchPublish = useWorkspaceStore(
     (state) => state.exportAutoResearchPublish,
   );
+  const approveAutoResearchHumanReview = useWorkspaceStore(
+    (state) => state.approveAutoResearchHumanReview,
+  );
+  const exportAutoResearchRelease = useWorkspaceStore(
+    (state) => state.exportAutoResearchRelease,
+  );
+  const downloadAutoResearchRelease = useWorkspaceStore(
+    (state) => state.downloadAutoResearchRelease,
+  );
   const downloadAutoResearchPublish = useWorkspaceStore(
     (state) => state.downloadAutoResearchPublish,
   );
@@ -312,6 +321,9 @@ export function WorkspacePage() {
             onApplyResearchReplan={applyAutoResearchResearchReplan}
             onRebuildPaper={rebuildAutoResearchPaper}
             onExportPublish={exportAutoResearchPublish}
+            onApproveHumanReview={approveAutoResearchHumanReview}
+            onExportRelease={exportAutoResearchRelease}
+            onDownloadRelease={downloadAutoResearchRelease}
             onDownloadPublish={downloadAutoResearchPublish}
             onDownloadPaper={downloadAutoResearchPaper}
             onDownloadCompiledPaper={downloadAutoResearchCompiledPaper}

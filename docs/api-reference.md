@@ -243,6 +243,7 @@ This document focuses on the current auto-research API surface.
 - reconstructs state from `run.json`, registry/lineage artifacts, queue state, bridge state, typed experiment execution results, review/publish artifacts, and `operator_action_log.json`
 - response fields include `control_state`, `action_policy`, `jobs`, `approvals`, `budget`, `repair_queue`, `artifact_lineage`, `package_status`, `final_gate_status`, `external_capability_manifest`, `action_log`, `stale_refs`, `missing_refs`, and a deterministic timeline
 - response also includes Goal 11/12 state: `state_manifest` audits active/stale/superseded/missing/migration-needed artifacts plus unsafe-resume blockers; `runbook` lists next actions, approvals, repair candidates, claim ceiling, final-gate status, kill criteria, stale/migration inputs, and relevant prior memory risks/follow-ups; `timeline_state` records versioned project events; `attempt_ledger` records retry/resume/cancel/reject/import attempts without deleting old negative evidence; `branch_state` scopes final-gate evidence to the selected branch
+- response also includes Goal 13 `release_readiness`, with scientific final gate, human review, compliance, venue, final/non-final label, blockers, required actions, and related refs; this field never converts `final_publish_ready=false` into a final-ready release
 - runbook memory hints surface prior blockers/negative findings as risks or repair suggestions only; they do not directly fail the current run's final gate without current-project evidence
 - `action_policy` provides policy-checked `approve`, `reject`, `retry`, `resume`, and `cancel` decisions with blocker codes, recoverability, required next action, and related refs
 - approval state is derived from persisted operator action records after reload; approval does not fabricate experiment output or bypass runtime contracts
@@ -555,6 +556,66 @@ This document focuses on the current auto-research API surface.
 
 - downloads the compiled paper PDF when the persisted paper workspace already contains `paper_sources/main.pdf`
 - returns `404` when no compiled PDF has been materialized for that run yet
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/release/human-review`
+
+- records a persisted Goal 13 human review in `human_review.json`
+- request fields include reviewer role/id, decision (`approved`, `rejected`, or `changes_requested`), comments, requested changes, policy exceptions, conflict notes, reviewed artifact refs, and optional final-decision linkage
+- response includes reviewed artifact fingerprints, timestamp, review path, and review fingerprint
+- human approval is a release-governance input only; it does not change the scientific final publish gate
+
+### `GET /api/projects/{project_id}/auto-research/{run_id}/release/human-review`
+
+- returns the persisted human review record
+- returns `404` when no human review has been recorded
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/release/compliance`
+
+- builds and persists `compliance_checklist.json`
+- checklist items cover dataset license, paper/source license, code license, dependency license, privacy/PII, model/API terms, paid service disclosure, benchmark terms, venue policy, artifact retention, external attribution, and reproducibility package policy
+- items must link source refs or carry explicit blockers; scoped internal-only exceptions are recorded as auditable exceptions and do not satisfy public/final compliance pass
+
+### `GET /api/projects/{project_id}/auto-research/{run_id}/release/compliance`
+
+- returns the current compliance checklist, building the conservative default if missing
+- failed or exception-only compliance blocks final release and public non-final release
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/release/venue`
+
+- builds and persists `venue_adapter.json`
+- supports `internal_report`, `workshop`, `conference`, `arxiv_preprint`, and `custom` profiles with required files, anonymity, metadata, supplemental policy, page limit, artifact naming, final/non-final label, and compliance requirements
+- missing required files are release blockers; venue profiles cannot bypass `final_publish_ready=false`
+
+### `GET /api/projects/{project_id}/auto-research/{run_id}/release/venue`
+
+- returns the persisted or default venue profile and its missing-file blockers
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/release/readiness`
+
+- returns release readiness for a requested release type/finality without exporting
+- readiness includes scientific final gate status, human review approval, compliance pass/exception state, venue validity, explicit non-final label, blockers, required actions, and related refs
+
+### `GET /api/projects/{project_id}/auto-research/{run_id}/release`
+
+- returns the current persisted `release_package.json`, building a conservative package if missing
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/release`
+
+- builds `release_package.json` for a requested final or non-final release
+- release packages include release id/version, release label, final decision refs, human/compliance/venue refs, publish package refs, artifact integrity refs, lineage refs, reproducibility refs, memory export policy summary, scientific blockers, release blockers, and deterministic fingerprint
+- non-final release packages preserve scientific blockers and limitations instead of presenting them as final-publish-ready
+
+### `POST /api/projects/{project_id}/auto-research/{run_id}/release/export`
+
+- exports `release_archive.zip` plus `release_archive_manifest.json`
+- final release requires scientific final gate pass, human approval, compliance pass, and valid venue profile
+- non-final release requires explicit non-final label and human approval; public non-final release requires compliance pass; internal-only non-final release with incomplete compliance requires scoped policy exceptions
+- archive manifest contains a deterministic SHA-256 hash/signature manifest for included package files; no external signing service is required
+
+### `GET /api/projects/{project_id}/auto-research/{run_id}/release/download`
+
+- downloads the governed release archive after successful release export
+- returns `409` when the release package has not been exported yet
 
 ### `GET /api/auto-research/deployments`
 

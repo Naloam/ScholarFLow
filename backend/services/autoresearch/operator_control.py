@@ -60,6 +60,7 @@ from services.autoresearch.repository import (
     save_operator_action_log,
     save_operator_state_audit,
 )
+from services.autoresearch.release_governance import build_release_readiness
 from services.autoresearch.review_publish import build_publish_package, build_review_loop, build_run_review
 
 
@@ -909,6 +910,14 @@ def build_operator_run_status(
         external_capability_manifest_path=external_capabilities.manifest_path,
         external_capability_blockers=external_capabilities.blockers,
     )
+    try:
+        release_readiness = (
+            build_release_readiness(project_id, run_id)
+            if run.status == "done" and publish is not None
+            else None
+        )
+    except Exception:
+        release_readiness = None
     budget = _budget_status(run, result)
     approvals = _approval_status(
         run=run,
@@ -940,6 +949,7 @@ def build_operator_run_status(
             *lineage.missing_refs,
             *package.blockers,
             *final_gate.blockers,
+            *(release_readiness.blockers if release_readiness is not None else []),
             *budget.blockers,
             *external_capabilities.blockers,
         ]
@@ -998,6 +1008,7 @@ def build_operator_run_status(
         final_gate_status=final_gate,
         external_capability_manifest=external_capabilities,
         action_log=action_log,
+        release_readiness=release_readiness,
         audit_artifact_ref=operator_state_audit_file_path(project_id),
     )
     state_manifest, timeline_state, runbook, attempt_ledger, branch_state = build_long_running_state(
@@ -1086,6 +1097,7 @@ def build_operator_run_status(
             "action_policy": policy,
             "package_status": package,
             "final_gate_status": final_gate,
+            "release_readiness": release_readiness,
             "state_manifest": state_manifest,
             "timeline_state": timeline_state,
             "runbook": runbook,

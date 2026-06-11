@@ -33,12 +33,16 @@ from schemas.autoresearch import (
     AutoResearchMemoryQueryRequest,
 )
 from services.autoresearch.repository import (
+    load_compliance_checklist,
+    load_human_review_record,
     load_long_running_attempt_ledger,
     load_operator_action_log,
     load_project_branch_state,
     load_project_runbook,
+    load_release_package,
     load_project_state_manifest,
     load_project_timeline,
+    load_venue_profile,
     long_running_attempt_ledger_file_path,
     project_branch_state_file_path,
     project_runbook_file_path,
@@ -50,6 +54,7 @@ from services.autoresearch.repository import (
     save_project_state_manifest,
     save_project_timeline,
 )
+from services.autoresearch.release_governance import build_release_readiness
 from services.autoresearch.memory import (
     memory_followups_from_hints,
     memory_risks_from_hints,
@@ -717,18 +722,112 @@ def build_project_timeline(
                 blockers=state_manifest.current_final_gate_state.blockers,
             )
         )
-    events.append(
-        _event(
-            run=run,
-            event_id=f"human_compliance_placeholder:{run.id}",
-            event_type="human_compliance_placeholder",
-            timestamp=run.updated_at,
-            source="goal13_placeholder",
-            summary="Human review and compliance records are not implemented before Goal 13.",
-            status="placeholder",
-            risks=["Release export remains gated until human/compliance records exist."],
+    human_review = load_human_review_record(run.project_id, run.id)
+    compliance = load_compliance_checklist(run.project_id, run.id)
+    venue = load_venue_profile(run.project_id, run.id)
+    release = load_release_package(run.project_id, run.id)
+    release_readiness = build_release_readiness(run.project_id, run.id) if run.status == "done" else None
+    if human_review is not None:
+        events.append(
+            _event(
+                run=run,
+                event_id=f"human_review:{human_review.review_fingerprint or human_review.review_id}",
+                event_type="human_review",
+                timestamp=human_review.timestamp,
+                source="release_governance",
+                actor=human_review.reviewer_id,
+                summary=f"Human review decision: {human_review.decision}.",
+                status=human_review.decision,
+                artifact_refs=[human_review.review_path or "human_review.json"],
+                blockers=human_review.requested_changes if human_review.decision != "approved" else [],
+                risks=human_review.conflict_notes,
+            )
         )
-    )
+    else:
+        events.append(
+            _event(
+                run=run,
+                event_id=f"human_compliance_placeholder:{run.id}",
+                event_type="human_compliance_placeholder",
+                timestamp=run.updated_at,
+                source="release_governance",
+                summary="Human review record is missing.",
+                status="blocked",
+                risks=["Release export remains gated until human review is recorded."],
+            )
+        )
+    if compliance is not None:
+        events.append(
+            _event(
+                run=run,
+                event_id=f"compliance:{compliance.checklist_fingerprint or compliance.checklist_id}",
+                event_type="compliance",
+                timestamp=compliance.generated_at,
+                source="release_governance",
+                summary=f"Compliance checklist status: {compliance.status}.",
+                status=compliance.status,
+                artifact_refs=[compliance.checklist_path or "compliance_checklist.json"],
+                blockers=compliance.blockers,
+                risks=[
+                    f"{compliance.exception_count} scoped compliance exceptions recorded."
+                ]
+                if compliance.exception_count
+                else [],
+            )
+        )
+    if venue is not None:
+        events.append(
+            _event(
+                run=run,
+                event_id=f"venue_adapter:{venue.venue_fingerprint or venue.profile_id}",
+                event_type="venue_adapter",
+                timestamp=venue.generated_at,
+                source="release_governance",
+                summary=f"Venue profile `{venue.venue_name}` is {'valid' if venue.valid else 'blocked'}.",
+                status="valid" if venue.valid else "blocked",
+                artifact_refs=[venue.venue_path or "venue_adapter.json"],
+                blockers=venue.blockers,
+                risks=venue.warnings,
+            )
+        )
+    if release is not None:
+        events.append(
+            _event(
+                run=run,
+                event_id=f"release:{release.release_fingerprint or release.release_id}",
+                event_type="release",
+                timestamp=release.generated_at,
+                source="release_governance",
+                summary=f"Release package {release.release_id} is {release.status}.",
+                status=release.status,
+                artifact_refs=[
+                    item
+                    for item in [
+                        release.package_path,
+                        release.archive_manifest_path,
+                        release.archive_path,
+                    ]
+                    if item
+                ],
+                blockers=release.blockers,
+                risks=release.warnings,
+            )
+        )
+    elif release_readiness is not None:
+        events.append(
+            _event(
+                run=run,
+                event_id=f"release_readiness:{run.id}",
+                event_type="release",
+                timestamp=run.updated_at,
+                source="release_governance",
+                summary="Release readiness is ready." if release_readiness.ready else "Release readiness is blocked.",
+                status="ready" if release_readiness.ready else "blocked",
+                artifact_refs=release_readiness.related_refs,
+                blockers=release_readiness.blockers,
+                risks=release_readiness.warnings,
+            )
+        )
     for blocker in state_manifest.unsafe_resume_blockers:
         events.append(
             _event(
@@ -799,6 +898,19 @@ def build_project_runbook(
         next_actions.append("resolve_final_gate_blockers")
     if run.status in {"failed", "canceled"}:
         next_actions.append("retry_or_fork_direction")
+    release_readiness = build_release_readiness(run.project_id, run.id) if run.status == "done" else None
+    release_blockers: list[str] = []
+    if release_readiness is not None:
+        if release_readiness.ready:
+            next_actions.append("export_release_package")
+        else:
+            next_actions.extend(release_readiness.required_actions)
+            blocked_actions.append(
+                "release_export: " + "; ".join(release_readiness.blockers)
+                if release_readiness.blockers
+                else "release_export: release governance is incomplete"
+            )
+            release_blockers = release_readiness.blockers
     memory_result = query_memory(
         run.project_id,
         AutoResearchMemoryQueryRequest(
@@ -863,7 +975,7 @@ def build_project_runbook(
         memory_policy_notes=memory_result.policy_notes,
         memory_risks=memory_risks,
         memory_required_followups=memory_followups,
-        blockers=state_manifest.unsafe_resume_blockers,
+        blockers=_dedupe([*state_manifest.unsafe_resume_blockers, *release_blockers]),
         runbook_path=project_runbook_file_path(run.project_id, run.id),
     )
     return save_project_runbook(runbook) if persist else runbook

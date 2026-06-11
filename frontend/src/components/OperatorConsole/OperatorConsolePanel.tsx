@@ -36,6 +36,9 @@ type OperatorConsolePanelProps = {
     deployment_id?: string | null;
     deployment_label?: string | null;
   }) => void;
+  onApproveHumanReview: () => void;
+  onExportRelease: () => void;
+  onDownloadRelease: () => void;
   onDownloadPublish: () => void;
   onDownloadPaper: () => void;
   onDownloadCompiledPaper: () => void;
@@ -98,6 +101,9 @@ export function OperatorConsolePanel({
   onApplyResearchReplan,
   onRebuildPaper,
   onExportPublish,
+  onApproveHumanReview,
+  onExportRelease,
+  onDownloadRelease,
   onDownloadPublish,
   onDownloadPaper,
   onDownloadCompiledPaper,
@@ -167,6 +173,7 @@ export function OperatorConsolePanel({
   const currentSummary =
     activeConsole?.runs.find((run) => run.run_id === current?.run.id) ?? null;
   const operatorStatus = current?.operator_status ?? null;
+  const releaseReadiness = operatorStatus?.release_readiness ?? null;
   const stateManifest =
     current?.state_manifest ?? operatorStatus?.state_manifest ?? null;
   const runbook = current?.runbook ?? operatorStatus?.runbook ?? null;
@@ -1968,6 +1975,64 @@ export function OperatorConsolePanel({
                       {operatorStatus.repair_queue.pending_count} pending /{" "}
                       {operatorStatus.repair_queue.blocked_count} blocked
                     </strong>
+                  </div>
+                </div>
+              ) : null}
+
+              {releaseReadiness ? (
+                <div className="meta-block" data-testid="operator-release-governance">
+                  <span className="meta-label">Release Governance</span>
+                  <p>
+                    scientific_final=
+                    {releaseReadiness.final_publish_ready ? "ready" : "blocked"} · human=
+                    {releaseReadiness.human_review_approved ? "approved" : "missing"} · compliance=
+                    {releaseReadiness.compliance_passed ? "passed" : "blocked"} · venue=
+                    {releaseReadiness.venue_valid ? "valid" : "blocked"}
+                  </p>
+                  <p>
+                    release={releaseReadiness.release_finality} /{" "}
+                    {releaseReadiness.release_type} · status={releaseReadiness.status}
+                    {releaseReadiness.non_final_label
+                      ? ` · label=${releaseReadiness.non_final_label}`
+                      : ""}
+                  </p>
+                  {releaseReadiness.blockers.length ? (
+                    <ul>
+                      {releaseReadiness.blockers.slice(0, 4).map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No release governance blockers.</p>
+                  )}
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onApproveHumanReview}
+                      disabled={disabled || releaseReadiness.human_review_approved}
+                      data-testid="approve-human-review-button"
+                    >
+                      Approve Human Review
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onExportRelease}
+                      disabled={disabled || !releaseReadiness.ready}
+                      data-testid="export-release-button"
+                    >
+                      Export Governed Release
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={onDownloadRelease}
+                      disabled={disabled || !releaseReadiness.ready}
+                      data-testid="download-release-button"
+                    >
+                      Download Release
+                    </button>
                   </div>
                 </div>
               ) : null}

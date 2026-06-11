@@ -28,8 +28,10 @@ from schemas.autoresearch import (
     AutoResearchExperimentFactoryMaterializedJobRead,
     AutoResearchExperimentFactoryPlanRead,
     AutoResearchExperimentFactoryRepairPlanRead,
+    AutoResearchComplianceChecklistRead,
     AutoResearchResearchBriefRead,
     AutoResearchLineageEdgeRead,
+    AutoResearchHumanReviewRecordRead,
     AutoResearchOperatorActionLogRead,
     AutoResearchOperatorStateAuditRead,
     AutoResearchPaperRevisionActionIndexRead,
@@ -39,8 +41,10 @@ from schemas.autoresearch import (
     AutoResearchMemoryIndexRead,
     AutoResearchMemoryStoreRead,
     AutoResearchRegistryAssetRef,
+    AutoResearchReleasePackageRead,
     AutoResearchReviewerSimulationRead,
     AutoResearchReviewLoopRead,
+    AutoResearchVenueProfileRead,
     AutoResearchProjectBranchStateRead,
     AutoResearchProjectRunbookRead,
     AutoResearchProjectStateManifestRead,
@@ -143,6 +147,12 @@ PROJECT_TIMELINE_FILENAME = "project_timeline.json"
 PROJECT_RUNBOOK_FILENAME = "project_runbook.json"
 LONG_RUNNING_ATTEMPT_LEDGER_FILENAME = "attempt_ledger.json"
 PROJECT_BRANCH_STATE_FILENAME = "branch_state.json"
+HUMAN_REVIEW_FILENAME = "human_review.json"
+COMPLIANCE_CHECKLIST_FILENAME = "compliance_checklist.json"
+VENUE_ADAPTER_FILENAME = "venue_adapter.json"
+RELEASE_PACKAGE_FILENAME = "release_package.json"
+RELEASE_ARCHIVE_MANIFEST_FILENAME = "release_archive_manifest.json"
+RELEASE_ARCHIVE_FILENAME = "release_archive.zip"
 BENCHMARK_FILENAME = "benchmark.json"
 BENCHMARK_CARD_FILENAME = "benchmark_card.json"
 CANDIDATES_DIRNAME = "candidates"
@@ -274,6 +284,30 @@ def long_running_attempt_ledger_file_path(project_id: str, run_id: str) -> str:
 
 def project_branch_state_file_path(project_id: str, run_id: str) -> str:
     return str(_run_path(project_id, run_id) / PROJECT_BRANCH_STATE_FILENAME)
+
+
+def human_review_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / HUMAN_REVIEW_FILENAME)
+
+
+def compliance_checklist_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / COMPLIANCE_CHECKLIST_FILENAME)
+
+
+def venue_adapter_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / VENUE_ADAPTER_FILENAME)
+
+
+def release_package_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / RELEASE_PACKAGE_FILENAME)
+
+
+def release_archive_manifest_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / RELEASE_ARCHIVE_MANIFEST_FILENAME)
+
+
+def release_archive_file_path(project_id: str, run_id: str) -> str:
+    return str(_run_path(project_id, run_id) / RELEASE_ARCHIVE_FILENAME)
 
 
 def _literature_scout_cache_key(*, source: str, query: str, limit: int) -> str:
@@ -791,6 +825,114 @@ def load_project_branch_state(
         return None
     try:
         return AutoResearchProjectBranchStateRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_human_review_record(
+    record: AutoResearchHumanReviewRecordRead,
+) -> AutoResearchHumanReviewRecordRead:
+    path = Path(human_review_file_path(record.project_id, record.run_id))
+    payload = record.model_copy(update={"review_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "review_fingerprint", "timestamp")
+    payload = payload.model_copy(update={"review_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_human_review_record(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchHumanReviewRecordRead | None:
+    path = Path(human_review_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchHumanReviewRecordRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_compliance_checklist(
+    checklist: AutoResearchComplianceChecklistRead,
+) -> AutoResearchComplianceChecklistRead:
+    path = Path(compliance_checklist_file_path(checklist.project_id, checklist.run_id))
+    ordered_items = sorted(checklist.items, key=lambda item: item.item_id)
+    payload = checklist.model_copy(
+        update={
+            "items": ordered_items,
+            "item_count": len(ordered_items),
+            "checklist_path": str(path),
+        }
+    )
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "checklist_fingerprint", "generated_at")
+    payload = payload.model_copy(update={"checklist_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_compliance_checklist(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchComplianceChecklistRead | None:
+    path = Path(compliance_checklist_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchComplianceChecklistRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_venue_profile(profile: AutoResearchVenueProfileRead) -> AutoResearchVenueProfileRead:
+    path = Path(venue_adapter_file_path(profile.project_id, profile.run_id))
+    payload = profile.model_copy(update={"venue_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(dumped, "venue_fingerprint", "generated_at")
+    payload = payload.model_copy(update={"venue_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_venue_profile(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchVenueProfileRead | None:
+    path = Path(venue_adapter_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchVenueProfileRead.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_release_package(package: AutoResearchReleasePackageRead) -> AutoResearchReleasePackageRead:
+    path = Path(release_package_file_path(package.project_id, package.run_id))
+    payload = package.model_copy(update={"package_path": str(path)})
+    dumped = payload.model_dump(mode="json")
+    artifact_sha = _payload_sha256_excluding(
+        dumped,
+        "release_fingerprint",
+        "generated_at",
+        "hash_manifest",
+    )
+    payload = payload.model_copy(update={"release_fingerprint": artifact_sha})
+    _write_json(path, _normalize_evaluation_payload(payload.model_dump(mode="json")))
+    return payload
+
+
+def load_release_package(
+    project_id: str,
+    run_id: str,
+) -> AutoResearchReleasePackageRead | None:
+    path = Path(release_package_file_path(project_id, run_id))
+    if not path.exists():
+        return None
+    try:
+        return AutoResearchReleasePackageRead.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 

@@ -2977,6 +2977,176 @@ export type AutoResearchPublishExport = {
   download_ready: boolean;
 };
 
+export type AutoResearchHumanReviewDecision =
+  | "approved"
+  | "rejected"
+  | "changes_requested";
+
+export type AutoResearchReleaseType = "internal_only" | "public";
+export type AutoResearchReleaseFinality = "final" | "non_final";
+
+export type AutoResearchHumanReviewRequest = {
+  reviewer_id?: string;
+  reviewer_role?: string;
+  decision: AutoResearchHumanReviewDecision;
+  comments?: string | null;
+  requested_changes?: string[];
+  policy_exceptions?: Record<string, unknown>[];
+  conflict_notes?: string[];
+  reviewed_artifact_refs?: string[];
+  final_decision_linkage?: string | null;
+};
+
+export type AutoResearchHumanReviewRecord = {
+  review_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  reviewer_id: string;
+  reviewer_role: string;
+  decision: AutoResearchHumanReviewDecision;
+  comments?: string | null;
+  requested_changes: string[];
+  policy_exceptions: Record<string, unknown>[];
+  conflict_notes: string[];
+  reviewed_artifact_refs: string[];
+  reviewed_artifact_fingerprints: Record<string, string>;
+  final_decision_linkage?: string | null;
+  timestamp: string;
+  review_path?: string | null;
+  review_fingerprint?: string | null;
+};
+
+export type AutoResearchComplianceChecklist = {
+  checklist_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  generated_at: string;
+  status: "passed" | "failed" | "exception";
+  passed: boolean;
+  item_count: number;
+  failed_required_count: number;
+  exception_count: number;
+  internal_only_exception_allowed: boolean;
+  public_release_allowed: boolean;
+  final_release_allowed: boolean;
+  items: Record<string, unknown>[];
+  blockers: string[];
+  policy_exceptions: Record<string, unknown>[];
+  checklist_path?: string | null;
+  checklist_fingerprint?: string | null;
+};
+
+export type AutoResearchComplianceChecklistRequest = {
+  policy_exceptions?: Record<string, unknown>[];
+  source_overrides?: Record<string, string>;
+};
+
+export type AutoResearchVenueProfileRequest = {
+  profile_kind?: "internal_report" | "workshop" | "conference" | "arxiv_preprint" | "custom";
+  venue_name?: string | null;
+  release_finality?: AutoResearchReleaseFinality;
+  release_type?: AutoResearchReleaseType;
+  required_files?: string[];
+  anonymity?: "none" | "single_blind" | "double_blind" | "anonymous";
+  metadata?: Record<string, unknown>;
+  supplemental_policy?: string | null;
+  page_limit?: number | null;
+  artifact_naming?: Record<string, string>;
+  final_non_final_label?: string | null;
+  compliance_requirements?: string[];
+};
+
+export type AutoResearchVenueProfile = {
+  profile_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  profile_kind: "internal_report" | "workshop" | "conference" | "arxiv_preprint" | "custom";
+  venue_name: string;
+  release_finality: AutoResearchReleaseFinality;
+  release_type: AutoResearchReleaseType;
+  required_files: string[];
+  anonymity: string;
+  metadata: Record<string, unknown>;
+  final_non_final_label: string;
+  missing_required_files: string[];
+  blockers: string[];
+  warnings: string[];
+  valid: boolean;
+  generated_at: string;
+  venue_path?: string | null;
+  venue_fingerprint?: string | null;
+};
+
+export type AutoResearchReleaseRequest = {
+  release_type?: AutoResearchReleaseType;
+  release_finality?: AutoResearchReleaseFinality;
+  venue_profile?: AutoResearchVenueProfileRequest | null;
+  non_final_label?: string | null;
+  version_reason?: string | null;
+  include_publish_archive?: boolean;
+};
+
+export type AutoResearchReleaseReadiness = {
+  project_id: string;
+  run_id: string;
+  release_type: AutoResearchReleaseType;
+  release_finality: AutoResearchReleaseFinality;
+  ready: boolean;
+  status: "ready" | "blocked" | "exported";
+  final_publish_ready: boolean;
+  human_review_approved: boolean;
+  compliance_passed: boolean;
+  venue_valid: boolean;
+  non_final_label?: string | null;
+  blockers: string[];
+  warnings: string[];
+  required_actions: string[];
+  related_refs: string[];
+};
+
+export type AutoResearchReleasePackage = {
+  release_id: string;
+  schema_version: string;
+  project_id: string;
+  run_id: string;
+  version: number;
+  generated_at: string;
+  release_type: AutoResearchReleaseType;
+  release_finality: AutoResearchReleaseFinality;
+  status: "ready" | "blocked" | "exported";
+  ready: boolean;
+  final_publish_ready: boolean;
+  release_label: string;
+  scientific_blockers: string[];
+  blockers: string[];
+  warnings: string[];
+  package_path?: string | null;
+  archive_path?: string | null;
+  archive_manifest_path?: string | null;
+  release_fingerprint?: string | null;
+};
+
+export type AutoResearchReleaseExport = {
+  project_id: string;
+  run_id: string;
+  release_id: string;
+  generated_at: string;
+  release_type: AutoResearchReleaseType;
+  release_finality: AutoResearchReleaseFinality;
+  file_name: string;
+  archive_path: string;
+  archive_manifest_path: string;
+  package_path: string;
+  package_fingerprint?: string | null;
+  signature: string;
+  entry_count: number;
+  download_path: string;
+  ready: boolean;
+};
+
 export type AutoResearchOperatorProjectActions = {
   start_run: boolean;
   create_idea_brief: boolean;
@@ -4596,6 +4766,7 @@ export type AutoResearchOperatorRunStatus = {
   timeline_state?: AutoResearchProjectTimeline | null;
   attempt_ledger?: AutoResearchLongRunningAttemptLedger | null;
   branch_state?: AutoResearchProjectBranchState | null;
+  release_readiness?: AutoResearchReleaseReadiness | null;
   audit_artifact_ref?: string | null;
 };
 

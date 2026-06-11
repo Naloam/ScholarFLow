@@ -42,10 +42,18 @@ import type {
   AutoResearchOperatorStateAudit,
   AutoResearchProjectPaperOrchestration,
   AutoResearchSubmissionPackage,
+  AutoResearchComplianceChecklist,
+  AutoResearchComplianceChecklistRequest,
+  AutoResearchHumanReviewRecord,
+  AutoResearchHumanReviewRequest,
   AutoResearchPublishExport,
   AutoResearchPublishExportRequest,
   AutoResearchPublishPackage,
   AutoResearchPublicationManifest,
+  AutoResearchReleaseExport,
+  AutoResearchReleasePackage,
+  AutoResearchReleaseReadiness,
+  AutoResearchReleaseRequest,
   AutoResearchResearchReplanApply,
   AutoResearchReviewLoopAutoApply,
   AutoResearchReviewLoopAutoApplyRequest,
@@ -58,6 +66,8 @@ import type {
   AutoResearchRunReview,
   AutoResearchRunRegistry,
   AutoResearchRunRegistryViews,
+  AutoResearchVenueProfile,
+  AutoResearchVenueProfileRequest,
   AutoResearchRunRequest,
   AutoResearchSystemEvaluation,
   AuthConfig,
@@ -952,6 +962,97 @@ export const api = {
     return download(
       `/api/projects/${projectId}/auto-research/${runId}/publish/code/download`,
       `${runId}-code_package.zip`,
+    );
+  },
+
+  recordAutoResearchHumanReview(
+    projectId: string,
+    runId: string,
+    payload: AutoResearchHumanReviewRequest,
+  ): Promise<AutoResearchHumanReviewRecord> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/release/human-review`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  buildAutoResearchComplianceChecklist(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchComplianceChecklistRequest,
+  ): Promise<AutoResearchComplianceChecklist> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/release/compliance`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+    );
+  },
+
+  buildAutoResearchVenueProfile(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchVenueProfileRequest,
+  ): Promise<AutoResearchVenueProfile> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/release/venue`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+    );
+  },
+
+  getAutoResearchReleaseReadiness(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchReleaseRequest,
+  ): Promise<AutoResearchReleaseReadiness> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/release/readiness`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+    );
+  },
+
+  buildAutoResearchReleasePackage(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchReleaseRequest,
+  ): Promise<AutoResearchReleasePackage> {
+    return request(`/api/projects/${projectId}/auto-research/${runId}/release`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
+
+  exportAutoResearchReleasePackage(
+    projectId: string,
+    runId: string,
+    payload?: AutoResearchReleaseRequest,
+  ): Promise<AutoResearchReleaseExport> {
+    return request(
+      `/api/projects/${projectId}/auto-research/${runId}/release/export`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+    );
+  },
+
+  downloadAutoResearchReleasePackage(
+    projectId: string,
+    runId: string,
+  ): Promise<string> {
+    return download(
+      `/api/projects/${projectId}/auto-research/${runId}/release/download`,
+      `${runId}-release_archive.zip`,
     );
   },
 

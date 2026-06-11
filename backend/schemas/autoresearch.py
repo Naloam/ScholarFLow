@@ -296,6 +296,20 @@ AutoResearchPublishStatus = Literal["publish_ready", "revision_required", "block
 AutoResearchPublishCompletenessStatus = Literal["complete", "incomplete"]
 AutoResearchPublishBundleKind = Literal["review_bundle", "final_publish_bundle"]
 AutoResearchPublishArchiveStatus = Literal["missing", "stale", "current"]
+AutoResearchHumanReviewDecision = Literal["approved", "rejected", "changes_requested"]
+AutoResearchComplianceItemStatus = Literal["pass", "fail", "not_applicable", "exception"]
+AutoResearchComplianceStatus = Literal["passed", "failed", "exception"]
+AutoResearchVenueProfileKind = Literal[
+    "internal_report",
+    "workshop",
+    "conference",
+    "arxiv_preprint",
+    "custom",
+]
+AutoResearchVenueAnonymityPolicy = Literal["none", "single_blind", "double_blind", "anonymous"]
+AutoResearchReleaseType = Literal["internal_only", "public"]
+AutoResearchReleaseFinality = Literal["final", "non_final"]
+AutoResearchReleaseStatus = Literal["ready", "blocked", "exported"]
 AutoResearchBridgeStatus = Literal["inactive", "waiting_result", "result_imported", "completed", "failed", "canceled"]
 AutoResearchBridgeSessionStatus = Literal["waiting_result", "result_imported", "completed", "failed", "canceled"]
 AutoResearchBridgeCheckpointKind = Literal[
@@ -367,6 +381,10 @@ AutoResearchLongRunningTimelineEventType = Literal[
     "external_capability_check",
     "operator_action",
     "human_compliance_placeholder",
+    "human_review",
+    "compliance",
+    "venue_adapter",
+    "release",
     "blocker_failure",
     "attempt",
     "branch_fork",
@@ -5099,6 +5117,217 @@ class AutoResearchPublishExportRead(BaseModel):
     download_ready: bool = True
 
 
+class AutoResearchHumanReviewRequest(BaseModel):
+    reviewer_id: str = "operator"
+    reviewer_role: str = "human_reviewer"
+    decision: AutoResearchHumanReviewDecision
+    comments: str | None = None
+    requested_changes: list[str] = Field(default_factory=list)
+    policy_exceptions: list[dict[str, Any]] = Field(default_factory=list)
+    conflict_notes: list[str] = Field(default_factory=list)
+    reviewed_artifact_refs: list[str] = Field(default_factory=list)
+    final_decision_linkage: str | None = None
+
+
+class AutoResearchHumanReviewRecordRead(BaseModel):
+    review_id: str
+    schema_version: str = "human_review_v1"
+    project_id: str
+    run_id: str
+    reviewer_id: str
+    reviewer_role: str
+    decision: AutoResearchHumanReviewDecision
+    comments: str | None = None
+    requested_changes: list[str] = Field(default_factory=list)
+    policy_exceptions: list[dict[str, Any]] = Field(default_factory=list)
+    conflict_notes: list[str] = Field(default_factory=list)
+    reviewed_artifact_refs: list[str] = Field(default_factory=list)
+    reviewed_artifact_fingerprints: dict[str, str] = Field(default_factory=dict)
+    final_decision_linkage: str | None = None
+    timestamp: datetime
+    review_path: str | None = None
+    review_fingerprint: str | None = None
+
+
+class AutoResearchComplianceChecklistItemRead(BaseModel):
+    item_id: str
+    label: str
+    status: AutoResearchComplianceItemStatus = "fail"
+    required_for_public_release: bool = True
+    required_for_final_release: bool = True
+    source_refs: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    exception_scope: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoResearchComplianceChecklistRead(BaseModel):
+    checklist_id: str
+    schema_version: str = "compliance_checklist_v1"
+    project_id: str
+    run_id: str
+    generated_at: datetime
+    status: AutoResearchComplianceStatus = "failed"
+    passed: bool = False
+    item_count: int = 0
+    failed_required_count: int = 0
+    exception_count: int = 0
+    internal_only_exception_allowed: bool = False
+    public_release_allowed: bool = False
+    final_release_allowed: bool = False
+    items: list[AutoResearchComplianceChecklistItemRead] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    policy_exceptions: list[dict[str, Any]] = Field(default_factory=list)
+    checklist_path: str | None = None
+    checklist_fingerprint: str | None = None
+
+
+class AutoResearchComplianceChecklistRequest(BaseModel):
+    policy_exceptions: list[dict[str, Any]] = Field(default_factory=list)
+    source_overrides: dict[str, str] = Field(default_factory=dict)
+
+
+class AutoResearchVenueProfileRequest(BaseModel):
+    profile_kind: AutoResearchVenueProfileKind = "workshop"
+    venue_name: str | None = None
+    release_finality: AutoResearchReleaseFinality = "non_final"
+    release_type: AutoResearchReleaseType = "internal_only"
+    required_files: list[str] = Field(default_factory=list)
+    anonymity: AutoResearchVenueAnonymityPolicy = "none"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    supplemental_policy: str | None = None
+    page_limit: int | None = None
+    artifact_naming: dict[str, str] = Field(default_factory=dict)
+    final_non_final_label: str | None = None
+    compliance_requirements: list[str] = Field(default_factory=list)
+
+
+class AutoResearchVenueProfileRead(BaseModel):
+    profile_id: str
+    schema_version: str = "venue_profile_v1"
+    project_id: str
+    run_id: str
+    profile_kind: AutoResearchVenueProfileKind
+    venue_name: str
+    release_finality: AutoResearchReleaseFinality = "non_final"
+    release_type: AutoResearchReleaseType = "internal_only"
+    required_files: list[str] = Field(default_factory=list)
+    anonymity: AutoResearchVenueAnonymityPolicy = "none"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    supplemental_policy: str | None = None
+    page_limit: int | None = None
+    artifact_naming: dict[str, str] = Field(default_factory=dict)
+    final_non_final_label: str
+    compliance_requirements: list[str] = Field(default_factory=list)
+    missing_required_files: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    valid: bool = False
+    generated_at: datetime
+    venue_path: str | None = None
+    venue_fingerprint: str | None = None
+
+
+class AutoResearchReleaseReadinessRead(BaseModel):
+    project_id: str
+    run_id: str
+    release_type: AutoResearchReleaseType = "internal_only"
+    release_finality: AutoResearchReleaseFinality = "non_final"
+    ready: bool = False
+    status: AutoResearchReleaseStatus = "blocked"
+    final_publish_ready: bool = False
+    human_review_approved: bool = False
+    compliance_passed: bool = False
+    venue_valid: bool = False
+    non_final_label: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    required_actions: list[str] = Field(default_factory=list)
+    related_refs: list[str] = Field(default_factory=list)
+
+
+class AutoResearchReleaseRequest(BaseModel):
+    release_type: AutoResearchReleaseType = "internal_only"
+    release_finality: AutoResearchReleaseFinality = "non_final"
+    venue_profile: AutoResearchVenueProfileRequest | None = None
+    non_final_label: str | None = None
+    version_reason: str | None = None
+    include_publish_archive: bool = True
+
+
+class AutoResearchReleaseFileManifestEntryRead(BaseModel):
+    name: str
+    path: str | None = None
+    size_bytes: int = 0
+    sha256: str
+    required: bool = True
+
+
+class AutoResearchReleaseHashManifestRead(BaseModel):
+    manifest_id: str
+    schema_version: str = "release_hash_manifest_v1"
+    generated_at: datetime
+    entries: list[AutoResearchReleaseFileManifestEntryRead] = Field(default_factory=list)
+    entry_count: int = 0
+    signature_algorithm: str = "sha256-manifest"
+    signature: str
+
+
+class AutoResearchReleasePackageRead(BaseModel):
+    release_id: str
+    schema_version: str = "release_package_v1"
+    project_id: str
+    run_id: str
+    version: int = 1
+    generated_at: datetime
+    release_type: AutoResearchReleaseType = "internal_only"
+    release_finality: AutoResearchReleaseFinality = "non_final"
+    status: AutoResearchReleaseStatus = "blocked"
+    ready: bool = False
+    final_publish_ready: bool = False
+    final_decision_ref: str | None = None
+    human_review_ref: str | None = None
+    compliance_ref: str | None = None
+    venue_ref: str | None = None
+    publish_package_ref: str | None = None
+    publish_archive_ref: str | None = None
+    artifact_integrity_audit_ref: str | None = None
+    source_package_refs: list[str] = Field(default_factory=list)
+    lineage_refs: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    scientific_blockers: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    memory_export_policy_summary: str = (
+        "Goal 12 memory remains discovery-only and is not exported as current-project claim evidence."
+    )
+    reproducibility_checklist_ref: str | None = None
+    release_label: str
+    package_path: str | None = None
+    archive_path: str | None = None
+    archive_manifest_path: str | None = None
+    hash_manifest: AutoResearchReleaseHashManifestRead | None = None
+    release_fingerprint: str | None = None
+
+
+class AutoResearchReleaseExportRead(BaseModel):
+    project_id: str
+    run_id: str
+    release_id: str
+    generated_at: datetime
+    release_type: AutoResearchReleaseType
+    release_finality: AutoResearchReleaseFinality
+    file_name: str
+    archive_path: str
+    archive_manifest_path: str
+    package_path: str
+    package_fingerprint: str | None = None
+    signature: str
+    entry_count: int = 0
+    download_path: str
+    ready: bool = True
+
+
 class AutoResearchBridgeImportedArtifactRead(BaseModel):
     imported_at: datetime
     source: Literal["inline", "file"]
@@ -5457,6 +5686,7 @@ class AutoResearchOperatorRunStatusRead(BaseModel):
     timeline_state: "AutoResearchProjectTimelineRead | None" = None
     attempt_ledger: "AutoResearchLongRunningAttemptLedgerRead | None" = None
     branch_state: "AutoResearchProjectBranchStateRead | None" = None
+    release_readiness: AutoResearchReleaseReadinessRead | None = None
     audit_artifact_ref: str | None = None
 
 

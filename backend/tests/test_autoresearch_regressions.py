@@ -36,6 +36,7 @@ import services.autoresearch.project_paper_orchestrator as autoresearch_project_
 import services.autoresearch.publication_repair_execution as publication_repair_execution
 import services.autoresearch.repository as autoresearch_repository
 import services.autoresearch.review_publish as review_publish
+import services.autoresearch.release_governance as autoresearch_release_governance
 import services.autoresearch.writer as autoresearch_writer
 import services.autoresearch.system_evaluation as autoresearch_system_evaluation
 import services.papers.repository as papers_repository
@@ -49,6 +50,7 @@ from schemas.autoresearch import (
     AutoResearchClaimEvidenceEntryRead,
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
+    AutoResearchComplianceChecklistRequest,
     AutoResearchEvidenceLedgerEntryRead,
     AutoResearchEvidenceLedgerRead,
     AutoResearchExperimentBridgeConfig,
@@ -56,6 +58,7 @@ from schemas.autoresearch import (
     AutoResearchExperimentExecutionPlanRequest,
     AutoResearchExperimentFactoryMaterializedJobRead,
     AutoResearchLineageEdgeRead,
+    AutoResearchHumanReviewRequest,
     AutoResearchNoveltyAssessmentRead,
     AutoResearchOperatorConsoleFiltersRead,
     AutoResearchOperatorActionRequest,
@@ -83,6 +86,8 @@ from schemas.autoresearch import (
     AutoResearchProjectConclusionLedgerRead,
     AutoResearchPublishPackageRead,
     AutoResearchRegistryAssetRef,
+    AutoResearchReleaseRequest,
+    AutoResearchVenueProfileRequest,
     AutoResearchRunConfig,
     AutoResearchRunExecutionRead,
     AutoResearchRunLineageRead,
@@ -14411,6 +14416,465 @@ def test_goal12_negative_memory_surfaces_runbook_risk_without_final_gate_failure
     assert all(hint.memory_hint_only for hint in status.runbook.memory_hints)
     if status.runbook.final_gate_status is not None:
         assert not any("memory" in blocker.lower() for blocker in status.runbook.final_gate_status.blockers)
+
+
+_GOAL13_COMPLIANCE_ITEM_IDS = [
+    "dataset_license",
+    "paper_source_license",
+    "code_license",
+    "dependency_license",
+    "privacy_pii",
+    "model_api_terms",
+    "paid_service_disclosure",
+    "benchmark_terms",
+    "venue_policy",
+    "artifact_retention",
+    "external_source_attribution",
+    "reproducibility_package_policy",
+]
+
+
+def _goal13_stub_package(
+    run: AutoResearchRunRead,
+    *,
+    final_publish_ready: bool = False,
+    package_fingerprint: str = "goal13-package-v1",
+) -> AutoResearchPublishPackageRead:
+    root = autoresearch_repository.run_dir(run.project_id, run.id)
+    files = {
+        "publish_package.json": {"package_fingerprint": package_fingerprint},
+        "paper.md": "# Goal 13 release package\n\nEvidence-constrained manuscript.",
+        "claim_evidence_index.md": "Claim -> evidence refs.",
+        "lineage_archive.json": {"lineage": ["run", "paper", "release"]},
+        "reproducibility_checklist.md": "- deterministic replay\n",
+        "artifact_integrity_audit.json": {"complete": True},
+        "publication_readiness.json": {"final_publish_ready": final_publish_ready},
+        "submission_manifest.json": {"final_publish_ready": final_publish_ready},
+    }
+    for name, payload in files.items():
+        path = root / name
+        if isinstance(payload, str):
+            path.write_text(payload, encoding="utf-8")
+        else:
+            path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    final_blockers = [] if final_publish_ready else ["Final publish requires independent replication."]
+    return AutoResearchPublishPackageRead(
+        project_id=run.project_id,
+        run_id=run.id,
+        package_id="publish_ready_bundle",
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
+        status="publish_ready" if final_publish_ready else "revision_required",
+        publish_ready=final_publish_ready,
+        review_bundle_ready=True,
+        final_publish_ready=final_publish_ready,
+        publication_tier="publish_ready" if final_publish_ready else "review_ready",
+        publication_readiness_score=100 if final_publish_ready else 75,
+        manifest_path=str(root / "publish_package.json"),
+        publication_readiness_path=str(root / "publication_readiness.json"),
+        artifact_integrity_audit_path=str(root / "artifact_integrity_audit.json"),
+        submission_manifest_path=str(root / "submission_manifest.json"),
+        reproducibility_checklist_path=str(root / "reproducibility_checklist.md"),
+        claim_evidence_index_path=str(root / "claim_evidence_index.md"),
+        lineage_archive_path=str(root / "lineage_archive.json"),
+        package_fingerprint=package_fingerprint,
+        final_blocker_count=len(final_blockers),
+        final_blockers=final_blockers,
+    )
+
+
+def _goal13_run_with_package(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    project_id: str,
+    run_id: str,
+    final_publish_ready: bool = False,
+) -> tuple[AutoResearchRunRead, dict[str, AutoResearchPublishPackageRead]]:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    run = autoresearch_repository.create_run(project_id, "Goal 13 release governance")
+    run = autoresearch_repository.save_run(
+        run.model_copy(update={"id": run_id, "status": "done"})
+    )
+    package = _goal13_stub_package(run, final_publish_ready=final_publish_ready)
+    state = {"package": package}
+
+    def stub_publish_package(project_id_arg: str, run_id_arg: str):
+        if project_id_arg == run.project_id and run_id_arg == run.id:
+            return state["package"]
+        return None
+
+    monkeypatch.setattr(
+        autoresearch_release_governance,
+        "build_publish_package",
+        stub_publish_package,
+    )
+    return run, state
+
+
+def _goal13_compliance_pass_request(
+    package: AutoResearchPublishPackageRead,
+) -> AutoResearchComplianceChecklistRequest:
+    source_ref = package.manifest_path or "manual_compliance_source"
+    return AutoResearchComplianceChecklistRequest(
+        source_overrides={
+            item_id: source_ref for item_id in _GOAL13_COMPLIANCE_ITEM_IDS
+        }
+    )
+
+
+def _goal13_compliance_exception_request(
+    package: AutoResearchPublishPackageRead,
+) -> AutoResearchComplianceChecklistRequest:
+    return AutoResearchComplianceChecklistRequest(
+        policy_exceptions=[
+            {
+                "item_id": item_id,
+                "scope": "internal_only",
+                "approved": True,
+                "approved_by": "compliance_officer",
+                "reason": "Internal non-final review export only.",
+                "source_ref": package.manifest_path,
+            }
+            for item_id in _GOAL13_COMPLIANCE_ITEM_IDS
+        ]
+    )
+
+
+def test_goal13_human_review_records_artifact_fingerprints(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    run, state = _goal13_run_with_package(
+        monkeypatch,
+        tmp_path,
+        project_id="project-goal13-human-review",
+        run_id="run-goal13-human-review",
+    )
+    package = state["package"]
+
+    record = autoresearch_release_governance.record_human_review(
+        run.project_id,
+        run.id,
+        AutoResearchHumanReviewRequest(
+            reviewer_id="reviewer-a",
+            reviewer_role="release_reviewer",
+            decision="approved",
+            reviewed_artifact_refs=[
+                package.manifest_path,
+                package.claim_evidence_index_path,
+            ],
+        ),
+    )
+
+    assert record is not None
+    assert record.decision == "approved"
+    assert record.review_path is not None
+    assert Path(record.review_path).is_file()
+    assert package.manifest_path in record.reviewed_artifact_fingerprints
+    expected = hashlib.sha256(Path(package.manifest_path).read_bytes()).hexdigest()
+    assert record.reviewed_artifact_fingerprints[package.manifest_path] == expected
+
+
+def test_goal13_human_rejection_blocks_release_export(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    run, state = _goal13_run_with_package(
+        monkeypatch,
+        tmp_path,
+        project_id="project-goal13-human-reject",
+        run_id="run-goal13-human-reject",
+    )
+    package = state["package"]
+    autoresearch_release_governance.record_human_review(
+        run.project_id,
+        run.id,
+        AutoResearchHumanReviewRequest(
+            reviewer_id="reviewer-a",
+            reviewer_role="release_reviewer",
+            decision="rejected",
+            requested_changes=["Clarify unsupported final-publish claims."],
+        ),
+    )
+    autoresearch_release_governance.build_compliance_checklist(
+        run.project_id,
+        run.id,
+        _goal13_compliance_pass_request(package),
+    )
+    autoresearch_release_governance.build_venue_profile(
+        run.project_id,
+        run.id,
+        AutoResearchVenueProfileRequest(required_files=["paper.md"]),
+    )
+
+    request = AutoResearchReleaseRequest(
+        release_type="internal_only",
+        release_finality="non_final",
+        non_final_label="NON_FINAL_OPERATOR_EXPORT",
+        include_publish_archive=False,
+    )
+    release = autoresearch_release_governance.build_release_package(
+        run.project_id,
+        run.id,
+        request,
+    )
+    assert release is not None
+    assert release.ready is False
+    assert any("Human review blocks release" in blocker for blocker in release.blockers)
+    with pytest.raises(ValueError):
+        autoresearch_release_governance.export_release_package(run.project_id, run.id, request)
+
+
+def test_goal13_missing_license_and_privacy_block_public_release(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    run, _state = _goal13_run_with_package(
+        monkeypatch,
+        tmp_path,
+        project_id="project-goal13-compliance-missing",
+        run_id="run-goal13-compliance-missing",
+    )
+    autoresearch_release_governance.record_human_review(
+        run.project_id,
+        run.id,
+        AutoResearchHumanReviewRequest(decision="approved"),
+    )
+    checklist = autoresearch_release_governance.build_compliance_checklist(run.project_id, run.id)
+    assert checklist is not None
+    assert checklist.status == "failed"
+    failed_ids = {item.item_id for item in checklist.items if item.status == "fail"}
+    assert "dataset_license" in failed_ids
+    assert "privacy_pii" in failed_ids
+    assert any("privacy_pii" in blocker for blocker in checklist.blockers)
+
+    autoresearch_release_governance.build_venue_profile(
+        run.project_id,
+        run.id,
+        AutoResearchVenueProfileRequest(required_files=["paper.md"]),
+    )
+    release = autoresearch_release_governance.build_release_package(
+        run.project_id,
+        run.id,
+        AutoResearchReleaseRequest(
+            release_type="public",
+            release_finality="non_final",
+            non_final_label="NON_FINAL_PUBLIC_PREVIEW",
+        ),
+    )
+    assert release is not None
+    assert release.ready is False
+    assert any("Public release requires a passed compliance checklist" in blocker for blocker in release.blockers)
+
+
+def test_goal13_internal_exception_cannot_hide_scientific_blocker(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    run, state = _goal13_run_with_package(
+        monkeypatch,
+        tmp_path,
+        project_id="project-goal13-exception",
+        run_id="run-goal13-exception",
+    )
+    package = state["package"]
+    autoresearch_release_governance.record_human_review(
+        run.project_id,
+        run.id,
+        AutoResearchHumanReviewRequest(
+            decision="approved",
+            policy_exceptions=[{"scope": "internal_only", "reason": "Review-only release."}],
+        ),
+    )
+    checklist = autoresearch_release_governance.build_compliance_checklist(
+        run.project_id,
+        run.id,
+        _goal13_compliance_exception_request(package),
+    )
+    assert checklist is not None
+    assert checklist.status == "exception"
+    autoresearch_release_governance.build_venue_profile(
+        run.project_id,
+        run.id,
+        AutoResearchVenueProfileRequest(required_files=["paper.md"]),
+    )
+    non_final = autoresearch_release_governance.build_release_package(
+        run.project_id,
+        run.id,
+        AutoResearchReleaseRequest(
+            release_type="internal_only",
+            release_finality="non_final",
+            non_final_label="NON_FINAL_INTERNAL_EXCEPTION",
+        ),
+    )
+    assert non_final is not None
+    assert non_final.ready is True
+    assert "Final publish requires independent replication." in non_final.scientific_blockers
+    assert non_final.blockers == []
+    assert non_final.compliance_ref == checklist.checklist_path
+
+    final_release = autoresearch_release_governance.build_release_package(
+        run.project_id,
+        run.id,
+        AutoResearchReleaseRequest(
+            release_type="internal_only",
+            release_finality="final",
+        ),
+    )
+    assert final_release is not None
+    assert final_release.ready is False
+    assert "Final publish requires independent replication." in final_release.scientific_blockers
+    assert any("final_publish_ready is false" in blocker for blocker in final_release.blockers)
+
+
+def test_goal13_workshop_nonfinal_release_archive_manifest_verifies_contents(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    run, state = _goal13_run_with_package(
+        monkeypatch,
+        tmp_path,
+        project_id="project-goal13-archive",
+        run_id="run-goal13-archive",
+    )
+    package = state["package"]
+    autoresearch_release_governance.record_human_review(
+        run.project_id,
+        run.id,
+        AutoResearchHumanReviewRequest(decision="approved"),
+    )
+    autoresearch_release_governance.build_compliance_checklist(
+        run.project_id,
+        run.id,
+        _goal13_compliance_pass_request(package),
+    )
+    autoresearch_release_governance.build_venue_profile(
+        run.project_id,
+        run.id,
+        AutoResearchVenueProfileRequest(
+            profile_kind="workshop",
+            required_files=["paper.md", "claim_evidence_index.md"],
+        ),
+    )
+    request = AutoResearchReleaseRequest(
+        release_type="public",
+        release_finality="non_final",
+        non_final_label="NON_FINAL_WORKSHOP_EXPORT",
+        include_publish_archive=False,
+    )
+    export = autoresearch_release_governance.export_release_package(
+        run.project_id,
+        run.id,
+        request,
+    )
+    assert export is not None
+    assert Path(export.archive_path).is_file()
+    archive_manifest = json.loads(Path(export.archive_manifest_path).read_text(encoding="utf-8"))
+    assert archive_manifest["release_finality"] == "non_final"
+    assert archive_manifest["release_label"] == "NON_FINAL_WORKSHOP_EXPORT"
+    entries = archive_manifest["hash_manifest"]["entries"]
+    assert any(entry["name"] == "release_package.json" for entry in entries)
+    with ZipFile(export.archive_path, "r") as archive:
+        names = set(archive.namelist())
+        assert "release_archive_manifest.json" in names
+        for entry in entries:
+            assert entry["name"] in names
+            digest = hashlib.sha256(archive.read(entry["name"])).hexdigest()
+            assert digest == entry["sha256"]
+
+
+def test_goal13_final_conference_release_requires_gate_and_required_files(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    run, state = _goal13_run_with_package(
+        monkeypatch,
+        tmp_path,
+        project_id="project-goal13-conference",
+        run_id="run-goal13-conference",
+    )
+    package = state["package"]
+    autoresearch_release_governance.record_human_review(
+        run.project_id,
+        run.id,
+        AutoResearchHumanReviewRequest(decision="approved"),
+    )
+    autoresearch_release_governance.build_compliance_checklist(
+        run.project_id,
+        run.id,
+        _goal13_compliance_pass_request(package),
+    )
+    release = autoresearch_release_governance.build_release_package(
+        run.project_id,
+        run.id,
+        AutoResearchReleaseRequest(
+            release_type="public",
+            release_finality="final",
+            venue_profile=AutoResearchVenueProfileRequest(
+                profile_kind="conference",
+                release_type="public",
+                release_finality="final",
+                required_files=["paper.md", "code_package.zip"],
+            ),
+        ),
+    )
+    assert release is not None
+    assert release.ready is False
+    assert any("final_publish_ready is false" in blocker for blocker in release.blockers)
+    assert any("code_package.zip" in blocker for blocker in release.blockers)
+
+
+def test_goal13_release_version_increments_when_source_package_changes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    run, state = _goal13_run_with_package(
+        monkeypatch,
+        tmp_path,
+        project_id="project-goal13-version",
+        run_id="run-goal13-version",
+    )
+    package = state["package"]
+    autoresearch_release_governance.record_human_review(
+        run.project_id,
+        run.id,
+        AutoResearchHumanReviewRequest(decision="approved"),
+    )
+    autoresearch_release_governance.build_compliance_checklist(
+        run.project_id,
+        run.id,
+        _goal13_compliance_pass_request(package),
+    )
+    autoresearch_release_governance.build_venue_profile(
+        run.project_id,
+        run.id,
+        AutoResearchVenueProfileRequest(required_files=["paper.md"]),
+    )
+    request = AutoResearchReleaseRequest(
+        release_type="public",
+        release_finality="non_final",
+        non_final_label="NON_FINAL_VERSIONED_EXPORT",
+        include_publish_archive=False,
+    )
+    first = autoresearch_release_governance.export_release_package(run.project_id, run.id, request)
+    assert first is not None
+    first_package = autoresearch_repository.load_release_package(run.project_id, run.id)
+    assert first_package is not None
+    assert first_package.version == 1
+
+    Path(package.manifest_path).write_text(
+        json.dumps({"package_fingerprint": "goal13-package-v2"}, sort_keys=True),
+        encoding="utf-8",
+    )
+    state["package"] = package.model_copy(update={"package_fingerprint": "goal13-package-v2"})
+    second_package = autoresearch_release_governance.build_release_package(
+        run.project_id,
+        run.id,
+        request.model_copy(update={"version_reason": "source package changed"}),
+    )
+    assert second_package is not None
+    assert second_package.version == 2
+    assert second_package.release_fingerprint != first_package.release_fingerprint
 
 
 def test_goal3_runtime_contract_validation_failure_classes() -> None:

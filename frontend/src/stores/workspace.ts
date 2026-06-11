@@ -20,6 +20,7 @@ import type {
   AutoResearchOperatorConsoleFilters,
   AutoResearchPublishExportRequest,
   AutoResearchPublicationManifest,
+  AutoResearchReleaseRequest,
   AutoResearchRunRequest,
   AuthConfig,
   AuthUser,
@@ -213,6 +214,9 @@ type WorkspaceState = {
   exportAutoResearchPublish: (
     payload?: AutoResearchPublishExportRequest,
   ) => Promise<void>;
+  approveAutoResearchHumanReview: () => Promise<void>;
+  exportAutoResearchRelease: (payload?: AutoResearchReleaseRequest) => Promise<void>;
+  downloadAutoResearchRelease: () => Promise<void>;
   downloadAutoResearchPublish: () => Promise<void>;
   downloadAutoResearchPaper: () => Promise<void>;
   downloadAutoResearchCompiledPaper: () => Promise<void>;
@@ -1492,6 +1496,86 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         });
       } catch (error) {
         handleActionError(error, "Publish export failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async approveAutoResearchHumanReview() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before recording review" });
+        return;
+      }
+
+      set({ working: true, notice: "Recording human release approval..." });
+      try {
+        await api.recordAutoResearchHumanReview(currentProjectId, runId, {
+          reviewer_id: "operator",
+          reviewer_role: "release_reviewer",
+          decision: "approved",
+          comments: "Operator approved release governance review.",
+        });
+        await get().refreshAutoResearchConsole(runId);
+        set({ notice: "Human release approval recorded" });
+      } catch (error) {
+        handleActionError(error, "Human review failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async exportAutoResearchRelease(payload) {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before exporting release" });
+        return;
+      }
+
+      const releasePayload: AutoResearchReleaseRequest = {
+        release_type: "internal_only",
+        release_finality: "non_final",
+        non_final_label: "NON_FINAL_OPERATOR_EXPORT",
+        include_publish_archive: false,
+        ...payload,
+      };
+      set({ working: true, notice: "Exporting governed release package..." });
+      try {
+        const exportResult = await api.exportAutoResearchReleasePackage(
+          currentProjectId,
+          runId,
+          releasePayload,
+        );
+        await get().refreshAutoResearchConsole(runId);
+        set({
+          notice: `Release package ${exportResult.file_name} ready (${exportResult.release_finality})`,
+        });
+      } catch (error) {
+        handleActionError(error, "Release export failed");
+      } finally {
+        set({ working: false });
+      }
+    },
+
+    async downloadAutoResearchRelease() {
+      const { currentProjectId, autoResearchConsole } = get();
+      const runId = autoResearchConsole?.current_run?.run.id;
+      if (!currentProjectId || !runId) {
+        set({ notice: "Select an auto-research run before release download" });
+        return;
+      }
+
+      set({ working: true, notice: "Preparing release archive download..." });
+      try {
+        const fileName = await api.downloadAutoResearchReleasePackage(
+          currentProjectId,
+          runId,
+        );
+        set({ notice: `Downloaded ${fileName}` });
+      } catch (error) {
+        handleActionError(error, "Release download failed");
       } finally {
         set({ working: false });
       }

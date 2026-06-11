@@ -47,11 +47,19 @@ from schemas.autoresearch import (
     AutoResearchProjectPaperOrchestrationRead,
     AutoResearchPublicationTier,
     AutoResearchPublicationManifestRead,
+    AutoResearchComplianceChecklistRead,
+    AutoResearchComplianceChecklistRequest,
+    AutoResearchHumanReviewRecordRead,
+    AutoResearchHumanReviewRequest,
     AutoResearchPublishExportRequest,
     AutoResearchPublishStatus,
     AutoResearchPublishExportRead,
     AutoResearchPublishPackageRead,
     AutoResearchQueuePriority,
+    AutoResearchReleaseExportRead,
+    AutoResearchReleasePackageRead,
+    AutoResearchReleaseReadinessRead,
+    AutoResearchReleaseRequest,
     AutoResearchRunConfig,
     AutoResearchRunControlPatch,
     AutoResearchRunControlUpdateRead,
@@ -62,6 +70,8 @@ from schemas.autoresearch import (
     AutoResearchRunStatus,
     AutoResearchRunReviewRead,
     AutoResearchSubmissionPackageRead,
+    AutoResearchVenueProfileRead,
+    AutoResearchVenueProfileRequest,
     AutoResearchReviewLoopRead,
     AutoResearchReviewLoopAutoApplyRead,
     AutoResearchReviewLoopAutoApplyRequest,
@@ -132,6 +142,19 @@ from services.autoresearch.review_publish import (
     build_run_review,
     export_publish_package,
     get_publish_archive_path,
+)
+from services.autoresearch.release_governance import (
+    build_compliance_checklist,
+    build_release_package,
+    build_release_readiness,
+    build_venue_profile,
+    export_release_package,
+    get_human_review,
+    get_release_archive_path,
+    get_release_package,
+    get_or_build_compliance_checklist,
+    get_or_build_venue_profile,
+    record_human_review,
 )
 from services.autoresearch.system_evaluation import build_system_evaluation
 from services.autoresearch.repository import (
@@ -1557,6 +1580,165 @@ def download_auto_research_compiled_paper_asset(
         path=compiled_paper_path,
         filename=compiled_paper_path.name,
         media_type="application/pdf",
+    )
+
+
+@router.get("/{run_id}/release/human-review", response_model=AutoResearchHumanReviewRecordRead)
+def get_auto_research_human_review(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchHumanReviewRecordRead:
+    del db
+    record = get_human_review(project_id, run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Auto research human review not found")
+    return record
+
+
+@router.post("/{run_id}/release/human-review", response_model=AutoResearchHumanReviewRecordRead)
+def record_auto_research_human_review(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchHumanReviewRequest,
+    db: Session = Depends(get_db),
+) -> AutoResearchHumanReviewRecordRead:
+    del db
+    record = record_human_review(project_id, run_id, payload)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return record
+
+
+@router.get("/{run_id}/release/compliance", response_model=AutoResearchComplianceChecklistRead)
+def get_auto_research_compliance_checklist(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchComplianceChecklistRead:
+    del db
+    checklist = get_or_build_compliance_checklist(project_id, run_id)
+    if checklist is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return checklist
+
+
+@router.post("/{run_id}/release/compliance", response_model=AutoResearchComplianceChecklistRead)
+def build_auto_research_compliance_checklist(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchComplianceChecklistRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchComplianceChecklistRead:
+    del db
+    checklist = build_compliance_checklist(project_id, run_id, payload)
+    if checklist is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return checklist
+
+
+@router.get("/{run_id}/release/venue", response_model=AutoResearchVenueProfileRead)
+def get_auto_research_venue_profile(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchVenueProfileRead:
+    del db
+    profile = get_or_build_venue_profile(project_id, run_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return profile
+
+
+@router.post("/{run_id}/release/venue", response_model=AutoResearchVenueProfileRead)
+def build_auto_research_venue_profile(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchVenueProfileRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchVenueProfileRead:
+    del db
+    profile = build_venue_profile(project_id, run_id, payload)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return profile
+
+
+@router.post("/{run_id}/release/readiness", response_model=AutoResearchReleaseReadinessRead)
+def get_auto_research_release_readiness(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchReleaseRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchReleaseReadinessRead:
+    del db
+    readiness = build_release_readiness(project_id, run_id, payload)
+    if readiness is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return readiness
+
+
+@router.get("/{run_id}/release", response_model=AutoResearchReleasePackageRead)
+def get_auto_research_release_package(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> AutoResearchReleasePackageRead:
+    del db
+    package = get_release_package(project_id, run_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return package
+
+
+@router.post("/{run_id}/release", response_model=AutoResearchReleasePackageRead)
+def build_auto_research_release_package(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchReleaseRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchReleasePackageRead:
+    del db
+    package = build_release_package(project_id, run_id, payload)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return package
+
+
+@router.post("/{run_id}/release/export", response_model=AutoResearchReleaseExportRead)
+def export_auto_research_release_package(
+    project_id: str,
+    run_id: str,
+    payload: AutoResearchReleaseRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AutoResearchReleaseExportRead:
+    del db
+    try:
+        export_result = export_release_package(project_id, run_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if export_result is None:
+        raise HTTPException(status_code=404, detail="Auto research run not found")
+    return export_result
+
+
+@router.get("/{run_id}/release/download")
+def download_auto_research_release_package(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    del db
+    package = get_release_package(project_id, run_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Auto research release package not found")
+    archive_path = get_release_archive_path(project_id, run_id).resolve()
+    if package.status != "exported" or not archive_path.is_file():
+        raise HTTPException(status_code=409, detail="Release package has not been exported yet")
+    return FileResponse(
+        path=archive_path,
+        filename=archive_path.name,
+        media_type="application/zip",
     )
 
 

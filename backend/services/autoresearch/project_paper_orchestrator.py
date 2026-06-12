@@ -46,6 +46,10 @@ from schemas.autoresearch import (
     LiteratureInsight,
 )
 from services.autoresearch.meta_analysis import build_cross_run_meta_analysis
+from services.autoresearch.benchmark_source_metadata import (
+    MaterializedBenchmarkSource,
+    materialize_file_backed_benchmark_source,
+)
 from services.autoresearch.repository import list_research_briefs, list_runs
 from services.autoresearch.research_readiness import PUBLICATION_MIN_DATASET_EXAMPLES
 from services.autoresearch.writer import PaperWriter
@@ -384,6 +388,28 @@ def _claim_evidence_refs(run: AutoResearchRunRead) -> list[str]:
 
 def _run_has_evidence(run: AutoResearchRunRead) -> bool:
     return bool(_claim_evidence_refs(run))
+
+
+def _run_has_final_candidate_benchmark(run: AutoResearchRunRead) -> bool:
+    materialized_benchmark = materialize_file_backed_benchmark_source(run)
+    spec = run.spec or (materialized_benchmark.spec if materialized_benchmark is not None else None)
+    dataset = spec.dataset if spec is not None else None
+    if dataset is None:
+        return False
+    total_examples = dataset.train_size + dataset.test_size
+    sample_count = dataset.sample_count or total_examples
+    source_class = dataset.source_class
+    source_file_path = run.benchmark.file_path if run.benchmark is not None else None
+    return bool(
+        dataset.publication_grade
+        and dataset.provenance_complete
+        and sample_count >= FINAL_PUBLISH_CANDIDATE_MIN_DATASET_EXAMPLES
+        and source_class in {"frozen_snapshot", "imported_real", "remote_real"}
+        and (
+            source_class != "frozen_snapshot"
+            or (source_file_path is not None and Path(str(source_file_path)).is_file())
+        )
+    )
 
 
 def _dedupe(items: list[Any]) -> list[str]:
@@ -1597,6 +1623,61 @@ def _benchmark_provenance_failure_classification(repair_index: dict[str, Any]) -
 
 
 def _benchmark_query_document_evidence_schema(profile: dict[str, Any]) -> dict[str, Any]:
+    declared = profile.get("query_document_evidence_schema")
+    if isinstance(declared, dict) and declared.get("schema_complete") is not None:
+        query_fields = [str(item) for item in declared.get("query_fields", []) if item]
+        document_fields = [str(item) for item in declared.get("document_fields", []) if item]
+        evidence_fields = [str(item) for item in declared.get("evidence_fields", []) if item]
+        label_fields = [str(item) for item in declared.get("label_fields", []) if item]
+        split_fields = [str(item) for item in declared.get("split_fields", []) if item]
+        label_space = [str(item) for item in declared.get("label_space", []) if item]
+        supports_claim_verification = bool(
+            declared.get("supports_claim_verification", profile.get("supports_claim_verification"))
+        )
+        split_count = int(profile.get("split_count") or 0)
+        verification_schema_complete = bool(
+            query_fields
+            and document_fields
+            and evidence_fields
+            and label_fields
+            and label_space
+            and supports_claim_verification
+        )
+        retrieval_schema_complete = bool(
+            query_fields and document_fields and evidence_fields and split_count >= 2
+        )
+        schema_complete = bool(declared.get("schema_complete")) and split_count >= 2
+        missing_roles = [
+            role
+            for role, fields in {
+                "query": query_fields,
+                "document": document_fields,
+                "evidence": evidence_fields,
+                "label": label_fields,
+            }.items()
+            if not fields
+        ]
+        if supports_claim_verification and not label_space:
+            missing_roles.append("verification_label_space")
+        if split_count < 2:
+            missing_roles.append("split")
+        return {
+            "query_fields": query_fields,
+            "document_fields": document_fields,
+            "evidence_fields": evidence_fields,
+            "label_fields": label_fields,
+            "split_fields": split_fields,
+            "label_space": label_space,
+            "verification_schema_complete": verification_schema_complete,
+            "retrieval_schema_complete": retrieval_schema_complete,
+            "requires_claim_verification_schema": supports_claim_verification,
+            "split_count": split_count,
+            "input_fields": [str(item) for item in profile.get("input_fields", []) if item],
+            "schema_source": "declared_benchmark_payload",
+            "inferred_from_claim_verification_profile": False,
+            "schema_complete": schema_complete,
+            "missing_schema_roles": _dedupe(missing_roles),
+        }
     input_fields = [str(item) for item in profile.get("input_fields", []) if item]
     normalized_fields = {item.lower() for item in input_fields}
     supports_claim_verification = bool(profile.get("supports_claim_verification"))
@@ -1681,7 +1762,11 @@ def _benchmark_query_document_evidence_schema(profile: dict[str, Any]) -> dict[s
     }
 
 
-def _benchmark_observation_profile(run: AutoResearchRunRead) -> dict[str, Any]:
+def _benchmark_observation_profile(
+    run: AutoResearchRunRead,
+    *,
+    materialized_benchmark: MaterializedBenchmarkSource | None = None,
+) -> dict[str, Any]:
     artifact = run.artifact
     outputs = artifact.outputs if artifact is not None else {}
     diagnostics = outputs.get("objective_query_diagnostics", [])
@@ -1721,33 +1806,48 @@ def _benchmark_observation_profile(run: AutoResearchRunRead) -> dict[str, Any]:
             continue
         status = str(item.get("support_status") or "unknown")
         ledger_status_distribution[status] = ledger_status_distribution.get(status, 0) + 1
-    spec = run.spec
+    spec = run.spec or (materialized_benchmark.spec if materialized_benchmark is not None else None)
+    payload = materialized_benchmark.payload if materialized_benchmark is not None else {}
     dataset = spec.dataset if spec is not None else None
     supports_claim_verification = bool(
         dataset is not None and dataset.supports_claim_verification
+    ) or bool(payload.get("supports_claim_verification"))
+    payload_split_distribution = (
+        payload.get("split_distribution") if isinstance(payload.get("split_distribution"), dict) else {}
     )
     train_size = dataset.train_size if dataset is not None else 0
     test_size = dataset.test_size if dataset is not None else 0
     split_distribution = {
-        "train": train_size,
-        "test": test_size,
+        "train": train_size or int(payload_split_distribution.get("train") or 0),
+        "test": test_size or int(payload_split_distribution.get("test") or 0),
     }
+    payload_label_distribution = (
+        payload.get("label_distribution") if isinstance(payload.get("label_distribution"), dict) else {}
+    )
+    if not label_distribution and payload_label_distribution:
+        label_distribution = {
+            str(label): int(count)
+            for label, count in payload_label_distribution.items()
+            if str(label).strip()
+        }
+    evidence_annotation_count = (
+        sum(
+            len(item.get("relevant_ids", []))
+            for item in diagnostics
+            if isinstance(item, dict)
+        )
+        if diagnostics and supports_claim_verification
+        else int(payload.get("evidence_annotation_count") or 0)
+    )
+    retrieval_relevance_count = len(relevant_ids) or int(payload.get("retrieval_relevance_count") or 0)
     return {
         "split_distribution": split_distribution,
         "label_distribution": dict(sorted(label_distribution.items())),
         "ledger_status_distribution": dict(sorted(ledger_status_distribution.items())),
-        "query_count": len(query_ids) or test_size,
-        "document_count": len(ranked_ids | relevant_ids),
-        "evidence_annotation_count": (
-            sum(
-                len(item.get("relevant_ids", []))
-                for item in diagnostics
-                if isinstance(item, dict)
-            )
-            if supports_claim_verification
-            else 0
-        ),
-        "retrieval_relevance_count": len(relevant_ids),
+        "query_count": len(query_ids) or int(payload.get("query_count") or test_size),
+        "document_count": len(ranked_ids | relevant_ids) or int(payload.get("document_count") or 0),
+        "evidence_annotation_count": evidence_annotation_count,
+        "retrieval_relevance_count": retrieval_relevance_count,
         "diagnostic_record_count": len([item for item in diagnostics if isinstance(item, dict)]),
         "retrieval_ledger_entry_count": len([item for item in retrieval_ledger if isinstance(item, dict)]),
     }
@@ -6058,7 +6158,8 @@ def _project_benchmark_card_payload(
     run_cards: list[dict[str, Any]] = []
     blockers: list[str] = []
     for run in selected_runs:
-        spec = run.spec
+        materialized_benchmark = materialize_file_backed_benchmark_source(run)
+        spec = run.spec or (materialized_benchmark.spec if materialized_benchmark is not None else None)
         dataset = spec.dataset if spec is not None else None
         source_kind = (
             run.benchmark.kind
@@ -6183,7 +6284,9 @@ def _project_publication_evidence_profile(
 ) -> dict[str, Any]:
     run_profiles: list[dict[str, Any]] = []
     for run in selected_runs:
-        spec = run.spec
+        materialized_benchmark = materialize_file_backed_benchmark_source(run)
+        spec = run.spec or (materialized_benchmark.spec if materialized_benchmark is not None else None)
+        benchmark_payload = materialized_benchmark.payload if materialized_benchmark is not None else {}
         dataset = spec.dataset if spec is not None else None
         source_kind = (
             run.benchmark.kind
@@ -6220,7 +6323,10 @@ def _project_publication_evidence_profile(
             + int((dataset.test_size if dataset is not None else 0) > 0)
         )
         provenance_complete = bool(dataset is not None and dataset.provenance_complete)
-        observation_profile = _benchmark_observation_profile(run)
+        observation_profile = _benchmark_observation_profile(
+            run,
+            materialized_benchmark=materialized_benchmark,
+        )
         run_profiles.append(
             {
                 "run_id": run.id,
@@ -6272,6 +6378,11 @@ def _project_publication_evidence_profile(
                 ),
                 "publication_grade_eligibility": (
                     dataset.publication_grade_eligibility if dataset is not None else {}
+                ),
+                "query_document_evidence_schema": (
+                    benchmark_payload.get("query_document_evidence_schema")
+                    if isinstance(benchmark_payload.get("query_document_evidence_schema"), dict)
+                    else {}
                 ),
             }
         )
@@ -13188,6 +13299,11 @@ def _selected_runs(
     if selected:
         return selected
     done_with_evidence = [run for run in runs if run.status == "done" and _run_has_evidence(run)]
+    final_candidate_runs = [
+        run for run in done_with_evidence if _run_has_final_candidate_benchmark(run)
+    ]
+    if final_candidate_runs:
+        return final_candidate_runs
     if done_with_evidence:
         return done_with_evidence
     return [run for run in runs if run.status == "done"]

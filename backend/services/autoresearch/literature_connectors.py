@@ -41,7 +41,7 @@ DEFAULT_CONNECTOR_SOURCES = (
 SUPPORTED_CONNECTOR_SOURCES = set(DEFAULT_CONNECTOR_SOURCES)
 _SYNTHETIC_SOURCES = {FIXTURE_SOURCE, "fixture", "offline_project_context"}
 
-_ARXIV_API = "http://export.arxiv.org/api/query"
+_ARXIV_API = "https://export.arxiv.org/api/query"
 _SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 _CROSSREF_API = "https://api.crossref.org/works"
 _ARXIV_NS = {
@@ -52,6 +52,7 @@ _DEFAULT_CONNECTOR_TIMEOUT_SECONDS = 15.0
 _DEFAULT_CONNECTOR_RETRIES = 2
 _DEFAULT_CONNECTOR_RETRY_BACKOFF_SECONDS = 0.25
 _DEFAULT_CACHE_FRESHNESS_DAYS = 30
+_MAX_CONNECTOR_QUERIES = 4
 
 _STOPWORDS = {
     "about",
@@ -251,7 +252,7 @@ def _selected_sources(sources: Iterable[str] | None) -> list[str]:
 
 def _selected_queries(search_queries: list[str]) -> list[str]:
     queries = _dedupe(search_queries)
-    return queries[:4]
+    return queries[:_MAX_CONNECTOR_QUERIES]
 
 
 def _brief_text(brief: AutoResearchResearchBriefRead | None) -> str:
@@ -1073,7 +1074,7 @@ def _fetch_connector_response(source: str, query: str, *, limit: int) -> object:
             "limit": limit,
             "fields": (
                 "paperId,title,authors,year,venue,publicationVenue,"
-                "abstract,doi,url,externalIds"
+                "abstract,url,externalIds"
             ),
         }
         def fetch() -> object:
@@ -1379,10 +1380,7 @@ def search_literature_connectors(
                     status.stale_cache_count += 1
             status.paper_count += len(parsed)
             papers.extend(parsed)
-        if status.error_count:
-            status.availability_status = "error"
-            status.unavailable_reason = "; ".join(status.errors[:3])
-        elif status.paper_count > 0:
+        if status.paper_count > 0:
             status.availability_status = "available"
             status.freshness_policy = (
                 f"Cache entries older than {_env_positive_int('LITERATURE_SCOUT_CACHE_FRESHNESS_DAYS', _DEFAULT_CACHE_FRESHNESS_DAYS)} days are stale and cannot support fresh final-publish literature claims."
@@ -1391,6 +1389,9 @@ def search_literature_connectors(
                 status.availability_blockers.append(
                     f"{status.stale_cache_count} cached {source} record(s) are stale."
                 )
+        elif status.error_count:
+            status.availability_status = "error"
+            status.unavailable_reason = "; ".join(status.errors[:3])
         elif status.cache_miss_count and not network_enabled:
             status.availability_status = "cache_miss"
             status.unavailable_reason = (

@@ -110,10 +110,13 @@ def _direction_text(brief: AutoResearchResearchBriefRead) -> str:
 
 
 def _search_queries(brief: AutoResearchResearchBriefRead) -> list[str]:
-    queries = [
+    primary_queries = [
         f'"{brief.original_idea}"',
         f"{brief.original_idea} literature survey",
     ]
+    domain_strategy = brief.domain_literature_strategy or build_domain_literature_strategy(brief)
+    domain_queries = list(domain_strategy.query_strings[:3]) if domain_strategy is not None else []
+    queries = [*domain_queries, *primary_queries]
     for direction in brief.research_directions[:4]:
         queries.extend(
             [
@@ -128,9 +131,8 @@ def _search_queries(brief: AutoResearchResearchBriefRead) -> list[str]:
         )
         if selected is not None:
             queries.append(f"{selected.research_question} {selected.required_metrics[0] if selected.required_metrics else ''}")
-    domain_strategy = brief.domain_literature_strategy or build_domain_literature_strategy(brief)
     if domain_strategy is not None:
-        queries.extend(domain_strategy.query_strings)
+        queries.extend(domain_strategy.query_strings[3:])
     return _dedupe(queries)[: max(3, min(10, len(queries)))]
 
 

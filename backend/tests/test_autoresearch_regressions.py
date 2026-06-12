@@ -51,6 +51,7 @@ from schemas.autoresearch import (
     AutoResearchClaimEvidenceMatrixRead,
     AutoResearchClaimEvidenceRefRead,
     AutoResearchComplianceChecklistRequest,
+    AutoResearchCrossRunMetaAnalysisRead,
     AutoResearchEvidenceLedgerEntryRead,
     AutoResearchEvidenceLedgerRead,
     AutoResearchExperimentBridgeConfig,
@@ -634,6 +635,191 @@ def test_scifact_json_adapter_records_frozen_snapshot_metadata_without_promoting
     assert "Benchmark has fewer than 20 normalized examples." in spec.dataset.publication_grade_blockers
     assert spec.dataset.publication_grade_eligibility["checks"]["not_internal_fixture"] is True
     assert spec.dataset.publication_grade_eligibility["checks"]["meets_min_examples"] is False
+
+
+def test_benchmark_card_materializes_scifact_file_metadata_without_spec(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"Frozen SciFact snapshot should load from file, not network: {url}"),
+    )
+    source = BenchmarkSource(
+        kind="scifact_json",
+        name="SciFact Claim Verification Frozen Snapshot",
+        file_path=str(autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_PATH),
+        dataset_id="allenai/scifact",
+        revision=autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_REVISION,
+        license=autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_LICENSE,
+        task_family_hint="ir_reranking",
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_scifact_file_backed_no_spec",
+        project_id="project_scifact_file_backed_no_spec",
+        topic="Claim evidence retrieval with citation faithful RAG verification",
+        status="done",
+        request=AutoResearchRunConfig(execution_profile="publication"),
+        task_family="ir_reranking",
+        benchmark=source,
+        created_at=now,
+        updated_at=now,
+    )
+
+    card = build_benchmark_card(run)
+
+    assert card.source_kind == "scifact_json"
+    assert card.source_dataset_id == "allenai/scifact"
+    assert card.source_revision == autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_REVISION
+    assert card.source_license == autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_LICENSE
+    assert card.source_fingerprint
+    assert card.source_class == "frozen_snapshot"
+    assert card.source_content_origin == "original_benchmark_records"
+    assert card.train_size == 72
+    assert card.test_size == 48
+    assert card.sample_count == 120
+    assert card.split_count == 2
+    assert card.supports_claim_verification is True
+    assert card.publication_grade is True
+    assert card.provenance_complete is True
+    assert card.publication_grade_blockers == []
+    assert card.blockers == []
+
+
+def test_project_benchmark_profile_materializes_scifact_file_metadata_without_spec(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"Frozen SciFact snapshot should load from file, not network: {url}"),
+    )
+    source = BenchmarkSource(
+        kind="scifact_json",
+        name="SciFact Claim Verification Frozen Snapshot",
+        file_path=str(autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_PATH),
+        dataset_id="allenai/scifact",
+        revision=autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_REVISION,
+        license=autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_LICENSE,
+        task_family_hint="ir_reranking",
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run = AutoResearchRunRead(
+        id="run_scifact_project_profile_no_spec",
+        project_id="project_scifact_project_profile_no_spec",
+        topic="Claim evidence retrieval with citation faithful RAG verification",
+        status="done",
+        request=AutoResearchRunConfig(execution_profile="publication"),
+        task_family="ir_reranking",
+        benchmark=source,
+        created_at=now,
+        updated_at=now,
+    )
+
+    card_payload = autoresearch_project_paper_orchestrator._project_benchmark_card_payload(
+        project_id=run.project_id,
+        selected_runs=[run],
+        project_publish_gate_passed=False,
+    )
+    run_card = card_payload["run_cards"][0]
+    evidence_profile = autoresearch_project_paper_orchestrator._project_publication_evidence_profile(
+        selected_runs=[run],
+        latest_brief=None,
+    )
+    run_profile = evidence_profile["run_profiles"][0]
+    source_record = autoresearch_project_paper_orchestrator._benchmark_source_record(run_profile)
+
+    assert run_card["source_class"] == "frozen_snapshot"
+    assert run_card["publication_grade"] is True
+    assert run_card["provenance_complete"] is True
+    assert run_card["blockers"] == []
+    assert evidence_profile["benchmark_scale_ready"] is True
+    assert evidence_profile["benchmark_provenance_ready"] is True
+    assert evidence_profile["benchmark_publication_ready"] is True
+    assert evidence_profile["benchmark_final_publish_candidate_ready"] is True
+    assert evidence_profile["snapshot_metadata"]["total_sample_count"] == 120
+    assert evidence_profile["snapshot_metadata"]["total_query_count"] == 48
+    assert evidence_profile["snapshot_metadata"]["total_document_count"] == 201
+    assert evidence_profile["snapshot_metadata"]["total_evidence_annotation_count"] == 33
+    assert evidence_profile["snapshot_metadata"]["total_retrieval_relevance_count"] == 27
+    assert source_record["source_file_path"] == str(
+        autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_PATH
+    )
+    assert source_record["repository_local_snapshot_materialized"] is True
+    assert source_record["query_document_evidence_schema"]["schema_complete"] is True
+    assert source_record["publication_grade_eligible"] is True
+    assert source_record["final_publish_candidate_eligible"] is True
+    assert source_record["record_blockers"] == []
+    assert source_record["final_publish_candidate_blockers"] == []
+
+
+def test_project_paper_selected_runs_excludes_fixture_when_final_candidates_exist(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        autoresearch_ingestion,
+        "_fetch_remote_text",
+        lambda url: pytest.fail(f"Frozen SciFact snapshot should load from file, not network: {url}"),
+    )
+    final_source = BenchmarkSource(
+        kind="scifact_json",
+        name="SciFact Claim Verification Frozen Snapshot",
+        file_path=str(autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_PATH),
+        dataset_id="allenai/scifact",
+        revision=autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_REVISION,
+        license=autoresearch_evaluation_cases.SCIFACT_FROZEN_SNAPSHOT_LICENSE,
+        task_family_hint="ir_reranking",
+    )
+    final_benchmark = autoresearch_ingestion.resolve_benchmark(
+        topic="claim evidence retrieval with publication-grade frozen SciFact provenance",
+        task_family_hint="ir_reranking",
+        benchmark_source=final_source,
+    )
+    final_spec = build_experiment_spec("ir_reranking", final_benchmark)
+    fixture_benchmark = builtin_benchmark("ir_reranking")
+    fixture_spec = build_experiment_spec("ir_reranking", fixture_benchmark)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    final_run = AutoResearchRunRead(
+        id="run_final_candidate",
+        project_id="project_selected_runs",
+        topic="Final candidate run",
+        status="done",
+        request=AutoResearchRunConfig(execution_profile="publication"),
+        task_family="ir_reranking",
+        benchmark=final_source,
+        spec=final_spec,
+        artifact=_result_artifact(),
+        created_at=now,
+        updated_at=now,
+    )
+    fixture_run = AutoResearchRunRead(
+        id="run_fixture_smoke",
+        project_id="project_selected_runs",
+        topic="Fixture smoke run",
+        status="done",
+        request=AutoResearchRunConfig(execution_profile="exploratory"),
+        task_family="ir_reranking",
+        benchmark=fixture_benchmark.source,
+        spec=fixture_spec,
+        artifact=_result_artifact(),
+        created_at=now,
+        updated_at=now,
+    )
+    meta = AutoResearchCrossRunMetaAnalysisRead(
+        generated_at=now,
+        project_id="project_selected_runs",
+        run_count=2,
+        recommended_run_ids=[],
+        analysis_fingerprint="test-selected-runs-fingerprint",
+    )
+
+    selected = autoresearch_project_paper_orchestrator._selected_runs(
+        runs=[fixture_run, final_run],
+        meta_analysis=meta,
+    )
+
+    assert [run.id for run in selected] == ["run_final_candidate"]
 
 
 def test_goal10_benchmark_package_manifest_rejects_checksum_mismatch(
@@ -7514,6 +7700,9 @@ def test_literature_connector_retries_transient_network_errors(monkeypatch) -> N
     assert raw == _semantic_scholar_cache_fixture()
     assert len(calls) == 2
     assert len(timeouts) == 2
+    semantic_fields = str(calls[-1][1]["params"]["fields"])
+    assert "externalIds" in semantic_fields
+    assert "doi" not in semantic_fields.split(",")
 
 
 def test_literature_connectors_use_cached_full_text_for_structured_extraction(
@@ -7657,6 +7846,61 @@ def test_literature_scout_network_results_are_cached(
         for paper in second.literature_scout.similar_papers
         if paper.source == "semantic_scholar"
     )
+
+
+def test_literature_scout_prioritizes_domain_queries_without_breaking_existing_cache() -> None:
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-scout-domain-query-priority",
+        payload=AutoResearchIdeaRequest.model_validate(_idea_request_payload()),
+    )
+    queries = autoresearch_literature_scout._search_queries(brief)
+    selected = autoresearch_literature_connectors._selected_queries(queries)
+
+    assert len(selected) == 4
+    assert "claim evidence retrieval scientific writing agents" in selected
+    assert "scientific claim verification retrieval evidence support" in selected
+    assert _cached_literature_query(brief) in selected
+
+
+def test_literature_connector_keeps_source_available_with_partial_query_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    payload = _idea_request_payload()
+    payload["allow_web"] = True
+    brief = autoresearch_idea_brief.build_research_brief(
+        project_id="project-scout-partial-source-error",
+        payload=AutoResearchIdeaRequest.model_validate(payload),
+    )
+
+    def fake_fetch(source: str, query: str, *, limit: int):
+        if "first query" in query:
+            raise RuntimeError("provider temporarily throttled first query")
+        return _semantic_scholar_cache_fixture()
+
+    monkeypatch.setattr(autoresearch_literature_connectors, "_fetch_connector_response", fake_fetch)
+
+    papers, statuses = autoresearch_literature_connectors.search_literature_connectors(
+        brief,
+        search_queries=[
+            "first query claim evidence retrieval",
+            "second query claim verification retrieval evidence",
+        ],
+        sources=["semantic_scholar"],
+        limit_per_source=2,
+        network_enabled=True,
+        cache_enabled=False,
+    )
+
+    assert len(papers) == 1
+    assert len(statuses) == 1
+    assert statuses[0].paper_count == 1
+    assert statuses[0].error_count == 1
+    assert statuses[0].availability_status == "available"
+    assert statuses[0].errors == [
+        "semantic_scholar query failed: provider temporarily throttled first query"
+    ]
 
 
 def test_literature_scout_mines_testable_gap_for_brief() -> None:

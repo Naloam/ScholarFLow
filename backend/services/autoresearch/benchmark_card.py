@@ -10,6 +10,7 @@ from schemas.autoresearch import (
     AutoResearchReadinessCheckRead,
     AutoResearchRunRead,
 )
+from services.autoresearch.benchmark_source_metadata import materialize_file_backed_benchmark_source
 from services.autoresearch.research_readiness import PUBLICATION_MIN_DATASET_EXAMPLES
 
 
@@ -45,7 +46,8 @@ def _add_check(
 
 
 def build_benchmark_card(run: AutoResearchRunRead) -> AutoResearchBenchmarkCardRead:
-    spec = run.spec
+    materialized_benchmark = materialize_file_backed_benchmark_source(run)
+    spec = run.spec or (materialized_benchmark.spec if materialized_benchmark is not None else None)
     dataset = spec.dataset if spec is not None else None
     source_kind = (
         run.benchmark.kind

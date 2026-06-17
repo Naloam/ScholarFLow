@@ -25,7 +25,12 @@ logger = logging.getLogger("research_harness.pipeline")
 # Unified workspace root (plan §5.2 P1 — single DATA_DIR, no double-backend).
 WORKSPACE_ROOT: Path = Path(settings.data_dir) / "research_workspace"
 
-ALL_STEPS: list[str] = ["literature", "idea", "experiment", "review", "report"]
+ALL_STEPS: list[str] = ["literature", "idea", "experiment", "review", "report", "write", "audit"]
+
+# The honest research core. A run is "done" once these have produced their
+# artifacts; the paper layer (write/audit) is best-effort on top and does not gate
+# "done" status (a draft/audit failure must never make a completed run look partial).
+CORE_STEPS: list[str] = ["literature", "idea", "experiment", "review", "report"]
 
 STEP_OUTPUTS: dict[str, list[str]] = {
     "literature": [
@@ -51,6 +56,8 @@ STEP_OUTPUTS: dict[str, list[str]] = {
         "reviews/review_round_1.json",
     ],
     "report": ["research_report.md", "conclusion.md"],
+    "write": ["paper/contribution.md", "paper/outline.md", "paper/draft.md", "paper/draft.raw.md"],
+    "audit": ["paper/draft.md", "ledger/claim_audit.json"],
 }
 
 
@@ -214,7 +221,7 @@ def _derive_status_from_timeline(timeline: list[dict]) -> str:
     if any(e.get("status") == "error" for e in timeline):
         return "error"
     done_steps = {e["step"] for e in timeline if e.get("status") == "done"}
-    if set(ALL_STEPS).issubset(done_steps):
+    if set(CORE_STEPS).issubset(done_steps):
         return "done"
     return "partial"
 
@@ -337,13 +344,60 @@ def run_step_report(project_id: str, idea: str) -> Path:
     return report_path
 
 
+def run_step_write(project_id: str, idea: str) -> Path:
+    """WriterAgent: contribution → outline → draft.md (plan §6).
+
+    Needs the report-step inputs on disk (metrics + review + selected + notes).
+    Failures here are paper-layer failures, caught as non-fatal by run_pipeline so
+    the honest research_report.md is never blocked by a draft-generation problem.
+    """
+    from services.research_harness.writer import run_writer_agent
+
+    notes = load_literature_notes(project_id)
+    selected = load_selected_hypothesis(project_id) or {}
+    metrics = load_metrics(project_id)
+    review = load_review(project_id)
+    if not metrics or not review:
+        raise RuntimeError("No metrics/review on disk. Run --steps report first.")
+    draft_path = run_writer_agent(project_id, idea, selected, metrics, review, notes)
+    logger.info("Paper draft written: %s", draft_path)
+    return draft_path
+
+
+def run_step_audit(project_id: str, idea: str) -> dict:
+    """AuditorAgent: gate paper/draft.md against metrics → ledger + [UNVERIFIED] marks.
+
+    Reads paper/draft.md (produced by the write step) and metrics.json. A failed
+    audit is recorded on disk + the report (never silently passed); an exception is
+    caught as non-fatal so the honest report is never blocked by an audit problem.
+    """
+    from services.research_harness.auditor import run_auditor_agent
+
+    metrics = load_metrics(project_id)
+    if not metrics:
+        raise RuntimeError("No metrics on disk. Run --steps report first.")
+    result = run_auditor_agent(project_id, metrics)
+    logger.info(
+        "Audit complete: gate=%s verified=%s unverified=%s",
+        result.get("gate"), result.get("verified_count"), result.get("unverified_count"),
+    )
+    return result
+
+
 STEP_FUNCS: dict[str, Callable[[str, str], Any]] = {
     "literature": run_step_literature,
     "idea": run_step_idea,
     "experiment": run_step_experiment,
     "review": run_step_review,
     "report": run_step_report,
+    "write": run_step_write,
+    "audit": run_step_audit,
 }
+
+# Paper-layer steps (V2). Their failure is recorded on the timeline but does NOT
+# break the run or flip its status to "error": the honest research_report.md is
+# already on disk after `report`, and a draft/audit problem must never block it.
+NONFATAL_STEPS: frozenset[str] = frozenset({"write", "audit"})
 
 
 # --------------------------------------------------------------------------- #
@@ -377,10 +431,15 @@ def run_pipeline(project_id: str, idea: str, steps: list[str] | None = None) -> 
             STEP_FUNCS[step](project_id, idea)
             append_timeline(project_id, step, "done", STEP_OUTPUTS.get(step, []))
             summary_steps.append({"step": step, "status": "done"})
-        except Exception:  # noqa: BLE001 — record + propagate
+        except Exception:  # noqa: BLE001 — record + (maybe) propagate
             logger.error("Step %s failed:\n%s", step, traceback.format_exc())
             append_timeline(project_id, step, "error", STEP_OUTPUTS.get(step, []))
             summary_steps.append({"step": step, "status": "error"})
+            if step in NONFATAL_STEPS:
+                # Paper-layer (write/audit) failure: the honest report is already on disk;
+                # record it but keep going. Do not flip the run to "error".
+                logger.warning("Non-fatal step %s failed; report honesty is unaffected.", step)
+                continue
             failed = True
             break
 

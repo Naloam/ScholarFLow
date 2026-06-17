@@ -1,0 +1,320 @@
+"""AuditorAgent (V2, plan §6) — post-writing evidence gate.
+
+Ports the *logic* (not the 13975-line orchestrator) of the frozen
+``claim_evidence_gate.py`` / ``citation_verifier.py`` / ``paper_evidence_compiler.py``
+into a small, deterministic, self-contained gate that runs AFTER the Writer.
+
+Contract (docs/goal_session6.md Step 3, hard constraints — never loosened):
+  - claim with no supporting metric / citation → marked ``[UNVERIFIED]`` → gate false
+  - "significantly outperforms" with no significant favorable result → ``[UNVERIFIED]``
+  - "outperforms across all datasets" when the method lost on some dataset → ``[UNVERIFIED]``
+  - "competitive" / "promising" on a negative result → ``[UNVERIFIED]``
+  - execution never ran → the draft must not contain a results section (Writer-enforced;
+    the Auditor still flags any result-style claim it finds)
+
+The gate is deliberately NON-LLM: verifying an LLM's claims with another LLM call is
+circular. Evidence comes from ``metrics.json`` + ``papers.jsonl`` (what the experiment
+actually produced), matched by portable keyword overlap (the frozen gate's approach).
+
+Outputs: rewrites ``paper/draft.md`` with inline ``[UNVERIFIED: reason]`` markers,
+writes ``ledger/claim_audit.json``, and annotates ``research_report.md`` with the
+gate outcome (never silently passing a failed audit).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from config.settings import settings
+from services.research_harness import evidence
+
+logger = logging.getLogger(__name__)
+WORKSPACE_ROOT = Path(settings.data_dir) / "research_workspace"
+
+# Cue sets (port of paper_evidence_compiler's strong/overclaim cues, trimmed to the
+# portable substrings the gate acts on). Matched case-insensitively as substrings.
+_RESULT_CUES: tuple[str, ...] = (
+    "outperform", "significantly", "superior", "improve", "improves", "improved",
+    "improvement", "achieves", "achieve", "demonstrate", "demonstrates", "establish",
+    "beats", "beat the baseline", "better than", "higher than", "lower error",
+    "best-performing", "highest", "strongest", "robust",
+)
+_SPIN_CUES: tuple[str, ...] = (
+    "competitive", "promising", "state-of-the-art", "sota", "novel", "contribution",
+)
+# A sentence is a "claim" worth auditing if it carries any result or spin cue.
+_CLAIM_CUES: tuple[str, ...] = _RESULT_CUES + _SPIN_CUES
+
+# Universal-scope phrases → "outperforms across all datasets" style overclaim.
+_SCOPE_PHRASES: tuple[str, ...] = (
+    "all datasets", "every dataset", "across all", "all three", "all of the",
+    "uniformly", "consistently", "in every", "on each dataset", "broadly",
+    "generalization", "generalizes", "robustly",
+)
+
+# Split on sentence-final punctuation followed by whitespace + a capital/structural opener.
+# Resists splitting on decimals like "0.003" (the "." there is followed by a digit, not whitespace).
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(“\"`\[])")
+
+
+def _project_dir(project_id: str) -> Path:
+    return WORKSPACE_ROOT / project_id
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [s.strip() for s in _SENT_SPLIT_RE.split(text or "") if s and s.strip()]
+
+
+def _dataset_names(metrics: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for d in (metrics.get("baseline_comparison") or {}).get("datasets") or []:
+        if isinstance(d, dict) and d.get("dataset"):
+            names.add(str(d["dataset"]))
+    return names
+
+
+def _lost_datasets(metrics: dict[str, Any]) -> list[str]:
+    return [
+        str(d["dataset"])
+        for d in (metrics.get("baseline_comparison") or {}).get("datasets") or []
+        if isinstance(d, dict) and d.get("beats_baseline") is False
+    ]
+
+
+def _has_any(text: str, cues: tuple[str, ...]) -> bool:
+    lowered = (text or "").lower()
+    return any(cue in lowered for cue in cues)
+
+
+def extract_claims(draft_text: str) -> list[dict[str, Any]]:
+    """Sentences carrying a result/spin cue — these are the claims that need evidence.
+
+    Descriptive sentences without a cue are not audited (background/method text).
+    Markdown heading lines are dropped before splitting so a claim never absorbs a
+    ``# Heading``; the surviving sentences remain verbatim substrings of the draft,
+    so :func:`annotate_draft` can still locate them for inline marking.
+    Each claim dict: ``{id, text, category}`` where category ∈ {result, spin}.
+    """
+    # Drop standalone markdown headers (structural, not claims).
+    body = "\n".join(
+        line for line in (draft_text or "").splitlines()
+        if not re.match(r"^#{1,6}\s", line)
+    )
+    claims: list[dict[str, Any]] = []
+    idx = 0
+    for sentence in _split_sentences(body):
+        if not _has_any(sentence, _CLAIM_CUES):
+            continue
+        category = "spin" if _has_any(sentence, _SPIN_CUES) and not _has_any(sentence, _RESULT_CUES) else "result"
+        idx += 1
+        claims.append({"id": f"claim_{idx}", "text": sentence, "category": category})
+    return claims
+
+
+def _evidence_overlap(claim_text: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Evidence items whose keyword set overlaps the claim (≥2 shared terms, or ≥30% of the
+    claim's keywords). Port of claim_evidence_gate._match_evidence."""
+    claim_kw = evidence.keywords(claim_text)
+    if not claim_kw:
+        return []
+    matched: list[dict[str, Any]] = []
+    for item in items:
+        overlap = claim_kw & item.get("keywords", set())
+        if len(overlap) >= 2 or len(overlap) / len(claim_kw) >= 0.3:
+            matched.append(item)
+    return matched
+
+
+def _classify_claim(claim: dict[str, Any], metrics: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Apply the overclaim rules, then the evidence check. Returns a verdict dict.
+
+    verdict ∈ {"verified", "unverified"}; gates on the FIRST overclaim rule that fires.
+    """
+    text = claim["text"]
+    cid = claim["id"]
+    v = evidence.verdict(metrics)
+    datasets = _dataset_names(metrics)
+    lost = _lost_datasets(metrics)
+    has_sig = evidence.has_significant_favorable(metrics)
+    text_lower = text.lower()
+    names_dataset = any(evidence.keywords(d) & evidence.keywords(text) for d in datasets) or any(
+        d.lower() in text_lower for d in datasets
+    )
+
+    # Rule 1 — significance overclaim: claims significant superiority with no significant favorable result.
+    sig_superiority = "significantly" in text_lower and _has_any(text, ("outperform", "superior", "improve", "better", "beats"))
+    if sig_superiority and not has_sig:
+        return _verdict(cid, "unverified", text, [],
+                        "claims a significant superiority but no statistically significant favorable result exists")
+
+    # Rule 2 — scope overclaim: uniform/general superiority while the method lost on some dataset.
+    if _has_any(text, _SCOPE_PHRASES) and lost:
+        return _verdict(
+            cid, "unverified", text, [],
+            f"claims uniform/general superiority but the proposed method lost on: {', '.join(lost)}",
+        )
+
+    # Rule 3 — positive spin on a negative result.
+    if v == "negative" and _has_any(text, ("competitive", "promising", "state-of-the-art", "sota")):
+        return _verdict(cid, "unverified", text, [],
+                        "uses competitive/promising/state-of-the-art wording for a negative result")
+
+    # Rule 4 — global superiority without a dataset qualifier while overall not beating baseline.
+    bare_superiority = _has_any(text, ("outperforms the baseline", "beats the baseline", "superior to the baseline"))
+    if bare_superiority and not names_dataset and (metrics.get("baseline_comparison") or {}).get("overall_beats_baseline") is False:
+        return _verdict(cid, "unverified", text, [],
+                        "claims to outperform the baseline overall but the proposed method does not beat it overall")
+
+    # Rule 5 — evidence check: must find supporting metric/citation.
+    matched = _evidence_overlap(text, items)
+    if matched:
+        return _verdict(
+            cid, "verified", text, [m["id"] for m in matched],
+            "supported by metric evidence: " + " | ".join(m["summary"] for m in matched[:3]),
+        )
+    return _verdict(cid, "unverified", text, [], "no supporting metric or citation found for this claim")
+
+
+def _verdict(cid: str, verdict_kind: str, text: str, refs: list[str], reason: str) -> dict[str, Any]:
+    return {
+        "claim_id": cid,
+        "claim": text,
+        "verdict": verdict_kind,
+        "evidence_refs": refs,
+        "reason": reason,
+    }
+
+
+def audit_draft(draft_text: str, metrics: dict[str, Any], papers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Pure audit: returns the ledger dict without touching disk.
+
+    ``papers`` is accepted for forward-compat (citation verification) but the current
+    gate keys off metrics; paper-backed claims still need a metric/literature overlap.
+    """
+    items = evidence.build_evidence_items(metrics)
+    # Fold paper titles into the evidence pool so literature-grounded claims can match too.
+    if papers:
+        for i, p in enumerate(papers[:30]):
+            if not isinstance(p, dict):
+                continue
+            title = p.get("title") or ""
+            items.append({"id": f"lit_{i}", "kind": "literature", "summary": title, "keywords": evidence.keywords(title)})
+
+    claims = extract_claims(draft_text)
+    verdicts = [_classify_claim(c, metrics, items) for c in claims]
+    unverified = [v for v in verdicts if v["verdict"] == "unverified"]
+    gate = len(unverified) == 0
+
+    return {
+        "total_claims": len(verdicts),
+        "verified_count": len(verdicts) - len(unverified),
+        "unverified_count": len(unverified),
+        "gate": gate,
+        "claims": verdicts,
+        "verdict": evidence.verdict(metrics),
+        "audited_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def annotate_draft(draft_text: str, result: dict[str, Any]) -> str:
+    """Insert ``[UNVERIFIED: reason]`` after each unverified claim sentence.
+
+    Matches by exact sentence text (claims were extracted from the same draft).
+    """
+    annotated = draft_text
+    for v in result.get("claims", []):
+        if v["verdict"] != "unverified":
+            continue
+        sentence = v["claim"]
+        # Plain-text marker (no markdown bold): the frontend wraps [UNVERIFIED] in a
+        # styled <mark class="unverified"> for emphasis, so keeping the marker as a bare
+        # string lets the renderer highlight it regardless of surrounding inline formatting.
+        marker = f" [UNVERIFIED: {v['reason']}]"
+        if marker in annotated:
+            continue
+        # Insert the marker right after the sentence's terminal punctuation, before the
+        # following whitespace. If the exact sentence isn't found verbatim (e.g. the LLM
+        # emitted it across a line break), skip rather than corrupting the text.
+        idx = annotated.find(sentence)
+        if idx == -1:
+            continue
+        end = idx + len(sentence)
+        annotated = annotated[:end] + marker + annotated[end:]
+    return annotated
+
+
+_REPORT_AUDIT_HEADER = "## Paper Audit"
+
+
+def _annotate_report(project_id: str, result: dict[str, Any]) -> None:
+    """Append a clearly-delimited audit section to research_report.md (idempotent).
+
+    Never edits the honest Conclusion — only appends the post-hoc gate outcome, so a
+    failed audit can never be silently passed. If write/audit ran but the report is
+    missing, the ledger on disk still carries the verdict.
+    """
+    report_path = _project_dir(project_id) / "research_report.md"
+    if not report_path.exists():
+        return
+    existing = report_path.read_text(encoding="utf-8")
+    # Drop a previously-appended audit section so reruns don't stack duplicates.
+    if _REPORT_AUDIT_HEADER in existing:
+        existing = existing.split(_REPORT_AUDIT_HEADER)[0].rstrip() + "\n"
+    gate_word = "PASSED" if result.get("gate") else "FAILED"
+    section = (
+        f"\n\n{_REPORT_AUDIT_HEADER}\n\n"
+        f"The paper draft was audited against the experiment's own metrics. "
+        f"**Gate: {gate_word}** — {result.get('verified_count', 0)}/{result.get('total_claims', 0)} "
+        f"claims verified, {result.get('unverified_count', 0)} unverified. "
+        f"Verdict of the underlying experiment: `{result.get('verdict')}`. "
+        "Unverified claims are marked `[UNVERIFIED]` inline in `paper/draft.md`; see "
+        "`ledger/claim_audit.json` for the full per-claim ledger.\n"
+    )
+    report_path.write_text(existing + section, encoding="utf-8")
+
+
+def run_auditor_agent(project_id: str, metrics: dict[str, Any]) -> dict[str, Any]:
+    """Read paper/draft.md, audit it, write ledger + annotated draft + report annotation."""
+    proj = _project_dir(project_id)
+    draft_path = proj / "paper" / "draft.md"
+    if not draft_path.exists():
+        logger.warning("[AuditorAgent] no paper/draft.md for %s — skipping audit", project_id)
+        return {"gate": False, "skipped": True, "reason": "no_draft"}
+
+    draft_text = draft_path.read_text(encoding="utf-8")
+
+    papers: list[dict[str, Any]] = []
+    papers_path = proj / "literature" / "papers.jsonl"
+    if papers_path.exists():
+        for line in papers_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                papers.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    result = audit_draft(draft_text, metrics, papers)
+
+    ledger_dir = proj / "ledger"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    (ledger_dir / "claim_audit.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    # Rewrite draft.md with inline [UNVERIFIED] markers; keep draft.raw.md pristine.
+    annotated = annotate_draft(draft_text, result)
+    draft_path.write_text(annotated, encoding="utf-8")
+
+    _annotate_report(project_id, result)
+
+    logger.info(
+        "[AuditorAgent] %s: gate=%s verified=%d unverified=%d",
+        project_id, result["gate"], result["verified_count"], result["unverified_count"],
+    )
+    return result

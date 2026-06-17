@@ -84,7 +84,9 @@ def _resolve_status(project_id: str, run_id: str) -> RunStatus:
         status = "running"
     elif has_error:
         status = "error"
-    elif set(pipeline.ALL_STEPS).issubset(done_steps):
+    elif set(pipeline.CORE_STEPS).issubset(done_steps):
+        # Core research done. write/audit (paper layer) are best-effort and do not
+        # gate "done" — a draft/audit failure must not make a finished run look partial.
         status = "done"
     elif done_steps:
         status = "partial"

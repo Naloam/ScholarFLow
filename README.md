@@ -86,12 +86,20 @@ Key environment variables (see `.env.example` for the full list):
 
 ## Document Map
 
+Tracked (in-repo) canonical docs:
+
+- `CLAUDE.md`: project instructions and conventions for AI development sessions
+- `SCHOLARFLOW_CORE_REBUILD_PLAN_v2.md`: the rebuild diagnosis and V0–V3 plan
+- `docs/research-harness-roadmap.md`: status by version + explicit P2/P3 trigger conditions
+- `docs/api-reference.md`: current auto-research and registry APIs
+
+Local-dev deep-dives (present on dev machines, gitignored — not in a fresh clone):
+
 - `PROJECT_PLAN.md`: authoritative roadmap and phase priorities
 - `AGENTS.md`: contributor rules for humans and AI agents
 - `SYSTEM_PROMPT.md`: long-lived default prompt for future AI development sessions
-- `docs/fars-reference.md`: distilled public FARS signals and how ScholarFlow should emulate them
 - `docs/architecture.md`: current and target architecture
-- `docs/api-reference.md`: current auto-research and registry APIs
+- `docs/fars-reference.md`: distilled public FARS signals and how ScholarFlow should emulate them
 
 ## Current State
 
@@ -128,7 +136,7 @@ Key environment variables (see `.env.example` for the full list):
 - Execution plane: `backend/services/autoresearch/execution.py`
 - Persistence and manifests: `backend/services/autoresearch/repository.py`
 - Schemas: `backend/schemas/autoresearch.py`
-- Main regression suite: `backend/tests/test_autoresearch.py`
+- Main regression suite: `backend/tests/test_autoresearch_regressions.py`
 
 ## Legacy Notes
 

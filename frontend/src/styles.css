@@ -604,6 +604,122 @@ code {
   font-family: ui-monospace, monospace;
 }
 
+/* ---------------- paper draft + audit ledger (V2) ---------------- */
+
+.report__paper {
+  margin-top: 28px;
+}
+.report__paper details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.report__paper details > summary::-webkit-details-marker {
+  display: none;
+}
+.report__paper-note {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 6px 0 12px;
+}
+.paper-draft {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  background: var(--surface);
+}
+
+/* Inline [UNVERIFIED] marker inserted by the AuditorAgent. Loud on purpose —
+   a human scanning the draft must instantly see which claims the gate rejected. */
+.unverified {
+  background: var(--bad-soft);
+  color: var(--bad);
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+.audit {
+  margin-top: 28px;
+}
+.audit__title {
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.audit__gate {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.audit__gate--pass {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.audit__gate--fail {
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+.audit__summary {
+  margin: 8px 0 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.audit__hot {
+  color: var(--bad);
+}
+.audit__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+.audit__claim {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 12px;
+}
+.audit__claim--verified {
+  border-left-color: var(--ok);
+}
+.audit__claim--unverified {
+  border-left-color: var(--bad);
+}
+.audit__verdict {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  height: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.audit__claim--verified .audit__verdict {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.audit__claim--unverified .audit__verdict {
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+.audit__text {
+  font-weight: 500;
+}
+.audit__reason {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 4px;
+  font-family: ui-monospace, monospace;
+}
+
 /* ---------------- markdown ---------------- */
 
 .markdown {

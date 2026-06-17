@@ -21,8 +21,8 @@ test.describe("research-harness flow", () => {
     await page.goto(`/projects/${FIXTURE}`);
     await expect(page.locator(".page__title", { hasText: "Run" })).toBeVisible();
     await expect(page.getByTestId("status-badge")).toContainText("Done", { timeout: 15000 });
-    // All five agent steps are present in the timeline.
-    for (const step of ["Literature", "Idea", "Experiment", "Review", "Report"]) {
+    // All agent steps are present in the timeline, including the V2 paper layer.
+    for (const step of ["Literature", "Idea", "Experiment", "Review", "Report", "Write", "Audit"]) {
       await expect(page.locator(".timeline__step", { hasText: step })).toBeVisible();
     }
   });
@@ -34,10 +34,27 @@ test.describe("research-harness flow", () => {
     await expect(page.locator(".metric__value", { hasText: "Mixed / Negative" })).toBeVisible();
     // Execution really ran.
     await expect(page.locator(".metric__value", { hasText: "Succeeded" })).toBeVisible();
-    // The report itself is rendered and contains the honest TL;DR.
-    await expect(page.locator(".markdown")).toContainText(/NEGATIVE RESULT/i);
+    // The report itself is rendered and contains the honest TL;DR. Scope to the
+    // report body so the V2 paper draft (also a .markdown block) doesn't make this
+    // locator ambiguous.
+    await expect(page.locator(".report__body .markdown")).toContainText(/NEGATIVE RESULT/i);
     // Reviewer weaknesses surfaced (major severity exists for this run).
     await expect(page.locator(".reviewer__severity", { hasText: "major" }).first()).toBeVisible();
+  });
+
+  test("Report renders the paper draft with a red [UNVERIFIED] claim + audit ledger", async ({ page }) => {
+    // V2 layer: the WriterAgent draft is rendered and the AuditorAgent has flagged
+    // the one overclaim ("across all three datasets") as [UNVERIFIED] + gate FAILED.
+    await page.goto(`/projects/${FIXTURE}/report`);
+    // Paper draft section is present and rendered.
+    await expect(page.locator(".paper-draft")).toBeVisible();
+    await expect(page.locator(".paper-draft")).toContainText(/Evidence-Aware Retrieval/i);
+    // The overclaim sentence is highlighted red (the auditor's [UNVERIFIED] marker).
+    await expect(page.locator(".paper-draft .unverified").first()).toBeVisible();
+    await expect(page.locator(".paper-draft .unverified").first()).toContainText(/UNVERIFIED/i);
+    // The audit ledger card reports a FAILED gate + the unverified claim.
+    await expect(page.getByTestId("audit-gate")).toContainText(/failed/i);
+    await expect(page.locator(".audit__claim--unverified")).toBeVisible();
   });
 
   test("Workspace shows the file tree and renders a selected file", async ({ page }) => {

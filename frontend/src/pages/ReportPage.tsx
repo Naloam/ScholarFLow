@@ -6,10 +6,12 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getFile } from "../api/client";
-import type { MetricsJson, ReviewJson } from "../api/types";
+import type { ClaimAudit, MetricsJson, ReviewJson } from "../api/types";
 import { ErrorState } from "../components/States";
 import { MarkdownView } from "../components/MarkdownView";
 import { MetricCards } from "../components/MetricCards";
+import { PaperDraft } from "../components/PaperDraft";
+import { AuditLedger } from "../components/AuditLedger";
 import { ReviewerWeaknesses } from "../components/ReviewerWeaknesses";
 import { Spinner } from "../components/Spinner";
 
@@ -18,14 +20,18 @@ interface ReportData {
   metrics: MetricsJson | null;
   review: ReviewJson | null;
   paperCount: number;
+  draft: string;
+  audit: ClaimAudit | null;
 }
 
 async function loadReport(projectId: string): Promise<ReportData> {
-  const [reportText, metricsText, reviewText, papersText] = await Promise.all([
+  const [reportText, metricsText, reviewText, papersText, draftText, auditText] = await Promise.all([
     getFile(projectId, "research_report.md").catch(() => ""),
     getFile(projectId, "artifacts/metrics.json").catch(() => ""),
     getFile(projectId, "reviews/review_round_1.json").catch(() => ""),
     getFile(projectId, "literature/papers.jsonl").catch(() => ""),
+    getFile(projectId, "paper/draft.md").catch(() => ""),
+    getFile(projectId, "ledger/claim_audit.json").catch(() => ""),
   ]);
 
   let metrics: MetricsJson | null = null;
@@ -44,9 +50,17 @@ async function loadReport(projectId: string): Promise<ReportData> {
       review = null;
     }
   }
+  let audit: ClaimAudit | null = null;
+  if (auditText) {
+    try {
+      audit = JSON.parse(auditText) as ClaimAudit;
+    } catch {
+      audit = null;
+    }
+  }
   const paperCount = papersText ? papersText.split("\n").filter((l) => l.trim()).length : 0;
 
-  return { report: reportText, metrics, review, paperCount };
+  return { report: reportText, metrics, review, paperCount, draft: draftText, audit };
 }
 
 export function ReportPage() {
@@ -118,6 +132,24 @@ export function ReportPage() {
           </div>
         )}
       </section>
+
+      {data?.draft ? (
+        <section className="report__paper" aria-label="Paper draft">
+          <details open>
+            <summary className="section__title">Paper draft (paper/draft.md)</summary>
+            <p className="report__paper-note">
+              Written by the WriterAgent from the experiment record, then gated by the
+              AuditorAgent. Claims with no supporting metric are marked{" "}
+              <mark className="unverified">[UNVERIFIED]</mark> inline.
+            </p>
+            <PaperDraft source={data.draft} />
+          </details>
+        </section>
+      ) : null}
+
+      {data?.audit || data?.draft ? (
+        <AuditLedger audit={data?.audit ?? null} />
+      ) : null}
 
       <ReviewerWeaknesses review={data?.review ?? null} />
     </div>

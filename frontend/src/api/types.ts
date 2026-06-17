@@ -131,3 +131,25 @@ export interface ReviewJson {
   weaknesses?: ReviewWeakness[];
   required_experiments?: Array<{ action?: string; description?: string; priority?: string }>;
 }
+
+// ---- paper + audit (V2 Writer + Auditor layer) ----
+
+export interface ClaimVerdict {
+  claim_id: string;
+  claim: string;
+  verdict: "verified" | "unverified";
+  evidence_refs?: string[];
+  reason?: string;
+}
+
+export interface ClaimAudit {
+  total_claims?: number;
+  verified_count?: number;
+  unverified_count?: number;
+  gate?: boolean;
+  verdict?: string;
+  audited_at?: string;
+  claims?: ClaimVerdict[];
+  skipped?: boolean;
+  reason?: string;
+}

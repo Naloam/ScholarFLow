@@ -1,9 +1,10 @@
-// Vertical timeline of the 5 agent steps. Shows done/error/running/pending with
+// Vertical timeline of the agent steps. Shows done/error/running/pending with
 // icon + timestamp + per-step duration. Honest: a failed step renders as error,
-// never silently promoted to success.
+// never silently promoted to success. write/audit are the V2 paper layer; they are
+// best-effort (non-fatal) but still surfaced here so a human sees the full run.
 import type { TimelineEntry } from "../api/types";
 
-const STEP_ORDER = ["literature", "idea", "experiment", "review", "report"] as const;
+const STEP_ORDER = ["literature", "idea", "experiment", "review", "report", "write", "audit"] as const;
 
 const STEP_LABELS: Record<string, string> = {
   literature: "Literature",
@@ -11,6 +12,8 @@ const STEP_LABELS: Record<string, string> = {
   experiment: "Experiment",
   review: "Review",
   report: "Report",
+  write: "Write",
+  audit: "Audit",
 };
 
 interface TimelineProps {

@@ -24,6 +24,15 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Registered markers — keeps `pytest --markers` honest and silences
+# PytestUnknownMarkWarning. The default run must EXCLUDE live_research: those
+# tests do a real 10-15 min GLM-5.2 run (needs a live key + network + budget)
+# and must never run in CI or as part of the normal suite.
+#   CI / default:  pytest -m "not live_research"
+#   manual live:   pytest -m live_research  (set SCHOLARFLOW_OFFLINE_LLM=0 + a real key)
+markers = [
+  "live_research: end-to-end live GLM run (network + key + minutes) — excluded from CI/default",
+]
 
 [tool.setuptools]
 py-modules = ["main"]

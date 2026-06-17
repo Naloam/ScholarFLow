@@ -155,7 +155,9 @@ def test_llm_chat_hard_timeout_returns_fallback(monkeypatch) -> None:
 
     assert response == llm_client.FALLBACK_RESPONSE
     assert elapsed < 2
-    assert recorded["model"] == "test-model"
+    # chat() normalizes a bare model name to an openai-compatible prefix when a
+    # custom api_base is configured (so litellm can route it); "test-model" → "openai/test-model".
+    assert recorded["model"] == "openai/test-model"
     assert recorded["completion_tokens"] == 0
 
 

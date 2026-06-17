@@ -1,0 +1,16 @@
+# Experiment-environment dependencies for the research_harness sandbox (Session 4).
+#
+# These are EXPERIMENT capabilities (loaded by generated experiment.py inside the local
+# sandbox), NOT application/dev dependencies. They are installed one-time into the same
+# venv that runs the sandbox (see docs/goal_session4.md Step 0/1).
+#
+# Install:
+#   .venv/bin/python -m pip install -r backend/services/research_harness/requirements-experiment.txt
+#
+# Why: the Session-3 reviewer flagged a method-hypothesis mismatch — the hypothesis calls for
+# sentence-transformers (all-MiniLM-L6-v2) sentence vectors, but the sandbox only had the stdlib,
+# so the experiment degraded to TF-IDF. Installing these lets the proposed method TRULY implement
+# the hypothesis. See backend/services/research_harness/sandbox_capabilities.py.
+numpy>=2.0
+scikit-learn>=1.4
+sentence-transformers>=3.0

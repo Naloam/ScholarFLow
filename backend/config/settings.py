@@ -33,6 +33,20 @@ def _get_bool(raw: str | None, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_under_root(raw: str) -> Path:
+    """Resolve a possibly-relative path against PROJECT_ROOT (not CWD).
+
+    Fixes the 'double-backend' data_dir bug (plan §5.2 P1): with ``DATA_DIR=backend/data``
+    a process launched from ``backend/`` previously resolved it against CWD →
+    ``backend/backend/data``. Now relative DATA_DIR is always anchored to the repo root.
+    Absolute paths are unaffected.
+    """
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return p.resolve()
+
+
 _load_env_files()
 
 
@@ -76,9 +90,9 @@ class Settings(BaseModel):
         )
     )
     data_dir: Path = Field(
-        default_factory=lambda: Path(
+        default_factory=lambda: _resolve_under_root(
             os.getenv("DATA_DIR", str(BACKEND_ROOT / "data"))
-        ).expanduser().resolve()
+        )
     )
 
 

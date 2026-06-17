@@ -95,8 +95,8 @@ failure mode this rebuild exists to avoid.
 
 ### V2 "quality bar" (the P3 trigger condition, quantified)
 P3 becomes eligible when a **real live GLM run** (`SCHOLARFLOW_OFFLINE_LLM=0
-pytest -m live_research backend/tests/test_live_research.py -s`, ~10–15 min, real
-tokens) demonstrates, on a fresh idea:
+python scripts/live_acceptance_run.py`, ~15 min, real tokens) demonstrates, on a
+fresh idea:
 - `paper/draft.md` is structurally complete (all outlined sections present, no
   empty/aborted sections from rate-limiting);
 - the honesty gate is **not bypassed** (a genuine negative/mixed verdict is
@@ -107,8 +107,19 @@ tokens) demonstrates, on a fresh idea:
   false-flag real retrieved papers.
 
 Record each live run's `[UNVERIFIED]` hit count, draft completeness, and cost into
-this file's baseline table as the "after" sample. **The live run is manual and is
-the sole acceptance evidence for P3** — CI/fixtures cannot substitute.
+the baseline table below. **The live run is manual and is the sole acceptance
+evidence for P3** — CI/fixtures cannot substitute.
+
+#### Live-run baseline table
+
+| run | idea (short) | elapsed | exec | verdict | draft | gate | unverified | citation_unverified | notes |
+|-----|--------------|---------|------|---------|-------|------|-----------|---------------------|-------|
+| live_session7 (2026-06-18, GLM-5.2) | Self-Consistency Calibration for Hallucination Detection in RAG | 16.1 min | success | **negative** | complete, 7 sections, 3.7k chars | **True** | 0 (1/1 verified) | 0 | 69 papers retrieved. Writer reported the negative result faithfully (no competitive/promising/SOTA); numerically-higher AUCs correctly flagged as non-significant (p=0.72/0.12/0.72); failure mode on vitaminc analyzed. One real issue caught+fixed: coverage_lint had flagged heading section numbers (3.1/6.2) — fixed this session. |
+
+**Assessment:** the first live run clears the V2 quality bar — honest negative
+result preserved end-to-end, complete draft, no honesty-gate bypass, no
+hallucinated citations. P3 is therefore *eligible in principle*; the remaining
+gate before starting it is a product/priority decision, not a quality one.
 
 ## Non-negotiable baselines (never weakened)
 

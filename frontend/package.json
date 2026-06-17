@@ -11,9 +11,6 @@
     "e2e:auth": "SCHOLARFLOW_E2E_BACKEND_PORT=8001 SCHOLARFLOW_E2E_FRONTEND_PORT=4174 AUTH_REQUIRED=1 AUTH_SECRET=phase6-secret playwright test --grep @auth-required"
   },
   "dependencies": {
-    "@tiptap/extension-placeholder": "^2.22.3",
-    "@tiptap/react": "^2.22.3",
-    "@tiptap/starter-kit": "^2.22.3",
     "i18next": "^26.0.3",
     "i18next-browser-languagedetector": "^8.2.1",
     "i18next-http-backend": "^3.0.4",

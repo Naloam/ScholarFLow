@@ -259,15 +259,21 @@ def coverage_lint(draft_text: str, metrics: dict[str, Any]) -> list[dict[str, st
     Writer for a single corrective pass. Returns ``[{token, reason}, ...]``.
     """
     pack = _pack_numbers(metrics)
+    # Strip LEADING section numbers from markdown headings (``### 3.1 Title`` → ``### Title``).
+    # Those ``\d+\.\d+`` tokens are structural section refs, not experimental metrics —
+    # flagging them (surfaced by the Session 7 live run on GLM-5.2, which numbers its
+    # headings) produced false positives that the bounded revise then stripped. A real
+    # metric appearing mid-heading is unaffected; only the leading ``N.N`` after ``#`` is.
+    body = re.sub(r"^(#{1,6}\s+)\d+(?:\.\d+)*\s+", r"\1", draft_text or "", flags=re.MULTILINE)
     flags: list[dict[str, str]] = []
     seen: set[str] = set()
-    for m in _LINT_NUMBER_RE.finditer(draft_text or ""):
+    for m in _LINT_NUMBER_RE.finditer(body):
         token = m.group(0).strip()
-        body = _DECIMAL_BODY_RE.search(token)
-        if not body:
+        dec = _DECIMAL_BODY_RE.search(token)
+        if not dec:
             continue
         try:
-            value = float(body.group(0))
+            value = float(dec.group(0))
         except ValueError:
             continue
         if token in seen:

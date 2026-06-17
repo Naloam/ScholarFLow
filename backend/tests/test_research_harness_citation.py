@@ -162,6 +162,23 @@ def test_coverage_lint_empty_when_no_numbers() -> None:
     assert evidence.coverage_lint("A draft with no decimal numbers.", _lint_metrics()) == []
 
 
+def test_coverage_lint_ignores_markdown_heading_section_numbers() -> None:
+    """Regression: the Session 7 live GLM run numbered its headings (``### 3.1 …``)
+    and coverage_lint flagged ``3.1``/``6.2`` as unsupported metrics, so the bounded
+    revise stripped the numbering. Section refs are structural, not experimental."""
+    m = _lint_metrics()
+    draft = (
+        "## 5. Results\n\n"
+        "### 3.1 Method Details\n"
+        "### 6.2 Effect Size and Power\n"
+        "Our method improved to 0.967 (p=0.003).\n"
+    )
+    flags = [f["token"] for f in evidence.coverage_lint(draft, m)]
+    assert "3.1" not in flags
+    assert "6.2" not in flags
+    assert flags == []  # 0.967 rounds from the pack's 0.966501; p=0.003 is exact
+
+
 # --------------------------------------------------------------------------- #
 # Auditor integration: citation gate folds into the ledger + affects gate
 # --------------------------------------------------------------------------- #

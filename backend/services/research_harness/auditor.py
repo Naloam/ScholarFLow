@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from config.settings import settings
+from services.research_harness import citation
 from services.research_harness import evidence
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,20 @@ def extract_claims(draft_text: str) -> list[dict[str, Any]]:
     return claims
 
 
+def _citation_claim(result: dict[str, Any], index: int) -> dict[str, Any]:
+    """Lift a citation.verify_citations result into the ledger's claim shape."""
+    title = result.get("raw_title") or result.get("marker") or ""
+    marker = result.get("marker", "")
+    display = f"{marker} {title}".strip() or title
+    return {
+        "id": f"citation_{index}",
+        "text": display,
+        "category": "citation",
+        "raw_title": title,
+        "marker": marker,
+    }
+
+
 def _evidence_overlap(claim_text: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Evidence items whose keyword set overlaps the claim (≥2 shared terms, or ≥30% of the
     claim's keywords). Port of claim_evidence_gate._match_evidence."""
@@ -136,6 +151,7 @@ def _classify_claim(claim: dict[str, Any], metrics: dict[str, Any], items: list[
     """
     text = claim["text"]
     cid = claim["id"]
+    cat = claim.get("category", "result")
     v = evidence.verdict(metrics)
     datasets = _dataset_names(metrics)
     lost = _lost_datasets(metrics)
@@ -149,25 +165,25 @@ def _classify_claim(claim: dict[str, Any], metrics: dict[str, Any], items: list[
     sig_superiority = "significantly" in text_lower and _has_any(text, ("outperform", "superior", "improve", "better", "beats"))
     if sig_superiority and not has_sig:
         return _verdict(cid, "unverified", text, [],
-                        "claims a significant superiority but no statistically significant favorable result exists")
+                        "claims a significant superiority but no statistically significant favorable result exists", cat)
 
     # Rule 2 — scope overclaim: uniform/general superiority while the method lost on some dataset.
     if _has_any(text, _SCOPE_PHRASES) and lost:
         return _verdict(
             cid, "unverified", text, [],
-            f"claims uniform/general superiority but the proposed method lost on: {', '.join(lost)}",
+            f"claims uniform/general superiority but the proposed method lost on: {', '.join(lost)}", cat,
         )
 
     # Rule 3 — positive spin on a negative result.
     if v == "negative" and _has_any(text, ("competitive", "promising", "state-of-the-art", "sota")):
         return _verdict(cid, "unverified", text, [],
-                        "uses competitive/promising/state-of-the-art wording for a negative result")
+                        "uses competitive/promising/state-of-the-art wording for a negative result", cat)
 
     # Rule 4 — global superiority without a dataset qualifier while overall not beating baseline.
     bare_superiority = _has_any(text, ("outperforms the baseline", "beats the baseline", "superior to the baseline"))
     if bare_superiority and not names_dataset and (metrics.get("baseline_comparison") or {}).get("overall_beats_baseline") is False:
         return _verdict(cid, "unverified", text, [],
-                        "claims to outperform the baseline overall but the proposed method does not beat it overall")
+                        "claims to outperform the baseline overall but the proposed method does not beat it overall", cat)
 
     # Rule 5 — evidence check: must find supporting metric/citation.
     matched = _evidence_overlap(text, items)
@@ -175,25 +191,70 @@ def _classify_claim(claim: dict[str, Any], metrics: dict[str, Any], items: list[
         return _verdict(
             cid, "verified", text, [m["id"] for m in matched],
             "supported by metric evidence: " + " | ".join(m["summary"] for m in matched[:3]),
+            claim.get("category", "result"),
         )
-    return _verdict(cid, "unverified", text, [], "no supporting metric or citation found for this claim")
+    return _verdict(cid, "unverified", text, [], "no supporting metric or citation found for this claim", claim.get("category", "result"))
 
 
-def _verdict(cid: str, verdict_kind: str, text: str, refs: list[str], reason: str) -> dict[str, Any]:
+def _verdict(
+    cid: str,
+    verdict_kind: str,
+    text: str,
+    refs: list[str],
+    reason: str,
+    category: str = "result",
+) -> dict[str, Any]:
     return {
         "claim_id": cid,
         "claim": text,
         "verdict": verdict_kind,
+        "category": category,
         "evidence_refs": refs,
         "reason": reason,
     }
 
 
-def audit_draft(draft_text: str, metrics: dict[str, Any], papers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _citation_verdict(claim: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """Lift a citation.verify_citations result into the ledger's claim shape."""
+    verdict_kind = result.get("verdict", "unverified")
+    reason = result.get("reason") or (
+        "matched retrieved literature" if verdict_kind == "verified" else "citation not found in retrieved literature"
+    )
+    refs = [result["matched_title"]] if verdict_kind == "verified" and result.get("matched_title") else []
+    if result.get("source") in {"dblp", "crossref"}:
+        reason = f"matched external source ({result['source']})"
+    return {
+        "claim_id": claim["id"],
+        "claim": claim["text"],
+        "verdict": verdict_kind,
+        "category": "citation",
+        "raw_title": claim.get("raw_title", ""),
+        "marker": claim.get("marker", ""),
+        "evidence_refs": refs,
+        "reason": reason,
+    }
+
+
+def audit_draft(
+    draft_text: str,
+    metrics: dict[str, Any],
+    papers: list[dict[str, Any]] | None = None,
+    *,
+    live: bool | None = None,
+) -> dict[str, Any]:
     """Pure audit: returns the ledger dict without touching disk.
 
-    ``papers`` is accepted for forward-compat (citation verification) but the current
-    gate keys off metrics; paper-backed claims still need a metric/literature overlap.
+    Two gate families, both never loosened:
+      1. **Metric/overclaim gate** (V2): each result/spin claim must be backed by a
+         metric or literature-overlap item, and must not overclaim significance /
+         scope / positive spin on a loss.
+      2. **Citation gate** (V2.1): each ``[n]`` / ``"Title"`` / reference-list entry
+         must resolve to a paper in ``papers.jsonl`` (offline) — else it is marked
+         ``[UNVERIFIED: citation "…" not found in retrieved literature]`` and fails
+         the gate. ``live`` enables an optional DBLP/CrossRef second chance under
+         ``live_research`` only.
+
+    Returns the ledger dict. ``unverified_count`` and ``gate`` reflect BOTH gates.
     """
     items = evidence.build_evidence_items(metrics)
     # Fold paper titles into the evidence pool so literature-grounded claims can match too.
@@ -204,15 +265,24 @@ def audit_draft(draft_text: str, metrics: dict[str, Any], papers: list[dict[str,
             title = p.get("title") or ""
             items.append({"id": f"lit_{i}", "kind": "literature", "summary": title, "keywords": evidence.keywords(title)})
 
-    claims = extract_claims(draft_text)
-    verdicts = [_classify_claim(c, metrics, items) for c in claims]
+    claim_sentences = extract_claims(draft_text)
+    verdicts = [_classify_claim(c, metrics, items) for c in claim_sentences]
+
+    # Citation gate (V2.1). One call, offline by default; live is opt-in and safe.
+    citation_results = citation.verify_citations(draft_text, papers or [], live=live)
+    for i, result in enumerate(citation_results, start=1):
+        cclaim = _citation_claim(result, i)
+        verdicts.append(_citation_verdict(cclaim, result))
+
     unverified = [v for v in verdicts if v["verdict"] == "unverified"]
     gate = len(unverified) == 0
+    citation_unverified = sum(1 for v in verdicts if v.get("category") == "citation" and v["verdict"] == "unverified")
 
     return {
         "total_claims": len(verdicts),
         "verified_count": len(verdicts) - len(unverified),
         "unverified_count": len(unverified),
+        "citation_unverified_count": citation_unverified,
         "gate": gate,
         "claims": verdicts,
         "verdict": evidence.verdict(metrics),
@@ -221,28 +291,32 @@ def audit_draft(draft_text: str, metrics: dict[str, Any], papers: list[dict[str,
 
 
 def annotate_draft(draft_text: str, result: dict[str, Any]) -> str:
-    """Insert ``[UNVERIFIED: reason]`` after each unverified claim sentence.
+    """Insert ``[UNVERIFIED: reason]`` after each unverified claim sentence, and
+    after each unverified citation's title/entry.
 
-    Matches by exact sentence text (claims were extracted from the same draft).
+    Sentence claims are matched by exact text (they were extracted from the same
+    draft). Citation claims are matched by their ``raw_title`` substring — if the
+    title isn't found verbatim (e.g. the Writer paraphrased it), the marker is
+    skipped rather than corrupting the text; the ledger still records the verdict.
     """
     annotated = draft_text
     for v in result.get("claims", []):
         if v["verdict"] != "unverified":
             continue
-        sentence = v["claim"]
-        # Plain-text marker (no markdown bold): the frontend wraps [UNVERIFIED] in a
-        # styled <mark class="unverified"> for emphasis, so keeping the marker as a bare
-        # string lets the renderer highlight it regardless of surrounding inline formatting.
         marker = f" [UNVERIFIED: {v['reason']}]"
         if marker in annotated:
             continue
-        # Insert the marker right after the sentence's terminal punctuation, before the
-        # following whitespace. If the exact sentence isn't found verbatim (e.g. the LLM
-        # emitted it across a line break), skip rather than corrupting the text.
-        idx = annotated.find(sentence)
+        if v.get("category") == "citation":
+            anchor = v.get("raw_title") or v.get("marker") or ""
+            if not anchor:
+                continue
+            idx = annotated.find(anchor)
+        else:
+            anchor = v["claim"]
+            idx = annotated.find(anchor)
         if idx == -1:
             continue
-        end = idx + len(sentence)
+        end = idx + len(anchor)
         annotated = annotated[:end] + marker + annotated[end:]
     return annotated
 
@@ -265,11 +339,19 @@ def _annotate_report(project_id: str, result: dict[str, Any]) -> None:
     if _REPORT_AUDIT_HEADER in existing:
         existing = existing.split(_REPORT_AUDIT_HEADER)[0].rstrip() + "\n"
     gate_word = "PASSED" if result.get("gate") else "FAILED"
+    citation_line = ""
+    citation_unverified = result.get("citation_unverified_count") or 0
+    if citation_unverified:
+        citation_line = (
+            f" Of the unverified, {citation_unverified} are citations not found in the "
+            "retrieved literature (possible hallucinated references)."
+        )
     section = (
         f"\n\n{_REPORT_AUDIT_HEADER}\n\n"
-        f"The paper draft was audited against the experiment's own metrics. "
+        f"The paper draft was audited against the experiment's own metrics and the "
+        f"retrieved literature. "
         f"**Gate: {gate_word}** — {result.get('verified_count', 0)}/{result.get('total_claims', 0)} "
-        f"claims verified, {result.get('unverified_count', 0)} unverified. "
+        f"claims verified, {result.get('unverified_count', 0)} unverified.{citation_line} "
         f"Verdict of the underlying experiment: `{result.get('verdict')}`. "
         "Unverified claims are marked `[UNVERIFIED]` inline in `paper/draft.md`; see "
         "`ledger/claim_audit.json` for the full per-claim ledger.\n"

@@ -480,15 +480,27 @@ backend/data/research_workspace/<project_id>/
 统一为 `settings.DATA_DIR / "research_workspace" / project_id`，
 旧的 `backend/backend/data` 路径用脚本做一次迁移或在代码里统一忽略。
 
-### 5.3 Research Cockpit 前端（最小版）
+### 5.3 前端完全重构（极简、可发现 —— 取代原「最小 cockpit」）
 
-按 v1 第 9.3 节三栏布局，但 V1 只实现：
-- 左侧：项目列表 + run timeline（每个 step 的状态 icon + 耗时）。
-- 中间：workspace 文件浏览器（点击可查看各个 .md / .json 文件原内容）。
-- 右侧：ReviewerAgent 的批评 + action_plan。
+> **修订（Session 4 末）**：原计划是「在旧前端上加一个三栏 cockpit 面板」。实测旧前端是单页 +
+> 1898 行巨型 store + 2600 行 `OperatorConsolePanel` + ~60 个旧 autoresearch endpoint，14 个折叠面板
+> 让功能不可发现（用户反馈「体验差、找不到功能」）。旧前端服务的是 §2 的 **FROZEN** 旧系统。
+> 故 V1 前端**升级为完全重构**：新建以 research_harness 为中心的极简应用，替换而非叠加。详见
+> `docs/goal_session5.md`。
 
-**不做**：代码编辑器（工程师看，不是用户改的）、
-Operator Console 深化、release package UI、venue adapter。
+重构要点：
+- **极简 IA**：左侧固定导航 5 项（Projects / Run / Workspace / Report / Settings），每项标签自解释、
+  当前项高亮——解决「找不到功能」。砍掉旧 OperatorConsole / Mentor / Beta / Wizard / VersionDiff。
+- **单主线流程**：Projects（列表+New run）→ Run（timeline+状态）→ Workspace（文件树）→
+  Report（渲染 research_report.md + 指标卡：execution_status / Mixed-or-Negative / any_significant /
+  abstention 摘要）。
+- **拆 store**：按域拆 Zustand（auth/projects/run/workspace），删除 1898 行巨怪；组件 <200 行。
+- **路由**：上 `react-router`（旧 app 无路由，靠面板切换——正是不可发现的根因）。
+- **归档旧代码**：`git mv frontend/src → src.legacy`（或 legacy 分支），保留可回溯；新代码进全新 `src/`。
+- **只接 research-harness API**（§5.1 的 5 个端点）；**不**迁移旧 60 个 autoresearch endpoint。
+
+**不做**：TipTap 富文本编辑器（V2 写论文用；V1 只渲染 report.md）、release/venue UI、
+evidence-ledger UI、Operator Console 深化。
 
 ---
 

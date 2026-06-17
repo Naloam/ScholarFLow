@@ -1,98 +1,15 @@
+// Typed client for the research-harness API + minimal auth.
+// Talks ONLY to the 5 research-harness endpoints + /api/auth/{config,session}.
+// The old ~60 autoresearch endpoints are intentionally NOT migrated (FROZEN).
+
 import type {
-  AutoResearchBridgeImportRequest,
-  AutoResearchBridgeUpdate,
-  AutoResearchBundleIndex,
-  AutoResearchCandidateRegistry,
-  AutoResearchCrossRunMetaAnalysis,
-  AutoResearchDeployment,
-  AutoResearchDeploymentFilters,
-  AutoResearchDeploymentList,
-  AnalysisSummary,
-  AutoResearchExecution,
-  AutoResearchExecutionCommandResponse,
-  AutoResearchEvaluationCaseSuite,
-  AutoResearchExternalCapabilityManifest,
-  AutoResearchExperimentBridge,
-  AutoResearchExperimentExecutionImportRequest,
-  AutoResearchExperimentExecutionPlan,
-  AutoResearchExperimentExecutionPlanRequest,
-  AutoResearchExperimentExecutionResult,
-  AutoResearchExperimentFactoryExecution,
-  AutoResearchExperimentFactoryImportRequest,
-  AutoResearchExperimentFactoryMaterializeRequest,
-  AutoResearchExperimentFactoryPlan,
-  AutoResearchHypothesisBank,
-  AutoResearchIdeaRequest,
-  AutoResearchIdeaRunCreateRequest,
-  AutoResearchLiteratureScoutRequest,
-  AutoResearchLiteratureScoutResult,
-  AutoResearchMemoryExport,
-  AutoResearchMemoryImport,
-  AutoResearchMemoryImportRequest,
-  AutoResearchMemoryQueryRequest,
-  AutoResearchMemoryQueryResult,
-  AutoResearchMemoryRebuild,
-  AutoResearchResearchBrief,
-  AutoResearchResearchBriefList,
-  AutoResearchOperatorConsole,
-  AutoResearchOperatorConsoleFilters,
-  AutoResearchOperatorActionRequest,
-  AutoResearchOperatorActionResult,
-  AutoResearchOperatorRunStatus,
-  AutoResearchOperatorStateAudit,
-  AutoResearchProjectPaperOrchestration,
-  AutoResearchSubmissionPackage,
-  AutoResearchComplianceChecklist,
-  AutoResearchComplianceChecklistRequest,
-  AutoResearchHumanReviewRecord,
-  AutoResearchHumanReviewRequest,
-  AutoResearchPublishExport,
-  AutoResearchPublishExportRequest,
-  AutoResearchPublishPackage,
-  AutoResearchPublicationManifest,
-  AutoResearchReleaseExport,
-  AutoResearchReleasePackage,
-  AutoResearchReleaseReadiness,
-  AutoResearchReleaseRequest,
-  AutoResearchResearchReplanApply,
-  AutoResearchReviewLoopAutoApply,
-  AutoResearchReviewLoopAutoApplyRequest,
-  AutoResearchReviewLoopApply,
-  AutoResearchReviewLoopApplyRequest,
-  AutoResearchReviewLoop,
-  AutoResearchRunControlPatch,
-  AutoResearchRunControlUpdate,
-  AutoResearchRun,
-  AutoResearchRunReview,
-  AutoResearchRunRegistry,
-  AutoResearchRunRegistryViews,
-  AutoResearchVenueProfile,
-  AutoResearchVenueProfileRequest,
-  AutoResearchRunRequest,
-  AutoResearchSystemEvaluation,
   AuthConfig,
-  AuthSessionPayload,
   AuthSessionResponse,
-  AuthUser,
-  BetaSummary,
-  CreateFeedbackPayload,
-  CreateMentorAccessPayload,
-  CreateMentorFeedbackPayload,
-  CreateProjectPayload,
-  Draft,
-  ExportResult,
-  GenerateDraftPayload,
-  HealthResponse,
-  IdResponse,
-  MentorAccessEntry,
-  MentorFeedbackEntry,
-  Project,
-  ProjectListItem,
-  ProjectStatus,
-  ReviewReport,
-  TemplateListResponse,
-  UpdateDraftPayload,
-  EvidenceItem,
+  ProjectSummary,
+  RunStatus,
+  StartRequest,
+  StartResponse,
+  TimelineEntry,
 } from "./types";
 
 function inferApiBaseUrl(): string {
@@ -104,6 +21,7 @@ function inferApiBaseUrl(): string {
     return "http://127.0.0.1:8000";
   }
   const { origin, protocol, hostname, port } = window.location;
+  // Vite dev (5173) / preview (4173, 4174) → backend on :8000.
   if (port === "5173" || port === "4173" || port === "4174") {
     return `${protocol}//${hostname}:8000`;
   }
@@ -111,11 +29,11 @@ function inferApiBaseUrl(): string {
 }
 
 export const API_BASE_URL = inferApiBaseUrl();
-const API_TOKEN = import.meta.env.VITE_API_TOKEN?.trim();
+const STATIC_API_TOKEN = import.meta.env.VITE_API_TOKEN?.trim() ?? "";
 const ACCESS_TOKEN_STORAGE_KEY = "scholarflow.access_token";
 
 export class ApiError extends Error {
-  status: number;
+  readonly status: number;
 
   constructor(status: number, message: string) {
     super(message);
@@ -131,983 +49,129 @@ export function getStoredAuthToken(): string | null {
   return window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
 }
 
-export function getAuthToken(): string | null {
-  return getStoredAuthToken() || API_TOKEN || null;
-}
-
-export function setAuthToken(token: string): void {
+export function storeAuthToken(token: string | null): void {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
-}
-
-export function clearAuthToken(): void {
-  if (typeof window === "undefined") {
-    return;
+  if (token) {
+    window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+  } else {
+    window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
   }
-  window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
 }
 
-export function isApiError(error: unknown): error is ApiError {
-  return error instanceof ApiError;
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const bearer = getStoredAuthToken();
+  if (bearer) {
+    headers.Authorization = `Bearer ${bearer}`;
+  } else if (STATIC_API_TOKEN) {
+    headers.Authorization = `Bearer ${STATIC_API_TOKEN}`;
+  }
+  return headers;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const authToken = getAuthToken();
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  const raw = await response.text();
-  const data = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
-  if (!response.ok) {
-    const detail =
-      (data && typeof data.detail === "string" && data.detail) ||
-      response.statusText;
-    throw new ApiError(response.status, detail || "Request failed");
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...authHeaders(),
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    throw new ApiError(0, err instanceof Error ? err.message : "Network error");
   }
-  return data as T;
-}
-
-function parseDownloadFilename(
-  contentDisposition: string | null,
-  fallback: string,
-): string {
-  if (!contentDisposition) {
-    return fallback;
-  }
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    return decodeURIComponent(utf8Match[1]);
-  }
-  const plainMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
-  if (plainMatch?.[1]) {
-    return plainMatch[1];
-  }
-  return fallback;
-}
-
-async function download(path: string, fallbackName: string): Promise<string> {
-  const authToken = getAuthToken();
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    },
-  });
 
   if (!response.ok) {
-    let detail = response.statusText || "Download failed";
-    const raw = await response.text();
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        if (typeof parsed.detail === "string" && parsed.detail) {
-          detail = parsed.detail;
-        }
-      } catch {
-        detail = raw;
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body && typeof body.detail === "string") {
+        detail = body.detail;
       }
+    } catch {
+      // Non-JSON error body — keep the status text.
     }
     throw new ApiError(response.status, detail);
   }
 
-  const blob = await response.blob();
-  const fileName = parseDownloadFilename(
-    response.headers.get("content-disposition"),
-    fallbackName,
-  );
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = fileName;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.URL.revokeObjectURL(objectUrl);
-  return fileName;
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
 }
 
-export const api = {
-  getHealth(): Promise<HealthResponse> {
-    return request("/health");
-  },
-
-  getAuthConfig(): Promise<AuthConfig> {
-    return request("/api/auth/config");
-  },
-
-  createSession(payload: AuthSessionPayload): Promise<AuthSessionResponse> {
-    return request("/api/auth/session", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  getCurrentUser(): Promise<AuthUser> {
-    return request("/api/auth/me");
-  },
-
-  listTemplates(): Promise<TemplateListResponse> {
-    return request("/api/templates");
-  },
-
-  createProject(payload: CreateProjectPayload): Promise<IdResponse> {
-    return request("/api/projects", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  listProjects(): Promise<ProjectListItem[]> {
-    return request("/api/projects");
-  },
-
-  getProject(projectId: string): Promise<Project> {
-    return request(`/api/projects/${projectId}`);
-  },
-
-  getProjectStatus(projectId: string): Promise<ProjectStatus> {
-    return request(`/api/projects/${projectId}/status`);
-  },
-
-  listDrafts(projectId: string): Promise<Draft[]> {
-    return request(`/api/projects/${projectId}/drafts`);
-  },
-
-  updateDraft(
-    projectId: string,
-    version: number,
-    payload: UpdateDraftPayload,
-  ): Promise<Draft> {
-    return request(`/api/projects/${projectId}/drafts/${version}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  generateDraft(
-    projectId: string,
-    payload: GenerateDraftPayload,
-  ): Promise<IdResponse> {
-    return request(`/api/projects/${projectId}/drafts/generate`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  listEvidence(projectId: string): Promise<EvidenceItem[]> {
-    return request(`/api/projects/${projectId}/evidence`);
-  },
-
-  listReviews(projectId: string): Promise<ReviewReport[]> {
-    return request(`/api/projects/${projectId}/review`);
-  },
-
-  runReview(projectId: string, draftVersion: number): Promise<IdResponse> {
-    return request(`/api/projects/${projectId}/review`, {
-      method: "POST",
-      body: JSON.stringify({ draft_version: draftVersion }),
-    });
-  },
-
-  getAnalysisSummary(projectId: string): Promise<AnalysisSummary> {
-    return request(`/api/projects/${projectId}/analysis/summary`);
-  },
-
-  getBetaSummary(projectId: string): Promise<BetaSummary> {
-    return request(`/api/projects/${projectId}/beta/summary`);
-  },
-
-  createFeedback(projectId: string, payload: CreateFeedbackPayload) {
-    return request(`/api/projects/${projectId}/beta/feedback`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  listMentorAccess(projectId: string): Promise<MentorAccessEntry[]> {
-    return request(`/api/projects/${projectId}/mentor/access`);
-  },
-
-  createMentorAccess(
-    projectId: string,
-    payload: CreateMentorAccessPayload,
-  ): Promise<MentorAccessEntry> {
-    return request(`/api/projects/${projectId}/mentor/access`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  listMentorFeedback(projectId: string): Promise<MentorFeedbackEntry[]> {
-    return request(`/api/projects/${projectId}/mentor/feedback`);
-  },
-
-  createMentorFeedback(
-    projectId: string,
-    payload: CreateMentorFeedbackPayload,
-  ): Promise<MentorFeedbackEntry> {
-    return request(`/api/projects/${projectId}/mentor/feedback`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  exportDraft(
-    projectId: string,
-    format: "markdown" | "latex" | "word" | "docx",
-  ): Promise<IdResponse> {
-    return request(`/api/projects/${projectId}/export`, {
-      method: "POST",
-      body: JSON.stringify({ format }),
-    });
-  },
-
-  getExport(projectId: string, fileId: string): Promise<ExportResult> {
-    return request(`/api/projects/${projectId}/export/${fileId}`);
-  },
-
-  downloadExport(projectId: string, fileId: string): Promise<string> {
-    return download(
-      `/api/projects/${projectId}/export/${fileId}/download`,
-      `${fileId}.bin`,
-    );
-  },
-
-  startAutoResearch(
-    projectId: string,
-    payload: AutoResearchRunRequest,
-  ): Promise<IdResponse> {
-    return request(`/api/projects/${projectId}/auto-research/run`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  createAutoResearchIdeaBrief(
-    projectId: string,
-    payload: AutoResearchIdeaRequest,
-  ): Promise<AutoResearchResearchBrief> {
-    return request(`/api/projects/${projectId}/auto-research/ideas`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  listAutoResearchIdeaBriefs(
-    projectId: string,
-  ): Promise<AutoResearchResearchBriefList> {
-    return request(`/api/projects/${projectId}/auto-research/ideas`);
-  },
-
-  getAutoResearchIdeaBrief(
-    projectId: string,
-    briefId: string,
-  ): Promise<AutoResearchResearchBrief> {
-    return request(
-      `/api/projects/${projectId}/auto-research/ideas/${briefId}`,
-    );
-  },
-
-  getAutoResearchIdeaHypothesisBank(
-    projectId: string,
-    briefId: string,
-  ): Promise<AutoResearchHypothesisBank> {
-    return request(
-      `/api/projects/${projectId}/auto-research/ideas/${briefId}/hypotheses`,
-    );
-  },
-
-  runAutoResearchIdeaLiteratureScout(
-    projectId: string,
-    briefId: string,
-    payload?: AutoResearchLiteratureScoutRequest,
-  ): Promise<AutoResearchLiteratureScoutResult> {
-    return request(
-      `/api/projects/${projectId}/auto-research/ideas/${briefId}/literature-scout`,
-      {
-        method: "POST",
-        body: payload ? JSON.stringify(payload) : undefined,
-      },
-    );
-  },
-
-  rebuildAutoResearchMemory(projectId: string): Promise<AutoResearchMemoryRebuild> {
-    return request(`/api/projects/${projectId}/auto-research/memory/rebuild`, {
-      method: "POST",
-    });
-  },
-
-  queryAutoResearchMemory(
-    projectId: string,
-    payload?: AutoResearchMemoryQueryRequest,
-  ): Promise<AutoResearchMemoryQueryResult> {
-    return request(`/api/projects/${projectId}/auto-research/memory/query`, {
-      method: "POST",
-      body: payload ? JSON.stringify(payload) : undefined,
-    });
-  },
-
-  exportAutoResearchMemory(projectId: string): Promise<AutoResearchMemoryExport> {
-    return request(`/api/projects/${projectId}/auto-research/memory/export`);
-  },
-
-  importAutoResearchMemory(
-    projectId: string,
-    payload: AutoResearchMemoryImportRequest,
-  ): Promise<AutoResearchMemoryImport> {
-    return request(`/api/projects/${projectId}/auto-research/memory/import`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  buildAutoResearchIdeaExperimentFactory(
-    projectId: string,
-    briefId: string,
-    hypothesisId?: string | null,
-  ): Promise<AutoResearchExperimentFactoryPlan> {
-    const params = new URLSearchParams();
-    if (hypothesisId) {
-      params.set("hypothesis_id", hypothesisId);
-    }
-    const query = params.size > 0 ? `?${params.toString()}` : "";
-    return request(
-      `/api/projects/${projectId}/auto-research/ideas/${briefId}/experiment-factory${query}`,
-      { method: "POST" },
-    );
-  },
-
-  createAutoResearchRunFromIdeaBrief(
-    projectId: string,
-    briefId: string,
-    payload?: AutoResearchIdeaRunCreateRequest,
-  ): Promise<IdResponse> {
-    return request(
-      `/api/projects/${projectId}/auto-research/ideas/${briefId}/run`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  buildAutoResearchRunExperimentFactory(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchExperimentFactoryPlan> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory`,
-      { method: "POST" },
-    );
-  },
-
-  buildAutoResearchRunExperimentExecutionPlan(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchExperimentExecutionPlanRequest,
-  ): Promise<AutoResearchExperimentExecutionPlan> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/experiment-execution/plan`,
-      {
-        method: "POST",
-        body: payload ? JSON.stringify(payload) : undefined,
-      },
-    );
-  },
-
-  executeAutoResearchRunExperimentExecution(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchExperimentExecutionPlanRequest,
-  ): Promise<AutoResearchExperimentExecutionResult> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/experiment-execution/execute`,
-      {
-        method: "POST",
-        body: payload ? JSON.stringify(payload) : undefined,
-      },
-    );
-  },
-
-  importAutoResearchRunExperimentExecutionResult(
-    projectId: string,
-    runId: string,
-    payload: AutoResearchExperimentExecutionImportRequest,
-  ): Promise<AutoResearchExperimentExecutionResult> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/experiment-execution/import`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-
-  executeAutoResearchRunExperimentFactoryToy(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchExperimentFactoryExecution> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/toy-execute`,
-      { method: "POST" },
-    );
-  },
-
-  materializeAutoResearchRunExperimentFactory(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchExperimentFactoryMaterializeRequest,
-  ): Promise<AutoResearchExperimentFactoryExecution> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/materialize`,
-      {
-        method: "POST",
-        body: payload ? JSON.stringify(payload) : undefined,
-      },
-    );
-  },
-
-  importAutoResearchRunExperimentFactoryResult(
-    projectId: string,
-    runId: string,
-    payload: AutoResearchExperimentFactoryImportRequest,
-  ): Promise<AutoResearchExperimentFactoryExecution> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/experiment-factory/import`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-
-  getAutoResearchRun(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchRun> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}`);
-  },
-
-  updateAutoResearchRunControls(
-    projectId: string,
-    runId: string,
-    payload: AutoResearchRunControlPatch,
-  ): Promise<AutoResearchRunControlUpdate> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/controls`,
-      {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-
-  getAutoResearchExecution(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchExecution> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/execution`,
-    );
-  },
-
-  getAutoResearchBridge(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchExperimentBridge> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/bridge`);
-  },
-
-  refreshAutoResearchBridge(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchBridgeUpdate> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/bridge/refresh`,
-      {
-        method: "POST",
-      },
-    );
-  },
-
-  importAutoResearchBridgeResult(
-    projectId: string,
-    runId: string,
-    payload: AutoResearchBridgeImportRequest,
-  ): Promise<AutoResearchBridgeUpdate> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/bridge/import`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-
-  getAutoResearchOperatorConsole(
-    projectId: string,
-    options?: { runId?: string } & AutoResearchOperatorConsoleFilters,
-  ): Promise<AutoResearchOperatorConsole> {
-    const params = new URLSearchParams();
-    if (options?.runId) {
-      params.set("run_id", options.runId);
-    }
-    if (options?.search) {
-      params.set("search", options.search);
-    }
-    if (options?.status) {
-      params.set("status", options.status);
-    }
-    if (options?.publish_status) {
-      params.set("publish_status", options.publish_status);
-    }
-    if (options?.publication_tier) {
-      params.set("publication_tier", options.publication_tier);
-    }
-    if (options?.review_risk) {
-      params.set("review_risk", options.review_risk);
-    }
-    if (options?.novelty_status) {
-      params.set("novelty_status", options.novelty_status);
-    }
-    if (options?.budget_status) {
-      params.set("budget_status", options.budget_status);
-    }
-    if (options?.queue_priority) {
-      params.set("queue_priority", options.queue_priority);
-    }
-    const query = params.size > 0 ? `?${params.toString()}` : "";
-    return request(`/api/projects/${projectId}/auto-research/console${query}`);
-  },
-
-  getAutoResearchOperatorAudit(
-    projectId: string,
-    options?: { rebuild?: boolean },
-  ): Promise<AutoResearchOperatorStateAudit> {
-    const params = new URLSearchParams();
-    if (options?.rebuild !== undefined) {
-      params.set("rebuild", String(options.rebuild));
-    }
-    const query = params.size > 0 ? `?${params.toString()}` : "";
-    return request(
-      `/api/projects/${projectId}/auto-research/operator/audit${query}`,
-    );
-  },
-
-  getAutoResearchExternalCapabilities(
-    projectId: string,
-    options?: { rebuild?: boolean },
-  ): Promise<AutoResearchExternalCapabilityManifest> {
-    const params = new URLSearchParams();
-    if (options?.rebuild !== undefined) {
-      params.set("rebuild", String(options.rebuild));
-    }
-    const query = params.size > 0 ? `?${params.toString()}` : "";
-    return request(
-      `/api/projects/${projectId}/auto-research/external-capabilities${query}`,
-    );
-  },
-
-  getAutoResearchMetaAnalysis(
-    projectId: string,
-  ): Promise<AutoResearchCrossRunMetaAnalysis> {
-    return request(`/api/projects/${projectId}/auto-research/meta-analysis`);
-  },
-
-  getAutoResearchProjectPaperOrchestration(
-    projectId: string,
-  ): Promise<AutoResearchProjectPaperOrchestration> {
-    return request(`/api/projects/${projectId}/auto-research/project-paper`);
-  },
-
-  getAutoResearchProjectSubmissionPackage(
-    projectId: string,
-  ): Promise<AutoResearchSubmissionPackage> {
-    return request(
-      `/api/projects/${projectId}/auto-research/project-paper/submission`,
-    );
-  },
-
-  downloadAutoResearchProjectSubmissionArchive(
-    projectId: string,
-  ): Promise<string> {
-    return download(
-      `/api/projects/${projectId}/auto-research/project-paper/submission/download`,
-      `${projectId}-submission_archive.zip`,
-    );
-  },
-
-  getAutoResearchSystemEvaluation(
-    projectId: string,
-  ): Promise<AutoResearchSystemEvaluation> {
-    return request(`/api/projects/${projectId}/auto-research/system-evaluation`);
-  },
-
-  getAutoResearchEvaluationCases(
-    projectId: string,
-  ): Promise<AutoResearchEvaluationCaseSuite> {
-    return request(`/api/projects/${projectId}/auto-research/evaluation-cases`);
-  },
-
-  getAutoResearchRegistry(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchRunRegistry> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/registry`,
-    );
-  },
-
-  getAutoResearchCandidateRegistry(
-    projectId: string,
-    runId: string,
-    candidateId: string,
-  ): Promise<AutoResearchCandidateRegistry> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/registry/candidates/${candidateId}`,
-    );
-  },
-
-  getAutoResearchBundleIndex(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchBundleIndex> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/registry/bundles`,
-    );
-  },
-
-  getAutoResearchRegistryViews(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchRunRegistryViews> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/registry/views`,
-    );
-  },
-
-  getAutoResearchRunReview(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchRunReview> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/review`);
-  },
-
-  getAutoResearchOperatorRunStatus(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchOperatorRunStatus> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/operator/status`,
-    );
-  },
-
-  applyAutoResearchOperatorAction(
-    projectId: string,
-    runId: string,
-    payload: AutoResearchOperatorActionRequest,
-  ): Promise<AutoResearchOperatorActionResult> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/operator/actions`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-
-  getAutoResearchReviewLoop(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchReviewLoop> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/review-loop`,
-    );
-  },
-
-  refreshAutoResearchReviewLoop(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchReviewLoop> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/review-loop/refresh`,
-      {
-        method: "POST",
-      },
-    );
-  },
-
-  applyAutoResearchReviewLoop(
-    projectId: string,
-    runId: string,
-    payload: AutoResearchReviewLoopApplyRequest,
-  ): Promise<AutoResearchReviewLoopApply> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/review-loop/apply`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-
-  autoApplyAutoResearchReviewLoop(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchReviewLoopAutoApplyRequest,
-  ): Promise<AutoResearchReviewLoopAutoApply> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/review-loop/auto-apply`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  applyAutoResearchResearchReplan(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchReviewLoopApplyRequest,
-  ): Promise<AutoResearchResearchReplanApply> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/research-replan/apply`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  rebuildAutoResearchPaper(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchRun> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/paper/rebuild`,
-      {
-        method: "POST",
-      },
-    );
-  },
-
-  getAutoResearchPublishPackage(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchPublishPackage> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/publish`);
-  },
-
-  getAutoResearchPublicationManifest(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchPublicationManifest> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/publish/manifest`,
-    );
-  },
-
-  exportAutoResearchPublishPackage(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchPublishExportRequest,
-  ): Promise<AutoResearchPublishExport> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/publish/export`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  downloadAutoResearchPublishPackage(
-    projectId: string,
-    runId: string,
-  ): Promise<string> {
-    return download(
-      `/api/projects/${projectId}/auto-research/${runId}/publish/download`,
-      `${runId}-publish_bundle.zip`,
-    );
-  },
-
-  downloadAutoResearchPaper(projectId: string, runId: string): Promise<string> {
-    return download(
-      `/api/projects/${projectId}/auto-research/${runId}/publish/paper/download`,
-      `${runId}-paper.md`,
-    );
-  },
-
-  downloadAutoResearchCompiledPaper(
-    projectId: string,
-    runId: string,
-  ): Promise<string> {
-    return download(
-      `/api/projects/${projectId}/auto-research/${runId}/publish/paper/compiled/download`,
-      `${runId}-paper.pdf`,
-    );
-  },
-
-  downloadAutoResearchCodePackage(
-    projectId: string,
-    runId: string,
-  ): Promise<string> {
-    return download(
-      `/api/projects/${projectId}/auto-research/${runId}/publish/code/download`,
-      `${runId}-code_package.zip`,
-    );
-  },
-
-  recordAutoResearchHumanReview(
-    projectId: string,
-    runId: string,
-    payload: AutoResearchHumanReviewRequest,
-  ): Promise<AutoResearchHumanReviewRecord> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/release/human-review`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-  },
-
-  buildAutoResearchComplianceChecklist(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchComplianceChecklistRequest,
-  ): Promise<AutoResearchComplianceChecklist> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/release/compliance`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  buildAutoResearchVenueProfile(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchVenueProfileRequest,
-  ): Promise<AutoResearchVenueProfile> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/release/venue`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  getAutoResearchReleaseReadiness(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchReleaseRequest,
-  ): Promise<AutoResearchReleaseReadiness> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/release/readiness`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  buildAutoResearchReleasePackage(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchReleaseRequest,
-  ): Promise<AutoResearchReleasePackage> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/release`, {
-      method: "POST",
-      body: JSON.stringify(payload ?? {}),
-    });
-  },
-
-  exportAutoResearchReleasePackage(
-    projectId: string,
-    runId: string,
-    payload?: AutoResearchReleaseRequest,
-  ): Promise<AutoResearchReleaseExport> {
-    return request(
-      `/api/projects/${projectId}/auto-research/${runId}/release/export`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload ?? {}),
-      },
-    );
-  },
-
-  downloadAutoResearchReleasePackage(
-    projectId: string,
-    runId: string,
-  ): Promise<string> {
-    return download(
-      `/api/projects/${projectId}/auto-research/${runId}/release/download`,
-      `${runId}-release_archive.zip`,
-    );
-  },
-
-  listAutoResearchDeployments(): Promise<AutoResearchDeploymentList> {
-    return request("/api/auto-research/deployments");
-  },
-
-  getAutoResearchDeployment(
-    deploymentId: string,
-    filters?: AutoResearchDeploymentFilters,
-  ): Promise<AutoResearchDeployment> {
-    const params = new URLSearchParams();
-    if (filters?.search) {
-      params.set("search", filters.search);
-    }
-    if (
-      filters?.final_publish_ready !== null &&
-      filters?.final_publish_ready !== undefined
-    ) {
-      params.set("final_publish_ready", String(filters.final_publish_ready));
-    }
-    if (filters?.bundle_kind) {
-      params.set("bundle_kind", filters.bundle_kind);
-    }
-    if (filters?.task_family) {
-      params.set("task_family", filters.task_family);
-    }
-    const query = params.size > 0 ? `?${params.toString()}` : "";
-    return request(`/api/auto-research/deployments/${deploymentId}${query}`);
-  },
-
-  resumeAutoResearch(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchExecutionCommandResponse> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/resume`, {
-      method: "POST",
-    });
-  },
-
-  retryAutoResearch(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchExecutionCommandResponse> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/retry`, {
-      method: "POST",
-    });
-  },
-
-  cancelAutoResearch(
-    projectId: string,
-    runId: string,
-  ): Promise<AutoResearchExecutionCommandResponse> {
-    return request(`/api/projects/${projectId}/auto-research/${runId}/cancel`, {
-      method: "POST",
-    });
-  },
-};
+// ---- research-harness endpoints ----
+
+export function startRun(
+  projectId: string,
+  payload: StartRequest,
+): Promise<StartResponse> {
+  return request<StartResponse>(
+    `/api/research-harness/projects/${encodeURIComponent(projectId)}/start`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function getStatus(projectId: string, runId = projectId): Promise<RunStatus> {
+  return request<RunStatus>(
+    `/api/research-harness/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/status`,
+  );
+}
+
+export function getTimeline(
+  projectId: string,
+  runId = projectId,
+): Promise<TimelineEntry[]> {
+  return request<TimelineEntry[]>(
+    `/api/research-harness/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/timeline`,
+  );
+}
+
+export async function getFile(
+  projectId: string,
+  filePath: string,
+  runId = projectId,
+): Promise<string> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/research-harness/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/files/${encodeURI(filePath)}`,
+    { headers: { ...authHeaders() } },
+  );
+  if (!response.ok) {
+    throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+  }
+  return response.text();
+}
+
+export function listProjects(): Promise<ProjectSummary[]> {
+  return request<ProjectSummary[]>("/api/research-harness/projects");
+}
+
+export interface HarnessConfig {
+  llm_model: string;
+  llm_writer_model: string;
+  llm_api_base: string;
+  sandbox_backend: string;
+}
+
+export function getHarnessConfig(): Promise<HarnessConfig> {
+  return request<HarnessConfig>("/api/research-harness/config");
+}
+
+// ---- auth ----
+
+export function getAuthConfig(): Promise<AuthConfig> {
+  return request<AuthConfig>("/api/auth/config");
+}
+
+export function createSession(email: string, name?: string): Promise<AuthSessionResponse> {
+  return request<AuthSessionResponse>("/api/auth/session", {
+    method: "POST",
+    body: JSON.stringify({ email, name }),
+  });
+}

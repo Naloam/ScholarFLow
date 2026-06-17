@@ -10,14 +10,15 @@ export default defineConfig({
           if (id.indexOf("node_modules") === -1) {
             return undefined;
           }
-          if (id.indexOf("@tiptap") !== -1) {
-            return "tiptap";
-          }
-          if (id.indexOf("react") !== -1 || id.indexOf("scheduler") !== -1) {
+          // React core in its own chunk; everything else shares "vendor".
+          // (Keeps the dep graph acyclic — react-markdown pulls deps that would
+          // otherwise cycle between vendor and react-vendor.)
+          if (
+            id.indexOf("/react/") !== -1 ||
+            id.indexOf("/react-dom/") !== -1 ||
+            id.indexOf("/scheduler/") !== -1
+          ) {
             return "react-vendor";
-          }
-          if (id.indexOf("zustand") !== -1) {
-            return "state-vendor";
           }
           return "vendor";
         },

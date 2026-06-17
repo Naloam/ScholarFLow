@@ -52,6 +52,21 @@ def _reset_e2e_state(*, data_dir: Path, db_url: str) -> None:
             candidate.unlink()
 
 
+def _seed_fixture_workspace(data_dir: Path) -> None:
+    """Copy the real completed run (v0_citrag_05) into the E2E data dir.
+
+    The UI flow (Projects → Run → Report) is validated against this genuine
+    GLM-5.2 run rather than a synthetic mock — the E2E asserts the honest
+    NEGATIVE result is rendered verbatim. A live 10-15 min run is gated behind
+    ``@pytest.mark.live_research`` and never runs in CI/E2E.
+    """
+    source = BACKEND_ROOT / "data" / "research_workspace" / "v0_citrag_05"
+    if not source.exists():
+        return
+    dest = data_dir / "research_workspace" / "v0_citrag_05"
+    shutil.copytree(source, dest)
+
+
 def main() -> None:
     data_dir = Path(os.environ["DATA_DIR"])
     db_url = os.environ["DATABASE_URL"]
@@ -62,6 +77,8 @@ def main() -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     if db_path is not None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    _seed_fixture_workspace(data_dir)
 
     Base.metadata.create_all(engine)
     uvicorn.run(

@@ -27,6 +27,7 @@ from api.analysis import router as analysis_router
 from api.autoresearch import router as autoresearch_router
 from api.autoresearch_deployments import router as autoresearch_deployments_router
 from api.progress import router as progress_router
+from api.research_harness import router as research_harness_router
 from config.db import SessionLocal
 from config.settings import settings
 from services.security.audit import write_audit_log
@@ -119,3 +120,4 @@ app.include_router(analysis_router)
 app.include_router(autoresearch_router)
 app.include_router(autoresearch_deployments_router)
 app.include_router(progress_router)
+app.include_router(research_harness_router)

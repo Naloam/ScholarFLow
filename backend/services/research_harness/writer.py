@@ -112,6 +112,85 @@ def write_draft(
     return text
 
 
+# --------------------------------------------------------------------------- #
+# V2.1 quality loop: deterministic coverage lint → at most ONE bounded revision
+# --------------------------------------------------------------------------- #
+
+
+def _format_lint_flags(flags: list[dict]) -> str:
+    if not flags:
+        return "_(none — the lint found no unsupported numbers)_"
+    return "\n".join(f"- `{f['token']}` — {f['reason']}" for f in flags)
+
+
+def revise_on_lint(
+    project_id: str,
+    draft: str,
+    flags: list[dict],
+    metrics: dict,
+) -> tuple[str, dict]:
+    """One bounded Writer revision pass over the lint flags.
+
+    Feeds the flags + evidence pack + honesty constraints back to the writer model
+    with instructions to fix ONLY the flagged numbers (no new numbers, no softened
+    honesty). At most one call; on empty/failed revision the original draft is kept
+    (the flags still reach the Auditor as a backstop). Returns ``(revised_draft, log)``.
+    """
+    log = {"flags_before": [f["token"] for f in flags], "revised": False, "flags_after": []}
+    if not flags:
+        return draft, log
+
+    prompt = (
+        load_prompt("writer_revise_v1.md")
+        .replace("{draft}", draft)
+        .replace("{lint_flags}", _format_lint_flags(flags))
+        .replace("{evidence_pack}", evidence.build_evidence_pack(metrics))
+        .replace("{honesty_constraints}", evidence.build_honesty_constraints(metrics))
+    )
+    try:
+        revised = _call_writer(prompt)
+    except Exception as exc:  # noqa: BLE001 — revision is best-effort; never block the draft
+        logger.warning("[WriterAgent] revise call failed, keeping original draft: %s", exc)
+        log["error"] = str(exc)
+        return draft, log
+
+    revised = (revised or "").strip()
+    if not revised or revised == draft:
+        # No usable change → keep the original; the Auditor still gates the flags.
+        return draft, log
+
+    # Re-lint the revision so the ledger records whether the loop actually helped.
+    log["revised"] = True
+    log["flags_after"] = [f["token"] for f in evidence.coverage_lint(revised, metrics)]
+    return revised, log
+
+
+def run_quality_loop(project_id: str, metrics: dict) -> dict:
+    """``draft → lint → revise(≤1) → persist``. Mutates ``paper/draft.md`` only when a
+    real revision lands; always writes ``paper/revise_log.json`` for measurement.
+
+    The pre-revision draft is preserved at ``paper/draft.revise_pre.md`` so the
+    before/after ``[UNVERIFIED]`` delta is reproducible. ``paper/draft.raw.md`` (the
+    pristine first LLM output) is never touched.
+    """
+    paper = _paper_dir(project_id)
+    draft_path = paper / "draft.md"
+    draft = draft_path.read_text(encoding="utf-8") if draft_path.exists() else ""
+    flags = evidence.coverage_lint(draft, metrics)
+
+    revised, log = revise_on_lint(project_id, draft, flags, metrics)
+    if log.get("revised"):
+        (paper / "draft.revise_pre.md").write_text(draft, encoding="utf-8")
+        draft_path.write_text(revised, encoding="utf-8")
+        logger.info(
+            "[WriterAgent] revised draft: flags %d → %d", len(flags), len(log["flags_after"])
+        )
+    (paper / "revise_log.json").write_text(
+        json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return log
+
+
 def run_writer_agent(
     project_id: str,
     idea: str,
@@ -120,9 +199,14 @@ def run_writer_agent(
     review: dict,
     notes: dict,
 ) -> Path:
-    """Full contribution → outline → draft pipeline. Returns the draft path."""
+    """Full contribution → outline → draft → (lint → revise ≤1) pipeline.
+
+    The quality loop (V2.1) runs INSIDE the write step — it is not a new pipeline
+    step, so the 7-step timeline and 5-item nav stay unchanged. Returns the draft path.
+    """
     contribution = write_contribution(project_id, idea, selected, notes)
     outline = write_outline(project_id, idea, selected, metrics, review, contribution)
     draft_path = _paper_dir(project_id) / "draft.md"
     write_draft(project_id, idea, selected, metrics, contribution, outline)
+    run_quality_loop(project_id, metrics)
     return draft_path

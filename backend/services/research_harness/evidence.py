@@ -206,6 +206,92 @@ def build_evidence_pack(metrics: dict[str, Any]) -> str:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Coverage lint (V2.1 quality loop — deterministic, no LLM, no network)
+# --------------------------------------------------------------------------- #
+
+# Numbers worth checking: decimals (0.003, 0.966501), p-values (p=0.03, p<0.05),
+# deltas (Δ+0.0335). We capture the optional p=/Δ prefix for display but match
+# on the decimal body. Integers alone (seed counts, n) are too noisy to lint, so
+# only floating-point quantities are checked — the things the Writer is most
+# tempted to invent or drift.
+_LINT_NUMBER_RE = re.compile(r"(?:p\s*[=<≤]?\s*|Δ\s*[+\-]?|delta\s*[+\-]?)?\d+\.\d+")
+_DECIMAL_BODY_RE = re.compile(r"\d+\.\d+")
+
+
+def _decimal_places(token: str) -> int:
+    """Decimal places in a numeric token (``1.000``→3, ``0.003``→3, ``0.966501``→6)."""
+    m = _DECIMAL_BODY_RE.search(token)
+    if not m:
+        return 0
+    return len(m.group(0).split(".", 1)[1])
+
+
+def _pack_numbers(metrics: dict[str, Any]) -> list[float]:
+    """Every decimal the experiment actually produced — from the readable evidence
+    pack AND the raw metrics JSON, so a draft citing an exact stored value still
+    matches even when the human-readable pack rounded it."""
+    import json
+
+    sources = [build_evidence_pack(metrics)]
+    try:
+        sources.append(json.dumps(metrics, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        pass
+    nums: list[float] = []
+    for text in sources:
+        for m in _DECIMAL_BODY_RE.finditer(text or ""):
+            try:
+                nums.append(float(m.group(0)))
+            except ValueError:
+                continue
+    return nums
+
+
+def coverage_lint(draft_text: str, metrics: dict[str, Any]) -> list[dict[str, str]]:
+    """Flag draft numbers that have no root in the real evidence pack.
+
+    Pure logic, offline, no LLM. A draft decimal is *covered* when some pack
+    number rounds (to the draft's own precision) to the same value — so honest
+    rounding (``0.967`` ← ``0.966501``, ``1.000`` ← ``1.0``) passes, while a
+    fabricated number (``0.999``, ``p=0.0001``) that no experiment produced is
+    flagged. The bounded ``revise_on_lint`` step feeds these flags back to the
+    Writer for a single corrective pass. Returns ``[{token, reason}, ...]``.
+    """
+    pack = _pack_numbers(metrics)
+    flags: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for m in _LINT_NUMBER_RE.finditer(draft_text or ""):
+        token = m.group(0).strip()
+        body = _DECIMAL_BODY_RE.search(token)
+        if not body:
+            continue
+        try:
+            value = float(body.group(0))
+        except ValueError:
+            continue
+        if token in seen:
+            continue
+        places = _decimal_places(token)
+        covered = any(round(p, places) == value for p in pack)
+        if covered:
+            continue
+        seen.add(token)
+        flags.append({"token": token, "reason": f"number {token!r} not found in experimental evidence"})
+    return flags
+
+
+def json_dumps_compact(metrics: dict[str, Any]) -> str:
+    """Compact JSON of the metrics — re-exported so callers/tests can build the
+    same string the coverage pool uses. Kept here for a single source of truth."""
+    import json
+
+    try:
+        return json.dumps(metrics, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return ""
+
+
 def build_honesty_constraints(metrics: dict[str, Any]) -> str:
     """Plain-English honesty directive derived from the real verdict (drives Writer framing)."""
     v = verdict(metrics)
@@ -259,4 +345,6 @@ __all__ = [
     "build_evidence_items",
     "build_evidence_pack",
     "build_honesty_constraints",
+    "coverage_lint",
+    "json_dumps_compact",
 ]

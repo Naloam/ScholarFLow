@@ -138,8 +138,10 @@ export function ReportPage() {
           <details open>
             <summary className="section__title">Paper draft (paper/draft.md)</summary>
             <p className="report__paper-note">
-              Written by the WriterAgent from the experiment record, then gated by the
-              AuditorAgent. Claims with no supporting metric are marked{" "}
+              Written by the WriterAgent from the experiment record (one bounded revision
+              pass fixes numbers the evidence doesn't support), then gated by the
+              AuditorAgent. Claims with no supporting metric, and citations not found in the
+              retrieved literature, are marked{" "}
               <mark className="unverified">[UNVERIFIED]</mark> inline.
             </p>
             <PaperDraft source={data.draft} />

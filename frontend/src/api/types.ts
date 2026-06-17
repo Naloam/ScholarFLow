@@ -134,10 +134,16 @@ export interface ReviewJson {
 
 // ---- paper + audit (V2 Writer + Auditor layer) ----
 
+export type ClaimCategory = "result" | "spin" | "citation" | string;
+
 export interface ClaimVerdict {
   claim_id: string;
   claim: string;
   verdict: "verified" | "unverified";
+  category?: ClaimCategory;
+  /** Present on citation-category claims — the title/marker that was checked. */
+  raw_title?: string;
+  marker?: string;
   evidence_refs?: string[];
   reason?: string;
 }
@@ -146,6 +152,8 @@ export interface ClaimAudit {
   total_claims?: number;
   verified_count?: number;
   unverified_count?: number;
+  /** (V2.1) how many of the unverified claims are unmatched citations. */
+  citation_unverified_count?: number;
   gate?: boolean;
   verdict?: string;
   audited_at?: string;

@@ -719,6 +719,35 @@ code {
   margin-top: 4px;
   font-family: ui-monospace, monospace;
 }
+.audit__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.audit__chip {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--ink-soft);
+  background: var(--ink-soft-soft, rgba(0, 0, 0, 0.06));
+}
+.audit__chip--citation {
+  color: #9a6a00;
+  background: rgba(255, 196, 0, 0.16);
+}
+.audit__chip--spin {
+  color: #6a4a8a;
+  background: rgba(120, 80, 160, 0.14);
+}
+.audit__marker {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
 
 /* ---------------- markdown ---------------- */
 

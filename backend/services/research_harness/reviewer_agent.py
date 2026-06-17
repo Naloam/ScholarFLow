@@ -43,16 +43,11 @@ def _reviews_dir(project_id: str) -> Path:
     return p
 
 
-def _resolve_prompts_dir() -> Path:
-    anchored = Path(settings.data_dir).parent / "prompts" / "research_harness"
-    for cand in (anchored, Path("backend/prompts/research_harness"), Path("prompts/research_harness")):
-        if cand.is_dir():
-            return cand
-    return anchored
-
-
 def _load_prompt(name: str) -> str:
-    return (_resolve_prompts_dir() / name).read_text(encoding="utf-8")
+    # Session 6: centralized on BACKEND_ROOT so resolution is CWD / DATA_DIR independent.
+    from services.research_harness.prompts import load_prompt
+
+    return load_prompt(name)
 
 
 def _extract_json(content: str) -> object | None:

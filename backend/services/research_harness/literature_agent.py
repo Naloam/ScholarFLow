@@ -26,24 +26,11 @@ def _workspace(project_id: str) -> Path:
     return p
 
 
-def _resolve_prompts_dir() -> Path:
-    # settings.data_dir 默认是 <backend_root>/data，其 parent 即 backend root。
-    # 额外提供 CWD 相关的 fallback，兼容从仓库根或 backend 目录启动。
-    anchored = Path(settings.data_dir).parent / "prompts" / "research_harness"
-    candidates = (
-        anchored,
-        Path("backend/prompts/research_harness"),
-        Path("prompts/research_harness"),
-    )
-    for cand in candidates:
-        if cand.is_dir():
-            return cand
-    return anchored
-
-
 def _load_prompt(name: str) -> str:
-    path = _resolve_prompts_dir() / name
-    return path.read_text(encoding="utf-8")
+    # Session 6: centralized on BACKEND_ROOT so resolution is CWD / DATA_DIR independent.
+    from services.research_harness.prompts import load_prompt
+
+    return load_prompt(name)
 
 
 def generate_search_queries(project_id: str, idea: str) -> list[str]:

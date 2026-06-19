@@ -287,6 +287,65 @@ def _assert_no_overclaim(text: str) -> list[str]:
     return [word for word in FORBIDDEN_OVERCLAIM if word in lowered]
 
 
+def _portfolio_summary_block(project_id: str) -> str:
+    """Render the V2.3 Portfolio Summary table from ``ledger/portfolio.json``.
+
+    One row per executed candidate (primary_metric / beats baseline / anchored verdict /
+    kill tripped / downgraded), best row starred. Faithful — an all-negative portfolio
+    is rendered as all_negative, never beautified. Returns "" when no portfolio ran
+    (legacy / K=1 pre-portfolio workspaces), so this section is purely additive.
+    """
+    import json as _json
+
+    path = _project_dir(project_id) / "ledger" / "portfolio.json"
+    if not path.exists():
+        return ""
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    rows = data.get("summary") or []
+    if not rows:
+        return ""
+    k = data.get("k")
+    verdict = data.get("portfolio_verdict", "")
+    best_id = data.get("best_candidate_id")
+
+    lines = ["## Portfolio Summary\n"]
+    head = f"**Portfolio verdict:** `{verdict}`"
+    if best_id:
+        head += f" · best candidate: **{best_id}**"
+    if k:
+        head += f" (K={k} ran)"
+    lines.append(head + "\n")
+    lines.append(
+        "| best | candidate | primary_metric | beats baseline | verdict | kill tripped | downgraded |\n"
+        "|---|---|---|---|---|---|---|"
+    )
+    for r in rows:
+        star = "★" if r.get("is_best") else ""
+        beats = r.get("beats_baseline")
+        beats_str = "—" if beats is None else ("yes" if beats else "no")
+        kill_str = "yes" if r.get("kill_tripped") else "—"
+        down_str = "yes" if r.get("downgraded") else "—"
+        title = r.get("title") or r.get("candidate_id") or ""
+        cid = r.get("candidate_id") or ""
+        lines.append(
+            f"| {star} | {title} (`{cid}`) | `{r.get('primary_metric') or '—'}` | "
+            f"{beats_str} | **{r.get('verdict', '—')}** | {kill_str} | {down_str} |"
+        )
+    note = data.get("note")
+    if note:
+        lines.append(f"\n_{note}_")
+    lines.append(
+        "\n_Per-candidate detail: see ``candidates/<id>/`` (metrics.json + verdict.json). "
+        "The body of this report is the **best** candidate's full run._\n"
+    )
+    return "\n".join(lines) + "\n"
+
+
 def generate_research_report(
     project_id: str,
     idea: str,
@@ -323,6 +382,14 @@ def generate_research_report(
     )
     sections.append(f"- publish_gate: **{review.get('publish_gate', 'no_evidence')}**\n")
     sections.append(f"- papers retrieved: **{paper_count}**\n\n")
+
+    # V2.3 Portfolio Summary (goal_session9.md Step 6). Top of report, additive —
+    # only renders when a portfolio ran (ledger/portfolio.json present). The report
+    # body below is the best candidate's full run; this table names every candidate
+    # that executed and how each fared under the honest gate.
+    portfolio_block = _portfolio_summary_block(project_id)
+    if portfolio_block:
+        sections.append(portfolio_block)
 
     # Hypothesis-anchored honest-gate banner (V2.2). Prominent — never silent. A
     # downgrade or a tripped kill criterion is surfaced at the very top of the report.

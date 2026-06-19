@@ -57,20 +57,34 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
-def _experiments_dir(project_id: str) -> Path:
-    return _ensure_dir(_project_dir(project_id) / "experiments")
+def _candidate_base(project_id: str, candidate_subdir: str | None) -> Path:
+    """Workspace root for one candidate's artifacts.
+
+    ``candidate_subdir=None`` → the project root (the legacy single-hypothesis path:
+    metrics/code/plan land at the top level, K=1 backward-compatible). When set
+    (portfolio, K>1) the candidate's entire experiment subtree is isolated under
+    ``candidates/<candidate_subdir>/`` so K candidates never contaminate each other.
+    """
+    base = _project_dir(project_id)
+    if candidate_subdir:
+        return _ensure_dir(base / "candidates" / candidate_subdir)
+    return base
 
 
-def _code_dir(project_id: str) -> Path:
-    return _ensure_dir(_project_dir(project_id) / "code")
+def _experiments_dir(project_id: str, candidate_subdir: str | None = None) -> Path:
+    return _ensure_dir(_candidate_base(project_id, candidate_subdir) / "experiments")
 
 
-def _artifacts_dir(project_id: str) -> Path:
-    return _ensure_dir(_project_dir(project_id) / "artifacts")
+def _code_dir(project_id: str, candidate_subdir: str | None = None) -> Path:
+    return _ensure_dir(_candidate_base(project_id, candidate_subdir) / "code")
 
 
-def _artifacts_logs_dir(project_id: str) -> Path:
-    return _ensure_dir(_artifacts_dir(project_id) / "logs")
+def _artifacts_dir(project_id: str, candidate_subdir: str | None = None) -> Path:
+    return _ensure_dir(_candidate_base(project_id, candidate_subdir) / "artifacts")
+
+
+def _artifacts_logs_dir(project_id: str, candidate_subdir: str | None = None) -> Path:
+    return _ensure_dir(_artifacts_dir(project_id, candidate_subdir) / "logs")
 
 
 def _load_prompt(name: str) -> str:
@@ -134,9 +148,10 @@ def generate_experiment_plan(
     selected_hypothesis: dict,
     known_baselines: list[dict],
     available_packages: list[str],
+    candidate_subdir: str | None = None,
 ) -> dict:
     """LLM 生成实验计划，写 experiments/plan.json + experiments/plan.md。"""
-    ws = _experiments_dir(project_id)
+    ws = _experiments_dir(project_id, candidate_subdir)
     prompt_template = _load_prompt("experiment_planner_v1.md")
     prompt = (
         prompt_template
@@ -201,9 +216,10 @@ def generate_experiment_code(
     plan: dict,
     selected_hypothesis: dict,
     available_packages: list[str],
+    candidate_subdir: str | None = None,
 ) -> str:
     """LLM 生成 experiment.py 源码，写 code/experiment.py + code/requirements.txt。"""
-    code_dir = _code_dir(project_id)
+    code_dir = _code_dir(project_id, candidate_subdir)
     prompt_template = _load_prompt("experiment_codegen_v1.md")
     prompt = (
         prompt_template
@@ -241,9 +257,11 @@ def generate_experiment_code(
 # --------------------------------------------------------------------------- #
 
 
-def repair_experiment_code(project_id: str, code: str, stderr: str, attempt: int) -> str:
+def repair_experiment_code(
+    project_id: str, code: str, stderr: str, attempt: int, candidate_subdir: str | None = None
+) -> str:
     """LLM 修复代码，返回修复后完整代码；追加记录到 experiments/repair_log.md。"""
-    ws = _experiments_dir(project_id)
+    ws = _experiments_dir(project_id, candidate_subdir)
     prompt_template = _load_prompt("experiment_repair_v1.md")
     prompt = (
         prompt_template
@@ -265,7 +283,7 @@ def repair_experiment_code(project_id: str, code: str, stderr: str, attempt: int
     # 会导致磁盘上 experiment.py 与真正跑出结果的代码不一致（v0_citrag_04 GLM 限流时暴露）。
     # 每次 repair 都同步落盘，保证 on-disk == 即将运行的 code。
     try:
-        (_code_dir(project_id) / "experiment.py").write_text(new_code, encoding="utf-8")
+        (_code_dir(project_id, candidate_subdir) / "experiment.py").write_text(new_code, encoding="utf-8")
     except OSError as exc:
         logger.warning("[ExperimentEngineer] could not persist repaired experiment.py: %s", exc)
 
@@ -832,14 +850,14 @@ def run_follow_up(
     return merged, merged["follow_up"]
 
 
-def _write_metrics_json(project_id: str, metrics: dict) -> None:
-    (_artifacts_dir(project_id) / "metrics.json").write_text(
+def _write_metrics_json(project_id: str, metrics: dict, candidate_subdir: str | None = None) -> None:
+    (_artifacts_dir(project_id, candidate_subdir) / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
-def _write_results_csv(project_id: str, results: list[dict]) -> None:
-    tables = _ensure_dir(_artifacts_dir(project_id) / "tables")
+def _write_results_csv(project_id: str, results: list[dict], candidate_subdir: str | None = None) -> None:
+    tables = _ensure_dir(_artifacts_dir(project_id, candidate_subdir) / "tables")
     path = tables / "results.csv"
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(
@@ -861,15 +879,25 @@ def run_experiment_engineer(
     idea: str,
     literature_notes: dict,
     selected_hypothesis: dict,
+    candidate_subdir: str | None = None,
 ) -> dict:
-    """完整执行循环：plan → codegen → run(+repair) → 统计 → metrics.json。"""
+    """完整执行循环：plan → codegen → run(+repair) → 统计 → metrics.json。
+
+    ``candidate_subdir`` isolates this candidate's artifacts under
+    ``candidates/<id>/`` (portfolio, K>1). ``None`` writes to the top-level workspace
+    (the legacy single-hypothesis path, K=1 backward-compatible).
+    """
     available_packages = _detect_available_packages()
     known_baselines = literature_notes.get("known_baselines", []) or []
 
-    plan = generate_experiment_plan(project_id, idea, selected_hypothesis, known_baselines, available_packages)
-    code = generate_experiment_code(project_id, plan, selected_hypothesis, available_packages)
+    plan = generate_experiment_plan(
+        project_id, idea, selected_hypothesis, known_baselines, available_packages, candidate_subdir
+    )
+    code = generate_experiment_code(
+        project_id, plan, selected_hypothesis, available_packages, candidate_subdir
+    )
 
-    logs_dir = _artifacts_logs_dir(project_id)
+    logs_dir = _artifacts_logs_dir(project_id, candidate_subdir)
     dataset_name = (plan.get("dataset") or {}).get("name", "")
 
     raw_results: list[dict] = []
@@ -905,7 +933,7 @@ def run_experiment_engineer(
             # 超时单独标注，提示 repair 缩小数据集
             if outputs.get("executor_mode") == "error" or "TimeoutExpired" in str(stderr_for_repair):
                 stderr_for_repair = f"[TIMEOUT/EXEC-ERROR detected — shrink test set to <=500, lower complexity]\n{stderr_for_repair}"
-            code = repair_experiment_code(project_id, code, stderr_for_repair, execution_index)
+            code = repair_experiment_code(project_id, code, stderr_for_repair, execution_index, candidate_subdir)
             repair_attempts += 1
         else:
             execution_status = "failed_after_3_repairs"
@@ -933,8 +961,8 @@ def run_experiment_engineer(
         "returncode": last_outputs.get("returncode"),
         "statistics": statistics,
     }
-    _write_metrics_json(project_id, metrics)
-    _write_results_csv(project_id, raw_results)
+    _write_metrics_json(project_id, metrics, candidate_subdir)
+    _write_results_csv(project_id, raw_results, candidate_subdir)
     logger.info(
         "[ExperimentEngineer] done: status=%s beats_baseline=%s",
         execution_status, baseline_comparison.get("beats_baseline"),

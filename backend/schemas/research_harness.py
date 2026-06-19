@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field
 class StartRequest(BaseModel):
     idea: str = Field(..., min_length=3, description="Research idea to investigate")
     steps: str = Field("all", description='Comma-separated steps or "all"')
+    portfolio_k: int | None = Field(
+        default=None,
+        description=(
+            "V2.3 portfolio size: how many ranked hypothesis candidates to execute "
+            "(default 3, hard cap 5). K=1 reproduces the legacy single-hypothesis run."
+        ),
+    )
 
 
 class StartResponse(BaseModel):

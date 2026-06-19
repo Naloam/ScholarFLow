@@ -139,10 +139,13 @@ def start_run(project_id: str, payload: StartRequest) -> StartResponse:
         raise HTTPException(status_code=409, detail="A run is already in progress for this project")
 
     def _target() -> None:
-        pipeline.run_pipeline(run_id, idea, steps=steps)
+        pipeline.run_pipeline(run_id, idea, steps=steps, portfolio_k=payload.portfolio_k)
 
     REGISTRY.spawn(run_id, project_id, idea, _target)
-    logger.info("Started background run %s for idea (len=%d)", run_id, len(idea))
+    logger.info(
+        "Started background run %s for idea (len=%d) portfolio_k=%s",
+        run_id, len(idea), payload.portfolio_k,
+    )
     return StartResponse(run_id=run_id, project_id=project_id)
 
 

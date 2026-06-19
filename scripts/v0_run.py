@@ -45,6 +45,13 @@ def main() -> None:
         default="all",
         help='Comma-separated steps (literature,idea,experiment,review,report) or "all"',
     )
+    parser.add_argument(
+        "--portfolio-k",
+        type=int,
+        default=None,
+        help="V2.3 portfolio size: how many ranked candidates to execute (default 3, cap 5; "
+        "K=1 reproduces the legacy single-hypothesis run).",
+    )
     args = parser.parse_args()
 
     project_id = args.project_id or f"v0_{uuid.uuid4().hex[:8]}"
@@ -55,8 +62,9 @@ def main() -> None:
     logger.info("Project ID: %s", project_id)
     logger.info("Idea: %s", args.idea)
     logger.info("Steps: %s", steps or ALL_STEPS)
+    logger.info("Portfolio K: %s", args.portfolio_k)
 
-    result = run_pipeline(project_id, args.idea, steps=steps)
+    result = run_pipeline(project_id, args.idea, steps=steps, portfolio_k=args.portfolio_k)
     logger.info("Run status: %s", result["status"])
 
     workspace_path = project_dir(project_id)

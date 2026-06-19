@@ -100,11 +100,28 @@ def load_literature_notes(project_id: str) -> dict:
     }
 
 
+def load_candidates(project_id: str) -> list[dict]:
+    """Read ``ideas/candidates.json`` (the full idea bank) → list (empty if absent)."""
+    data = _read_json(project_dir(project_id) / "ideas" / "candidates.json", None)
+    return data if isinstance(data, list) else []
+
+
 def load_selected_hypothesis(project_id: str) -> dict | None:
-    """Prefer ``selected.json``; otherwise reuse :func:`select_hypothesis`."""
+    """Resolve the hypothesis the report/review layers should anchor on.
+
+    V2.3 (only-add): when a portfolio ledger exists, prefer its **best** candidate
+    (the anchored-verdict winner) — that is what the report is about. Without a
+    portfolio (legacy / K=1 pre-portfolio workspaces) fall back to ``selected.json``
+    (rank-0), then to :func:`select_hypothesis`. For K=1 portfolio, best == rank-0.
+    """
     from services.research_harness.idea_agent import select_hypothesis
 
     proj = project_dir(project_id)
+    portfolio_ledger = _read_json(proj / "ledger" / "portfolio.json", None)
+    if isinstance(portfolio_ledger, dict):
+        best = portfolio_ledger.get("best_candidate")
+        if isinstance(best, dict) and best:
+            return best
     sel = _read_json(proj / "ideas" / "selected.json", None)
     if isinstance(sel, dict) and sel:
         return sel
@@ -291,20 +308,164 @@ def run_step_idea(project_id: str, idea: str) -> dict | None:
     return selected
 
 
-def run_step_experiment(project_id: str, idea: str) -> dict:
-    from services.research_harness.experiment_engineer import run_experiment_engineer
+def run_step_experiment(project_id: str, idea: str, portfolio_k: int | None = None) -> dict:
+    """Portfolio-aware experiment step (V2.3).
+
+    Ranks the idea bank, runs the top-K candidates sequentially (each isolated under
+    ``candidates/<id>/``), applies the full V2.2 honest gate to each, aggregates them
+    into one honest portfolio verdict, and promotes the best candidate's workspace to
+    the top level so the downstream review/report/write/audit operate on it unchanged.
+    K=1 is byte-equivalent to the old single-hypothesis path.
+    """
+    from services.research_harness import portfolio as portfolio_mod
 
     notes = load_literature_notes(project_id)
-    selected = load_selected_hypothesis(project_id)
-    if not selected:
-        raise RuntimeError("No selected hypothesis on disk. Run --steps idea first.")
-    metrics = run_experiment_engineer(project_id, idea, notes, selected)
+    candidates = load_candidates(project_id)
+    if not candidates:
+        selected = load_selected_hypothesis(project_id)
+        if not selected:
+            raise RuntimeError("No selected hypothesis on disk. Run --steps idea first.")
+        candidates = [selected]
+
+    metrics = run_portfolio_experiments(project_id, idea, notes, candidates, k=portfolio_k)
+    best_bc = (metrics.get("baseline_comparison") or {})
     logger.info(
-        "ExperimentEngineer complete: status=%s beats_baseline=%s",
+        "ExperimentEngineer complete (portfolio k=%s): status=%s beats_baseline=%s",
+        portfolio_k or portfolio_mod.DEFAULT_K,
         metrics.get("execution_status"),
-        metrics.get("baseline_comparison", {}).get("beats_baseline"),
+        best_bc.get("overall_beats_baseline"),
     )
     return metrics
+
+
+# --------------------------------------------------------------------------- #
+# V2.3 portfolio execution (goal_session9.md Steps 2–5)
+# --------------------------------------------------------------------------- #
+
+
+def _write_candidate_verdict(project_id: str, candidate_id: str, verdict: dict) -> None:
+    """Persist one candidate's anchored verdict at ``candidates/<id>/verdict.json``."""
+    d = project_dir(project_id) / "candidates" / candidate_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "verdict.json").write_text(
+        json.dumps(verdict, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _write_candidate_metrics(project_id: str, candidate_id: str, metrics: dict) -> None:
+    """Persist one candidate's metrics at ``candidates/<id>/artifacts/metrics.json``.
+
+    The orchestration layer owns the per-candidate ledger so the portfolio record is
+    complete regardless of how the experiment engineer persists its own output.
+    """
+    d = project_dir(project_id) / "candidates" / candidate_id / "artifacts"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "metrics.json").write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _write_portfolio_ledger(project_id: str, aggregated: dict) -> None:
+    """Single structured source for the frontend + acceptance: ``ledger/portfolio.json``."""
+    ledger = project_dir(project_id) / "ledger"
+    ledger.mkdir(parents=True, exist_ok=True)
+    (ledger / "portfolio.json").write_text(
+        json.dumps(aggregated, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _promote_candidate(project_id: str, candidate_id: str) -> None:
+    """Copy the best candidate's experiments/code/artifacts to the top-level workspace.
+
+    The downstream review/report/write/audit/follow-up all read top-level files; by
+    mirroring the best candidate there they operate on it unchanged (no candidate
+    threading needed through 6 steps). ``literature/`` is shared (one search per idea)
+    and stays top-level. Per-candidate artifacts remain under ``candidates/<id>/``.
+    """
+    import shutil
+
+    src = project_dir(project_id) / "candidates" / candidate_id
+    dst = project_dir(project_id)
+    for sub in ("experiments", "code", "artifacts"):
+        src_sub = src / sub
+        if not src_sub.exists():
+            continue
+        dst_sub = dst / sub
+        if dst_sub.exists():
+            shutil.rmtree(dst_sub)
+        shutil.copytree(src_sub, dst_sub)
+
+
+def run_portfolio_experiments(
+    project_id: str,
+    idea: str,
+    literature_notes: dict,
+    candidates: list[dict],
+    *,
+    k: int | None = None,
+) -> dict:
+    """Run the top-K candidates sequentially and aggregate an honest portfolio verdict.
+
+    Sequential, never parallel — GLM enforces per-minute rate limits and parallel
+    candidates would collide. Each candidate failure (``failed_after_3_repairs``) is a
+    legitimate portfolio member; it never aborts the others. Returns the BEST
+    candidate's metrics (also mirrored at the top level for downstream steps).
+    """
+    import shutil
+    from services.research_harness import portfolio as portfolio_mod
+    from services.research_harness import evidence, experiment_engineer
+
+    sel = portfolio_mod.select_portfolio(candidates, project_id=project_id, k=k)
+    top_k = sel["ranked"]
+    if not top_k:
+        raise RuntimeError("No candidates to run; idea_agent produced none.")
+    single = len(top_k) <= 1
+
+    per_candidate: list[dict] = []
+    for cand in top_k:
+        cid = str(cand.get("hypothesis_id") or f"rank{cand.get('rank', 0)}")
+        # K=1 (single) writes to the top level → byte-identical to the legacy path.
+        sub: str | None = None if single else cid
+        try:
+            metrics_i = experiment_engineer.run_experiment_engineer(
+                project_id, idea, literature_notes, cand, candidate_subdir=sub
+            )
+        except Exception as exc:  # noqa: BLE001 — one candidate's failure must not abort the portfolio
+            logger.error("[Portfolio] candidate %s failed hard: %s", cid, exc)
+            metrics_i = {"execution_status": "failed_after_3_repairs", "results": [],
+                         "baseline_comparison": {}, "statistics": None}
+        verdict_i = evidence.full_verdict(metrics_i, cand)
+        if not single:
+            _write_candidate_metrics(project_id, cid, metrics_i)
+            _write_candidate_verdict(project_id, cid, verdict_i)
+        per_candidate.append(
+            {"candidate_id": cid, "title": cand.get("title"), "hypothesis": cand,
+             "metrics": metrics_i, "verdict": verdict_i}
+        )
+        logger.info(
+            "[Portfolio] candidate %s: status=%s verdict=%s",
+            cid, metrics_i.get("execution_status"), verdict_i.get("verdict"),
+        )
+
+    aggregated = portfolio_mod.aggregate_portfolio(per_candidate)
+    _write_portfolio_ledger(project_id, aggregated)
+
+    best_id = aggregated.get("best_candidate_id")
+    best_entry = next((e for e in per_candidate if e["candidate_id"] == best_id), per_candidate[0])
+    best_metrics = best_entry["metrics"]
+    if not single:
+        # Best candidate's workspace becomes the canonical top-level run.
+        _promote_candidate(project_id, str(best_id))
+    else:
+        # Single candidate already wrote metrics to the top level via run (sub=None);
+        # but if that run hard-failed we still ensure a metrics.json so downstream sees it.
+        if not (project_dir(project_id) / "artifacts" / "metrics.json").exists():
+            experiment_engineer._write_metrics_json(project_id, best_metrics)
+    logger.info(
+        "[Portfolio] best=%s portfolio_verdict=%s",
+        best_id, aggregated.get("portfolio_verdict"),
+    )
+    return best_metrics or {}
 
 
 def run_step_review(project_id: str, idea: str) -> dict:
@@ -408,7 +569,12 @@ NONFATAL_STEPS: frozenset[str] = frozenset({"write", "audit"})
 # --------------------------------------------------------------------------- #
 
 
-def run_pipeline(project_id: str, idea: str, steps: list[str] | None = None) -> dict:
+def run_pipeline(
+    project_id: str,
+    idea: str,
+    steps: list[str] | None = None,
+    portfolio_k: int | None = None,
+) -> dict:
     """Run the ordered agent steps for one project.
 
     Writes ``timeline.jsonl`` and ``project.json`` status as it goes. Raises only
@@ -416,6 +582,9 @@ def run_pipeline(project_id: str, idea: str, steps: list[str] | None = None) -> 
     re-raised so the caller (CLI or background thread) can mark the run as failed.
 
     Returns a summary dict ``{project_id, idea, steps: [...], status}``.
+
+    ``portfolio_k`` (V2.3) controls how many ranked candidates actually execute
+    (default ``portfolio.DEFAULT_K``=3); K=1 reproduces the legacy single-hypothesis run.
     """
     resolved = list(steps) if steps else list(ALL_STEPS)
     unknown = [s for s in resolved if s not in ALL_STEPS]
@@ -431,7 +600,10 @@ def run_pipeline(project_id: str, idea: str, steps: list[str] | None = None) -> 
     for step in resolved:
         logger.info("--- Step: %s ---", step)
         try:
-            STEP_FUNCS[step](project_id, idea)
+            if step == "experiment":
+                run_step_experiment(project_id, idea, portfolio_k=portfolio_k)
+            else:
+                STEP_FUNCS[step](project_id, idea)
             append_timeline(project_id, step, "done", STEP_OUTPUTS.get(step, []))
             summary_steps.append({"step": step, "status": "done"})
         except Exception:  # noqa: BLE001 — record + (maybe) propagate

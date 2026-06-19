@@ -275,9 +275,29 @@ with no arg still return exactly the V2.4 claim note).
 live acceptances; requires ≥1 negative/downgrade/kill on a non-RAG domain to prove the
 gate is not bypassed in a new domain.
 
-### V3 — Editable paper (not started)
-TipTap rich-text editor so a human can edit `paper/draft.md` in-place (currently
-read-only render). Out of scope until V2 quality is validated on live runs.
+### V3 — Editable paper (TipTap, human-in-the-loop) ✅ done (Session 11)
+Puts the human back in the loop. The paper draft is no longer read-only: a TipTap
+rich-text editor (view/edit dual mode) edits `paper/draft.md`; saving then re-running
+the Auditor re-applies the honesty gate to the human's claims. **A newly-added
+unsupported claim is marked `[UNVERIFIED]` and fails the gate** — the human
+collaborates with the gate, never bypasses it (the closure Session 9's read-only
+render couldn't offer).
+
+- **Backend**: `pipeline.save_paper_draft` (length-validated at the boundary) +
+  `pipeline.reaudit_paper` (re-runs `run_auditor_agent` on the current draft;
+  appends a `reaudit` timeline entry; **non-fatal** — never breaks a finished run).
+  API: `PUT /projects/{id}/paper/draft` + `POST /projects/{id}/paper/reaudit` (audit
+  is pure-logic → synchronous, returns the new gate + counts immediately).
+- **Frontend**: `PaperEditor` (view reuses the faithful read-only `PaperDraft`;
+  edit uses TipTap + `tiptap-markdown` for markdown round-trip). Toolbar (bold /
+  italic / H2 / lists) + Save + Re-run audit. Unsaved edits guard navigation
+  (`beforeunload` + react-router `useBlocker`).
+- **Tests**: CI-safe `test_research_harness_editable_paper.py` (3 cases) — save +
+  length cap; re-audit flags a human-added unsupported citation (gate False,
+  `[UNVERIFIED]` annotated); re-audit non-fatal without metrics. Frontend
+  `npm run build` green.
+- **Manual**: editing + re-audit on `live_session10`/12 products deferred to the
+  live batch (a fixture draft is exercised by the unit test).
 
 ## Deferred work — explicit "not until X" triggers
 

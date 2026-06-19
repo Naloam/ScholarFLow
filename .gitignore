@@ -26,6 +26,7 @@ frontend/playwright-report/
 backend/tests/*
 !backend/tests/test_research_harness_prompts.py
 !backend/tests/test_research_harness_citation.py
+!backend/tests/test_research_harness_honest_gate.py
 backend/migrations/
 
 # Docs — internal project documents

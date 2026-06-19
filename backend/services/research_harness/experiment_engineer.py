@@ -379,6 +379,11 @@ def _role_of(system_name: str, role_map: dict[str, str]) -> str:
     name = (system_name or "").lower()
     if system_name in role_map:
         return role_map[system_name]
+    # Session 10: stronger_baseline is a DISTINCT system, not the comparison baseline —
+    # its name contains "baseline", so guard it before the prefix heuristic to avoid
+    # polluting the weak-baseline pool (only-add correctness fix).
+    if "stronger" in name:
+        return "stronger_baseline"
     for role in ("baseline", "proposed", "ablation"):
         if role in name:
             return role

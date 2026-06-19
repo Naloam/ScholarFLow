@@ -133,6 +133,26 @@ _INFEASIBLE_KEYWORDS: tuple[str, ...] = (
     "cloud", "manual annotation", "manual evaluation",
 )
 
+# V2.4 / goal_session10 Step 7: reviewer actions that are ANALYSIS/WRITING, not
+# experiments. These must NEVER become ``run_target`` (they would otherwise be
+# handed to ``experiment_engineer.run_follow_up`` which generates code to "run"
+# them — a logical error). They are recorded as ``writing_tasks`` instead.
+_ANALYSIS_ONLY_ACTIONS: frozenset[str] = frozenset({
+    "report_failure_mode", "rewrite_related_work", "add_limitations_section",
+    "discuss_results", "discuss_limitations", "discuss_threats_to_validity",
+    "write_future_work", "summarize_contribution",
+})
+_ANALYSIS_ONLY_PREFIXES: tuple[str, ...] = ("discuss_", "rewrite_", "write_")
+
+
+def _is_analysis_only_action(action: str) -> bool:
+    a = (action or "").strip().lower()
+    if not a:
+        return False
+    if a in _ANALYSIS_ONLY_ACTIONS:
+        return True
+    return any(a.startswith(p) for p in _ANALYSIS_ONLY_PREFIXES)
+
 
 def _follow_up_feasibility(req: dict) -> dict:
     """Is this required_experiment runnable inside the sandbox budget?"""
@@ -166,12 +186,23 @@ def run_research_manager(
     ]
 
     future_work: list[dict] = []
+    writing_tasks: list[dict] = []
     run_target: dict | None = None
     for req in must_haves:
+        action = req.get("action", "")
+        # goal_session10 Step 7: analysis/writing actions are NEVER run as experiments.
+        if _is_analysis_only_action(action):
+            writing_tasks.append({
+                "action": action,
+                "description": req.get("description"),
+                "reason": "analysis/writing action, not an experiment",
+                "kind": "writing_task",
+            })
+            continue
         feas = _follow_up_feasibility(req)
         if not feas["feasible"]:
             future_work.append({
-                "action": req.get("action"),
+                "action": action,
                 "description": req.get("description"),
                 "reason": feas["reason"],
             })
@@ -213,6 +244,7 @@ def run_research_manager(
         "follow_up_ran": follow_up_ran,
         "follow_up_target": run_target,
         "future_work": future_work,
+        "writing_tasks": writing_tasks,
         "sandbox_backend": SANDBOX_BACKEND_KIND,
         "sandbox_budget_seconds": MAX_EXPERIMENT_SECONDS,
     }
@@ -252,6 +284,15 @@ def run_research_manager(
             conclusion_lines.append(
                 f"- **{fw.get('action', '')}** — {fw.get('description', '')} "
                 f"(_reason: {fw.get('reason', '')}_)\n"
+            )
+    if writing_tasks:
+        conclusion_lines.append(
+            "\n### Writing tasks (analysis/writing actions, NOT experiments — never spawned)\n\n"
+        )
+        for wt in writing_tasks:
+            conclusion_lines.append(
+                f"- **{wt.get('action', '')}** — {wt.get('description', '')} "
+                f"(_{wt.get('reason', '')}_)\n"
             )
     conclusion_lines.append(
         f"\n_Backend_: `{SANDBOX_BACKEND_KIND}` (budget {MAX_EXPERIMENT_SECONDS}s). "

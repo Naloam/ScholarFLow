@@ -13,9 +13,38 @@ from pathlib import Path
 from config.settings import settings
 from services.llm.client import chat
 from services.llm.response_utils import get_message_content
+from services.research_harness import evidence
 
 logger = logging.getLogger(__name__)
 WORKSPACE_ROOT = Path(settings.data_dir) / "research_workspace"
+
+
+def _kill_criteria_parseable(hypothesis: dict) -> bool:
+    """Default True when the IdeaAgent never annotated (e.g. direct test calls)."""
+    return bool(hypothesis.get("kill_criteria_parseable", True))
+
+
+def annotate_candidates_kill_criteria(candidates: list[dict]) -> list[dict]:
+    """Mark each candidate with whether its kill_criteria are mechanically parseable.
+
+    goal_session10 Step 6: the IdeaAgent must never *silently* let a free-text
+    kill criterion through. Returns NEW candidate dicts (immutability) carrying
+    ``kill_criteria_parseable`` (bool) and ``kill_criteria_issues`` (the
+    unparseable criteria + their suggested rewrites) so ranking can demote them.
+    """
+    out: list[dict] = []
+    for h in candidates or []:
+        checks = evidence.validate_kill_criteria(h)
+        issues = [
+            {"criterion": c["criterion"], "suggested_rewrite": c.get("suggested_rewrite", "")}
+            for c in checks
+            if not c.get("parseable")
+        ]
+        new_h = dict(h)
+        new_h["kill_criteria_parseable"] = not issues
+        new_h["kill_criteria_issues"] = issues
+        out.append(new_h)
+    return out
 
 
 def _workspace(project_id: str) -> Path:
@@ -103,8 +132,11 @@ def select_hypothesis(candidates: list[dict]) -> dict | None:
     priority = {"high": 0, "medium": 1, "low": 2}
     def score(h: dict) -> tuple:
         f = priority.get(h.get("feasibility", "low"), 2)
+        # goal_session10 Step 6: candidates with unparseable kill criteria are
+        # demoted within their feasibility tier (default parseable = no penalty).
+        parseable_penalty = 0 if _kill_criteria_parseable(h) else 1
         specificity = len(h.get("kill_criteria", []))
-        return (f, -specificity)
+        return (f, parseable_penalty, -specificity)
     return min(candidates, key=score)
 
 
@@ -131,6 +163,15 @@ def run_idea_agent(project_id: str, idea: str, literature_notes: dict) -> dict |
             encoding="utf-8",
         )
         return None
+
+    # goal_session10 Step 6: validate kill-criteria parseability; mark + demote,
+    # never silently pass a free-text criterion that would be needs_manual later.
+    candidates = annotate_candidates_kill_criteria(candidates)
+    unparseable = [h.get("hypothesis_id") for h in candidates if not _kill_criteria_parseable(h)]
+    if unparseable:
+        logger.warning(
+            "[IdeaAgent] candidates with unparseable kill_criteria (demoted): %s", unparseable,
+        )
 
     (ws / "candidates.json").write_text(
         json.dumps(candidates, ensure_ascii=False, indent=2),

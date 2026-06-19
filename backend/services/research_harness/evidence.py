@@ -496,6 +496,106 @@ def evaluate_kill_criteria(hypothesis: dict[str, Any] | None, metrics: dict[str,
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Idea-time kill-criterion validation (goal_session10 Step 6)
+# --------------------------------------------------------------------------- #
+
+# Metric names the claim-verification experiments actually produce (V2.2/V2.3).
+_STANDARD_METRICS: tuple[str, ...] = (
+    "macro_f1", "accuracy", "auc",
+    "error_rate_at_20pct_abstain", "spearman_consistency_vs_label",
+)
+
+_STOPWORD_TOKENS: frozenset[str] = frozenset({
+    "the", "and", "for", "not", "with", "that", "this", "when", "if", "than",
+    "method", "baseline", "criterion", "kill", "drop", "abandon", "stop",
+    "result", "metric", "proposed", "ablation",
+})
+
+
+def _looks_like_metric(token: str, avail: set[str]) -> bool:
+    """A plausible metric identifier: a known metric, or a snake_case name."""
+    low = token.lower()
+    if low in avail:
+        return True
+    return "_" in low and len(low) >= 4 and low not in _STOPWORD_TOKENS
+
+
+def _suggest_kill_rewrite(criterion: str, available_metrics: list[str]) -> str:
+    """Deterministic rewrite hint for an unparseable kill criterion."""
+    avail = {m.lower() for m in available_metrics}
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]*", criterion or "")
+    picked = next((t.lower() for t in tokens if _looks_like_metric(t, avail)), None)
+    if picked is None:
+        picked = next((t.lower() for t in tokens if t.lower() not in _STOPWORD_TOKENS), None)
+    if picked is None:
+        return "rewrite as: '<metric_name> < 0.5' (threshold) or '<metric_name> 相比 baseline 未提升' (comparison)"
+    return f"{picked} 相比 baseline 未提升"
+
+
+def _validate_one_kill_criterion(criterion: str, available_metrics: list[str]) -> dict[str, Any]:
+    m = _KILL_THRESHOLD_RE.search(criterion)
+    if m:
+        return {
+            "criterion": criterion,
+            "parseable": True,
+            "kind": "threshold",
+            "metric": m.group(1).lower(),
+        }
+    avail = {x.lower() for x in available_metrics}
+    has_baseline = "baseline" in criterion.lower()
+    metric = next(
+        (t.lower() for t in re.findall(r"[A-Za-z][A-Za-z0-9_]*", criterion)
+         if _looks_like_metric(t, avail)),
+        None,
+    )
+    if has_baseline and metric:
+        return {
+            "criterion": criterion,
+            "parseable": True,
+            "kind": "comparison",
+            "metric": metric,
+        }
+    return {
+        "criterion": criterion,
+        "parseable": False,
+        "kind": None,
+        "metric": None,
+        "reason": (
+            "not a parseable threshold (`<metric> <op> <number>`) "
+            "or comparison (`<metric> 相比 baseline <op>`)"
+        ),
+        "suggested_rewrite": _suggest_kill_rewrite(criterion, available_metrics),
+    }
+
+
+def validate_kill_criteria(
+    hypothesis: dict[str, Any] | None,
+    available_metrics: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Idea-time check: is each ``hypothesis.kill_criteria`` mechanically parseable?
+
+    Pure, deterministic, network-free — the gate that refuses to *silently* let a
+    free-text kill criterion through (goal_session10 Step 6). For each criterion
+    returns ``{criterion, parseable, kind, metric}`` and, when not parseable, a
+    ``reason`` + ``suggested_rewrite``. The IdeaAgent marks candidates with
+    unparseable criteria and demotes them, so live-run kill criteria are no longer
+    all ``needs_manual`` at evaluation time. ``available_metrics`` defaults to the
+    standard claim-verification metric set.
+    """
+    if not hypothesis:
+        return []
+    criteria = hypothesis.get("kill_criteria")
+    if not isinstance(criteria, list):
+        return []
+    avail = list(available_metrics) if available_metrics else list(_STANDARD_METRICS)
+    return [
+        _validate_one_kill_criterion(c, avail)
+        for c in criteria
+        if isinstance(c, str) and c.strip()
+    ]
+
+
 def full_verdict(metrics: dict[str, Any], hypothesis: dict[str, Any] | None = None) -> dict[str, Any]:
     """Verdict anchored to the hypothesis's primary metric + kill criteria.
 
@@ -851,6 +951,7 @@ __all__ = [
     "primary_metric_for",
     "primary_metric_outcome",
     "evaluate_kill_criteria",
+    "validate_kill_criteria",
     "full_verdict",
     "build_evidence_items",
     "build_evidence_pack",

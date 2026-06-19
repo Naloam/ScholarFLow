@@ -42,12 +42,15 @@ DATASET_REGISTRY: tuple[DatasetSpec, ...] = (
             "biomedical/scientific abstracts."
         ),
         file_path=SEED_DIR / "scifact_slice.jsonl",
-        n_examples=100,
-        label_balance="50 SUPPORT / 50 REFUTE",
+        n_examples=474,
+        label_balance="237 SUPPORT / 237 REFUTE",
         positive_label="SUPPORT",
         negative_label="REFUTE",
         metric_hint="macro_f1 / accuracy",
-        attribution="allenai/scifact (CC BY 4.0), 100-example balanced dev slice",
+        attribution=(
+            "allenai/scifact (CC BY 4.0), balanced held-out slice of all labeled "
+            "SUPPORT/REFUTE claims (dev + train; gold corpus abstract attached)"
+        ),
     ),
     DatasetSpec(
         key="vitaminc_claim_verification",
@@ -58,12 +61,12 @@ DATASET_REGISTRY: tuple[DatasetSpec, ...] = (
             "(distinct from SciFact)."
         ),
         file_path=SEED_DIR / "vitaminc_slice.jsonl",
-        n_examples=100,
-        label_balance="50 SUPPORT / 50 REFUTE",
+        n_examples=500,
+        label_balance="250 SUPPORT / 250 REFUTE",
         positive_label="SUPPORT",
         negative_label="REFUTE",
         metric_hint="macro_f1 / accuracy",
-        attribution="tals/vitaminc (CC BY-SA 4.0), 100-example balanced validation slice",
+        attribution="tals/vitaminc (CC BY-SA 4.0), 500-example balanced held-out dev slice",
     ),
     DatasetSpec(
         key="citation_faithfulness",
@@ -76,8 +79,8 @@ DATASET_REGISTRY: tuple[DatasetSpec, ...] = (
             "'detect citation parsing errors'. Derived deterministically from allenai/scifact."
         ),
         file_path=SEED_DIR / "citation_faithfulness_slice.jsonl",
-        n_examples=100,
-        label_balance="50 FAITHFUL / 50 PARSING_ERROR",
+        n_examples=474,
+        label_balance="237 FAITHFUL / 237 PARSING_ERROR",
         positive_label="FAITHFUL",
         negative_label="PARSING_ERROR",
         metric_hint="macro_f1 / accuracy",
@@ -121,9 +124,11 @@ def registry_note() -> str:
     lines.append("1. 把所选数据集的 loader 原样粘进去（绝对路径，**不要改、不要换成自创 URL**）。")
     lines.append("2. **必须用注册表里的全部数据集**（遍历它们），对每个数据集都跑一遍实验。")
     lines.append(
-        "3. 每个数据集 × 每个 system 跑 **≥10 个 seed**。seed 机制 = **配对 bootstrap 重采样**："
+        "3. 每个数据集 × 每个 system 跑 **≥128 个 seed（尽量贴近 512）**。seed 机制 = **配对 bootstrap 重采样**："
         "对每个 seed，用 `random.Random(seed)` 生成 n 个有放回抽样下标（n=数据集大小），"
         "用**同一组下标**评估所有 system（保证配对）；这会给每个 system 一组 per-seed macro_f1，用于配对符号检验。"
+        "（Session 10 实测：ST 路径 512 seed × 500 例 × 3 数据集计算量 <1 秒，预算远未触顶——"
+        "seed 越多 paired sign-flip 检验功效越高；目标是不再 underpowered。）"
     )
     lines.append("4. 每条结果输出一行 `__RESULT__` row：")
     lines.append(

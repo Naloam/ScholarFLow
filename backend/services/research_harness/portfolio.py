@@ -67,15 +67,22 @@ def _feasibility_rank(h: dict[str, Any]) -> int:
     return _FEASIBILITY_RANK.get(str(h.get("feasibility", "")).strip().lower(), 0)
 
 
-def _rank_key(h: dict[str, Any]) -> tuple[int, int]:
+def _rank_key(h: dict[str, Any]) -> tuple[int, int, int]:
     """Sort key reusing select_hypothesis's logic: feasibility first (high<medium<low
-    as 0/1/2), then MORE kill_criteria = MORE specific = EARLIER (hence negative)."""
+    as 0/1/2), then MORE kill_criteria = MORE specific = EARLIER (hence negative).
+
+    goal_session10 Step 6: a candidate whose kill_criteria are NOT mechanically
+    parseable (``kill_criteria_parseable == False``, set by the IdeaAgent) is
+    demoted within its feasibility tier. Defaults to parseable when unannotated
+    (e.g. direct test calls) — only-add, no regression on existing ranking.
+    """
     feasibility = _FEASIBILITY_PRIORITY.get(
         str(h.get("feasibility", "")).strip().lower(),
         _FEASIBILITY_PRIORITY["low"],
     )
+    parseable_penalty = 0 if h.get("kill_criteria_parseable", True) else 1
     specificity = len(h.get("kill_criteria") or [])
-    return (feasibility, -specificity)
+    return (feasibility, parseable_penalty, -specificity)
 
 
 def rank_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:

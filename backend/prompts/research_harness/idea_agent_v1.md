@@ -37,7 +37,11 @@
 "feasibility": "high | medium | low",
 "expected_positive_outcome": "如果假设成立，实验会看到什么（一句）",
 "expected_negative_outcome": "如果假设不成立，实验会看到什么（一句，必填）",
-"kill_criteria": ["放弃这个方向的具体判据（1-2条；尽量写成可机械判定的阈值型，如 'AUC<0.55'、'error_rate_at_20pct_abstain 未低于 baseline'）"]
+"kill_criteria": ["放弃这个方向的可机械判定判据 1-2 条。🔴 硬格式要求（违反即被系统拒绝并降级该候选）：每条必须是下列之一——"
+                   "(a) 阈值型 `<metric_name> <OP> <数值>`，如 `auc < 0.55`、`error_rate_at_20pct_abstain >= 0.20`；"
+                   "(b) 比较型 `<metric_name> 相比 baseline <OP>`，如 `macro_f1 相比 baseline 未提升`。"
+                   "metric_name 必须是实验会真实产出的指标名（macro_f1 / error_rate_at_20pct_abstain / spearman_consistency_vs_label / auc）。"
+                   "禁止纯中文叙述句，禁止无指标名的「方法不行就停」类表述。"]
 }
 ]
 
@@ -56,4 +60,5 @@ abstention 类指标（error_rate_at_20pct_abstain / spearman_consistency_vs_lab
 - 不允许 3 个假设都是 TF-IDF / 关键词匹配的变体（即使它们 feasibility 高）
 - 不允许 expected_negative_outcome 为空
 - 不允许 primary_metric 缺失或填成"improve performance"这类非指标空话
+- 不允许 kill_criteria 是不可机械判定的纯叙述句（如「方法效果不好就放弃」「结果不理想就停止」）；每条必须符合上方硬格式
 - 不允许输出少于 3 个或多于 5 个假设；不允许任何字段写成长段落

@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import re
 from pathlib import Path
 
 from config.settings import settings
@@ -605,6 +606,232 @@ def _compute_stats(results: list[dict], plan: dict) -> dict | None:
 # --------------------------------------------------------------------------- #
 
 
+# V2.2 hypothesis-contract signals (goal_session8.md Step 5):
+#  - missing_baselines: comparison systems the hypothesis NAMES (in expected outcome /
+#    kill criteria) but that were NOT generated/run → recorded honestly, never silent.
+#  - underpowered: ran fewer seeds than the power analysis recommended.
+_GENERIC_NAME_STARTS: frozenset[str] = frozenset(
+    {"the", "our", "we", "this", "these", "those", "that", "a", "an", "if", "when",
+     "for", "with", "without", "each", "some", "any", "all", "no", "not", "note"}
+)
+_NAMED_SYSTEM_RE = re.compile(r"[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,4}")
+
+
+def _extract_named_systems(text: str) -> set[str]:
+    """Capitalized multi-word phrases in ``text`` that look like named systems/
+    baselines (e.g. 'Sufficient Context Classifier', 'Calibrated Softmax')."""
+    candidates: set[str] = set()
+    for m in _NAMED_SYSTEM_RE.finditer(text or ""):
+        phrase = m.group(0).strip()
+        words = phrase.split()
+        if words[0].lower() in _GENERIC_NAME_STARTS:
+            continue
+        if not any(len(w) >= 4 for w in words):
+            continue
+        candidates.add(phrase)
+    return candidates
+
+
+def _existing_system_names(results: list[dict], plan: dict) -> set[str]:
+    names: set[str] = set()
+    for r in results or []:
+        if isinstance(r, dict):
+            names.add(str(r.get("system_name", "")))
+    for s in (plan.get("systems") if isinstance(plan, dict) else None) or []:
+        if isinstance(s, dict):
+            names.add(str(s.get("name", "")))
+    return names
+
+
+def _phrase_matches_existing(phrase: str, names: set[str]) -> bool:
+    """Does ``phrase`` correspond to a system that actually ran (token overlap)?"""
+    cand = {w.lower() for w in re.split(r"[\s_\-]+", phrase) if len(w) >= 4}
+    if not cand:
+        return False
+    for name in names:
+        if not name:
+            continue
+        name_tokens = {w.lower() for w in re.split(r"[\s_\-]+", name) if len(w) >= 4}
+        if cand & name_tokens:
+            return True
+    return False
+
+
+def _detect_missing_baselines(
+    hypothesis: dict | None, results: list[dict], plan: dict
+) -> list[str]:
+    """Comparison systems the hypothesis names but that did not run.
+
+    Extracts Capitalized named systems from the hypothesis's expected-outcome /
+    kill-criteria text and flags any with no matching system in the results/plan.
+    Returns ``[]`` when there is no hypothesis.
+    """
+    if not hypothesis:
+        return []
+    text = " ".join(
+        [
+            str(hypothesis.get("expected_positive_outcome", "")),
+            str(hypothesis.get("expected_negative_outcome", "")),
+            " ".join(str(c) for c in (hypothesis.get("kill_criteria") or [])),
+        ]
+    )
+    candidates = _extract_named_systems(text)
+    names = _existing_system_names(results, plan)
+    missing = [c for c in sorted(candidates) if not _phrase_matches_existing(c, names)]
+    return missing
+
+
+def _underpowered_note(metrics: dict) -> dict | None:
+    """If the run used fewer seeds than the power analysis recommended, return a
+    descriptive ``underpowered`` marker; else ``None``. Pure, deterministic."""
+    stats = metrics.get("statistics") or {}
+    ran = stats.get("seed_count")
+    recommended = None
+    for t in stats.get("significance_tests") or []:
+        if isinstance(t, dict) and t.get("recommended_sample_count"):
+            recommended = t["recommended_sample_count"]
+            break
+    if recommended and ran is not None and ran < recommended:
+        return {
+            "underpowered": True,
+            "ran_seeds": int(ran),
+            "recommended_seeds": int(recommended),
+            "note": f"underpowered: ran {ran} of recommended {recommended} seeds",
+        }
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# V2.2 reviewer → follow-up loop (goal_session8.md Step 6)
+# --------------------------------------------------------------------------- #
+
+
+def _load_plan_json(project_id: str) -> dict:
+    path = _experiments_dir(project_id) / "plan.json"
+    if path.exists():
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            return parsed if isinstance(parsed, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def _merge_followup_plan(base_plan: dict, action: str, new_rows: list[dict]) -> dict:
+    """Add the follow-up systems to the plan's system list so role-aware stat /
+    comparison recomputation treats them correctly. Roles are inferred from the
+    reviewer action (stronger baseline → 'baseline', ablation → 'ablation')."""
+    plan = dict(base_plan) if isinstance(base_plan, dict) else {}
+    systems = [s for s in (plan.get("systems") or []) if isinstance(s, dict)]
+    existing = {str(s.get("name", "")) for s in systems}
+    a = (action or "").lower()
+    inferred_role = "baseline" if "baseline" in a else ("ablation" if "ablation" in a else "")
+    for r in new_rows:
+        name = str(r.get("system_name", ""))
+        if name and name not in existing:
+            systems.append({"name": name, "role": inferred_role})
+            existing.add(name)
+    plan["systems"] = systems
+    return plan
+
+
+def _generate_followup_code(
+    project_id: str,
+    idea: str,
+    selected: dict,
+    follow_up_req: dict,
+    base_metrics: dict,
+    available_packages: list[str],
+) -> str:
+    """LLM-generate a self-contained follow-up experiment (the new system only)."""
+    action = follow_up_req.get("action", "")
+    description = follow_up_req.get("description", "")
+    existing = {
+        "dataset": base_metrics.get("dataset"),
+        "systems_run": sorted({str(r.get("system_name", "")) for r in base_metrics.get("results", []) if isinstance(r, dict)}),
+    }
+    prompt = (
+        "You are adding ONE follow-up experiment to an existing research project, requested by "
+        "an automated reviewer. Do NOT re-run systems that already ran — run ONLY the new system.\n\n"
+        f"Requested action: {action}\nDescription: {description}\n\n"
+        f"Hypothesis: {json.dumps(selected, ensure_ascii=False)}\n"
+        f"Already-run systems / dataset: {json.dumps(existing, ensure_ascii=False)}\n\n"
+        f"Allowed packages: {available_packages or ['Python standard library only']}\n"
+        "Write a SELF-CONTAINED Python script that runs the new follow-up system on the SAME small "
+        "public dataset and prints exactly one line:\n"
+        "  print('__RESULT__', json.dumps([{'system_name': ..., 'metric_name': ..., 'metric_value': ..., "
+        "'n_test': ..., 'dataset_name': ..., 'seed': ...}]))\n"
+        "Stay well within a small time budget (no GPU, no large downloads). "
+        "Output ONLY the python code in a single ```python block.\n"
+    )
+    content = get_message_content(chat([{"role": "user", "content": prompt}]))
+    code = _extract_python_code(content)
+    if not code.strip():
+        code = (
+            "# follow-up codegen returned empty — honest failure skeleton\n"
+            "def main():\n    raise RuntimeError('follow-up codegen produced empty code')\n\n"
+            "if __name__ == '__main__':\n    main()\n"
+        )
+    return code
+
+
+def run_follow_up(
+    project_id: str,
+    idea: str,
+    selected: dict,
+    follow_up_req: dict,
+    base_metrics: dict,
+) -> tuple[dict, dict]:
+    """Run ONE bounded follow-up experiment and merge it into ``base_metrics``.
+
+    Generates + executes a single follow-up system (no repair loop — bounded to one
+    attempt), then recomputes the baseline comparison / abstention / statistics over
+    the combined result rows. On any failure the base metrics are returned unchanged
+    with ``ran=False`` (no fabricated data). Returns ``(merged_metrics, follow_up_log)``.
+    """
+    action = follow_up_req.get("action", "")
+    available_packages = _detect_available_packages()
+    code = _generate_followup_code(project_id, idea, selected, follow_up_req, base_metrics, available_packages)
+
+    try:
+        combined, outputs = run_python_in_sandbox(
+            project_id,
+            code=code,
+            execution_backend=ExecutionBackendSpec(kind=SANDBOX_BACKEND_KIND, timeout_seconds=MAX_EXPERIMENT_SECONDS),
+        )
+    except Exception as exc:  # noqa: BLE001 — follow-up is best-effort, never fatal
+        logger.warning("[ExperimentEngineer] follow-up execution failed: %s", exc)
+        return base_metrics, {"ran": False, "action": action, "reason": f"execution error: {exc}"}
+
+    result = outputs.get("result")
+    if outputs.get("returncode") != 0 or not _is_nonempty_results(result):
+        logger.info(
+            "[ExperimentEngineer] follow-up produced no results: %s",
+            (outputs.get("stderr") or combined or "")[:200],
+        )
+        return base_metrics, {"ran": False, "action": action, "reason": "follow-up experiment did not produce results"}
+
+    new_rows = _normalize_results(result, base_metrics.get("dataset", ""))
+    base_plan = _load_plan_json(project_id)
+    merged_plan = _merge_followup_plan(base_plan, action, new_rows)
+    merged_results = list(base_metrics.get("results") or []) + new_rows
+
+    merged = dict(base_metrics)
+    merged["results"] = merged_results
+    merged["baseline_comparison"] = _compute_baseline_comparison(merged_results, merged_plan, "success")
+    merged["abstention_metrics"] = _compute_abstention_metrics(merged_results)
+    merged["statistics"] = _compute_stats(merged_results, merged_plan)
+    systems_added = sorted({str(r.get("system_name", "")) for r in new_rows})
+    merged["follow_up"] = {
+        "ran": True,
+        "action": action,
+        "description": follow_up_req.get("description", ""),
+        "systems_added": systems_added,
+    }
+    logger.info("[ExperimentEngineer] follow-up merged: %s", systems_added)
+    return merged, merged["follow_up"]
+
+
 def _write_metrics_json(project_id: str, metrics: dict) -> None:
     (_artifacts_dir(project_id) / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -689,12 +916,18 @@ def run_experiment_engineer(
     statistics = _compute_stats(raw_results, plan) if raw_results else None
     abstention_metrics = _compute_abstention_metrics(raw_results) if raw_results else {}
 
+    # V2.2 hypothesis-contract signals (goal_session8.md Step 5).
+    missing_baselines = _detect_missing_baselines(selected_hypothesis, raw_results, plan)
+    underpowered = _underpowered_note({"statistics": statistics} if statistics else {})
+
     metrics = {
         "execution_status": execution_status,
         "dataset": dataset_name,
         "results": raw_results,
         "baseline_comparison": baseline_comparison,
         "abstention_metrics": abstention_metrics,
+        "missing_baselines": missing_baselines,
+        "underpowered": underpowered,
         "attempts_used": attempts_used,
         "repair_attempts": repair_attempts,
         "returncode": last_outputs.get("returncode"),

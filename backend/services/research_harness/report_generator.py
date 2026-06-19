@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 
 from config.settings import settings
+from services.research_harness import evidence
 from services.research_harness.sandbox_capabilities import (
     ALLOWED_PACKAGES,
     SENTENCE_TRANSFORMERS_AVAILABLE,
@@ -133,8 +134,64 @@ def _abstention_block(metrics: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _hardcoded_conclusion(metrics: dict, review: dict, paper_count: int) -> str:
-    """🔴 硬定 Conclusion 段（plan §8.3），绝不走 LLM，绝不出现 overclaim 措辞。"""
+def _write_anchored_verdict(project_id: str, fv: dict, metrics: dict) -> None:
+    """Persist the hypothesis-anchored verdict (+ contract signals) as structured JSON.
+
+    Single source of truth for the frontend's honest-gate cards — keeps the verdict
+    logic on the backend so the UI never re-derives (or second-guesses) it.
+    """
+    payload = {
+        "verdict": fv.get("verdict"),
+        "base_verdict": fv.get("base_verdict"),
+        "primary_metric": fv.get("primary_metric"),
+        "primary_metric_source": fv.get("primary_metric_source"),
+        "primary_beats_baseline": fv.get("primary_beats_baseline"),
+        "kill_criteria": fv.get("kill_criteria", []),
+        "downgraded": fv.get("downgraded", False),
+        "downgrade_reasons": fv.get("downgrade_reasons", []),
+        "missing_baselines": metrics.get("missing_baselines") or [],
+        "underpowered": metrics.get("underpowered"),
+        "follow_up": metrics.get("follow_up"),
+    }
+    ledger = _project_dir(project_id) / "ledger"
+    ledger.mkdir(parents=True, exist_ok=True)
+    (ledger / "anchored_verdict.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _anchored_downgrade_block(fv: dict, ds_names: str) -> str:
+    """Honest, prominent conclusion when the hypothesis-anchored verdict downgrades.
+
+    Leads with the anchored verdict and names the primary metric / tripped kill
+    criteria explicitly — never lets a favourable generic metric mask a failed
+    hypothesis target.
+    """
+    tripped = [k for k in fv.get("kill_criteria", []) if k.get("tripped")]
+    parts = [
+        f"**{fv['verdict'].upper()} (hypothesis-anchored; downgraded from {fv['base_verdict']}).** "
+        f"Although a generic metric ({fv['base_verdict']}) looked favourable, success cannot be "
+        f"claimed: the hypothesis's own primary metric '{fv['primary_metric']}' "
+        f"(beats_baseline={fv['primary_beats_baseline']}) did not meet its bar."
+    ]
+    if tripped:
+        criteria = "; ".join(f"“{k['criterion']}”" for k in tripped)
+        parts.append(f" **Kill criterion tripped:** {criteria}.")
+    parts.append(
+        f" Per-dataset numbers ({ds_names or 'the evaluated datasets'}) are reported below for "
+        "completeness, but they do not overturn the anchored verdict."
+    )
+    return "".join(parts)
+
+
+def _hardcoded_conclusion(metrics: dict, review: dict, paper_count: int, hypothesis: dict | None = None) -> str:
+    """🔴 硬定 Conclusion 段（plan §8.3），绝不走 LLM，绝不出现 overclaim 措辞。
+
+    With ``hypothesis`` the conclusion is built on the hypothesis-anchored verdict
+    (:func:`evidence.full_verdict`): when the verdict is downgraded (the hypothesis's
+    own primary metric lost, or a deterministic kill criterion tripped) that is
+    reported PROMINENTLY and never masked by a favourable generic metric.
+    """
     status = metrics.get("execution_status")
     bc = metrics.get("baseline_comparison", {}) or {}
     publish_gate = review.get("publish_gate", "no_evidence")
@@ -148,6 +205,7 @@ def _hardcoded_conclusion(metrics: dict, review: dict, paper_count: int) -> str:
             "this is reported honestly rather than fabricated."
         )
     else:
+        fv = evidence.full_verdict(metrics, hypothesis)
         overall = bc.get("overall_beats_baseline")
         stats = metrics.get("statistics") or {}
         any_sig = stats.get("any_significant")
@@ -162,7 +220,10 @@ def _hardcoded_conclusion(metrics: dict, review: dict, paper_count: int) -> str:
         sig_win_datasets = sorted({d for d in (_ds_of(s) for s in sig_tests if s.get("significant")) if d})
         lost_datasets = [d["dataset"] for d in datasets if d.get("beats_baseline") is False]
 
-        if overall is True and any_sig:
+        if hypothesis is not None and fv["downgraded"]:
+            # Hypothesis-anchored downgrade overrides the generic-metric framing.
+            lines.append(_anchored_downgrade_block(fv, ds_names))
+        elif overall is True and any_sig:
             lines.append(
                 f"The proposed method outperformed the baseline across {ds_names} with statistical "
                 "support (paired sign-flip, Holm-corrected). This is a positive but preliminary result; "
@@ -243,8 +304,12 @@ def generate_research_report(
     reviewer_md = _read(proj / "reviews" / "reviewer_round_1.md")
     notes_md = _read(proj / "literature" / "notes.md")
 
-    conclusion = _hardcoded_conclusion(metrics, review, paper_count)
+    conclusion = _hardcoded_conclusion(metrics, review, paper_count, selected_hypothesis)
     decision = manager_decision.get("decision", {}) or {}
+    fv = evidence.full_verdict(metrics, selected_hypothesis)
+    _write_anchored_verdict(project_id, fv, metrics)
+    tripped_kill = [k for k in fv.get("kill_criteria", []) if k.get("tripped")]
+    manual_kill = [k for k in fv.get("kill_criteria", []) if k.get("needs_manual")]
 
     sections: list[str] = []
     sections.append(f"# Research Report: {idea}\n")
@@ -258,6 +323,44 @@ def generate_research_report(
     )
     sections.append(f"- publish_gate: **{review.get('publish_gate', 'no_evidence')}**\n")
     sections.append(f"- papers retrieved: **{paper_count}**\n\n")
+
+    # Hypothesis-anchored honest-gate banner (V2.2). Prominent — never silent. A
+    # downgrade or a tripped kill criterion is surfaced at the very top of the report.
+    if selected_hypothesis and (fv["downgraded"] or tripped_kill or manual_kill):
+        sections.append("## ⚠ Hypothesis-Anchored Verdict\n\n")
+        sections.append(
+            f"- anchored verdict: **{fv['verdict']}** (base on generic metric: {fv['base_verdict']}"
+            + (", **downgraded**" if fv["downgraded"] else "") + ")\n"
+        )
+        sections.append(
+            f"- primary_metric: **{fv['primary_metric']}** "
+            f"(source: {fv['primary_metric_source']}; beats_baseline: {fv['primary_beats_baseline']})\n"
+        )
+        for kc in tripped_kill:
+            sections.append(f"- **Kill criterion tripped:** {kc['criterion']} — {kc['reason']}\n")
+        for kc in manual_kill:
+            sections.append(f"- kill criterion needs manual review: {kc['criterion']} — {kc['reason']}\n")
+        sections.append("\n")
+
+    # V2.2 hypothesis-contract compliance (goal_session8.md Step 5). Surfaced honestly —
+    # never silent: a named baseline that didn't run, or an underpowered seed count, is
+    # material context for interpreting any result.
+    missing_baselines = metrics.get("missing_baselines") or []
+    underpowered = metrics.get("underpowered")
+    if missing_baselines or underpowered:
+        sections.append("## Hypothesis Contract Compliance\n\n")
+        if missing_baselines:
+            sections.append(
+                "- **Missing baselines** (named in the hypothesis but NOT run): "
+                + ", ".join(f"“{b}”" for b in missing_baselines) + ".\n"
+            )
+        if underpowered:
+            sections.append(
+                f"- **{underpowered.get('note', 'underpowered')}** — the power analysis "
+                f"recommended {underpowered.get('recommended_seeds')} seeds; claims are "
+                "correspondingly tentative.\n"
+            )
+        sections.append("\n")
 
     sections.append("## Literature Context\n\n")
     sections.append(gap_map_md or "_(gap_map.md unavailable)_\n")
@@ -303,6 +406,7 @@ def generate_research_report(
         sections.append(
             f"- selected must_have action: **{chosen.get('action', '')}** — {chosen.get('description', '')}\n"
             f"- classification: `{decision.get('follow_up_classification', '')}`\n"
+            f"- follow-up ran: **{decision.get('follow_up_ran', False)}**\n"
         )
     else:
         sections.append("- No must_have follow-up was selected by the ResearchManager.\n")
@@ -310,6 +414,12 @@ def generate_research_report(
         f"- sandbox budget: {decision.get('sandbox_budget_seconds')}s on backend "
         f"`{decision.get('sandbox_backend')}`.\n"
     )
+    # Infeasible must_haves → Future Work, with reasons (goal_session8.md Step 6).
+    for fw in decision.get("future_work") or []:
+        sections.append(
+            f"- **Future work (infeasible in sandbox)**: {fw.get('action', '')} — "
+            f"{fw.get('description', '')} (_reason: {fw.get('reason', '')}_)\n"
+        )
 
     sections.append("\n## Conclusion\n\n")
     sections.append(conclusion + "\n")

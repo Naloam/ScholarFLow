@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 
 from config.settings import settings
+from services.research_harness import evidence
 from services.research_harness.sandbox_capabilities import (
     MAX_EXPERIMENT_SECONDS,
     SANDBOX_BACKEND_KIND,
@@ -62,8 +63,14 @@ def _classify_follow_up(action: str, first_run_duration_seconds: float | None) -
     return "requires_manual_execution"
 
 
-def _build_conclusion(metrics: dict) -> str:
-    """结论字符串硬定（§8.3 gate），不经 LLM。"""
+def _build_conclusion(metrics: dict, hypothesis: dict | None = None) -> str:
+    """结论字符串硬定（§8.3 gate），不经 LLM。
+
+    With ``hypothesis`` the head reflects the hypothesis-anchored verdict
+    (:func:`evidence.full_verdict`): a downgrade (primary metric lost / kill
+    criterion tripped) is stated explicitly so the TL;DR can never claim success
+    on a cherry-picked generic metric.
+    """
     status = metrics.get("execution_status")
     bc = metrics.get("baseline_comparison", {}) or {}
 
@@ -86,6 +93,7 @@ def _build_conclusion(metrics: dict) -> str:
         )
     summary = "; ".join(parts)
 
+    fv = evidence.full_verdict(metrics, hypothesis)
     if overall is False:
         head = "NEGATIVE RESULT"
     elif overall is True and any_sig:
@@ -95,7 +103,44 @@ def _build_conclusion(metrics: dict) -> str:
     else:
         head = "Mixed result across datasets"
     sig_note = "" if any_sig else " No statistically significant improvement (paired sign-flip, Holm-corrected, p≥0.05)."
-    return f"{head}: {summary}.{sig_note}"
+    base_conclusion = f"{head}: {summary}.{sig_note}"
+
+    if hypothesis is not None and fv["downgraded"]:
+        tripped = [k for k in fv["kill_criteria"] if k.get("tripped")]
+        anchor = (
+            f" HYPOTHESIS-ANCHORED DOWNGRADE to {fv['verdict'].upper()}: the primary metric "
+            f"'{fv['primary_metric']}' (beats_baseline={fv['primary_beats_baseline']}) did not meet "
+            f"its bar, so the '{head}' framing above (on a generic metric) does not hold."
+        )
+        if tripped:
+            anchor += " Kill criterion tripped: " + "; ".join(f"“{k['criterion']}”" for k in tripped) + "."
+        return base_conclusion + anchor
+    return base_conclusion
+
+
+def _select_follow_up(review: dict) -> dict | None:
+    """First ``priority=must_have`` required_experiment, or None."""
+    for req in review.get("required_experiments", []) or []:
+        if isinstance(req, dict) and str(req.get("priority", "")).lower() == "must_have":
+            return req
+    return None
+
+
+# V2.2 (goal_session8.md Step 6): resources that place a follow-up outside the sandbox budget.
+_INFEASIBLE_KEYWORDS: tuple[str, ...] = (
+    "gpu", "cuda", "large dataset", "large-scale", "multi-day", "multiday",
+    "external api", "external-api", "pretrained language model", "billion",
+    "cloud", "manual annotation", "manual evaluation",
+)
+
+
+def _follow_up_feasibility(req: dict) -> dict:
+    """Is this required_experiment runnable inside the sandbox budget?"""
+    blob = f"{str(req.get('action', '')).lower()} {str(req.get('description', '')).lower()}"
+    for kw in _INFEASIBLE_KEYWORDS:
+        if kw in blob:
+            return {"feasible": False, "reason": f"requires resources outside the sandbox budget ({kw})"}
+    return {"feasible": True, "reason": "action is runnable within the sandbox budget"}
 
 
 def run_research_manager(
@@ -105,25 +150,75 @@ def run_research_manager(
     metrics: dict,
     review: dict,
 ) -> dict:
-    """纯逻辑 follow-up 决策 + 结论生成。"""
+    """Follow-up decision + conclusion generation.
+
+    V2.2 (goal_session8.md Step 6): the first FEASIBLE ``must_have`` required_experiment
+    is run as a single bounded follow-up (results merged into metrics + persisted); every
+    INFEASIBLE ``must_have`` is recorded as Future Work with its reason. At most one
+    follow-up round — never an open loop. The merged metrics are returned so the report
+    reflects the follow-up.
+    """
     reviews = _reviews_dir(project_id)
     required_experiments = review.get("required_experiments", []) or []
-    chosen = _first_must_have(required_experiments)
+    must_haves = [
+        r for r in required_experiments
+        if isinstance(r, dict) and str(r.get("priority", "")).lower() == "must_have"
+    ]
 
-    # 首跑耗时（从 metrics.returncode 无法直接拿，但 run_1.log 在 artifacts/logs；这里保守取 None）
+    future_work: list[dict] = []
+    run_target: dict | None = None
+    for req in must_haves:
+        feas = _follow_up_feasibility(req)
+        if not feas["feasible"]:
+            future_work.append({
+                "action": req.get("action"),
+                "description": req.get("description"),
+                "reason": feas["reason"],
+            })
+        elif run_target is None:
+            run_target = req  # the single follow-up we will actually run
+
+    chosen = _select_follow_up(review)
     first_run_duration = _estimate_first_run_seconds(project_id)
+    classification = (
+        _classify_follow_up(chosen.get("action", ""), first_run_duration) if chosen else "none_must_have"
+    )
+
+    # ≤1 bounded follow-up run (feasible must_have only).
+    follow_up_ran = False
+    follow_up_log: dict | None = None
+    merged_metrics = metrics
+    if run_target is not None:
+        try:
+            from services.research_harness import experiment_engineer
+
+            merged_metrics, follow_up_log = experiment_engineer.run_follow_up(
+                project_id, idea, selected_hypothesis, run_target, metrics,
+            )
+            follow_up_ran = bool((follow_up_log or {}).get("ran"))
+            if follow_up_ran:
+                metrics_path = WORKSPACE_ROOT / project_id / "artifacts" / "metrics.json"
+                metrics_path.parent.mkdir(parents=True, exist_ok=True)
+                metrics_path.write_text(
+                    json.dumps(merged_metrics, ensure_ascii=False, indent=2), encoding="utf-8",
+                )
+        except Exception as exc:  # noqa: BLE001 — follow-up is non-fatal; honest report never blocked
+            logger.warning("[ResearchManager] follow-up run failed (non-fatal): %s", exc)
+            follow_up_ran = False
+            merged_metrics = metrics
 
     decision = {
         "selected_action": chosen,
-        "follow_up_classification": (
-            _classify_follow_up(chosen.get("action", ""), first_run_duration) if chosen else "none_must_have"
-        ),
+        "follow_up_classification": classification,
+        "follow_up_ran": follow_up_ran,
+        "follow_up_target": run_target,
+        "future_work": future_work,
         "sandbox_backend": SANDBOX_BACKEND_KIND,
         "sandbox_budget_seconds": MAX_EXPERIMENT_SECONDS,
     }
-    conclusion = _build_conclusion(metrics)
+    conclusion = _build_conclusion(merged_metrics, selected_hypothesis)
 
-    # 3. action_plan_1.json（若 reviewer 未写则补）
+    # action_plan_1.json（若 reviewer 未写则补）
     action_plan_path = reviews / "action_plan_1.json"
     if not action_plan_path.exists():
         action_plan_path.write_text(
@@ -135,17 +230,29 @@ def run_research_manager(
     conclusion_lines = [
         f"# Research Conclusion\n\n**Idea**: {idea}\n\n",
         f"**Selected hypothesis**: {selected_hypothesis.get('title', '')}\n\n",
-        f"**Execution status**: {metrics.get('execution_status', '')}\n\n",
+        f"**Execution status**: {merged_metrics.get('execution_status', '')}\n\n",
         f"## Conclusion\n\n{conclusion}\n\n",
         "## Follow-up (ResearchManager decision)\n\n",
     ]
     if chosen:
         conclusion_lines.append(
             f"- Selected must_have action: **{chosen.get('action', '')}** — {chosen.get('description', '')}\n"
-            f"- Classification: `{decision['follow_up_classification']}`\n"
+            f"- Classification: `{classification}`\n"
+            f"- Follow-up ran: **{follow_up_ran}**\n"
         )
     else:
         conclusion_lines.append("- No must_have required_experiment found; nothing auto-scheduled.\n")
+    if follow_up_log and follow_up_log.get("systems_added"):
+        conclusion_lines.append(
+            f"- Follow-up added systems: {', '.join(follow_up_log['systems_added'])}\n"
+        )
+    if future_work:
+        conclusion_lines.append("\n### Future Work (infeasible in sandbox)\n\n")
+        for fw in future_work:
+            conclusion_lines.append(
+                f"- **{fw.get('action', '')}** — {fw.get('description', '')} "
+                f"(_reason: {fw.get('reason', '')}_)\n"
+            )
     conclusion_lines.append(
         f"\n_Backend_: `{SANDBOX_BACKEND_KIND}` (budget {MAX_EXPERIMENT_SECONDS}s). "
         "Multi-seed / multi-dataset follow-ups are deferred to a later session.\n"
@@ -153,10 +260,10 @@ def run_research_manager(
     (reviews.parent / "conclusion.md").write_text("".join(conclusion_lines), encoding="utf-8")
 
     logger.info(
-        "[ResearchManager] conclusion=%s follow_up=%s",
-        conclusion[:80], decision["follow_up_classification"],
+        "[ResearchManager] conclusion=%s follow_up_ran=%s future_work=%d",
+        conclusion[:80], follow_up_ran, len(future_work),
     )
-    return {"decision": decision, "conclusion": conclusion}
+    return {"decision": decision, "conclusion": conclusion, "metrics": merged_metrics}
 
 
 def _estimate_first_run_seconds(project_id: str) -> float | None:

@@ -33,12 +33,20 @@
 "gap_addressed": "引用 gap_map.what_is_missing 原文片段",
 "core_novelty": "与 known_baselines 的本质区别（一句，不能只说'更好'）",
 "proposed_method_sketch": "方法描述（2-3句，足够让工程师写代码；**必须**用 sandbox_packages，若涉及句向量就明确用 sentence-transformers all-MiniLM-L6-v2）",
+"primary_metric": "本假设真正关心的主指标名（必须是实验会真实产出的指标，如 macro_f1 / error_rate_at_20pct_abstain / spearman_consistency_vs_label / auc；一句话或一个指标名）",
 "feasibility": "high | medium | low",
 "expected_positive_outcome": "如果假设成立，实验会看到什么（一句）",
 "expected_negative_outcome": "如果假设不成立，实验会看到什么（一句，必填）",
-"kill_criteria": ["放弃这个方向的具体判据（1-2条）"]
+"kill_criteria": ["放弃这个方向的具体判据（1-2条；尽量写成可机械判定的阈值型，如 'AUC<0.55'、'error_rate_at_20pct_abstain 未低于 baseline'）"]
 }
 ]
+
+## 关于 primary_metric（V2.2 诚实门）
+
+系统会用 primary_metric 锚定最终 verdict：成功不能只靠一个泛指标（如 macro_f1）撑——
+如果假设真正关心的主指标没达到，verdict 会被降级。所以 primary_metric 必须是你**真正**关心的、
+实验会真实产出的那个指标，而不是"随便挑一个看起来好的"。若假设关心的是拒答/校准，就填
+abstention 类指标（error_rate_at_20pct_abstain / spearman_consistency_vs_label），而不是 macro_f1。
 
 ## 禁止的输出
 
@@ -47,4 +55,5 @@
 - 不允许 feasibility=high 的假设需要下载超过 200MB 的模型
 - 不允许 3 个假设都是 TF-IDF / 关键词匹配的变体（即使它们 feasibility 高）
 - 不允许 expected_negative_outcome 为空
+- 不允许 primary_metric 缺失或填成"improve performance"这类非指标空话
 - 不允许输出少于 3 个或多于 5 个假设；不允许任何字段写成长段落

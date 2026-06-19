@@ -339,7 +339,10 @@ def run_step_report(project_id: str, idea: str) -> Path:
     if not metrics or not review:
         raise RuntimeError("No metrics/review on disk. Run --steps review first.")
     manager_decision = run_research_manager(project_id, idea, selected, metrics, review)
-    report_path = generate_research_report(project_id, idea, selected, metrics, review, manager_decision)
+    # The ResearchManager may have merged a follow-up run into the metrics; use the
+    # merged metrics so the report reflects the follow-up (goal_session8.md Step 6).
+    report_metrics = manager_decision.get("metrics", metrics)
+    report_path = generate_research_report(project_id, idea, selected, report_metrics, review, manager_decision)
     logger.info("Report written: %s", report_path)
     return report_path
 

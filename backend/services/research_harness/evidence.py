@@ -69,11 +69,13 @@ def has_significant_favorable(metrics: dict[str, Any]) -> bool:
     return bool(significant_favorable_datasets(metrics))
 
 
-def verdict(metrics: dict[str, Any]) -> str:
-    """Coarse honest verdict used to drive Writer framing + Auditor overclaim rules.
+def _base_verdict(metrics: dict[str, Any]) -> str:
+    """Coarse honest verdict on the comparison metric (Session 6 behaviour, unchanged).
 
     One of: ``execution_failed`` · ``no_comparison`` · ``negative`` · ``mixed``
-    · ``positive_significant`` · ``positive_not_significant``.
+    · ``positive_significant`` · ``positive_not_significant``. This is the
+    *generic-metric* verdict; :func:`full_verdict` may downgrade it once the
+    hypothesis's own primary metric / kill criteria are taken into account.
     """
     if metrics.get("execution_status") != "success":
         return "execution_failed"
@@ -90,6 +92,466 @@ def verdict(metrics: dict[str, Any]) -> str:
     if sig:  # overall loses but a dataset significantly wins
         return "mixed"
     return "negative"
+
+
+def verdict(metrics: dict[str, Any], hypothesis: dict[str, Any] | None = None) -> str:
+    """Honest verdict string. With no hypothesis this is byte-identical to the
+    Session 6 behaviour (only-add-never-loosen). Passing the selected hypothesis
+    anchors the verdict to the hypothesis's declared primary metric + executes
+    its deterministic kill criteria, which may DOWNGRADE the verdict — never upgrade.
+    """
+    return full_verdict(metrics, hypothesis)["verdict"]
+
+
+# --------------------------------------------------------------------------- #
+# V2.2 hypothesis-anchored verdict + kill criteria (goal_session8.md Step 2)
+# --------------------------------------------------------------------------- #
+#
+# The Session 7 hole: ``verdict(metrics)`` judged success on a generic metric
+# (``macro_f1``) while the hypothesis actually cared about a *different* primary
+# metric (an abstention / calibration target) that quietly failed — "plausible
+# unsupported success" via a cherry-picked metric. The layer below anchors the
+# verdict to the hypothesis's own primary metric and executes its kill criteria.
+# All of it is pure logic, offline, deterministic. Anchoring / kill can only
+# DOWNGRADE the verdict — never upgrade — so every prior honest gate is preserved.
+
+# Verdict favourability rank (higher = more favourable). Used to clamp a downgrade.
+_VERDICT_SEVERITY: dict[str, int] = {
+    "execution_failed": 0,
+    "no_comparison": 1,
+    "negative": 2,
+    "mixed": 3,
+    "positive_not_significant": 4,
+    "positive_significant": 5,
+}
+
+# Metric names whose value is better when LOWER (mirrors experiment_engineer).
+_LOWER_IS_BETTER_HINTS: tuple[str, ...] = (
+    "error", "loss", "wer", "perplexity", "rmse", "mae", "cer", "mer",
+)
+
+
+def _less_favourable(a: str, b: str) -> str:
+    """Return whichever verdict is less favourable (lower severity rank)."""
+    return a if _VERDICT_SEVERITY.get(a, 2) <= _VERDICT_SEVERITY.get(b, 2) else b
+
+
+def _metric_lower_is_better(name: str) -> bool:
+    n = (name or "").lower()
+    return any(hint in n for hint in _LOWER_IS_BETTER_HINTS)
+
+
+def _metric_names_in_metrics(metrics: dict[str, Any]) -> set[str]:
+    """Every metric name the experiment actually produced a value for."""
+    names: set[str] = set()
+    bc = metrics.get("baseline_comparison") or {}
+    if isinstance(bc.get("metric_name"), str) and bc["metric_name"].strip():
+        names.add(bc["metric_name"])
+    for key in (metrics.get("abstention_metrics") or {}):
+        if isinstance(key, str):
+            names.add(key)
+    for r in metrics.get("results") or []:
+        if isinstance(r, dict) and isinstance(r.get("metric_name"), str):
+            names.add(r["metric_name"])
+    return names
+
+
+def _heuristic_metric(text: str, available: set[str]) -> str | None:
+    """Map free-text (expected outcome / kill criteria) to a metric name that
+    actually exists in ``available``, by head-word containment."""
+    low = (text or "").lower()
+    for name in sorted(available):
+        if name.lower() in low:
+            return name
+        head = name.split("_")[0].lower()
+        if len(head) >= 4 and head in low:
+            return name
+    return None
+
+
+def primary_metric_for(hypothesis: dict[str, Any] | None, metrics: dict[str, Any]) -> dict[str, str]:
+    """Resolve the hypothesis's primary metric to a name that exists in ``metrics``.
+
+    Returns ``{"name", "source"}`` where ``source`` ∈
+    ``{"hypothesis_declared", "heuristic", "comparison_default"}``. The default is
+    the baseline-comparison metric (``macro_f1``) — i.e. when no primary can be
+    resolved the verdict keeps its old behaviour.
+    """
+    bc_metric = (metrics.get("baseline_comparison") or {}).get("metric_name") or "macro_f1"
+    available = _metric_names_in_metrics(metrics)
+    if available:
+        # Keep macro_f1 in the candidate set even if the comparison dict omitted it.
+        available.add(bc_metric)
+    else:
+        available = {bc_metric}
+    fallback = {"name": bc_metric, "source": "comparison_default"}
+    if not hypothesis:
+        return fallback
+
+    declared = hypothesis.get("primary_metric")
+    if isinstance(declared, str) and declared.strip():
+        name = declared.strip()
+        if name in available:
+            return {"name": name, "source": "hypothesis_declared"}
+
+    # Heuristic: scan the outcome + kill text for a metric name that exists.
+    text = " ".join(
+        [
+            str(hypothesis.get("expected_positive_outcome", "")),
+            str(hypothesis.get("expected_negative_outcome", "")),
+            " ".join(str(c) for c in (hypothesis.get("kill_criteria") or [])),
+            str(hypothesis.get("title", "")),
+        ]
+    )
+    hit = _heuristic_metric(text, available)
+    if hit:
+        return {"name": hit, "source": "heuristic"}
+    return fallback
+
+
+def _mean_role(sys_map: dict[str, Any], role: str) -> float | None:
+    """Mean value across systems whose name contains ``role`` (e.g. 'proposed')."""
+    vals: list[float] = []
+    for sysn, v in (sys_map or {}).items():
+        if role in str(sysn).lower():
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    return sum(vals) / len(vals) if vals else None
+
+
+def primary_metric_outcome(metrics: dict[str, Any], primary_metric: str) -> dict[str, Any]:
+    """Did the proposed method beat the baseline on ``primary_metric``?
+
+    Returns ``{"beats_baseline": bool|None, "any_significant": bool|None, "source"}``
+    where ``source`` ∈ ``{"baseline_comparison", "abstention_metrics", "results",
+    "not_found"}``. ``beats_baseline is None`` means it could not be determined
+    (no baseline value, or metric absent) — which is NOT a downgrade trigger.
+    """
+    bc = metrics.get("baseline_comparison") or {}
+    bc_metric = bc.get("metric_name")
+
+    # macro_f1 / comparison path.
+    if primary_metric == bc_metric or (primary_metric == "macro_f1" and bc_metric in (None, "macro_f1")):
+        return {
+            "beats_baseline": bc.get("overall_beats_baseline"),
+            "any_significant": has_significant_favorable(metrics),
+            "source": "baseline_comparison",
+        }
+
+    abstention = metrics.get("abstention_metrics") or {}
+    if primary_metric in abstention and isinstance(abstention[primary_metric], dict):
+        ds_map = abstention[primary_metric]
+        lower_is_better = _metric_lower_is_better(primary_metric)
+        per_dataset: list[dict[str, Any]] = []
+        beats_all = True
+        any_data = False
+        for ds, sys_map in ds_map.items():
+            if not isinstance(sys_map, dict):
+                continue
+            b = _mean_role(sys_map, "baseline")
+            p = _mean_role(sys_map, "proposed")
+            if b is None or p is None:
+                continue
+            any_data = True
+            favorable = (p < b) if lower_is_better else (p > b)
+            per_dataset.append({"dataset": ds, "baseline": b, "proposed": p, "beats": favorable})
+            if not favorable:
+                beats_all = False
+        return {
+            "beats_baseline": beats_all if any_data else None,
+            "any_significant": None,  # abstention metrics are descriptive only
+            "source": "abstention_metrics",
+            "datasets": per_dataset,
+        }
+
+    # Raw results rows (proposed vs baseline on this metric).
+    rows = [
+        r for r in (metrics.get("results") or [])
+        if isinstance(r, dict) and (r.get("metric_name") or "") == primary_metric
+    ]
+    if rows:
+        proposed = [
+            float(r["metric_value"]) for r in rows
+            if "proposed" in (r.get("system_name") or "").lower() and "metric_value" in r
+        ]
+        baseline = [
+            float(r["metric_value"]) for r in rows
+            if "baseline" in (r.get("system_name") or "").lower() and "metric_value" in r
+        ]
+        if not proposed or not baseline:
+            return {"beats_baseline": None, "any_significant": None, "source": "results"}
+        p = sum(proposed) / len(proposed)
+        b = sum(baseline) / len(baseline)
+        beats = (p < b) if _metric_lower_is_better(primary_metric) else (p > b)
+        return {"beats_baseline": beats, "any_significant": None, "source": "results"}
+
+    return {"beats_baseline": None, "any_significant": None, "source": "not_found"}
+
+
+# Threshold criterion: ``AUC<0.55`` / ``AUC 低于 0.55`` / ``spearman below 0.1``.
+_KILL_THRESHOLD_RE = re.compile(
+    r"([A-Za-z][A-Za-z0-9_]*)\s*"
+    r"(<=|>=|<|>|低于|小于|below|less than|高于|大于|above|greater than)\s*"
+    r"([0-9]*\.?[0-9]+)"
+)
+_LOWER_OPS = ("<", "<=", "低于", "小于", "below", "less than")
+_COMPARISON_CUES = (
+    "相比", "相比无", "compared to", "compared with", " vs ", "versus",
+    "over", "than", "outperform", "no improvement", "no significant improvement",
+    "无显著", "无显著提升", "不超过", "未超过", "低于", "劣于",
+)
+
+
+def _proposed_metric_value(metrics: dict[str, Any], keyword: str) -> float | None:
+    """The proposed method's value for ``keyword`` (mean across datasets/seeds)."""
+    kw = (keyword or "").lower()
+    proposed: list[float] = []
+    for r in metrics.get("results") or []:
+        if not isinstance(r, dict):
+            continue
+        if (r.get("metric_name") or "").lower() == kw and "proposed" in (r.get("system_name") or "").lower():
+            try:
+                proposed.append(float(r["metric_value"]))
+            except (TypeError, ValueError, KeyError):
+                continue
+    if proposed:
+        return sum(proposed) / len(proposed)
+
+    abstention = metrics.get("abstention_metrics") or {}
+    for key, ds_map in abstention.items():
+        if key.lower() != kw or not isinstance(ds_map, dict):
+            continue
+        vals = [
+            float(v) for sysn, v in _flatten_role_values(ds_map).items() if "proposed" in sysn.lower()
+        ]
+        if vals:
+            return sum(vals) / len(vals)
+
+    bc = metrics.get("baseline_comparison") or {}
+    if (bc.get("metric_name") or "").lower() == kw:
+        p_vals = [
+            float(d["proposed_metric"]) for d in bc.get("datasets") or []
+            if isinstance(d, dict) and "proposed_metric" in d
+        ]
+        if p_vals:
+            return sum(p_vals) / len(p_vals)
+    return None
+
+
+def _flatten_role_values(ds_map: dict[str, Any]) -> dict[str, float]:
+    """Flatten ``{dataset: {system: value}}`` → ``{system: [values]}``-ish mean per system."""
+    out: dict[str, list[float]] = {}
+    for sys_map in ds_map.values():
+        if not isinstance(sys_map, dict):
+            continue
+        for sysn, v in sys_map.items():
+            try:
+                out.setdefault(str(sysn), []).append(float(v))
+            except (TypeError, ValueError):
+                continue
+    return {sysn: sum(vs) / len(vs) for sysn, vs in out.items()}
+
+
+def _eval_threshold_criterion(criterion: str, metrics: dict[str, Any]) -> dict[str, Any] | None:
+    m = _KILL_THRESHOLD_RE.search(criterion)
+    if not m:
+        return None
+    metric_kw, op, threshold_str = m.group(1), m.group(2), m.group(3)
+    threshold = float(threshold_str)
+    value = _proposed_metric_value(metrics, metric_kw)
+    if value is None:
+        return _manual(criterion, f"threshold metric '{metric_kw}' not present in metrics; cannot evaluate")
+    tripped = (value < threshold) if op in _LOWER_OPS else (value > threshold)
+    reason = (
+        f"{metric_kw}={value:.4f} {'<' if op in _LOWER_OPS else '>'} {threshold} → "
+        f"{'kill criterion tripped' if tripped else 'not tripped'}"
+    )
+    return {
+        "criterion": criterion,
+        "tripped": bool(tripped),
+        "needs_manual": False,
+        "reason": reason,
+        "metric": metric_kw,
+        "value": value,
+        "threshold": threshold,
+    }
+
+
+def _eval_comparison_criterion(criterion: str, metrics: dict[str, Any]) -> dict[str, Any]:
+    """Comparison-style kill ('no improvement over X'). Trips only when the named
+    system X is present in results AND the proposed method did not beat it; if X is
+    absent the criterion is ``needs_manual`` (we never trip on an unevaluable claim)."""
+    results = [r for r in (metrics.get("results") or []) if isinstance(r, dict)]
+    system_names = {(r.get("system_name") or "") for r in results}
+    lowered = criterion.lower()
+    # Find a named comparison system mentioned in the criterion that exists in results.
+    matched_system: str | None = None
+    for sysn in system_names:
+        if not sysn:
+            continue
+        if sysn.lower() in lowered or _token_in(sysn, lowered):
+            if "proposed" not in sysn.lower():  # the comparator, not the proposed method itself
+                matched_system = sysn
+                break
+    if matched_system is None:
+        return _manual(criterion, "named comparison baseline not present in results; cannot evaluate")
+    # Did proposed beat matched_system on their shared metric(s)?
+    proposed_better = _proposed_beats_system(results, "proposed", matched_system)
+    if proposed_better is None:
+        return _manual(criterion, f"could not compare proposed vs '{matched_system}' on a shared metric")
+    tripped = not proposed_better
+    return {
+        "criterion": criterion,
+        "tripped": tripped,
+        "needs_manual": False,
+        "reason": (
+            f"proposed did beat '{matched_system}'" if not tripped
+            else f"proposed did NOT beat '{matched_system}' → kill criterion tripped"
+        ),
+        "metric": None,
+        "value": None,
+        "threshold": None,
+    }
+
+
+def _token_in(system_name: str, lowered_text: str) -> bool:
+    """True if any distinctive token of ``system_name`` appears in the criterion text."""
+    for tok in re.split(r"[\s_\-]+", system_name):
+        if len(tok) >= 4 and tok.lower() in lowered_text:
+            return True
+    return False
+
+
+def _proposed_beats_system(results: list[dict[str, Any]], proposed_name: str, other_name: str) -> bool | None:
+    """Per-metric: does the proposed system beat ``other_name`` (respecting direction)?"""
+    wins_any = False
+    decided = False
+    by_system: dict[str, dict[str, list[float]]] = {}
+    for r in results:
+        sysn = (r.get("system_name") or "").lower()
+        metric = r.get("metric_name") or ""
+        try:
+            val = float(r["metric_value"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        bucket = by_system.setdefault(sysn, {}).setdefault(metric, [])
+        bucket.append(val)
+    p = by_system.get(proposed_name.lower(), {})
+    o = by_system.get(other_name.lower(), {})
+    for metric, p_vals in p.items():
+        o_vals = o.get(metric)
+        if not o_vals:
+            continue
+        lower_is_better = _metric_lower_is_better(metric)
+        p_mean = sum(p_vals) / len(p_vals)
+        o_mean = sum(o_vals) / len(o_vals)
+        favorable = (p_mean < o_mean) if lower_is_better else (p_mean > o_mean)
+        decided = True
+        if favorable:
+            wins_any = True
+    return wins_any if decided else None
+
+
+def _manual(criterion: str, reason: str) -> dict[str, Any]:
+    return {
+        "criterion": criterion,
+        "tripped": False,
+        "needs_manual": True,
+        "reason": reason,
+        "metric": None,
+        "value": None,
+        "threshold": None,
+    }
+
+
+def evaluate_kill_criteria(hypothesis: dict[str, Any] | None, metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    """Deterministically evaluate each ``hypothesis.kill_criteria`` string.
+
+    Each result: ``{criterion, tripped, needs_manual, reason, metric, value, threshold}``.
+    Threshold-type criteria (``AUC<0.55``) trip when the metric is present and the
+    threshold holds. Comparison-type criteria (``no improvement over X``) trip only
+    when ``X`` is in the results and the proposed method lost; otherwise they are
+    ``needs_manual`` (never silently tripped). Returns ``[]`` when there is no
+    hypothesis or no kill criteria.
+    """
+    if not hypothesis:
+        return []
+    criteria = hypothesis.get("kill_criteria")
+    if not isinstance(criteria, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for c in criteria:
+        if not isinstance(c, str) or not c.strip():
+            continue
+        evaluated = _eval_threshold_criterion(c, metrics)
+        if evaluated is not None:
+            out.append(evaluated)
+            continue
+        if any(cue in c.lower() for cue in _COMPARISON_CUES):
+            out.append(_eval_comparison_criterion(c, metrics))
+        else:
+            out.append(_manual(c, "criterion is not a parseable threshold or comparison; cannot evaluate"))
+    return out
+
+
+def full_verdict(metrics: dict[str, Any], hypothesis: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Verdict anchored to the hypothesis's primary metric + kill criteria.
+
+    Returns ``{verdict, base_verdict, primary_metric, primary_metric_source,
+    primary_beats_baseline, kill_criteria, downgraded, downgrade_reasons}``.
+    ``base_verdict`` is the Session 6 generic-metric verdict; ``verdict`` is
+    ``base_verdict`` possibly DOWNGRADED (never upgraded) when the hypothesis's
+    own primary metric demonstrably lost or a deterministic kill criterion tripped.
+    With ``hypothesis=None`` the result is the old behaviour exactly.
+    """
+    base = _base_verdict(metrics)
+    bc_metric = (metrics.get("baseline_comparison") or {}).get("metric_name") or "macro_f1"
+    if hypothesis is None:
+        return {
+            "verdict": base,
+            "base_verdict": base,
+            "primary_metric": bc_metric,
+            "primary_metric_source": "comparison_default",
+            "primary_beats_baseline": (metrics.get("baseline_comparison") or {}).get("overall_beats_baseline"),
+            "kill_criteria": [],
+            "downgraded": False,
+            "downgrade_reasons": [],
+        }
+
+    pm = primary_metric_for(hypothesis, metrics)
+    outcome = primary_metric_outcome(metrics, pm["name"])
+    kill = evaluate_kill_criteria(hypothesis, metrics)
+    tripped = [k for k in kill if k["tripped"]]
+
+    verdict = base
+    reasons: list[str] = []
+
+    # Primary-metric anchoring: success cannot be claimed on a different metric.
+    if outcome["beats_baseline"] is False:
+        verdict = _less_favourable(verdict, "negative")
+        reasons.append(
+            f"primary metric '{pm['name']}' did not beat the baseline "
+            f"(source={outcome['source']}); success cannot be claimed on another metric"
+        )
+
+    # Deterministic kill-criterion trip → downgrade (never loosen).
+    if tripped:
+        verdict = _less_favourable(verdict, "negative")
+        reasons.append("kill criterion tripped: " + "; ".join(t["criterion"] for t in tripped))
+
+    downgraded = _VERDICT_SEVERITY[verdict] < _VERDICT_SEVERITY[base]
+    return {
+        "verdict": verdict,
+        "base_verdict": base,
+        "primary_metric": pm["name"],
+        "primary_metric_source": pm["source"],
+        "primary_beats_baseline": outcome["beats_baseline"],
+        "kill_criteria": kill,
+        "downgraded": downgraded,
+        "downgrade_reasons": reasons,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -191,16 +653,37 @@ def _significance_summary(metrics: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_evidence_pack(metrics: dict[str, Any]) -> str:
-    """Markdown block of the REAL numbers the Writer may cite. Verbatim source of truth."""
-    v = verdict(metrics)
+def build_evidence_pack(metrics: dict[str, Any], hypothesis: dict[str, Any] | None = None) -> str:
+    """Markdown block of the REAL numbers the Writer may cite. Verbatim source of truth.
+
+    When ``hypothesis`` is supplied the pack also carries the hypothesis-anchored
+    verdict (primary metric + any tripped kill criteria), so the Writer frames the
+    result on the metric the hypothesis actually cared about — not a generic one.
+    """
+    fv = full_verdict(metrics, hypothesis)
+    lines = [
+        f"- execution_status: {metrics.get('execution_status')}",
+        f"- verdict: {fv['verdict']} (base_verdict: {fv['base_verdict']})",
+        f"- primary_metric: {fv['primary_metric']} (source: {fv['primary_metric_source']}; "
+        f"beats_baseline: {fv['primary_beats_baseline']})",
+        f"- overall_beats_baseline: {(metrics.get('baseline_comparison') or {}).get('overall_beats_baseline')}",
+        f"- any_significant_favorable: {has_significant_favorable(metrics)}",
+        f"- significant_favorable_datasets: {sorted(significant_favorable_datasets(metrics)) or '[]'}",
+        f"- seed_count: {(metrics.get('statistics') or {}).get('seed_count')}",
+    ]
+    if fv["downgraded"]:
+        lines.append(f"- ⚠ DOWNGRADED from {fv['base_verdict']} to {fv['verdict']}:")
+        lines.extend(f"  - {r}" for r in fv["downgrade_reasons"])
+    tripped = [k for k in fv["kill_criteria"] if k["tripped"]]
+    if tripped:
+        lines.append("- kill criteria tripped:")
+        lines.extend(f"  - {k['criterion']} ({k['reason']})" for k in tripped)
+    abstention = metrics.get("abstention_metrics") or {}
+    if abstention:
+        lines.append(f"- abstention_metrics present: {sorted(abstention.keys())}")
+    head = "\n".join(lines)
     return (
-        f"- execution_status: {metrics.get('execution_status')}\n"
-        f"- verdict: {v}\n"
-        f"- overall_beats_baseline: {(metrics.get('baseline_comparison') or {}).get('overall_beats_baseline')}\n"
-        f"- any_significant_favorable: {has_significant_favorable(metrics)}\n"
-        f"- significant_favorable_datasets: {sorted(significant_favorable_datasets(metrics)) or '[]'}\n"
-        f"- seed_count: {(metrics.get('statistics') or {}).get('seed_count')}\n\n"
+        f"{head}\n\n"
         f"Per-dataset comparison:\n{_datasets_summary(metrics)}\n\n"
         f"Significance tests:\n{_significance_summary(metrics)}\n"
     )
@@ -298,49 +781,66 @@ def json_dumps_compact(metrics: dict[str, Any]) -> str:
         return ""
 
 
-def build_honesty_constraints(metrics: dict[str, Any]) -> str:
-    """Plain-English honesty directive derived from the real verdict (drives Writer framing)."""
-    v = verdict(metrics)
+def build_honesty_constraints(metrics: dict[str, Any], hypothesis: dict[str, Any] | None = None) -> str:
+    """Plain-English honesty directive derived from the real verdict (drives Writer framing).
+
+    With ``hypothesis`` the directive is built on the hypothesis-anchored verdict,
+    so a downgrade (primary metric lost / kill criterion tripped) forces honest
+    framing even when a generic metric looked favourable.
+    """
+    fv = full_verdict(metrics, hypothesis)
+    v = fv["verdict"]
     sig_datasets = sorted(significant_favorable_datasets(metrics))
     bc = metrics.get("baseline_comparison") or {}
     lost = [d["dataset"] for d in bc.get("datasets") or [] if isinstance(d, dict) and d.get("beats_baseline") is False]
 
+    anchor_note = ""
+    if hypothesis and fv["downgraded"]:
+        anchor_note = (
+            f"\n\n⚠ Hypothesis-anchored honesty: the verdict was DOWNGRADED from "
+            f"{fv['base_verdict']} to {v} because the hypothesis's primary metric "
+            f"'{fv['primary_metric']}' did not meet its bar "
+            f"(beats_baseline={fv['primary_beats_baseline']}). You MUST frame the paper around "
+            f"this anchored verdict and report the primary metric's outcome honestly. "
+            "Do NOT claim success by citing a different, favourable metric."
+        )
     if v == "execution_failed":
-        return (
+        directive = (
             "execution_status is NOT success: the experiment FAILED to produce results. "
             "The Results section MUST report the execution failure; do NOT invent any metric."
         )
-    if v == "no_comparison":
-        return (
+    elif v == "no_comparison":
+        directive = (
             "No baseline/proposed comparison is available. Do NOT claim the method beats anything; "
             "report that the comparison could not be computed."
         )
-    if v == "negative":
-        return (
+    elif v == "negative":
+        directive = (
             "NEGATIVE result: the proposed method did NOT beat the baseline on any dataset, and no "
             "dataset showed a statistically significant favorable improvement. Frame this as a "
             "negative result. Do NOT use 'competitive', 'promising', or 'state-of-the-art'. Do NOT "
             "write 'significantly outperforms'."
         )
-    if v == "mixed":
-        return (
+    elif v == "mixed":
+        directive = (
             f"MIXED result: the proposed method significantly outperformed the baseline ONLY on "
             f"{sig_datasets}, but did NOT win on every dataset (lost on: {lost or 'some datasets'}). "
             "State the win narrowly (name the winning dataset) and explicitly acknowledge the losses. "
             "Do NOT write 'outperforms across all datasets'. Do NOT use 'competitive'/'promising'."
         )
-    if v == "positive_not_significant":
-        return (
+    elif v == "positive_not_significant":
+        directive = (
             "Positive trend but NOT statistically significant. You may say the method improved on "
             "the baseline, but you MUST add that the improvement was not statistically significant. "
             "Do NOT write 'significantly outperforms'."
         )
-    # positive_significant
-    return (
-        f"Positive and statistically significant on {sig_datasets}. You MAY write "
-        "'significantly outperforms' for those datasets only; do not generalize the significance "
-        "claim to datasets where the test was not significant."
-    )
+    else:  # positive_significant
+        directive = (
+            f"Positive and statistically significant on {sig_datasets}. You MAY write "
+            "'significantly outperforms' for those datasets only; do not generalize the significance "
+            "claim to datasets where the test was not significant."
+        )
+    return directive + anchor_note
 
 
 __all__ = [
@@ -348,6 +848,10 @@ __all__ = [
     "significant_favorable_datasets",
     "has_significant_favorable",
     "verdict",
+    "primary_metric_for",
+    "primary_metric_outcome",
+    "evaluate_kill_criteria",
+    "full_verdict",
     "build_evidence_items",
     "build_evidence_pack",
     "build_honesty_constraints",

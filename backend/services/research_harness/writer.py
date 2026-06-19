@@ -19,6 +19,7 @@ from config.settings import settings
 from services.llm.client import chat
 from services.llm.response_utils import get_message_content
 from services.research_harness.prompts import load_prompt
+from services.research_harness import citation
 from services.research_harness import evidence
 
 logger = logging.getLogger(__name__)
@@ -100,8 +101,8 @@ def write_draft(
         .replace("{outline}", outline)
         .replace("{contribution}", contribution)
         .replace("{hypothesis_json}", json.dumps(selected or {}, ensure_ascii=False, indent=2))
-        .replace("{evidence_pack}", evidence.build_evidence_pack(metrics))
-        .replace("{honesty_constraints}", evidence.build_honesty_constraints(metrics))
+        .replace("{evidence_pack}", evidence.build_evidence_pack(metrics, selected))
+        .replace("{honesty_constraints}", evidence.build_honesty_constraints(metrics, selected))
     )
     text = _call_writer(prompt)
     draft_path = _paper_dir(project_id) / "draft.md"
@@ -128,6 +129,7 @@ def revise_on_lint(
     draft: str,
     flags: list[dict],
     metrics: dict,
+    hypothesis: dict | None = None,
 ) -> tuple[str, dict]:
     """One bounded Writer revision pass over the lint flags.
 
@@ -144,8 +146,8 @@ def revise_on_lint(
         load_prompt("writer_revise_v1.md")
         .replace("{draft}", draft)
         .replace("{lint_flags}", _format_lint_flags(flags))
-        .replace("{evidence_pack}", evidence.build_evidence_pack(metrics))
-        .replace("{honesty_constraints}", evidence.build_honesty_constraints(metrics))
+        .replace("{evidence_pack}", evidence.build_evidence_pack(metrics, hypothesis))
+        .replace("{honesty_constraints}", evidence.build_honesty_constraints(metrics, hypothesis))
     )
     try:
         revised = _call_writer(prompt)
@@ -165,20 +167,126 @@ def revise_on_lint(
     return revised, log
 
 
-def run_quality_loop(project_id: str, metrics: dict) -> dict:
-    """``draft → lint → revise(≤1) → persist``. Mutates ``paper/draft.md`` only when a
-    real revision lands; always writes ``paper/revise_log.json`` for measurement.
+# --------------------------------------------------------------------------- #
+# V2.2 citation grounding (goal_session8.md Step 4) — mirror of coverage_lint,
+# but for unverified citations: ≤1 bounded pass to delete or re-anchor them.
+# --------------------------------------------------------------------------- #
 
-    The pre-revision draft is preserved at ``paper/draft.revise_pre.md`` so the
-    before/after ``[UNVERIFIED]`` delta is reproducible. ``paper/draft.raw.md`` (the
-    pristine first LLM output) is never touched.
+
+def _load_papers(project_id: str) -> list[dict[str, Any]]:
+    papers: list[dict[str, Any]] = []
+    papers_path = WORKSPACE_ROOT / project_id / "literature" / "papers.jsonl"
+    if papers_path.exists():
+        for line in papers_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                papers.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return papers
+
+
+def _build_grounding_prompt(
+    draft: str,
+    unverified: list[dict[str, Any]],
+    available_titles: list[str],
+    metrics: dict[str, Any],
+    hypothesis: dict[str, Any] | None,
+) -> str:
+    unverified_list = "\n".join(f'- "{r.get("raw_title", "")}"' for r in unverified)
+    if available_titles:
+        titles_block = "\n".join(f"- {t}" for t in available_titles)
+    else:
+        titles_block = "_(no retrieved papers available — DELETE the unsupported citations instead)_"
+    return (
+        "You are fixing a research paper draft so that EVERY citation resolves to a paper "
+        "that was ACTUALLY retrieved. The following citations were NOT found in the retrieved "
+        "literature and are likely hallucinated:\n\n"
+        f"{unverified_list}\n\n"
+        "For each unsupported citation do EXACTLY ONE of:\n"
+        "  1. DELETE the sentence/claim that relies on it (preferred when the claim is not "
+        "supported by the experiment's own numbers); OR\n"
+        "  2. REPLACE the citation with one of the REAL retrieved paper titles listed below — "
+        "only if that paper genuinely supports the claim (pick the closest topical neighbor).\n\n"
+        f"Retrieved paper titles you MAY cite:\n{titles_block}\n\n"
+        "HARD RULES:\n"
+        "- NEVER cite a paper that is not in the list above. NEVER invent a title, author, or year.\n"
+        "- Do NOT change any experimental number, verdict, or honest conclusion.\n"
+        "- Do NOT add new claims. Only remove or re-anchor unsupported citations.\n"
+        "- Output the FULL revised draft (markdown), nothing else.\n\n"
+        f"## Evidence pack (do not contradict)\n{evidence.build_evidence_pack(metrics, hypothesis)}\n\n"
+        f"## Draft to fix\n{draft}\n"
+    )
+
+
+def ground_citations(
+    project_id: str,
+    draft: str,
+    metrics: dict[str, Any],
+    hypothesis: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """One bounded pass to ground unverified citations (≤1 LLM call).
+
+    For every citation :func:`citation.verify_citations` marks unverified (offline),
+    ask the writer to DELETE the unsupported sentence OR REPLACE it with a real
+    retrieved paper title — never invent or retain an unretrieved cite. At most one
+    call; on empty/failure the original draft is kept (the Auditor backstops).
+    Returns ``(revised_draft, log)``; ``log`` carries ``unverified_before`` /
+    ``unverified_after`` and is what gets persisted to
+    ``paper/citation_grounding_log.json``.
+    """
+    papers = _load_papers(project_id)
+    unverified = [r for r in citation.verify_citations(draft, papers) if r.get("verdict") == "unverified"]
+    log: dict[str, Any] = {
+        "unverified_before": [{"title": r.get("raw_title"), "marker": r.get("marker")} for r in unverified],
+        "revised": False,
+        "unverified_after": [],
+    }
+    if not unverified:
+        return draft, log
+
+    available_titles = [
+        str(p.get("title")) for p in papers[:30]
+        if isinstance(p, dict) and isinstance(p.get("title"), str) and p["title"].strip()
+    ]
+    prompt = _build_grounding_prompt(draft, unverified, available_titles, metrics, hypothesis)
+    try:
+        revised = _call_writer(prompt)
+    except Exception as exc:  # noqa: BLE001 — grounding is best-effort; never block the draft
+        logger.warning("[WriterAgent] citation grounding call failed, keeping original draft: %s", exc)
+        log["error"] = str(exc)
+        return draft, log
+
+    revised = (revised or "").strip()
+    if not revised or revised == draft:
+        return draft, log
+
+    log["revised"] = True
+    log["unverified_after"] = [
+        {"title": r.get("raw_title"), "marker": r.get("marker")}
+        for r in citation.verify_citations(revised, papers)
+        if r.get("verdict") == "unverified"
+    ]
+    return revised, log
+
+
+def run_quality_loop(project_id: str, metrics: dict, hypothesis: dict | None = None) -> dict:
+    """``draft → lint → revise(≤1) → ground citations(≤1) → persist``.
+
+    Mutates ``paper/draft.md`` only when a real revision/grounding lands; always
+    writes ``paper/revise_log.json`` + ``paper/citation_grounding_log.json`` for
+    measurement. The pre-revision draft is preserved at ``paper/draft.revise_pre.md``
+    (numbers) and ``paper/draft.ground_pre.md`` (citations); ``paper/draft.raw.md``
+    (the pristine first LLM output) is never touched. Returns the revise log.
     """
     paper = _paper_dir(project_id)
     draft_path = paper / "draft.md"
     draft = draft_path.read_text(encoding="utf-8") if draft_path.exists() else ""
     flags = evidence.coverage_lint(draft, metrics)
 
-    revised, log = revise_on_lint(project_id, draft, flags, metrics)
+    revised, log = revise_on_lint(project_id, draft, flags, metrics, hypothesis)
     if log.get("revised"):
         (paper / "draft.revise_pre.md").write_text(draft, encoding="utf-8")
         draft_path.write_text(revised, encoding="utf-8")
@@ -187,6 +295,20 @@ def run_quality_loop(project_id: str, metrics: dict) -> dict:
         )
     (paper / "revise_log.json").write_text(
         json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    # V2.2 citation grounding (≤1 round); the Auditor backstops anything that slips.
+    current = draft_path.read_text(encoding="utf-8") if draft_path.exists() else ""
+    grounded, glog = ground_citations(project_id, current, metrics, hypothesis)
+    if glog.get("revised"):
+        (paper / "draft.ground_pre.md").write_text(current, encoding="utf-8")
+        draft_path.write_text(grounded, encoding="utf-8")
+        logger.info(
+            "[WriterAgent] grounded citations: unverified %d → %d",
+            len(glog["unverified_before"]), len(glog["unverified_after"]),
+        )
+    (paper / "citation_grounding_log.json").write_text(
+        json.dumps(glog, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return log
 
@@ -208,5 +330,5 @@ def run_writer_agent(
     outline = write_outline(project_id, idea, selected, metrics, review, contribution)
     draft_path = _paper_dir(project_id) / "draft.md"
     write_draft(project_id, idea, selected, metrics, contribution, outline)
-    run_quality_loop(project_id, metrics)
+    run_quality_loop(project_id, metrics, selected)
     return draft_path

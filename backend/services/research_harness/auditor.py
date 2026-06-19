@@ -86,6 +86,93 @@ def _lost_datasets(metrics: dict[str, Any]) -> list[str]:
     ]
 
 
+# --------------------------------------------------------------------------- #
+# V2.2 omitted-material-metric gate (goal_session8.md Step 3)
+# --------------------------------------------------------------------------- #
+#
+# Closes the "selective reporting" hole: a draft that reports success on a
+# generic metric (macro_f1) while silently dropping the hypothesis's actual
+# target metrics (abstention / calibration). A metric that IS in metrics.json,
+# IS material to the hypothesis's main target (primary metric name, or the
+# abstention/error/spearman/consistency keyword family), but is NEVER mentioned
+# in the draft → an ``category="omission"`` claim that fails the gate. Only adds
+# claims; never loosens an existing verdict.
+
+_MATERIAL_METRIC_KEYWORDS: tuple[str, ...] = (
+    "abstention", "abstain", "spearman", "consistency", "error_rate", "calibration",
+)
+# Tokens too generic to count as "the draft discussed this metric".
+_GENERIC_METRIC_TOKENS: frozenset[str] = frozenset(
+    {"score", "value", "metric", "rate", "label", "result", "test", "data", "mean"}
+)
+
+
+def _distinctive_metric_tokens(name: str) -> list[str]:
+    toks = re.split(r"[_\s\-]+", (name or "").lower())
+    return [t for t in toks if len(t) >= 5 and t not in _GENERIC_METRIC_TOKENS and not t.isdigit()]
+
+
+def _metric_mentioned(name: str, draft_lower: str) -> bool:
+    """Is ``name`` discussed in the draft? Full-name match (with underscores or
+    spaces) OR a distinctive (≥5-char, non-generic) token of the name appears."""
+    if not name:
+        return False
+    n = name.lower()
+    if n in draft_lower or n.replace("_", " ") in draft_lower:
+        return True
+    return any(tok in draft_lower for tok in _distinctive_metric_tokens(name))
+
+
+def _material_metric_names(metrics: dict[str, Any], primary_name: str | None) -> set[str]:
+    """Metrics material to the hypothesis's main target: the abstention family
+    (always material when present) + any metric whose name carries a material
+    keyword + the hypothesis's resolved primary metric (when non-generic)."""
+    names: set[str] = set()
+    for key in (metrics.get("abstention_metrics") or {}):
+        if isinstance(key, str):
+            names.add(key)
+    for name in evidence._metric_names_in_metrics(metrics):
+        n = name.lower()
+        if any(kw in n for kw in _MATERIAL_METRIC_KEYWORDS):
+            names.add(name)
+    if primary_name:
+        names.add(primary_name)
+    return names
+
+
+def _omitted_material_metrics(
+    draft_text: str,
+    metrics: dict[str, Any],
+    hypothesis: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Material metrics present in ``metrics`` but absent from the draft body.
+
+    Returns ``category="omission"`` claims (verdict=unverified). Returns ``[]``
+    when there is no hypothesis (the gate is hypothesis-anchored — only-add)."""
+    if not hypothesis:
+        return []
+    pm = evidence.primary_metric_for(hypothesis, metrics)
+    primary_name = pm["name"] if pm["source"] != "comparison_default" else None
+    candidates = _material_metric_names(metrics, primary_name)
+    draft_lower = (draft_text or "").lower()
+    omitted: list[dict[str, Any]] = []
+    for i, name in enumerate(sorted(candidates), start=1):
+        if _metric_mentioned(name, draft_lower):
+            continue
+        omitted.append(
+            {
+                "claim_id": f"omission_{i}",
+                "claim": name,
+                "metric": name,
+                "verdict": "unverified",
+                "category": "omission",
+                "evidence_refs": [],
+                "reason": f'omitted material metric "{name}"',
+            }
+        )
+    return omitted
+
+
 def _has_any(text: str, cues: tuple[str, ...]) -> bool:
     lowered = (text or "").lower()
     return any(cue in lowered for cue in cues)
@@ -241,10 +328,11 @@ def audit_draft(
     papers: list[dict[str, Any]] | None = None,
     *,
     live: bool | None = None,
+    hypothesis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure audit: returns the ledger dict without touching disk.
 
-    Two gate families, both never loosened:
+    Three gate families, all never loosened:
       1. **Metric/overclaim gate** (V2): each result/spin claim must be backed by a
          metric or literature-overlap item, and must not overclaim significance /
          scope / positive spin on a loss.
@@ -253,8 +341,12 @@ def audit_draft(
          ``[UNVERIFIED: citation "…" not found in retrieved literature]`` and fails
          the gate. ``live`` enables an optional DBLP/CrossRef second chance under
          ``live_research`` only.
+      3. **Omitted-material-metric gate** (V2.2, hypothesis-anchored): a metric that
+         IS in ``metrics`` and IS material to the hypothesis's main target but is
+         NEVER mentioned in the draft → ``[UNVERIFIED: omitted material metric …]``
+         and fails the gate. Inert when ``hypothesis`` is None (only-add).
 
-    Returns the ledger dict. ``unverified_count`` and ``gate`` reflect BOTH gates.
+    Returns the ledger dict. ``unverified_count`` and ``gate`` reflect ALL gates.
     """
     items = evidence.build_evidence_items(metrics)
     # Fold paper titles into the evidence pool so literature-grounded claims can match too.
@@ -274,15 +366,20 @@ def audit_draft(
         cclaim = _citation_claim(result, i)
         verdicts.append(_citation_verdict(cclaim, result))
 
+    # Omitted-material-metric gate (V2.2). Hypothesis-anchored; inert without one.
+    verdicts.extend(_omitted_material_metrics(draft_text, metrics, hypothesis))
+
     unverified = [v for v in verdicts if v["verdict"] == "unverified"]
     gate = len(unverified) == 0
     citation_unverified = sum(1 for v in verdicts if v.get("category") == "citation" and v["verdict"] == "unverified")
+    omission_unverified = sum(1 for v in verdicts if v.get("category") == "omission" and v["verdict"] == "unverified")
 
     return {
         "total_claims": len(verdicts),
         "verified_count": len(verdicts) - len(unverified),
         "unverified_count": len(unverified),
         "citation_unverified_count": citation_unverified,
+        "omission_unverified_count": omission_unverified,
         "gate": gate,
         "claims": verdicts,
         "verdict": evidence.verdict(metrics),
@@ -303,6 +400,8 @@ def annotate_draft(draft_text: str, result: dict[str, Any]) -> str:
     for v in result.get("claims", []):
         if v["verdict"] != "unverified":
             continue
+        if v.get("category") == "omission":
+            continue  # no in-text anchor — handled by the appended block below.
         marker = f" [UNVERIFIED: {v['reason']}]"
         if marker in annotated:
             continue
@@ -318,6 +417,18 @@ def annotate_draft(draft_text: str, result: dict[str, Any]) -> str:
             continue
         end = idx + len(anchor)
         annotated = annotated[:end] + marker + annotated[end:]
+
+    # Omission claims have no in-text anchor (the metric is missing by definition);
+    # append a clearly-delimited block so the draft still carries the inline markers.
+    omissions = [
+        v for v in result.get("claims", [])
+        if v.get("category") == "omission" and v["verdict"] == "unverified"
+    ]
+    if omissions:
+        block = "\n\n<!-- auditor: omitted material metrics (V2.2 honesty gate) -->\n"
+        for v in omissions:
+            block += f"> [UNVERIFIED: {v['reason']}]\n"
+        annotated = annotated.rstrip() + "\n" + block
     return annotated
 
 
@@ -381,7 +492,18 @@ def run_auditor_agent(project_id: str, metrics: dict[str, Any]) -> dict[str, Any
             except json.JSONDecodeError:
                 continue
 
-    result = audit_draft(draft_text, metrics, papers)
+    # Load the selected hypothesis so the V2.2 omitted-material-metric gate is anchored.
+    selected: dict[str, Any] | None = None
+    selected_path = proj / "ideas" / "selected.json"
+    if selected_path.exists():
+        try:
+            loaded = json.loads(selected_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                selected = loaded
+        except json.JSONDecodeError:
+            selected = None
+
+    result = audit_draft(draft_text, metrics, papers, hypothesis=selected)
 
     ledger_dir = proj / "ledger"
     ledger_dir.mkdir(parents=True, exist_ok=True)

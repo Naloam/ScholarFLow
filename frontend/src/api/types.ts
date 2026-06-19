@@ -115,6 +115,23 @@ export interface MetricsJson {
   attempts_used?: number;
   repair_attempts?: number;
   returncode?: number;
+  /** (V2.2) hypothesis-named baselines that were not run. */
+  missing_baselines?: string[];
+  /** (V2.2) power-analysis underpowering marker, if the seed count was short. */
+  underpowered?: {
+    underpowered: boolean;
+    ran_seeds: number;
+    recommended_seeds: number;
+    note: string;
+  };
+  /** (V2.2) reviewer follow-up run merged into these metrics, if any. */
+  follow_up?: {
+    ran: boolean;
+    action?: string;
+    description?: string;
+    systems_added?: string[];
+    reason?: string;
+  };
 }
 
 export interface ReviewWeakness {
@@ -134,7 +151,7 @@ export interface ReviewJson {
 
 // ---- paper + audit (V2 Writer + Auditor layer) ----
 
-export type ClaimCategory = "result" | "spin" | "citation" | string;
+export type ClaimCategory = "result" | "spin" | "citation" | "omission" | string;
 
 export interface ClaimVerdict {
   claim_id: string;
@@ -144,6 +161,8 @@ export interface ClaimVerdict {
   /** Present on citation-category claims — the title/marker that was checked. */
   raw_title?: string;
   marker?: string;
+  /** Present on omission-category claims — the material metric that was dropped. */
+  metric?: string;
   evidence_refs?: string[];
   reason?: string;
 }
@@ -154,10 +173,56 @@ export interface ClaimAudit {
   unverified_count?: number;
   /** (V2.1) how many of the unverified claims are unmatched citations. */
   citation_unverified_count?: number;
+  /** (V2.2) how many unverified claims are omitted material metrics. */
+  omission_unverified_count?: number;
   gate?: boolean;
   verdict?: string;
   audited_at?: string;
   claims?: ClaimVerdict[];
   skipped?: boolean;
   reason?: string;
+}
+
+// ---- V2.2 hypothesis-anchored honest gate (ledger/anchored_verdict.json) ----
+
+export interface KillCriterion {
+  criterion: string;
+  tripped: boolean;
+  needs_manual: boolean;
+  reason: string;
+  metric?: string | null;
+  value?: number | null;
+  threshold?: number | null;
+}
+
+export interface CitationGroundingLog {
+  unverified_before?: Array<{ title?: string; marker?: string }>;
+  revised?: boolean;
+  unverified_after?: Array<{ title?: string; marker?: string }>;
+  error?: string;
+}
+
+export interface AnchoredVerdict {
+  verdict?: string;
+  base_verdict?: string;
+  primary_metric?: string;
+  primary_metric_source?: string;
+  primary_beats_baseline?: boolean | null;
+  kill_criteria?: KillCriterion[];
+  downgraded?: boolean;
+  downgrade_reasons?: string[];
+  missing_baselines?: string[];
+  underpowered?: {
+    underpowered: boolean;
+    ran_seeds: number;
+    recommended_seeds: number;
+    note: string;
+  } | null;
+  follow_up?: {
+    ran: boolean;
+    action?: string;
+    description?: string;
+    systems_added?: string[];
+    reason?: string;
+  } | null;
 }

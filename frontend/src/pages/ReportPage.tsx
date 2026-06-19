@@ -6,12 +6,19 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getFile } from "../api/client";
-import type { ClaimAudit, MetricsJson, ReviewJson } from "../api/types";
+import type {
+  AnchoredVerdict,
+  CitationGroundingLog,
+  ClaimAudit,
+  MetricsJson,
+  ReviewJson,
+} from "../api/types";
 import { ErrorState } from "../components/States";
 import { MarkdownView } from "../components/MarkdownView";
 import { MetricCards } from "../components/MetricCards";
 import { PaperDraft } from "../components/PaperDraft";
 import { AuditLedger } from "../components/AuditLedger";
+import { HonestGateCards } from "../components/HonestGateCards";
 import { ReviewerWeaknesses } from "../components/ReviewerWeaknesses";
 import { Spinner } from "../components/Spinner";
 
@@ -22,45 +29,42 @@ interface ReportData {
   paperCount: number;
   draft: string;
   audit: ClaimAudit | null;
+  anchored: AnchoredVerdict | null;
+  grounding: CitationGroundingLog | null;
 }
 
 async function loadReport(projectId: string): Promise<ReportData> {
-  const [reportText, metricsText, reviewText, papersText, draftText, auditText] = await Promise.all([
+  const [
+    reportText, metricsText, reviewText, papersText, draftText, auditText,
+    anchoredText, groundingText,
+  ] = await Promise.all([
     getFile(projectId, "research_report.md").catch(() => ""),
     getFile(projectId, "artifacts/metrics.json").catch(() => ""),
     getFile(projectId, "reviews/review_round_1.json").catch(() => ""),
     getFile(projectId, "literature/papers.jsonl").catch(() => ""),
     getFile(projectId, "paper/draft.md").catch(() => ""),
     getFile(projectId, "ledger/claim_audit.json").catch(() => ""),
+    getFile(projectId, "ledger/anchored_verdict.json").catch(() => ""),
+    getFile(projectId, "paper/citation_grounding_log.json").catch(() => ""),
   ]);
 
-  let metrics: MetricsJson | null = null;
-  if (metricsText) {
+  const parse = <T,>(text: string): T | null => {
+    if (!text) return null;
     try {
-      metrics = JSON.parse(metricsText) as MetricsJson;
+      return JSON.parse(text) as T;
     } catch {
-      metrics = null;
+      return null;
     }
-  }
-  let review: ReviewJson | null = null;
-  if (reviewText) {
-    try {
-      review = JSON.parse(reviewText) as ReviewJson;
-    } catch {
-      review = null;
-    }
-  }
-  let audit: ClaimAudit | null = null;
-  if (auditText) {
-    try {
-      audit = JSON.parse(auditText) as ClaimAudit;
-    } catch {
-      audit = null;
-    }
-  }
+  };
+
+  const metrics = parse<MetricsJson>(metricsText);
+  const review = parse<ReviewJson>(reviewText);
+  const audit = parse<ClaimAudit>(auditText);
+  const anchored = parse<AnchoredVerdict>(anchoredText);
+  const grounding = parse<CitationGroundingLog>(groundingText);
   const paperCount = papersText ? papersText.split("\n").filter((l) => l.trim()).length : 0;
 
-  return { report: reportText, metrics, review, paperCount, draft: draftText, audit };
+  return { report: reportText, metrics, review, paperCount, draft: draftText, audit, anchored, grounding };
 }
 
 export function ReportPage() {
@@ -119,6 +123,8 @@ export function ReportPage() {
 
       <MetricCards metrics={data?.metrics ?? null} review={data?.review ?? null} />
 
+      <HonestGateCards anchored={data?.anchored ?? null} />
+
       <section className="report__body">
         <h2 className="section__title">research_report.md</h2>
         {hasReport ? (
@@ -150,7 +156,7 @@ export function ReportPage() {
       ) : null}
 
       {data?.audit || data?.draft ? (
-        <AuditLedger audit={data?.audit ?? null} />
+        <AuditLedger audit={data?.audit ?? null} grounding={data?.grounding ?? null} />
       ) : null}
 
       <ReviewerWeaknesses review={data?.review ?? null} />

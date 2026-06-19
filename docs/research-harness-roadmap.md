@@ -73,6 +73,62 @@ Closes the two gaps Session 6 left open (see plan §6 contract + §7 P1):
   unmatched citation is caught (gate False) while real citations verify. The loop
   does **not** loosen any gate — it only adds checks.
 
+### V2.2 — Hypothesis-anchored honest gate + 3 loops ✅ done (this session)
+Closes the Session 7 review hole: V2.1's honesty gate stopped a draft from
+*exaggerating a reported metric*, but it could not stop *cherry-picking a metric*
+(reporting success on a generic `macro_f1` while the hypothesis's actual primary
+metric quietly failed — ARIS's "plausible unsupported success"). This session
+anchors the gate to the hypothesis's own primary metric and adds three bounded
+loops. All new gates **only add, never loosen**.
+
+1. **Anchored verdict + kill criteria** (`evidence.py`): `verdict(metrics,
+   hypothesis)` resolves the hypothesis's declared `primary_metric` (new field,
+   now requested by `idea_agent_v1.md`); when that primary metric demonstrably
+   loses, the verdict is *downgraded* (e.g. `positive_significant → negative`).
+   `evaluate_kill_criteria` deterministically evaluates threshold-type criteria
+   (`AUC<0.55`) and comparison-type criteria; a tripped criterion forces a
+   downgrade. The downgrade is written prominently into `research_report.md`
+   (`**Kill criterion tripped …**`) and persisted to `ledger/anchored_verdict.json`.
+2. **Omitted-material-metric gate** (`auditor.py`): a metric that IS in
+   `metrics.json` and IS material to the hypothesis's target (primary metric or the
+   `abstention`/`error`/`spearman`/`consistency` family) but is NEVER mentioned in
+   the draft → a `category="omission"` claim → `[UNVERIFIED: omitted material metric …]`
+   → fails the gate. Inert without a hypothesis (only-add).
+3. **Citation grounding loop** (`writer.py`, mirror of the numeric coverage-lint):
+   before the Auditor, ≤1 bounded pass to DELETE or RE-ANCHOR each unverified
+   citation to a real retrieved paper (never invent). `paper/citation_grounding_log.json`
+   records before/after; the Auditor backstops anything that slips.
+4. **Experiment-planner contract** (`experiment_engineer.py`): hypothesis-named
+   baselines that did not run → `metrics.missing_baselines`; a seed count short of
+   the power analysis's `recommended_sample_count` → `metrics.underpowered`. Both
+   surfaced in the report ("Hypothesis Contract Compliance").
+5. **Reviewer → follow-up loop** (`research_manager.py`): the first *feasible*
+   `must_have` runs as ≤1 bounded follow-up experiment (results merged into
+   `metrics.json`); every *infeasible* `must_have` (GPU / large data / multi-day)
+   is written into Future Work with its reason. At most one round — never an open loop.
+6. **Frontend surfaces the new signals**: new `HonestGateCards` renders the
+   anchored verdict banner (with downgrade), primary metric, kill criteria, missing
+   baselines, underpowered, follow-up — all from `ledger/anchored_verdict.json` so
+   the UI never re-derives the verdict. `AuditLedger` adds the omission count +
+   citation-grounding summary. `research_report.md` also carries the banner verbatim.
+
+**Verification (deterministic, against the original hole case `v0_3c6558d0`):**
+the Session 7 live run judged `positive_significant` on `macro_f1` while the
+hypothesis's real targets (`error_rate_at_20pct_abstain`, `spearman_consistency_vs_label`)
+were absent from the draft and the abstention error rate was *worse* than baseline.
+Under V2.2, with the hypothesis declaring its primary metric, the verdict
+downgrades `positive_significant → negative`; unconditionally, the run also
+records `missing_baselines=[Calibrated Softmax, Sufficient Context Classifier]`,
+`underpowered (ran 10 of recommended 512 seeds)`, both kill criteria as
+`needs_manual`, and the omission gate fails on the two abstention metrics.
+
+**Fresh live acceptance (`live_session8`, GLM-5.2, criterion #6):** a new abstention
+idea ran end-to-end (~18 min). The idea_agent declared `primary_metric=error_rate_at_20pct_abstain`;
+the planner ran the comparison on it; the proposed method did not beat baseline →
+verdict **`negative`**, reported faithfully via the anchored-verdict banner. The
+cherry-picking hole is closed on a fresh idea, not just the replayed hole case.
+Full row in the live-run table below.
+
 ### V3 — Editable paper (not started)
 TipTap rich-text editor so a human can edit `paper/draft.md` in-place (currently
 read-only render). Out of scope until V2 quality is validated on live runs.
@@ -115,6 +171,8 @@ evidence for P3** — CI/fixtures cannot substitute.
 | run | idea (short) | elapsed | exec | verdict | draft | gate | unverified | citation_unverified | notes |
 |-----|--------------|---------|------|---------|-------|------|-----------|---------------------|-------|
 | live_session7 (2026-06-18, GLM-5.2) | Self-Consistency Calibration for Hallucination Detection in RAG | 16.1 min | success | **negative** | complete, 7 sections, 3.7k chars | **True** | 0 (1/1 verified) | 0 | 69 papers retrieved. Writer reported the negative result faithfully (no competitive/promising/SOTA); numerically-higher AUCs correctly flagged as non-significant (p=0.72/0.12/0.72); failure mode on vitaminc analyzed. One real issue caught+fixed: coverage_lint had flagged heading section numbers (3.1/6.2) — fixed this session. |
+| v2.2_anchor_check (2026-06-18, deterministic re-validation of `v0_3c6558d0`) | (replays the Session 7 positive-significant hole case) | 0 min (no live tokens) | success | base `positive_significant` → **anchored `negative`** when primary metric declared | n/a | n/a | n/a | n/a | **The hole case, V2.2-gated.** With the hypothesis declaring `primary_metric=error_rate_at_20pct_abstain` (which the updated `idea_agent_v1.md` now elicits), the verdict downgrades to `negative` (proposed abstention error *worse* than baseline). Unconditionally the run also records `missing_baselines=[Calibrated Softmax, Sufficient Context Classifier]`, `underpowered (ran 10/512 seeds)`, both kill criteria `needs_manual`, and the omission gate fails on the two abstention metrics. |
+| live_session8 (2026-06-18, GLM-5.2) | Selective Answer Abstention via Retrieval-Evidence Dispersion Features for Citation-Faithful Fact Verification | 18.0 min | success | **negative** (anchored on `error_rate_at_20pct_abstain`) | complete, 11.2k chars | **True** | 0 (1/1 verified) | 0 | **Fresh-idea acceptance for V2.2 (criterion #6).** The idea_agent declared `primary_metric=error_rate_at_20pct_abstain`; the planner ran the comparison on it (not `macro_f1`); proposed did NOT beat baseline (Δ+0.000/+0.015/+0.021, all worse), `any_significant=False` → verdict **`negative`**, reported faithfully in the TL;DR + the "⚠ Hypothesis-Anchored Verdict" banner. No cherry-picking: the success is no longer shored up on a generic metric. kill criteria → `needs_manual` (Chinese, non-parseable); citation grounding log `unverified_before=[]` (no hallucinated refs); Future Work lists the infeasible must_haves (improve_statistical_power, add_stronger_baseline VICTOR/VERIRAG, run_ablation) with reasons. Reviewer: reject / no_evidence. |
 
 **Assessment:** the first live run clears the V2 quality bar — honest negative
 result preserved end-to-end, complete draft, no honesty-gate bypass, no
@@ -130,8 +188,9 @@ gate before starting it is a product/priority decision, not a quality one.
   compatibility.
 - Backward compatibility for `run.json` and `artifact.json` consumers.
 - The honesty gates: **negative / mixed / significance / retrieval-coverage /
-  citation** verdicts are reported faithfully. New verification (citation, quality
-  loop) **only adds gates, never loosens one**.
+  citation / hypothesis-anchored-primary-metric / kill-criteria / omitted-metric**
+  verdicts are reported faithfully. New verification (citation, quality loop,
+  V2.2 anchoring) **only adds gates, never loosens one**.
 - LLM main path: idea/hypothesis/method generation must go through real `chat()`
   calls with the user's idea + literature notes as input — no keyword→template
   fallback as a main path (fallbacks must be marked `source: "fallback_template"`
@@ -144,8 +203,8 @@ gate before starting it is a product/priority decision, not a quality one.
 
 - **CI / default suite** (`-m "not live_research"`): the FROZEN `autoresearch`
   regression suite + the force-tracked research_harness pure-logic subset
-  (`test_research_harness_prompts.py`, `test_research_harness_citation.py`).
-  These are network-free and need no fixture.
+  (`test_research_harness_prompts.py`, `test_research_harness_citation.py`,
+  `test_research_harness_honest_gate.py`). These are network-free and need no fixture.
 - **Local-dev only** (gitignored): the fixture-backed research_harness tests
   (`test_research_harness_writer_auditor.py`, `_api.py`, `_session4.py`) and the
   `v0_citrag_05` fixture under `backend/data/`. They read `backend/data/`.

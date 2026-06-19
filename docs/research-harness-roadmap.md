@@ -129,6 +129,68 @@ verdict **`negative`**, reported faithfully via the anchored-verdict banner. The
 cherry-picking hole is closed on a fresh idea, not just the replayed hole case.
 Full row in the live-run table below.
 
+### V2.3 — Portfolio-aware execution ✅ done (this session)
+Closes the gap CLAUDE.md's "Non-Negotiable Baselines" names but the new core had
+not implemented: the harness picked ONE hypothesis (`select_hypothesis`) and ran
+just that. V2.3 upgrades it to "rank N candidates, run the top-K sequentially, gate
+each independently, aggregate one honest portfolio verdict" — so "honest" is no
+longer "honestly report one toy hypothesis" but "honestly report an N-hypothesis
+portfolio search (who won / who lost / who tripped a kill criterion)". All V2.2
+gates are applied **per candidate**; portfolio **only adds, never loosens**.
+
+1. **Rank + select** (`portfolio.py`, new): `rank_candidates` (reuses
+   `select_hypothesis` scoring — feasibility high>medium>low, then kill-criteria
+   specificity — returns the full sorted list); `select_portfolio` (top-K, hard cap
+   `MAX_K=5`, default 3, writes the additive `ideas/portfolio.json` index;
+   `selected.json` stays rank-0 for old consumers).
+2. **Per-candidate execution** (`experiment_engineer` + `pipeline`):
+   `run_experiment_engineer` gains a `candidate_subdir` param that isolates each
+   candidate under `candidates/<id>/` (artifacts/code/experiments). `pipeline.
+   run_portfolio_experiments` runs the top-K **sequentially** (GLM per-minute limit
+   → no parallelism), one candidate's hard failure never aborts the others, and
+   writes `candidates/<id>/{metrics,verdict}.json` per candidate.
+3. **Per-candidate V2.2 honest gate**: each candidate gets its own
+   `evidence.full_verdict(metrics_i, hypothesis_i)` — anchoring / kill / missing-
+   baseline / underpowered all applied independently. Cost control (explicit in the
+   completion criteria): Writer+Auditor run **only on the best candidate**; non-best
+   candidates stop at metrics + anchored verdict.
+4. **Honest aggregation** (`portfolio.aggregate_portfolio`): best = the candidate
+   with the most favourable **anchored** verdict (tie-break any_significant →
+   seed_count → feasibility). `portfolio_verdict` is `best=<v>` / `mixed_portfolio`
+   / `all_negative`. **Never cherry-picks a metric** — an all-negative portfolio is
+   reported `all_negative`, best still the highest anchor. Written to
+   `ledger/portfolio.json` (single source for frontend + acceptance).
+5. **Report + promotion**: `research_report.md` gains a **Portfolio Summary** table
+   at the top (one row per candidate: primary_metric / beats / verdict / kill /
+   downgraded, best starred). The best candidate's workspace is promoted to the
+   top level so review/report/write/audit operate on it unchanged. K=1 is
+   byte-equivalent to the legacy single-hypothesis path.
+6. **Frontend**: `PortfolioCard` renders the portfolio as an accessible
+   `<table>` (candidate / primary_metric / beats / tone-coloured verdict / kill /
+   downgraded, best row highlighted) above `HonestGateCards`, verbatim from
+   `ledger/portfolio.json`. A Portfolio-K control (1–5) is on the New-run form;
+   `start` + the `v0_run` CLI accept `portfolio_k`.
+
+**Verification (deterministic):** `test_research_harness_portfolio.py` (22 cases,
+CI-safe) covers rank/select, aggregate (incl. all-negative never upgraded +
+feasibility tie-break), `candidate_subdir` isolation, K=2 orchestration (ledger +
+best promotion + no contamination), and K=1 backward-compat. `honest_gate` /
+`citation` / `prompts` regression suite still green (only-add). 164 FROZEN
+`autoresearch` regressions still pass.
+
+**Fresh live acceptance (`live_session9`, GLM-5.2, K=3, criterion #6):** a new,
+non-abstention idea (Refutation-Aware Retrieval for claim verification) ran
+end-to-end. 5 candidates generated → top-3 ran independently → honest verdicts:
+`h2` **negative** (downgraded — its abstention primary metric
+`error_rate_at_20pct_abstain` lost; the anchored gate fired per-candidate exactly as
+on the Session-8 hole case), `h3`/`h4` **positive_significant** (macro_f1). Aggregate
+→ `mixed_portfolio`, best `h3`, promoted to the top-level report (positive,
+3 datasets, any_significant). The Portfolio Summary table + per-candidate
+`candidates/<id>/{metrics,verdict}.json` are all on disk. Full row in the live-run
+table below. (The paper layer was cut short mid-write when the GLM account balance
+was exhausted — an external billing constraint, not a V2.3 issue; write/audit are
+non-fatal and the honest report was already on disk.)
+
 ### V3 — Editable paper (not started)
 TipTap rich-text editor so a human can edit `paper/draft.md` in-place (currently
 read-only render). Out of scope until V2 quality is validated on live runs.
@@ -173,6 +235,7 @@ evidence for P3** — CI/fixtures cannot substitute.
 | live_session7 (2026-06-18, GLM-5.2) | Self-Consistency Calibration for Hallucination Detection in RAG | 16.1 min | success | **negative** | complete, 7 sections, 3.7k chars | **True** | 0 (1/1 verified) | 0 | 69 papers retrieved. Writer reported the negative result faithfully (no competitive/promising/SOTA); numerically-higher AUCs correctly flagged as non-significant (p=0.72/0.12/0.72); failure mode on vitaminc analyzed. One real issue caught+fixed: coverage_lint had flagged heading section numbers (3.1/6.2) — fixed this session. |
 | v2.2_anchor_check (2026-06-18, deterministic re-validation of `v0_3c6558d0`) | (replays the Session 7 positive-significant hole case) | 0 min (no live tokens) | success | base `positive_significant` → **anchored `negative`** when primary metric declared | n/a | n/a | n/a | n/a | **The hole case, V2.2-gated.** With the hypothesis declaring `primary_metric=error_rate_at_20pct_abstain` (which the updated `idea_agent_v1.md` now elicits), the verdict downgrades to `negative` (proposed abstention error *worse* than baseline). Unconditionally the run also records `missing_baselines=[Calibrated Softmax, Sufficient Context Classifier]`, `underpowered (ran 10/512 seeds)`, both kill criteria `needs_manual`, and the omission gate fails on the two abstention metrics. |
 | live_session8 (2026-06-18, GLM-5.2) | Selective Answer Abstention via Retrieval-Evidence Dispersion Features for Citation-Faithful Fact Verification | 18.0 min | success | **negative** (anchored on `error_rate_at_20pct_abstain`) | complete, 11.2k chars | **True** | 0 (1/1 verified) | 0 | **Fresh-idea acceptance for V2.2 (criterion #6).** The idea_agent declared `primary_metric=error_rate_at_20pct_abstain`; the planner ran the comparison on it (not `macro_f1`); proposed did NOT beat baseline (Δ+0.000/+0.015/+0.021, all worse), `any_significant=False` → verdict **`negative`**, reported faithfully in the TL;DR + the "⚠ Hypothesis-Anchored Verdict" banner. No cherry-picking: the success is no longer shored up on a generic metric. kill criteria → `needs_manual` (Chinese, non-parseable); citation grounding log `unverified_before=[]` (no hallucinated refs); Future Work lists the infeasible must_haves (improve_statistical_power, add_stronger_baseline VICTOR/VERIRAG, run_ablation) with reasons. Reviewer: reject / no_evidence. |
+| live_session9 (2026-06-19, GLM-5.2, **K=3 portfolio**) | Refutation-Aware Evidence Retrieval for Citation-Faithful Claim Verification | ~53 min (core; portfolio step ~36 min for 3 candidates) | success (all 3) | **mixed_portfolio** — best `h3` `positive_significant`; `h2` **negative** (downgraded), `h4` `positive_significant` | partial: contribution.md + outline.md only (draft cut off — see notes) | n/a (audit not reached) | n/a | n/a | **Fresh-idea acceptance for V2.3 (criterion #6).** 5 candidates generated → top-3 ran **independently** to `candidates/<id>/`, each gated by the full V2.2 layer on its own primary metric. `h2` (冲突信号显式建模的拒答校准, primary `error_rate_at_20pct_abstain`) → **negative**, **downgraded** (the anchored gate fired per-candidate, mirroring the Session-8 hole case on a fresh idea — no cherry-picking). `h3`/`h4` (`macro_f1`) → **positive_significant** (h3: citation_faithfulness 0.980 vs 0.978, scifact 0.601 vs 0.532, vitaminc 0.528 vs 0.525; 10 seeds, any_significant=True, 3 datasets; underpowered 10/512 toy-scale). Aggregate honestly → `mixed_portfolio`, best `h3`, promoted to the top-level report; the Portfolio Summary table names all three candidates with their verdicts verbatim. 45 papers retrieved. Reviewer follow-up + paper **write** step were cut short when the GLM account balance was exhausted (余额不足) mid-run — an external billing constraint, not a V2.3 issue; write/audit are non-fatal and the honest portfolio + report were already on disk. The V2.3 acceptance (independent per-candidate honest gates + honest aggregate + Portfolio Summary) is fully met. |
 
 **Assessment:** the first live run clears the V2 quality bar — honest negative
 result preserved end-to-end, complete draft, no honesty-gate bypass, no
@@ -204,7 +267,8 @@ gate before starting it is a product/priority decision, not a quality one.
 - **CI / default suite** (`-m "not live_research"`): the FROZEN `autoresearch`
   regression suite + the force-tracked research_harness pure-logic subset
   (`test_research_harness_prompts.py`, `test_research_harness_citation.py`,
-  `test_research_harness_honest_gate.py`). These are network-free and need no fixture.
+  `test_research_harness_honest_gate.py`, `test_research_harness_portfolio.py`).
+  These are network-free and need no fixture.
 - **Local-dev only** (gitignored): the fixture-backed research_harness tests
   (`test_research_harness_writer_auditor.py`, `_api.py`, `_session4.py`) and the
   `v0_citrag_05` fixture under `backend/data/`. They read `backend/data/`.

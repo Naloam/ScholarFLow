@@ -94,6 +94,54 @@ def _load_prompt(name: str) -> str:
     return load_prompt(name)
 
 
+# --------------------------------------------------------------------------- #
+# Session 12: cross-domain routing
+# --------------------------------------------------------------------------- #
+
+
+def _domain_from(*sources: object) -> str | None:
+    """First declared ``domain`` across hypothesis/plan dicts (else None).
+
+    The hypothesis (tagged by the IdeaAgent) is the source of truth; the plan
+    echoes it. Defaults to None → claim_verification path (backward compatible).
+    """
+    for s in sources:
+        if isinstance(s, dict):
+            d = str(s.get("domain") or "").strip().lower()
+            if d:
+                return d
+    return None
+
+
+def _domain_preamble(domain: str | None) -> str:
+    """Override block prepended for non-claim domains so the static claim-specific
+    prompt body (ST cosine / abstention / 'traverse 3 datasets') is neutralized."""
+    d = (domain or "").strip().lower()
+    if not d or d == "claim_verification":
+        return ""
+    return (
+        f"\n\n## 🟢 DOMAIN ROUTING（domain={d}，覆盖下方 claim_verification 静态段）\n"
+        f"本次实验属于 **{d}** 域。下方 prompt 模板里所有 claim-verification / 句向量 / "
+        "abstention / 「遍历 3 个数据集」的静态描述**仅适用于 claim_verification 域，本次作废**。"
+        "以本次追加的「本域方法提示」+「数据集注册表（本域）」为准：用本域数据集、本域方法、"
+        "≥128 seed 配对 bootstrap，输出 `__RESULT__` 行"
+        "（system_name/seed/metric_name/metric_value/n_test/dataset_name）。\n"
+    )
+
+
+def _read_plan_domain(project_id: str, candidate_subdir: str | None) -> str | None:
+    """Domain recorded in experiments/plan.json (repair reads it for routing)."""
+    try:
+        plan_path = _experiments_dir(project_id, candidate_subdir) / "plan.json"
+        if plan_path.exists():
+            import json as _json
+
+            return _domain_from(_json.loads(plan_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def _extract_json(content: str) -> object | None:
     """剥 ```json 包裹并 json.loads；失败返回 None（Session 1 套路）。"""
     if not content:
@@ -152,8 +200,9 @@ def generate_experiment_plan(
 ) -> dict:
     """LLM 生成实验计划，写 experiments/plan.json + experiments/plan.md。"""
     ws = _experiments_dir(project_id, candidate_subdir)
+    domain = _domain_from(selected_hypothesis)
     prompt_template = _load_prompt("experiment_planner_v1.md")
-    prompt = (
+    prompt = _domain_preamble(domain) + (
         prompt_template
         .replace("{hypothesis_json}", json.dumps(selected_hypothesis, ensure_ascii=False, indent=2))
         .replace("{known_baselines_json}", json.dumps(known_baselines, ensure_ascii=False, indent=2))
@@ -163,7 +212,7 @@ def generate_experiment_plan(
         "\n\n## 实测可用包（用于 sandbox_packages 字段）\n"
         f"available_packages = {available_packages or ['（仅 Python 标准库）']}\n"
     )
-    prompt += capability_note()
+    prompt += capability_note(domain)
 
     logger.info("[ExperimentEngineer] generating plan for project=%s", project_id)
     content = get_message_content(chat([{"role": "user", "content": prompt}]))
@@ -182,6 +231,8 @@ def generate_experiment_plan(
     else:
         plan = parsed
 
+    # Session 12: persist the domain so repair + downstream steps route correctly.
+    plan["domain"] = domain or "claim_verification"
     (ws / "plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     (ws / "plan.md").write_text(_render_plan_md(plan, idea), encoding="utf-8")
     return plan
@@ -220,8 +271,9 @@ def generate_experiment_code(
 ) -> str:
     """LLM 生成 experiment.py 源码，写 code/experiment.py + code/requirements.txt。"""
     code_dir = _code_dir(project_id, candidate_subdir)
+    domain = _domain_from(selected_hypothesis, plan)
     prompt_template = _load_prompt("experiment_codegen_v1.md")
-    prompt = (
+    prompt = _domain_preamble(domain) + (
         prompt_template
         .replace("{plan_json}", json.dumps(plan, ensure_ascii=False, indent=2))
         .replace("{hypothesis_json}", json.dumps(selected_hypothesis, ensure_ascii=False, indent=2))
@@ -230,7 +282,7 @@ def generate_experiment_code(
         "\n\n## 实测可用包（requirements）\n"
         f"available_packages = {available_packages or ['（仅 Python 标准库——不要写任何 import numpy/pandas/sklearn）']}\n"
     )
-    prompt += capability_note()
+    prompt += capability_note(domain)
 
     logger.info("[ExperimentEngineer] generating code for project=%s", project_id)
     content = get_message_content(chat([{"role": "user", "content": prompt}]))
@@ -262,14 +314,15 @@ def repair_experiment_code(
 ) -> str:
     """LLM 修复代码，返回修复后完整代码；追加记录到 experiments/repair_log.md。"""
     ws = _experiments_dir(project_id, candidate_subdir)
+    domain = _read_plan_domain(project_id, candidate_subdir)
     prompt_template = _load_prompt("experiment_repair_v1.md")
-    prompt = (
+    prompt = _domain_preamble(domain) + (
         prompt_template
         .replace("{stderr}", (stderr or "")[:6000])
         .replace("{code}", code)
         .replace("{attempt}", str(attempt))
     )
-    prompt += capability_note()
+    prompt += capability_note(domain)
 
     logger.info("[ExperimentEngineer] repair attempt %d", attempt)
     content = get_message_content(chat([{"role": "user", "content": prompt}]))

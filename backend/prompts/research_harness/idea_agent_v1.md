@@ -29,21 +29,33 @@
 {
 "hypothesis_id": "h1",
 "title": "简短标题（一句话）",
+"domain": "claim_verification | tabular | structured | code（按 idea + 方法推断本假设所属领域；决定用哪组数据集与方法，见下方「领域路由」）",
 "research_question": "可检验的具体问题（一句）",
 "gap_addressed": "引用 gap_map.what_is_missing 原文片段",
 "core_novelty": "与 known_baselines 的本质区别（一句，不能只说'更好'）",
-"proposed_method_sketch": "方法描述（2-3句，足够让工程师写代码；**必须**用 sandbox_packages，若涉及句向量就明确用 sentence-transformers all-MiniLM-L6-v2）",
-"primary_metric": "本假设真正关心的主指标名（必须是实验会真实产出的指标，如 macro_f1 / error_rate_at_20pct_abstain / spearman_consistency_vs_label / auc；一句话或一个指标名）",
+"proposed_method_sketch": "方法描述（2-3句，足够让工程师写代码；**必须**用 sandbox_packages，且必须匹配 domain：claim_verification 域若涉及句向量就明确用 sentence-transformers all-MiniLM-L6-v2；tabular/structured/code 域用 sklearn 分类器，**不要**硬套句向量）",
+"primary_metric": "本假设真正关心的主指标名（必须是实验会真实产出的指标，如 macro_f1 / error_rate_at_20pct_abstain / spearman_consistency_vs_label / auc / calibration_error；一句话或一个指标名）",
 "feasibility": "high | medium | low",
 "expected_positive_outcome": "如果假设成立，实验会看到什么（一句）",
 "expected_negative_outcome": "如果假设不成立，实验会看到什么（一句，必填）",
 "kill_criteria": ["放弃这个方向的可机械判定判据 1-2 条。🔴 硬格式要求（违反即被系统拒绝并降级该候选）：每条必须是下列之一——"
                    "(a) 阈值型 `<metric_name> <OP> <数值>`，如 `auc < 0.55`、`error_rate_at_20pct_abstain >= 0.20`；"
                    "(b) 比较型 `<metric_name> 相比 baseline <OP>`，如 `macro_f1 相比 baseline 未提升`。"
-                   "metric_name 必须是实验会真实产出的指标名（macro_f1 / error_rate_at_20pct_abstain / spearman_consistency_vs_label / auc）。"
+                   "metric_name 必须是实验会真实产出的指标名（macro_f1 / error_rate_at_20pct_abstain / spearman_consistency_vs_label / auc / calibration_error）。"
                    "禁止纯中文叙述句，禁止无指标名的「方法不行就停」类表述。"]
 }
 ]
+
+## 关于 domain（V2.5 跨领域路由）
+
+每个候选必须标 `domain`。系统据此选数据集 + 方法提示：
+- `claim_verification`：claim-evidence faithfulness 二分类（句向量/词法方法），三个 claim 数据集。
+- `tabular`：数值特征向量分类（sklearn 分类器），breast_cancer 等表格数据集。
+- `structured`：结构化/图像特征分类（sklearn），digits 等数据集。
+- `code`：代码特征分类（sklearn）。
+若 idea 本质是检索/拒答/引用验证 → claim_verification；若是表格 ML / 校准 / 特征交互 → tabular；
+图像/结构化 → structured；代码缺陷/复杂度 → code。**domain 必须与 proposed_method_sketch 一致**
+（方法-领域不匹配 = major weakness）。
 
 ## 关于 primary_metric（V2.2 诚实门）
 

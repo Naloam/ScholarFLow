@@ -242,6 +242,39 @@ gate logic is touched.
 **Live acceptance (`live_session10`)**: pending — the GLM account balance must be
 recharged first (Session 9 exhausted it mid-run); acceptance row added once run.
 
+### V2.5 — Cross-domain generalization ✅ done (Session 12, deterministic)
+Proves the brain is not claim-verification-overfit. Two hard locks were
+generalized: `DATASET_REGISTRY` (was 3 claim-verification slices only) and
+`capability_note()` (globally forced sentence-transformer cosine). **Only-add** —
+the claim-verification path is byte-equivalent (`registry_note()`/`capability_note()`
+with no arg still return exactly the V2.4 claim note).
+
+1. **Registry domain-ized**: `DatasetSpec` gained `domain` + `feature_schema`; two
+   real non-retrieval domains committed — `breast_cancer` (tabular, 424×30 numeric
+   features, binary) and `digits` (structured/image, 500×64 pixel features, parity
+   label). Both real sklearn toys, balanced, stdlib-json loaders (zero runtime
+   network). `loader_snippet` is domain-aware (text vs feature-vector); `registry_note(domain)`
+   groups by domain and scopes codegen to the idea's domain — a tabular hypothesis
+   is no longer dragged back to "traverse all 3 claim datasets".
+2. **Capability note split**: `domain_agnostic_note()` (budget / backend / packages /
+   method-hypothesis **principle** — pins no specific method) + `domain_method_note(domain)`
+   (`claim_verification` keeps the ST-cosine requirement verbatim; `tabular`/`structured`/`code`
+   route to sklearn classifiers and explicitly forbid sentence-transformer cosine).
+   `capability_note(domain)` composes them.
+3. **Idea→domain routing**: `idea_agent_v1.md` elicits a per-candidate `domain`;
+   `experiment_engineer` threads it (hypothesis → plan/codegen/repair), prepends a
+   DOMAIN-ROUTING preamble that neutralizes the static claim-specific prompt body for
+   other domains, and persists `domain` into `plan.json` so repair routes correctly.
+4. **Gates confirmed domain-agnostic**: `evidence.verdict` / `evaluate_kill_criteria` /
+   `full_verdict` key off metric **names** in the metrics dict, never a domain label —
+   so a tabular/structured run is gated identically to a claim run. (Verified + tested.)
+5. **Tests**: new CI-safe `test_research_harness_cross_domain.py` (12 cases). The 6-file
+   CI subset (115 cases) + FROZEN (164) still green.
+
+**Cross-domain live (`live_session12_<domain>`)**: pending — batched with the other
+live acceptances; requires ≥1 negative/downgrade/kill on a non-RAG domain to prove the
+gate is not bypassed in a new domain.
+
 ### V3 — Editable paper (not started)
 TipTap rich-text editor so a human can edit `paper/draft.md` in-place (currently
 read-only render). Out of scope until V2 quality is validated on live runs.

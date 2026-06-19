@@ -26,7 +26,10 @@ from config.settings import settings
 from schemas.research_harness import (
     FileContent,
     ProjectSummary,
+    ReauditResponse,
     RunStatus,
+    SaveDraftRequest,
+    SaveDraftResponse,
     StartRequest,
     StartResponse,
     TimelineEntry,
@@ -147,6 +150,49 @@ def start_run(project_id: str, payload: StartRequest) -> StartResponse:
         run_id, len(idea), payload.portfolio_k,
     )
     return StartResponse(run_id=run_id, project_id=project_id)
+
+
+@router.put(
+    "/projects/{project_id}/paper/draft",
+    response_model=SaveDraftResponse,
+)
+def save_paper_draft(project_id: str, payload: SaveDraftRequest) -> SaveDraftResponse:
+    """V3 (Session 11): save a human-edited ``paper/draft.md`` (TipTap editor).
+
+    The path is fixed (no traversal surface); length is validated at the boundary.
+    """
+    if pipeline.read_project_meta(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        path = pipeline.save_paper_draft(project_id, payload.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SaveDraftResponse(ok=True, chars=len(payload.content), path=str(path.name))
+
+
+@router.post(
+    "/projects/{project_id}/paper/reaudit",
+    response_model=ReauditResponse,
+)
+def reaudit_paper(project_id: str) -> ReauditResponse:
+    """V3 (Session 11): re-run the Auditor on the (human-edited) draft.
+
+    The audit is pure-logic (no LLM), so it runs synchronously and returns the new
+    gate + counts immediately — a human-added unsupported claim is marked
+    ``[UNVERIFIED]`` without bypassing the gate. Non-fatal: never breaks a run.
+    """
+    if pipeline.read_project_meta(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    result = pipeline.reaudit_paper(project_id)
+    return ReauditResponse(
+        gate=bool(result.get("gate", False)),
+        verified_count=result.get("verified_count"),
+        unverified_count=result.get("unverified_count"),
+        citation_unverified_count=result.get("citation_unverified_count"),
+        omission_unverified_count=result.get("omission_unverified_count"),
+        skipped=bool(result.get("skipped", False)),
+        reason=result.get("reason"),
+    )
 
 
 @router.get("/projects/{project_id}/runs/{run_id}/status", response_model=RunStatus)

@@ -548,6 +548,68 @@ def run_step_audit(project_id: str, idea: str) -> dict:
     return result
 
 
+# --------------------------------------------------------------------------- #
+# V3 / Session 11 — human-in-the-loop editable paper (re-audit closure)
+# --------------------------------------------------------------------------- #
+
+# A paper draft is bounded; reject absurd payloads at the boundary (input validation).
+MAX_PAPER_DRAFT_CHARS: int = 200_000
+
+
+def save_paper_draft(project_id: str, content: str) -> Path:
+    """Write a human-edited ``paper/draft.md`` (V3 TipTap editor → PUT endpoint).
+
+    Validates length at the system boundary (KISS guard — the path is fixed, so
+    there is no traversal surface). Creates the ``paper/`` dir if absent.
+    """
+    if not isinstance(content, str):
+        raise ValueError("draft content must be a string")
+    if len(content) > MAX_PAPER_DRAFT_CHARS:
+        raise ValueError(
+            f"draft too long ({len(content)} > {MAX_PAPER_DRAFT_CHARS} chars)"
+        )
+    proj = project_dir(project_id)
+    paper_dir = proj / "paper"
+    paper_dir.mkdir(parents=True, exist_ok=True)
+    draft_path = paper_dir / "draft.md"
+    draft_path.write_text(content, encoding="utf-8")
+    return draft_path
+
+
+def reaudit_paper(project_id: str) -> dict:
+    """Re-run the Auditor on the (possibly human-edited) ``paper/draft.md``.
+
+    V3 (goal_session11): the human-in-the-loop closure — after a user edits the
+    draft in the TipTap editor, this re-applies ``audit_draft`` + ``annotate_draft``
+    so a newly-added unsupported claim is marked ``[UNVERIFIED]``. The human cannot
+    bypass the gate; they collaborate with it.
+
+    **Non-fatal**: a re-audit failure is recorded on the timeline but never turns a
+    completed run into an error (mirrors the write/audit NONFATAL contract).
+    """
+    try:
+        metrics = load_metrics(project_id)
+        if not metrics:
+            raise RuntimeError("no metrics on disk — run the experiment/report step first")
+        from services.research_harness.auditor import run_auditor_agent
+
+        result = run_auditor_agent(project_id, metrics)
+        append_timeline(
+            project_id, "reaudit", "done",
+            ["paper/draft.md", "ledger/claim_audit.json"],
+        )
+        logger.info(
+            "[ReAudit] %s: gate=%s verified=%d unverified=%d",
+            project_id, result.get("gate"), result.get("verified_count", 0),
+            result.get("unverified_count", 0),
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001 — re-audit is non-fatal; never break a finished run
+        logger.warning("[ReAudit] %s failed (non-fatal): %s", project_id, exc)
+        append_timeline(project_id, "reaudit", "error", [])
+        return {"gate": False, "skipped": True, "reason": f"reaudit failed: {exc}"}
+
+
 STEP_FUNCS: dict[str, Callable[[str, str], Any]] = {
     "literature": run_step_literature,
     "idea": run_step_idea,

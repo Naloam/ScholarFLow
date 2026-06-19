@@ -21,6 +21,28 @@ class StartResponse(BaseModel):
     project_id: str
 
 
+class SaveDraftRequest(BaseModel):
+    """V3 (Session 11): human-edited paper draft from the TipTap editor."""
+    content: str = Field(..., min_length=1, description="Edited paper/draft.md markdown")
+
+
+class SaveDraftResponse(BaseModel):
+    ok: bool
+    chars: int
+    path: str
+
+
+class ReauditResponse(BaseModel):
+    """V3 (Session 11): result of re-running the Auditor on the edited draft."""
+    gate: bool
+    verified_count: int | None = None
+    unverified_count: int | None = None
+    citation_unverified_count: int | None = None
+    omission_unverified_count: int | None = None
+    skipped: bool = False
+    reason: str | None = None
+
+
 class TimelineEntry(BaseModel):
     step: str
     status: str

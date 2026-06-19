@@ -28,6 +28,7 @@ backend/tests/*
 !backend/tests/test_research_harness_citation.py
 !backend/tests/test_research_harness_honest_gate.py
 !backend/tests/test_research_harness_portfolio.py
+!backend/tests/test_research_harness_scale.py
 backend/migrations/
 
 # Docs — internal project documents

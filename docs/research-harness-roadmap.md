@@ -301,12 +301,44 @@ render couldn't offer).
 
 ## Deferred work — explicit "not until X" triggers
 
-### P2 — Orchestrator deprecation
-Deprecate `project_paper_orchestrator.py` (13975 lines) into a thin
-read-the-new-workspace compatibility layer.
-**Trigger:** *after* V2, incrementally — not this session. Only once the
-research_harness write/audit path is producing paper drafts of acceptable quality
-on real runs (the P3 quality bar, below).
+### P2 — Orchestrator deprecation (Session 13 — audit done; physical retirement gated on the live trigger)
+Deprecate `project_paper_orchestrator.py` (13975 lines) + the dead keyword→template
+"thinking" modules into a thin read-the-new-workspace compatibility layer.
+
+**Session 13 audit (this session):**
+- **Independence confirmed** (completion criterion #4): `research_harness` does NOT
+  import any old thinking module. Its only `autoresearch` touchpoints are (a) shared
+  *schema* types in `schemas/autoresearch.py` (`ExecutionBackendSpec`,
+  `SignificanceTestResult`, `ConfidenceIntervalSummary`) and (b)
+  `literature_connectors.search_literature_connectors` — which plan §3 *intentionally*
+  reuses ("薄封装，原始 connector 不动"). The new brain is decoupled from the old one.
+- **Dead-module map**: `idea_brief`, `experiment_factory`, `benchmarks`,
+  `project_paper_orchestrator` (13975 lines) are each referenced only by
+  `api/autoresearch.py` (the old ~60-endpoint surface) + `test_autoresearch_regressions.py`
+  (164 cases verifying the OLD keyword→template thinking). Nothing in `research_harness`
+  or `main.py`'s new path depends on them.
+- **Backward-compat baseline** (`run.json` / `artifact.json` consumers): these shapes are
+  produced/read inside `autoresearch/` (repository, bridge, system_evaluation, …). The
+  compat shim must project them from the new workspace.
+
+**Trigger status:** the goal's trigger is "新核在真实尺度 + 跨领域证过" — i.e. a real-scale
++ cross-domain live run passes the honesty gate. `live_session10_12_tabular` (this session,
+saurlax/mimo-v2.5-pro) is that run; its result determines whether the physical retirement
+may proceed. Per the goal's own sequencing ("13 在 10–12 之后；本身是独立清理，不阻塞 10–12"),
+the physical deletion + 164-test migration are **deferred until that live result lands**
+(not started while a run is in flight, to protect the FROZEN baseline).
+
+**Retirement plan (when triggered):**
+1. Audit `api/autoresearch.py`'s externally-consumed contracts (endpoint shapes,
+   `run.json`/`artifact.json`); write `autoresearch_compat/` shims that read the new
+   workspace (`pipeline.read_project_meta`/`load_metrics`/`ledger/*`) and return the old shapes.
+2. Migrate `test_autoresearch_regressions.py` from "verify old keyword→template thinking"
+   to "verify the compat shim returns the correct old shapes"; delete the assertions that
+   protected the now-retired thinking.
+3. Delete the dead thinking modules (`idea_brief`, `experiment_factory`, `benchmarks`
+   catalog, `project_paper_orchestrator`'s internal paths); target <2000 lines.
+4. Re-confirm `research_harness` independence + the CLAUDE.md non-negotiable baselines
+   (portfolio / multi-seed / aggregation / lineage / `run.json`+`artifact.json` compat).
 
 ### P3 — Release / venue / compliance / publish-archive
 Release governance, venue adapters, compliance checklists, publish-archive

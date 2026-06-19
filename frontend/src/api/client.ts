@@ -6,7 +6,9 @@ import type {
   AuthConfig,
   AuthSessionResponse,
   ProjectSummary,
+  ReauditResponse,
   RunStatus,
+  SaveDraftResponse,
   StartRequest,
   StartResponse,
   TimelineEntry,
@@ -150,6 +152,25 @@ export async function getFile(
 
 export function listProjects(): Promise<ProjectSummary[]> {
   return request<ProjectSummary[]>("/api/research-harness/projects");
+}
+
+// ---- V3 editable paper (Session 11) ----
+
+export function savePaperDraft(
+  projectId: string,
+  content: string,
+): Promise<SaveDraftResponse> {
+  return request<SaveDraftResponse>(
+    `/api/research-harness/projects/${encodeURIComponent(projectId)}/paper/draft`,
+    { method: "PUT", body: JSON.stringify({ content }) },
+  );
+}
+
+export function reauditPaper(projectId: string): Promise<ReauditResponse> {
+  return request<ReauditResponse>(
+    `/api/research-harness/projects/${encodeURIComponent(projectId)}/paper/reaudit`,
+    { method: "POST" },
+  );
 }
 
 export interface HarnessConfig {

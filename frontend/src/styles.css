@@ -639,6 +639,38 @@ code {
   font-size: 0.92em;
 }
 
+/* ---- V3 editable paper (PaperEditor, Session 11) ---- */
+.paper-editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.paper-editor__toolbar .btn { min-width: 0; padding: 4px 10px; font-size: 0.9em; }
+.paper-editor__spacer { flex: 1; }
+.paper-editor__msg { margin: 0 0 8px; font-size: 0.9em; }
+.paper-editor__msg--warn { color: var(--bad, #b00); }
+.paper-editor__msg--err { color: var(--bad, #b00); font-weight: 600; }
+.paper-editor__hint { margin: 6px 0 0; font-size: 0.82em; opacity: 0.75; font-style: italic; }
+.paper-editor__edit { border: 1px solid var(--border); border-radius: var(--radius); padding: 4px; background: var(--surface); }
+/* TipTap (ProseMirror) editable surface — reuse the read-only markdown typography. */
+.paper-editor__tiptap.ProseMirror {
+  padding: 10px 12px;
+  min-height: 220px;
+  outline: none;
+}
+.paper-editor__tiptap.ProseMirror:focus { outline: none; }
+.paper-editor__tiptap.ProseMirror p { margin: 8px 0; }
+.paper-editor__tiptap.ProseMirror h1 { font-size: 22px; margin: 0 0 10px; }
+.paper-editor__tiptap.ProseMirror h2 { font-size: 17px; margin: 22px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.paper-editor__tiptap.ProseMirror ul,
+.paper-editor__tiptap.ProseMirror ol { padding-left: 22px; }
+
 .audit {
   margin-top: 28px;
 }

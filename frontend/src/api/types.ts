@@ -13,6 +13,24 @@ export interface StartResponse {
   project_id: string;
 }
 
+// ---- V3 editable paper (Session 11): TipTap editor + re-audit closure ----
+
+export interface SaveDraftResponse {
+  ok: boolean;
+  chars: number;
+  path: string;
+}
+
+export interface ReauditResponse {
+  gate: boolean;
+  verified_count?: number | null;
+  unverified_count?: number | null;
+  citation_unverified_count?: number | null;
+  omission_unverified_count?: number | null;
+  skipped?: boolean;
+  reason?: string | null;
+}
+
 export type StepStatus = "done" | "error" | "running";
 
 export interface TimelineEntry {

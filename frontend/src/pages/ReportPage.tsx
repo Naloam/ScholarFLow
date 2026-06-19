@@ -2,7 +2,7 @@
 // significance / abstention) + faithful research_report.md render + reviewer
 // weaknesses. The report text is rendered verbatim — negative/null/Mixed
 // conclusions are never reframed as positive (honesty gate, goal §避坑 #8).
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getFile } from "../api/client";
@@ -17,7 +17,7 @@ import type {
 import { ErrorState } from "../components/States";
 import { MarkdownView } from "../components/MarkdownView";
 import { MetricCards } from "../components/MetricCards";
-import { PaperDraft } from "../components/PaperDraft";
+import { PaperEditor } from "../components/PaperEditor";
 import { AuditLedger } from "../components/AuditLedger";
 import { HonestGateCards } from "../components/HonestGateCards";
 import { PortfolioCard } from "../components/PortfolioCard";
@@ -80,6 +80,15 @@ export function ReportPage() {
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    if (!projectId) return;
+    loadReport(projectId)
+      .then((result) => setData(result))
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load report");
+      });
+  }, [projectId]);
 
   useEffect(() => {
     if (!projectId) {
@@ -158,9 +167,12 @@ export function ReportPage() {
               pass fixes numbers the evidence doesn't support), then gated by the
               AuditorAgent. Claims with no supporting metric, and citations not found in the
               retrieved literature, are marked{" "}
-              <mark className="unverified">[UNVERIFIED]</mark> inline.
+              <mark className="unverified">[UNVERIFIED]</mark> inline. You can{" "}
+              <strong>edit the draft</strong> (V3 TipTap) — saving then re-running the audit
+              re-applies the gate: any newly-added unsupported claim is marked
+              [UNVERIFIED] too.
             </p>
-            <PaperDraft source={data.draft} />
+            <PaperEditor projectId={projectId} draft={data.draft} onChanged={reload} />
           </details>
         </section>
       ) : null}

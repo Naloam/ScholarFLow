@@ -191,6 +191,57 @@ table below. (The paper layer was cut short mid-write when the GLM account balan
 was exhausted — an external billing constraint, not a V2.3 issue; write/audit are
 non-fatal and the honest report was already on disk.)
 
+### V2.4 — Real-scale experiment plane + gate precision ✅ done (Session 10)
+Closes the four "honestly reports a toy" gaps Session 9 surfaced: every candidate
+was `underpowered (ran 10 of recommended 512 seeds)`, all kill criteria were free-
+text → `needs_manual`, the baseline was weak (TF-IDF/Jaccard), and the analysis
+action `report_failure_mode` could be spawned as an experiment. V2.4 makes the
+**input to the gates** real-scale and machine-judgeable. **Only-add** — no V2.2/V2.3
+gate logic is touched.
+
+1. **Scale (held-out + seeds)**: the committed claim-verification slices were rebuilt
+   from source at real scale within the `≤500` cap — `scifact 100→474`
+   (237 SUPPORT / 237 REFUTE, dev+train labeled claims), `vitaminc 100→500`
+   (250/250, dev split), `citation_faithfulness 100→474` (237/237, derived). The
+   planner/registry seed target moved `10 → ≥128 (toward 512)`. Builder:
+   `scripts/build_seed_slices_v2.py` (deterministic, reproducible).
+2. **Budget grounded in a measurement**: `scripts/measure_scale_budget.py` shows the
+   SentenceTransformer path is **not** the binding constraint — ST load ~8s (once),
+   encode amortized, and the paired bootstrap is <1s even at `1000×256 seeds × 3
+   datasets`. So 512 seeds at 500 examples fits comfortably; `MAX_EXPERIMENT_SECONDS`
+   stays 600 (no silent loosening). Measurement table:
+   | slice_size | seeds=10 | 64 | 128 | 256 |
+   |---|---|---|---|---|
+   | 100 | <0.01s | 0.02s | 0.02s | 0.04s |
+   | 300 | <0.01s | 0.03s | 0.05s | 0.11s |
+   | 500 | 0.01s | 0.04s | 0.07s | 0.13s |
+   | 1000 | 0.01s | 0.06s | 0.12s | 0.28s |
+   _(3 datasets, proposed-system macro_f1 only; the full 4-system×3-metric run is
+   ~9× this and still <3s at 1000×256.)_
+3. **Stronger baseline**: a real `stronger_baseline` role (BM25 / Okapi lexical
+   retrieval) joins the systems; the proposed method's win must clear BM25, not just
+   the TF-IDF weak baseline (VICTOR/VERIRAG named as Future Work — GPU/large-model).
+4. **Machine-judgeable kill criteria**: `idea_agent_v1.md` kill_criteria is now a
+   **hard format** (`<metric> <op> <number>` threshold OR `<metric> 相比 baseline
+   <op>` comparison; free-text forbidden). New pure-logic `evidence.
+   validate_kill_criteria(hypothesis)` checks parseability at idea-time; the
+   IdeaAgent annotates each candidate (`kill_criteria_parseable`) and **demotes**
+   candidates with unparseable criteria (never silently passes one that would be
+   `needs_manual` later).
+5. **Analysis-action fix**: `research_manager` gained `_ANALYSIS_ONLY_ACTIONS`
+   (`report_failure_mode`, `rewrite_related_work`, `add_limitations_section`,
+   `discuss_*`, …) — these are recorded as **writing_tasks**, never handed to
+   `experiment_engineer.run_follow_up` (the logical error where an analysis action
+   was generated as an experiment).
+6. **Tests**: new CI-safe `test_research_harness_scale.py` (13 cases) — kill
+   validator (threshold/comparison/free-text/empty), annotation + ranking demotion,
+   analysis-action non-spawning (asserts `run_follow_up` call count == 0), scale +
+   stronger-baseline invariants. `prompts/citation/honest_gate/portfolio` (102) +
+   FROZEN `autoresearch` (164) still green.
+
+**Live acceptance (`live_session10`)**: pending — the GLM account balance must be
+recharged first (Session 9 exhausted it mid-run); acceptance row added once run.
+
 ### V3 — Editable paper (not started)
 TipTap rich-text editor so a human can edit `paper/draft.md` in-place (currently
 read-only render). Out of scope until V2 quality is validated on live runs.

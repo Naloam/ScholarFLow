@@ -239,8 +239,10 @@ gate logic is touched.
    stronger-baseline invariants. `prompts/citation/honest_gate/portfolio` (102) +
    FROZEN `autoresearch` (164) still green.
 
-**Live acceptance (`live_session10`)**: pending — the GLM account balance must be
-recharged first (Session 9 exhausted it mid-run); acceptance row added once run.
+**Live acceptance (`live_session10_12_tabular`)**: ✅ done — see the live-run table.
+The cross-domain tabular run validates V2.4 (512 seeds / not underpowered; kill
+criterion machine-judged; `stronger_baseline_gradientboosting` in the plan) and V2.5
+(tabular domain end-to-end; honesty gate not bypassed) on one run.
 
 ### V2.5 — Cross-domain generalization ✅ done (Session 12, deterministic)
 Proves the brain is not claim-verification-overfit. Two hard locks were
@@ -271,9 +273,11 @@ with no arg still return exactly the V2.4 claim note).
 5. **Tests**: new CI-safe `test_research_harness_cross_domain.py` (12 cases). The 6-file
    CI subset (115 cases) + FROZEN (164) still green.
 
-**Cross-domain live (`live_session12_<domain>`)**: pending — batched with the other
-live acceptances; requires ≥1 negative/downgrade/kill on a non-RAG domain to prove the
-gate is not bypassed in a new domain.
+**Cross-domain live (`live_session10_12_tabular`)**: ✅ done — same run as V2.4 (tabular
+domain). The honesty gate was demonstrably **not bypassed** in the new domain: the audit
+`gate=False` fired on the domain-agnostic omitted-material-metric gate (the draft omitted
+`calibration_error`), and `h1` was honestly reported `no_comparison` (not forced positive) →
+`mixed_portfolio`. kill criterion evaluated (`needs_manual=False`).
 
 ### V3 — Editable paper (TipTap, human-in-the-loop) ✅ done (Session 11)
 Puts the human back in the loop. The paper draft is no longer read-only: a TipTap
@@ -322,11 +326,10 @@ Deprecate `project_paper_orchestrator.py` (13975 lines) + the dead keyword→tem
   compat shim must project them from the new workspace.
 
 **Trigger status:** the goal's trigger is "新核在真实尺度 + 跨领域证过" — i.e. a real-scale
-+ cross-domain live run passes the honesty gate. `live_session10_12_tabular` (this session,
-saurlax/mimo-v2.5-pro) is that run; its result determines whether the physical retirement
-may proceed. Per the goal's own sequencing ("13 在 10–12 之后；本身是独立清理，不阻塞 10–12"),
-the physical deletion + 164-test migration are **deferred until that live result lands**
-(not started while a run is in flight, to protect the FROZEN baseline).
++ cross-domain live run passes the honesty gate. `live_session10_12_tabular` (this session)
+**landed and satisfied the trigger** (real-scale 512-seed tabular run, honest mixed_portfolio,
+gate not bypassed). The physical deletion + 164-test migration remain a dedicated cleanup —
+not blocking, and deliberately not done mid-run; they are the next P2 step.
 
 **Retirement plan (when triggered):**
 1. Audit `api/autoresearch.py`'s externally-consumed contracts (endpoint shapes,
@@ -372,6 +375,7 @@ evidence for P3** — CI/fixtures cannot substitute.
 | v2.2_anchor_check (2026-06-18, deterministic re-validation of `v0_3c6558d0`) | (replays the Session 7 positive-significant hole case) | 0 min (no live tokens) | success | base `positive_significant` → **anchored `negative`** when primary metric declared | n/a | n/a | n/a | n/a | **The hole case, V2.2-gated.** With the hypothesis declaring `primary_metric=error_rate_at_20pct_abstain` (which the updated `idea_agent_v1.md` now elicits), the verdict downgrades to `negative` (proposed abstention error *worse* than baseline). Unconditionally the run also records `missing_baselines=[Calibrated Softmax, Sufficient Context Classifier]`, `underpowered (ran 10/512 seeds)`, both kill criteria `needs_manual`, and the omission gate fails on the two abstention metrics. |
 | live_session8 (2026-06-18, GLM-5.2) | Selective Answer Abstention via Retrieval-Evidence Dispersion Features for Citation-Faithful Fact Verification | 18.0 min | success | **negative** (anchored on `error_rate_at_20pct_abstain`) | complete, 11.2k chars | **True** | 0 (1/1 verified) | 0 | **Fresh-idea acceptance for V2.2 (criterion #6).** The idea_agent declared `primary_metric=error_rate_at_20pct_abstain`; the planner ran the comparison on it (not `macro_f1`); proposed did NOT beat baseline (Δ+0.000/+0.015/+0.021, all worse), `any_significant=False` → verdict **`negative`**, reported faithfully in the TL;DR + the "⚠ Hypothesis-Anchored Verdict" banner. No cherry-picking: the success is no longer shored up on a generic metric. kill criteria → `needs_manual` (Chinese, non-parseable); citation grounding log `unverified_before=[]` (no hallucinated refs); Future Work lists the infeasible must_haves (improve_statistical_power, add_stronger_baseline VICTOR/VERIRAG, run_ablation) with reasons. Reviewer: reject / no_evidence. |
 | live_session9 (2026-06-19, GLM-5.2, **K=3 portfolio**) | Refutation-Aware Evidence Retrieval for Citation-Faithful Claim Verification | ~53 min (core; portfolio step ~36 min for 3 candidates) | success (all 3) | **mixed_portfolio** — best `h3` `positive_significant`; `h2` **negative** (downgraded), `h4` `positive_significant` | partial: contribution.md + outline.md only (draft cut off — see notes) | n/a (audit not reached) | n/a | n/a | **Fresh-idea acceptance for V2.3 (criterion #6).** 5 candidates generated → top-3 ran **independently** to `candidates/<id>/`, each gated by the full V2.2 layer on its own primary metric. `h2` (冲突信号显式建模的拒答校准, primary `error_rate_at_20pct_abstain`) → **negative**, **downgraded** (the anchored gate fired per-candidate, mirroring the Session-8 hole case on a fresh idea — no cherry-picking). `h3`/`h4` (`macro_f1`) → **positive_significant** (h3: citation_faithfulness 0.980 vs 0.978, scifact 0.601 vs 0.532, vitaminc 0.528 vs 0.525; 10 seeds, any_significant=True, 3 datasets; underpowered 10/512 toy-scale). Aggregate honestly → `mixed_portfolio`, best `h3`, promoted to the top-level report; the Portfolio Summary table names all three candidates with their verdicts verbatim. 45 papers retrieved. Reviewer follow-up + paper **write** step were cut short when the GLM account balance was exhausted (余额不足) mid-run — an external billing constraint, not a V2.3 issue; write/audit are non-fatal and the honest portfolio + report were already on disk. The V2.3 acceptance (independent per-candidate honest gates + honest aggregate + Portfolio Summary) is fully met. |
+| live_session10_12_tabular (2026-06-19, saurlax mimo-v2.5-pro, **K=2 portfolio**, cross-domain) | Explicit pairwise feature-interaction features reduce Expected Calibration Error of small-sample tabular classifiers | ~17.4 min | success (both candidates) | **mixed_portfolio** — best `h3` `positive_significant` (NOT downgraded); `h1` `no_comparison` | complete, 2.8k chars | **True** (gate **False** — honest) | 0 (0/1 verified) | 0 | **Fresh-idea acceptance for V2.4 (Session 10) AND V2.5 (Session 12, criterion #6) on ONE cross-domain run.** Domain = **tabular** (all 3 idea_agent candidates tagged `domain=tabular`; method = sklearn SVM + explicit pairwise interactions, NOT sentence-transformer — cross-domain routing worked). Dataset = `breast_cancer_tabular` (424 examples, real scale). Best `h3`: proposed reduced **calibration_error 0.0474 → 0.0260** (Δ−0.0214, lower-is-better, beats baseline) on its declared `primary_metric=calibration_error` — **no cherry-picking a generic metric**; **512 seeds** (Session 9's underpowered 10/512 is GONE — `underpowered=None`); plan includes `stronger_baseline_gradientboosting` + baseline + ablation. Kill criterion `calibration_error >= 0.15` was **machine-judged** (`needs_manual=False`, tripped=False) — Session 9's "all kill criteria needs_manual" is fixed. `h1` honestly `no_comparison` (its codegen's result shape didn't pair into a baseline comparison) → portfolio honestly `mixed_portfolio`, not forced positive. Audit **gate=False**: the domain-agnostic **omitted-material-metric gate** fired (`omitted material metric "calibration_error"` — the writer's draft didn't discuss the primary metric) → proves the honesty gate is **NOT bypassed in the new domain** (Session 12). Reviewer: weak_reject / insufficient_evidence (3 weaknesses). Note: GLM-5.2 was impractical (112s/call ping) and the Xiaomi endpoint failed to connect, so this run used the responsive saurlax `mimo-v2.5-pro` fallback the operator provided — a model swap, not a code change. |
 
 **Assessment:** the first live run clears the V2 quality bar — honest negative
 result preserved end-to-end, complete draft, no honesty-gate bypass, no

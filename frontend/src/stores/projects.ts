@@ -10,7 +10,7 @@ interface ProjectsState {
   error: string | null;
   creating: boolean;
   loadProjects: () => Promise<void>;
-  createRun: (idea: string) => Promise<string>;
+  createRun: (idea: string, portfolioK?: number) => Promise<string>;
 }
 
 function newProjectId(): string {
@@ -38,11 +38,15 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     }
   },
 
-  createRun: async (idea) => {
+  createRun: async (idea, portfolioK) => {
     set({ creating: true, error: null });
     try {
       const projectId = newProjectId();
-      const result = await startRun(projectId, { idea, steps: "all" });
+      const result = await startRun(projectId, {
+        idea,
+        steps: "all",
+        ...(portfolioK ? { portfolio_k: portfolioK } : {}),
+      });
       // Optimistically insert so the Projects list reflects the new run immediately.
       const optimistic: ProjectSummary = {
         project_id: result.project_id,

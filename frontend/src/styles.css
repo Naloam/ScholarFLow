@@ -1005,3 +1005,96 @@ code {
   margin: 6px 0 0;
 }
 .audit__grounding .warn { color: var(--bad); }
+
+.portfolio__foot { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+
+/* Portfolio K control on the New run form. */
+.newrun__k {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+.newrun__k-input {
+  width: 56px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+}
+.chip--positive { color: var(--ok); background: var(--ok-soft); }
+.chip--mixed { color: var(--warn); background: var(--warn-soft); }
+.chip--negative { color: var(--bad); background: var(--bad-soft); }
+.chip--neutral { color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); }
+
+/* V2.3 PortfolioCard — honest per-candidate summary table. */
+.portfolio {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  margin: 0 0 16px;
+}
+.portfolio__head { margin-bottom: 10px; }
+.portfolio__head .section__title { margin: 0 0 2px; }
+.portfolio__sub { margin: 0; color: var(--muted); font-size: 13px; }
+.portfolio__verdict {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.portfolio__verdict-label { color: var(--muted); }
+.portfolio__best { color: var(--ink-soft); }
+.portfolio__best code { background: transparent; border: none; padding: 0; }
+.portfolio__table-wrap { overflow-x: auto; }
+.portfolio__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.portfolio__caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--muted);
+  font-size: 12px;
+  padding-bottom: 8px;
+}
+.portfolio__table thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-soft);
+  border-bottom: 2px solid var(--border-strong);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+.portfolio__table tbody th,
+.portfolio__table tbody td {
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 10px;
+  vertical-align: middle;
+}
+.portfolio__row { transition: background 0.1s ease; }
+.portfolio__row--best {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.portfolio__row--positive .chip { /* tone carried by the chip itself */ }
+.portfolio__candidate { font-weight: 500; white-space: nowrap; }
+.portfolio__star { color: var(--accent); margin-right: 6px; }
+.portfolio__title { margin-right: 6px; }
+.portfolio__cid { font-size: 11px; color: var(--muted); background: transparent; border: none; padding: 0; }
+.portfolio__note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.portfolio__foot { margin: 6px 0 0; color: var(--muted); font-size: 12px; }

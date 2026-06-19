@@ -16,6 +16,7 @@ export function ProjectsPage() {
   const navigate = useNavigate();
   const { projects, loading, error, creating, loadProjects, createRun } = useProjectsStore();
   const [idea, setIdea] = useState("");
+  const [portfolioK, setPortfolioK] = useState(3);
 
   useEffect(() => {
     void loadProjects();
@@ -28,7 +29,7 @@ export function ProjectsPage() {
       return;
     }
     try {
-      const projectId = await createRun(trimmed);
+      const projectId = await createRun(trimmed, portfolioK);
       setIdea("");
       navigate(`/projects/${projectId}`);
     } catch {
@@ -60,6 +61,22 @@ export function ProjectsPage() {
           required
         />
         <div className="newrun__row">
+          <label className="newrun__k" htmlFor="portfolio-k" title="How many ranked hypothesis candidates to execute (default 3, cap 5). K=1 = single-hypothesis run.">
+            <span className="newrun__k-label">Portfolio K</span>
+            <input
+              id="portfolio-k"
+              className="newrun__k-input"
+              type="number"
+              min={1}
+              max={5}
+              step={1}
+              value={portfolioK}
+              onChange={(e) => {
+                const v = Number.parseInt(e.target.value, 10);
+                if (!Number.isNaN(v)) setPortfolioK(Math.max(1, Math.min(5, v)));
+              }}
+            />
+          </label>
           <button type="button" className="btn btn--ghost" onClick={() => setIdea(SAMPLE_IDEA)}>
             Use sample idea
           </button>

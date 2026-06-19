@@ -11,6 +11,7 @@ import type {
   CitationGroundingLog,
   ClaimAudit,
   MetricsJson,
+  PortfolioSummary,
   ReviewJson,
 } from "../api/types";
 import { ErrorState } from "../components/States";
@@ -19,6 +20,7 @@ import { MetricCards } from "../components/MetricCards";
 import { PaperDraft } from "../components/PaperDraft";
 import { AuditLedger } from "../components/AuditLedger";
 import { HonestGateCards } from "../components/HonestGateCards";
+import { PortfolioCard } from "../components/PortfolioCard";
 import { ReviewerWeaknesses } from "../components/ReviewerWeaknesses";
 import { Spinner } from "../components/Spinner";
 
@@ -31,12 +33,13 @@ interface ReportData {
   audit: ClaimAudit | null;
   anchored: AnchoredVerdict | null;
   grounding: CitationGroundingLog | null;
+  portfolio: PortfolioSummary | null;
 }
 
 async function loadReport(projectId: string): Promise<ReportData> {
   const [
     reportText, metricsText, reviewText, papersText, draftText, auditText,
-    anchoredText, groundingText,
+    anchoredText, groundingText, portfolioText,
   ] = await Promise.all([
     getFile(projectId, "research_report.md").catch(() => ""),
     getFile(projectId, "artifacts/metrics.json").catch(() => ""),
@@ -46,6 +49,7 @@ async function loadReport(projectId: string): Promise<ReportData> {
     getFile(projectId, "ledger/claim_audit.json").catch(() => ""),
     getFile(projectId, "ledger/anchored_verdict.json").catch(() => ""),
     getFile(projectId, "paper/citation_grounding_log.json").catch(() => ""),
+    getFile(projectId, "ledger/portfolio.json").catch(() => ""),
   ]);
 
   const parse = <T,>(text: string): T | null => {
@@ -62,9 +66,13 @@ async function loadReport(projectId: string): Promise<ReportData> {
   const audit = parse<ClaimAudit>(auditText);
   const anchored = parse<AnchoredVerdict>(anchoredText);
   const grounding = parse<CitationGroundingLog>(groundingText);
+  const portfolio = parse<PortfolioSummary>(portfolioText);
   const paperCount = papersText ? papersText.split("\n").filter((l) => l.trim()).length : 0;
 
-  return { report: reportText, metrics, review, paperCount, draft: draftText, audit, anchored, grounding };
+  return {
+    report: reportText, metrics, review, paperCount, draft: draftText,
+    audit, anchored, grounding, portfolio,
+  };
 }
 
 export function ReportPage() {
@@ -122,6 +130,8 @@ export function ReportPage() {
       </header>
 
       <MetricCards metrics={data?.metrics ?? null} review={data?.review ?? null} />
+
+      <PortfolioCard portfolio={data?.portfolio ?? null} />
 
       <HonestGateCards anchored={data?.anchored ?? null} />
 

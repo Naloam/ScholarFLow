@@ -4,6 +4,8 @@
 export interface StartRequest {
   idea: string;
   steps?: string;
+  /** V2.3 portfolio size (default 3, cap 5). K=1 = legacy single-hypothesis run. */
+  portfolio_k?: number;
 }
 
 export interface StartResponse {
@@ -225,4 +227,34 @@ export interface AnchoredVerdict {
     systems_added?: string[];
     reason?: string;
   } | null;
+}
+
+// ---- V2.3 portfolio-aware execution (ledger/portfolio.json) ----
+
+export interface PortfolioCandidateRow {
+  candidate_id: string;
+  title?: string;
+  primary_metric?: string | null;
+  /** Did the proposed method beat the baseline on this candidate's primary metric. */
+  beats_baseline?: boolean | null;
+  /** Anchored verdict (evidence.full_verdict) for this candidate. */
+  verdict?: string;
+  /** Whether any deterministic kill criterion tripped for this candidate. */
+  kill_tripped?: boolean;
+  /** Whether the verdict was downgraded from the generic-metric base verdict. */
+  downgraded?: boolean;
+  execution_status?: string;
+  feasibility?: string;
+  /** True on the portfolio's best (anchored-verdict winner) candidate. */
+  is_best?: boolean;
+}
+
+export interface PortfolioSummary {
+  k?: number;
+  /** Honest overall label: `best=<verdict>` | `all_negative` | `mixed_portfolio`. */
+  portfolio_verdict?: string;
+  best_candidate_id?: string | null;
+  best_candidate?: Record<string, unknown> | null;
+  rows?: PortfolioCandidateRow[];
+  note?: string;
 }

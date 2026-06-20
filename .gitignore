@@ -31,6 +31,8 @@ backend/tests/*
 !backend/tests/test_research_harness_scale.py
 !backend/tests/test_research_harness_cross_domain.py
 !backend/tests/test_research_harness_editable_paper.py
+!backend/tests/test_research_harness_autoresearch_compat.py
+!backend/tests/test_research_harness_publish.py
 backend/migrations/
 
 # Docs — internal project documents

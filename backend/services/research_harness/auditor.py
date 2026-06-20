@@ -261,6 +261,39 @@ def extract_claims(draft_text: str) -> list[dict[str, Any]]:
     return claims
 
 
+# Structured claims (S17, only-add): a Writer-emitted marker binds a claim to its
+# evidence in a language-independent, machine-readable form, so verification does not
+# depend on parsing prose (which the keyword matcher cannot do for CJK or decimals).
+#   <!-- audit-claim metric=calibration_error proposed=0.025962 baseline=0.047393 -->
+_STRUCTURED_CLAIM_RE = re.compile(
+    r"<!--\s*audit-claim\s+metric=([A-Za-z0-9_]+)"
+    r"(?:\s+proposed=([-+0-9.eE]+))?"
+    r"(?:\s+baseline=([-+0-9.eE]+))?"
+    r"\s*-->"
+)
+
+
+def extract_structured_claims(draft_text: str) -> list[dict[str, Any]]:
+    """Parse ``<!-- audit-claim metric=.. proposed=.. baseline=.. -->`` markers into
+    claim dicts (``category="structured"``). Returns ``[]`` when the draft has no
+    markers, so existing drafts are unaffected (only-add)."""
+    claims: list[dict[str, Any]] = []
+    for i, m in enumerate(_STRUCTURED_CLAIM_RE.finditer(draft_text or ""), start=1):
+        raw_proposed = m.group(2)
+        raw_baseline = m.group(3)
+        claims.append(
+            {
+                "id": f"structured_{i}",
+                "text": m.group(0),
+                "category": "structured",
+                "metric": m.group(1),
+                "proposed": float(raw_proposed) if raw_proposed is not None else None,
+                "baseline": float(raw_baseline) if raw_baseline is not None else None,
+            }
+        )
+    return claims
+
+
 def _citation_claim(result: dict[str, Any], index: int) -> dict[str, Any]:
     """Lift a citation.verify_citations result into the ledger's claim shape."""
     title = result.get("raw_title") or result.get("marker") or ""
@@ -287,6 +320,69 @@ def _evidence_overlap(claim_text: str, items: list[dict[str, Any]]) -> list[dict
         if len(overlap) >= 2 or len(overlap) / len(claim_kw) >= 0.3:
             matched.append(item)
     return matched
+
+
+def _real_metric_values(name: str, metrics: dict[str, Any]) -> dict[str, list[float]]:
+    """Real proposed/baseline values for metric ``name`` from ``baseline_comparison``.
+    Used to ground a structured claim's cited numbers in actual evidence."""
+    proposed: list[float] = []
+    baseline: list[float] = []
+    bc = metrics.get("baseline_comparison") or {}
+    if isinstance(bc, dict) and (bc.get("metric_name") or "").lower() == (name or "").lower():
+        for d in bc.get("datasets") or []:
+            if not isinstance(d, dict):
+                continue
+            if isinstance(d.get("proposed_metric"), (int, float)):
+                proposed.append(float(d["proposed_metric"]))
+            if isinstance(d.get("baseline_metric"), (int, float)):
+                baseline.append(float(d["baseline_metric"]))
+    return {"proposed": proposed, "baseline": baseline}
+
+
+# Relative tolerance for matching a structured claim's cited value to a real one:
+# 1% absorbs prose rounding (0.026 ↔ 0.025962) while rejecting fabricated numbers
+# (0.9 vs 0.025962). Never loosen above ~1% or arbitrary numbers start matching.
+_STRUCTURED_VALUE_REL_TOL: float = 1e-2
+
+
+def _values_match(cited: float, real: float) -> bool:
+    if cited == real:
+        return True
+    return abs(cited - real) <= _STRUCTURED_VALUE_REL_TOL * max(abs(real), 1e-12)
+
+
+def _verify_structured_claim(claim: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    """Verify a structured claim by its cited numbers (language-independent): the
+    metric must exist, the claim must cite at least one value, and every cited value
+    must match a real value within tolerance. Fabricated numbers / unknown metrics
+    fail — never loosened. Direction overclaim is still handled by the prose overclaim
+    rules (Rules 1-4) on the surrounding sentence."""
+    cid = claim["id"]
+    metric = claim["metric"]
+    proposed = claim.get("proposed")
+    baseline = claim.get("baseline")
+    if proposed is None and baseline is None:
+        return _verdict(
+            cid, "unverified", claim["text"], [],
+            f'structured claim for "{metric}" carries no cited values to verify', "structured",
+        )
+    real = _real_metric_values(metric, metrics)
+    if not real["proposed"] and not real["baseline"]:
+        return _verdict(
+            cid, "unverified", claim["text"], [],
+            f'structured claim cites unknown metric "{metric}"', "structured",
+        )
+    proposed_ok = proposed is None or any(_values_match(proposed, v) for v in real["proposed"])
+    baseline_ok = baseline is None or any(_values_match(baseline, v) for v in real["baseline"])
+    if proposed_ok and baseline_ok:
+        return _verdict(
+            cid, "verified", claim["text"], [],
+            f"structured claim grounded in real {metric} values", "structured",
+        )
+    return _verdict(
+        cid, "unverified", claim["text"], [],
+        f'structured claim cites {metric} values that do not match metrics.json', "structured",
+    )
 
 
 def _classify_claim(claim: dict[str, Any], metrics: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -417,6 +513,12 @@ def audit_draft(
 
     claim_sentences = extract_claims(draft_text)
     verdicts = [_classify_claim(c, metrics, items) for c in claim_sentences]
+
+    # Structured claims (S17, only-add): Writer-emitted audit-claim markers, verified
+    # by their real numbers rather than prose parsing — language-independent. Drafts
+    # without markers yield none, so this is inert for existing drafts.
+    for structured in extract_structured_claims(draft_text):
+        verdicts.append(_verify_structured_claim(structured, metrics))
 
     # Citation gate (V2.1). One call, offline by default; live is opt-in and safe.
     citation_results = citation.verify_citations(draft_text, papers or [], live=live)

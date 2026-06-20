@@ -17,10 +17,11 @@ Design notes:
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from config.settings import settings
 from schemas.research_harness import (
@@ -34,7 +35,7 @@ from schemas.research_harness import (
     StartResponse,
     TimelineEntry,
 )
-from services.research_harness import pipeline
+from services.research_harness import pipeline, publish
 from services.research_harness.run_registry import REGISTRY
 
 logger = logging.getLogger("api.research_harness")
@@ -264,3 +265,70 @@ def list_projects() -> list[ProjectSummary]:
         )
         for p in pipeline.list_workspace_projects()
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Session 14 — P3 publication surface (publish-bundle + deployment listing)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/projects/{project_id}/publish-bundle")
+def get_publish_bundle(project_id: str, download: int = 0):
+    """Return the publish-bundle manifest, or the .zip when ``?download=1``.
+
+    Re-builds the bundle from the workspace (idempotent / deterministic) so the
+    manifest always reflects current on-disk state. The honesty contract is
+    enforced inside ``build_publish_bundle``: a gate-failed / negative artifact
+    is returned with ``publishable: false`` + reason — the endpoint never
+    overrides that. No user-controlled path (fixed bundle path → no traversal).
+    """
+    if pipeline.read_project_meta(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    manifest = publish.build_publish_bundle(project_id)
+
+    if download:
+        zip_path = pipeline.project_dir(project_id) / "publish_bundle" / "publish_bundle.zip"
+        if not zip_path.is_file():
+            raise HTTPException(status_code=404, detail="Bundle archive not available")
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=f"{project_id}_publish_bundle.zip",
+        )
+    return manifest
+
+
+@router.get("/projects/{project_id}/deployments")
+def list_deployments(project_id: str) -> dict:
+    """Read-only deployment status for a project's publish-bundle.
+
+    Lists the bundle + its publishable state. Does NOT auto-deploy, does NOT do
+    venue adaptation — pure read-only status (plan §6 YAGNI).
+    """
+    if pipeline.read_project_meta(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    manifest_path = pipeline.project_dir(project_id) / "publish_bundle" / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = publish.build_publish_bundle(project_id)
+    else:
+        manifest = publish.build_publish_bundle(project_id)
+
+    audit = manifest.get("audit_gate", {}) or {}
+    verdict = manifest.get("honest_verdict", {}) or {}
+    return {
+        "project_id": project_id,
+        "has_bundle": True,
+        "publishable": manifest.get("publishable"),
+        "publishable_reason": manifest.get("publishable_reason"),
+        "honest_verdict": verdict.get("verdict"),
+        "portfolio_verdict": manifest.get("portfolio_verdict"),
+        "audit_gate": audit.get("gate"),
+        "unverified_count": audit.get("unverified_count"),
+        "bundle_files": manifest.get("bundle_files"),
+        "manifest_path": "publish_bundle/manifest.json",
+    }

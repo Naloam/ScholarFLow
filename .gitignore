@@ -33,6 +33,7 @@ backend/tests/*
 !backend/tests/test_research_harness_editable_paper.py
 !backend/tests/test_research_harness_autoresearch_compat.py
 !backend/tests/test_research_harness_publish.py
+!backend/tests/test_research_harness_auditor_marker_hygiene.py
 backend/migrations/
 
 # Docs — internal project documents

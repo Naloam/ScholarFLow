@@ -470,6 +470,48 @@ def _annotate_report(project_id: str, result: dict[str, Any]) -> None:
     report_path.write_text(existing + section, encoding="utf-8")
 
 
+# Matches the Auditor's OWN previously-injected omission block (the marker
+# ``annotate_draft`` appends at line ~428) so a re-audit can strip it before
+# auditing. A draft that carries this marker into a re-audit is "poisoned": the
+# metric name inside the marker satisfies ``_metric_mentioned`` (pseudo-clearing
+# the very omission it flags) and the quoted name trips a false citation. Only
+# the stable prefix is anchored, so the match survives suffix/version drift.
+_AUDITOR_OMISSION_BLOCK_RE = re.compile(
+    r"\n*<!-- auditor: omitted material metrics\b.*?(?=\n\n|\Z)",
+    re.DOTALL,
+)
+_ORPHAN_OMISSION_MARKER_PREFIX = "> [UNVERIFIED: omitted material"
+
+
+def _strip_self_injected_omission_block(draft_text: str) -> str:
+    """Remove the Auditor's own previously-injected omission block before re-auditing.
+
+    Re-audit hygiene: ``annotate_draft`` appends a ``<!-- auditor: omitted material
+    metrics … -->`` block plus ``> [UNVERIFIED: omitted material metric "…"]`` lines
+    to flag omissions inline. On the NEXT ``run_auditor_agent`` re-audit the Auditor
+    read that marker back as draft content, which (a) pseudo-cleared the omission —
+    the metric name inside the marker satisfied ``_metric_mentioned`` — and (b) the
+    quoted name tripped a false citation. Stripping the Auditor's own write-back lets
+    re-audit see the human content.
+
+    **Only-add / never-loosen**: a real omission (a material metric genuinely absent
+    from the human text) is still reported once the marker is gone — only the
+    Auditor's own marker is removed, never a human sentence. See the regression test
+    ``test_research_harness_auditor_marker_hygiene.py``.
+    """
+    cleaned = _AUDITOR_OMISSION_BLOCK_RE.sub("", draft_text or "")
+    # Defense-in-depth: drop an orphaned omitted-metric marker line even if the HTML
+    # comment header that normally precedes it is missing.
+    cleaned = "\n".join(
+        line
+        for line in cleaned.splitlines()
+        if not line.strip().startswith(_ORPHAN_OMISSION_MARKER_PREFIX)
+    )
+    if cleaned and not cleaned.endswith("\n"):
+        cleaned += "\n"
+    return cleaned
+
+
 def run_auditor_agent(project_id: str, metrics: dict[str, Any]) -> dict[str, Any]:
     """Read paper/draft.md, audit it, write ledger + annotated draft + report annotation."""
     proj = _project_dir(project_id)
@@ -479,6 +521,10 @@ def run_auditor_agent(project_id: str, metrics: dict[str, Any]) -> dict[str, Any
         return {"gate": False, "skipped": True, "reason": "no_draft"}
 
     draft_text = draft_path.read_text(encoding="utf-8")
+    # Re-audit hygiene (only-add): strip our OWN previously-injected omission block so
+    # the marker can't pseudo-clear an omission or trigger a false citation. Real
+    # omissions are still detected from the human content.
+    draft_text = _strip_self_injected_omission_block(draft_text)
 
     papers: list[dict[str, Any]] = []
     papers_path = proj / "literature" / "papers.jsonl"

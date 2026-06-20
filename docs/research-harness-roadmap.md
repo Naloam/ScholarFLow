@@ -421,3 +421,108 @@ gate before starting it is a product/priority decision, not a quality one.
 context, per-minute rate limits, no embeddings interface). The Writer issues
 multiple section calls + at most one revise call, all through the rate-limit-aware
 `chat()`; large prompts are batched. See memory `[[llm-testing-constraint]]`.
+
+---
+
+## Session 13 / 14 (2026-06-20) — P3 publish surface shipped; orchestrator retirement scoped
+
+### Session 14 — P3 publication surface: DONE (live-verified)
+
+The publish surface (CLAUDE.md "current priority = Deployment/Publication
+surface") is shipped on top of the weighted, honest `live_session10_12_tabular`
+artifact (the run that satisfied P3's trigger).
+
+- `services/research_harness/publish.py` — `build_publish_bundle(project_id)`
+  aggregates idea / best candidate / honest verdict (`full_verdict`) / audit
+  gate / unverified count / metric summary / provenance into a manifest, and
+  writes `publish_bundle/manifest.json` + `publish_bundle.zip` (paper/draft.md +
+  code package + evidence ledger). **Honesty contract:** `publishable=false`
+  whenever the audit gate failed OR the verdict is
+  `negative` / `all_negative` / `execution_failed` / `no_comparison`; the full
+  honest verdict + unverified count are always carried (transparency).
+- API: `GET /publish-bundle` (manifest; `?download=1` → zip, fixed path → no
+  traversal surface) + `GET /deployments` (read-only status, no auto-deploy).
+- Frontend: `PublishCard` (<200 lines) in `ReportPage` — honest verdict banner +
+  gate status + Download button that is **disabled** when `publishable=false`.
+- **Bonus (closes Session 11 V3 手测 leftover):** `App.tsx` migrated
+  `BrowserRouter` → `createBrowserRouter` (data router). V3's `PaperEditor`
+  calls `useBlocker`, which requires a data router — `BrowserRouter` threw
+  *"useBlocker must be used within a data router"* and crashed the ReportPage
+  for any drafted project. Fixed + verified live.
+- Tests: `test_research_harness_publish.py` (10: 6 pure-logic + 4 API), CI-safe.
+- **Live verification** on `live_session10_12_tabular` (gate=False, 1 omission):
+  manifest `publishable=false` *"audit gate failed: 1 unverified claim(s) (1
+  omission)"*; UI shows "Not publishable" + download disabled; honest verdict
+  (positive_significant) shown transparently. Exactly the behavior the Session 14
+  manual acceptance test specifies.
+
+### Session 13 — orchestrator retirement: foundation laid; physical big-bang scoped
+
+Done now (the safe, only-add foundation):
+
+- **`autoresearch_compat/` projection layer** (plan §7 P2 "逐步降级为读取新
+  workspace 文件的兼容层") — projects the NEW workspace (`project.json` +
+  `metrics.json` + `ledger/*` + `candidates.json`) into the OLD `run.json` /
+  `artifact.json` / `HypothesisCandidate` / `PortfolioSummary` shapes. This is
+  the named downgrade target and the non-negotiable backward-compat surface
+  (CLAUDE.md baseline). Read-only, no re-introduced thinking. 8 deterministic
+  tests; verified on real `live_session10_12_tabular` + `live_session9`.
+- **Independence re-confirmed:** `research_harness` imports only
+  `schemas.autoresearch` (shared types, plan §3), `literature_connectors` (plan
+  §3 reuse), and `sandbox`. Zero imports of the 5 thinking modules.
+- **Completion criteria 2 / 4 / 5 satisfied** (compat shapes project correctly;
+  independence holds; all CLAUDE.md baselines green at 155 + 164).
+
+Deferred (criteria 1 + 3 — the physical retirement to `<2000` lines + `164 →
+compat-only`): this is a **single indivisible big-bang**, not a series of safe
+small steps, because of the dependency facts below. It is flagged here so the
+next session can execute it in one controlled pass (still on a branch, still
+`git revert`-able).
+
+**Why indivisible (dependency map, empirically verified 2026-06-20):**
+
+1. The old thinking chain is reachable **only** via `api/autoresearch.py` +
+   `api/autoresearch_deployments.py` (mounted routers) + the 164-test suite. The
+   frontend calls **none** of it (it talks only to `research-harness/*`).
+2. The 164-test suite calls modules **directly** (148 calls), not via HTTP, and
+   imports the **entire** old brain (~30 modules incl. `idea_brief`,
+   `experiment_factory`, `benchmarks`, `codegen`, `project_paper_orchestrator`,
+   `console`, `operator_control`, `evaluation_cases`, `writer`,
+   `review_publish`, `release_governance`, …).
+3. `test_autoresearch_regressions.py:16` imports `api.autoresearch` directly →
+   the old API cannot be removed independently of the suite.
+4. `literature_connectors` (reused by `research_harness`) imports `repository`
+   (3 cache fns: `literature_scout_cache_key` / `load_*` / `save_*`); `repository`
+   imports `writer` + `paper_evidence_compiler`. So the keep-set must include
+   `literature_connectors` + `repository` + those two, **or** the 3 cache fns
+   must be extracted first.
+
+**Therefore:** removing any one 病灶 (e.g. `benchmarks`, which 7 other modules
+import) cascades through `planner`/`ingestion`/`orchestrator`/`evaluation_cases`/
+`domain_evidence`/`console`/`operator_control`/`project_paper_orchestrator`/`api.autoresearch`
+and breaks the 130 "shape" tests that exercise that chain. There is no safe
+partial; it is all-or-nothing.
+
+**Safe execution sequence for the next session (one controlled pass):**
+
+1. Extract `literature_scout_cache_key/load/save` out of `repository.py` into a
+   small standalone helper (e.g. `research_harness/utils/literature_cache.py`);
+   re-point `literature_connectors` at it. Now the keep-set is just
+   `literature_connectors` (+ `schemas.autoresearch`, `sandbox`).
+2. `git rm` the old thinking chain (~60 modules under `services/autoresearch/`,
+   keeping only `literature_connectors`) + `api/autoresearch.py` +
+   `api/autoresearch_deployments.py` + the two `main.py` router mounts +
+   `tests/test_autoresearch_regressions.py` (replaced by the 8-test compat suite
+   + the 155 research_harness tests).
+3. Boot the app; run `research_harness` tests (155) + compat (8) + publish (10);
+   fix any residual `schemas.autoresearch` type reference (the schema file stays
+   whole — it is pure types).
+4. Result: `project_paper_orchestrator.py` gone (criterion 1 trivially met — the
+   file no longer exists); 164 → compat-only (criterion 3 met). Branch +
+   `git revert` if red.
+
+This is mechanical but high-risk (~70k lines); doing it blind in a single agent
+session against the plan's *"若某步红则回退"* + *"不必一轮做完"* guidance would
+risk leaving the repo broken. The compat layer above is the load-bearing piece —
+once it exists, the big-bang is a deletion, not a rewrite.
+

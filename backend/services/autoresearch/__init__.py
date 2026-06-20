@@ -1,15 +1,8 @@
-from services.autoresearch.orchestrator import AutoResearchOrchestrator
-from services.autoresearch.planner import ResearchPlanner
-from services.autoresearch.repair import ExperimentRepairEngine
-from services.autoresearch.runner import AutoExperimentRunner
-from services.autoresearch.writer import PaperWriter
-from services.autoresearch.ingestion import resolve_benchmark
+"""autoresearch package — slimmed (Session 15 orchestrator retirement).
 
-__all__ = [
-    "AutoExperimentRunner",
-    "AutoResearchOrchestrator",
-    "ExperimentRepairEngine",
-    "PaperWriter",
-    "ResearchPlanner",
-    "resolve_benchmark",
-]
+The old thinking chain (~60 modules incl. project_paper_orchestrator.py) was
+physically retired; the brain now lives in services/research_harness/. Only
+literature_connectors.py is retained here (reused by research_harness). This
+__init__ intentionally exports nothing so importing literature_connectors no
+longer pulls in deleted modules.
+"""

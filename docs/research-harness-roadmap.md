@@ -729,6 +729,115 @@ claims were positively verified). That is S17 candidate #3 (structured /
 multilingual claims) and is a larger change; it does not block the
 `publishable=true` honesty contract, which still holds.
 
+---
+
+## Session 17 (cont.) — Claim-extraction investigation: naive fixes break the gate; structured-claims design spec'd
+
+The S16/S17 work closed the **omission** half of the language-coverage gap
+(value-anchoring). This section records a full investigation of the remaining
+**claim-extraction** half — what was tried, why every cheap fix is unsafe, and the
+design of the only correct fix. Done offline (no LLM); prototype is reproducible.
+
+### The gap, precisely
+
+A Chinese result draft yields `total_claims≈0` for two stacked reasons:
+1. `_split_sentences` (`auditor.py`, `_SENT_SPLIT_RE = r"(?<=[.!?])\s+(?=[A-Z…])"`)
+   splits only on ASCII `.!?` + whitespace + capital opener. Chinese terminal
+   punctuation (`。！？`, no trailing space) is **never split on**, so a Chinese
+   paragraph is treated as one blob.
+2. `_CLAIM_CUES` (`auditor.py:41-51`) are English-only result/spin phrases.
+
+So no Chinese result sentence is ever extracted as a claim → nothing audited.
+
+### Investigation (2026-06-20, in-memory prototype on `live_session10_12_tabular`)
+
+Three configurations, by monkeypatching the module globals (`_SENT_SPLIT_RE`,
+`_CLAIM_CUES`, `_evidence_overlap`) and re-running `audit_draft`:
+
+| Config | total | verified | unverified | gate |
+|---|---|---|---|---|
+| **A — current** | 0 | 0 | 0 | true (nothing extracted) |
+| **B — + CJK sentence-split + Chinese result cues** | **21** | 1 | **20** | **false** |
+| **C — B + exact value-anchored claim verification** | 21 | 1 | 20 | **false** |
+
+**Finding 1 — cues alone break the gate.** Adding CJK split + cues (显著/提升/改善/
+降低/优于/p值/…) extracts 21 claims, but 20 are unverified. The cues fire on
+background sentences too ("feature interactions have been used to *improve*
+prediction performance"), and the genuine result sentences rarely carry a
+full-precision metric value in the same sentence (they say "0.047→0.026", "Δ-0.0214",
+or just "achieved positive significant results").
+
+**Finding 2 — exact value-anchoring doesn't help claims.** Reusing S17's
+`_value_anchor_forms` (exact `repr(value)`, ≥4 sig digits) to verify claims: only
+1/21 verifies (the results table row, which already keyword-matched). Chinese prose
+uses rounded/delta/no values, so exact-match misses them.
+
+**Finding 3 — keyword matching structurally cannot reach Chinese/value claims.**
+`evidence.keywords()` uses `_TOKEN_RE = r"[a-z][a-z0-9_]{2,}"` (leading letter
+required). So `keywords("0.025962")=∅` and `keywords("校准误差")=∅`. Decimals and
+CJK both produce **zero tokens** → `_evidence_overlap` returns `[]` → Rule 5 marks
+the claim unverified. There is no keyword-based path to a Chinese or value-bearing
+claim.
+
+### Why tolerance-based value matching is also unsafe
+
+The obvious next try — match a claim's number to a real value within ~1% relative
+tolerance (to catch "0.026"↔0.025962) — violates never-loosen: a claim can quote a
+*real* number but misrepresent its **direction** ("our method *increased*
+calibration_error to 0.047393" would verify, because 0.047393 is a real value).
+Safely verifying a prose claim requires understanding its direction, which
+prose-matching cannot do reliably across languages.
+
+### Conclusion
+
+Every cheap, code-only fix is unsafe: cues break the gate (Finding 1); exact
+value-anchoring is too strict (Finding 2); tolerance value-matching false-verifies
+(§ above); keyword matching structurally excludes decimals+CJK (Finding 3).
+**Reliable verification of non-English claims requires the Writer to bind each claim
+to its evidence explicitly** — structured claims (candidate #3). This is the only
+fix that is honest by construction (a fabricated claim either omits the binding or
+cites wrong numbers).
+
+### Structured-claims design (the real fix)
+
+**Marker** — the Writer emits one per result claim, inline in the draft (any
+language). Machine-readable, language-independent:
+
+```
+<!-- audit-claim metric=calibration_error proposed=0.025962 baseline=0.047393 -->
+```
+
+**Auditor (only-add, offline-doable now):**
+- `extract_structured_claims(draft)` — regex-parse markers into claim dicts
+  (`category="structured"`), merged with the existing cue-based extraction. A draft
+  with no markers yields zero structured claims → behavior byte-identical to today
+  (safe; the existing audit suite must stay green).
+- Verification — metric exists in `metrics`; `proposed`/`baseline` match a real value
+  for that metric within relative tolerance (~1%, to absorb rounding — safe here
+  because the *direction* is conveyed by which value is `proposed` vs `baseline`,
+  not parsed from prose); fabricated/out-of-tolerance numbers fail. Overclaim rules
+  (significance/scope/spin, Rules 1-4) still apply to the surrounding prose.
+
+**Writer (separate, needs live verify):** bump the paper-writer prompt
+(`prompts/research_harness/*`) to emit one `audit-claim` marker per result claim,
+numbers sourced from the evidence pack. A mocked Writer→Auditor test can prove the
+pipeline offline; a live GLM run confirms the Writer actually complies.
+
+**Why correct:** the marker carries the claim↔evidence binding (metric + real
+numbers) in a form that does not depend on parsing prose, so verification is
+language-independent and un-gameable. Honest by construction.
+
+### Status & next step
+
+Investigation complete; design spec'd and pinned here with the prototype numbers so
+the next attempt doesn't re-discover the traps. **Not implemented this turn**: the
+auditor half is offline-doable but would be dormant until the Writer emits markers,
+and the Writer half needs live-LLM verification (deferred — "充值相关的不急"). They
+land together in a live-capable session: auditor foundation + Writer prompt bump +
+mocked pipeline test, then a live GLM run to confirm marker compliance on a real
+Chinese draft.
+
+
 
 
 

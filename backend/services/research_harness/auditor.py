@@ -362,27 +362,21 @@ def _verify_structured_claim(claim: dict[str, Any], metrics: dict[str, Any]) -> 
     proposed = claim.get("proposed")
     baseline = claim.get("baseline")
     if proposed is None and baseline is None:
-        return _verdict(
-            cid, "unverified", claim["text"], [],
-            f'structured claim for "{metric}" carries no cited values to verify', "structured",
-        )
-    real = _real_metric_values(metric, metrics)
-    if not real["proposed"] and not real["baseline"]:
-        return _verdict(
-            cid, "unverified", claim["text"], [],
-            f'structured claim cites unknown metric "{metric}"', "structured",
-        )
-    proposed_ok = proposed is None or any(_values_match(proposed, v) for v in real["proposed"])
-    baseline_ok = baseline is None or any(_values_match(baseline, v) for v in real["baseline"])
-    if proposed_ok and baseline_ok:
-        return _verdict(
-            cid, "verified", claim["text"], [],
-            f"structured claim grounded in real {metric} values", "structured",
-        )
-    return _verdict(
-        cid, "unverified", claim["text"], [],
-        f'structured claim cites {metric} values that do not match metrics.json', "structured",
-    )
+        kind, reason = "unverified", f'structured claim for "{metric}" carries no cited values to verify'
+    else:
+        real = _real_metric_values(metric, metrics)
+        if not real["proposed"] and not real["baseline"]:
+            kind, reason = "unverified", f'structured claim cites unknown metric "{metric}"'
+        else:
+            proposed_ok = proposed is None or any(_values_match(proposed, v) for v in real["proposed"])
+            baseline_ok = baseline is None or any(_values_match(baseline, v) for v in real["baseline"])
+            if proposed_ok and baseline_ok:
+                kind, reason = "verified", f"structured claim grounded in real {metric} values"
+            else:
+                kind, reason = "unverified", f'structured claim cites {metric} values that do not match metrics.json'
+    verdict = _verdict(cid, kind, claim["text"], [], reason, "structured")
+    verdict["metric"] = metric  # surface the bound metric in the ledger (like omission claims)
+    return verdict
 
 
 def _classify_claim(claim: dict[str, Any], metrics: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:

@@ -32,8 +32,23 @@ mark unsupported claims `[UNVERIFIED]` — so grounding your claims now is in yo
    must state that the experiment failed to produce results — do not invent results.
 6. **Citations** use `[n]` markers only for papers that exist in the literature; a `## References`
    list is optional.
+7. **Bind each quantitative result claim to its evidence with an `audit-claim` marker.**
+   Immediately after any Abstract/Results sentence that asserts a metric outcome, emit one
+   HTML-comment marker on its own line, in this exact machine-readable form (the keys are always
+   English, even when the surrounding prose is another language):
+   `<!-- audit-claim metric=METRIC proposed=PROPOSED_VALUE baseline=BASELINE_VALUE -->`
+   - `METRIC`: the metric's exact key from the evidence pack (e.g. `calibration_error`).
+   - `PROPOSED_VALUE` / `BASELINE_VALUE`: the verbatim numbers from the evidence pack's
+     "Per-dataset comparison" line for that metric (e.g. `proposed=0.025962`, `baseline=0.047393`).
+     Omit `baseline=` only when there is no baseline for that metric.
+   - One marker per distinct (metric, dataset) claim. Do NOT fabricate or round the values — the
+     Auditor checks each cited number against the evidence pack.
+   - Why: this marker lets the Auditor verify the claim by its NUMBERS rather than by guessing from
+     prose, so verification works for any language. It is mandatory for any sentence citing a metric
+     value.
 
 ## Output
 
 Markdown with `## Section` headings matching the outline. Concise (workshop-paper scale). Same
-language as the hypothesis.
+language as the hypothesis. Inline `<!-- audit-claim ... -->` markers (Rule 7) are part of the
+output and must follow the sentences they bind.

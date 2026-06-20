@@ -526,3 +526,65 @@ session against the plan's *"若某步红则回退"* + *"不必一轮做完"* gu
 risk leaving the repo broken. The compat layer above is the load-bearing piece —
 once it exists, the big-bang is a deletion, not a rewrite.
 
+---
+
+## Session 15 (2026-06-20) — Orchestrator physical retirement: DONE (big-bang executed)
+
+The single indivisible big-bang scoped in Session 13/14 was executed in one
+controlled pass on branch `session15-physical-retirement`, exactly along the
+documented safe sequence. Two commits, the second of which is the clean
+`git revert` unit:
+
+1. `refactor: extract literature scout cache into research_harness/utils` —
+   byte-level move of the 3 public cache helpers (`literature_scout_cache_key` /
+   `load_literature_scout_cache` / `save_literature_scout_cache`) + private deps
+   out of `repository.py` into `research_harness/utils/literature_cache.py`
+   (imports `autoresearch_dir` from `services.workspace`; cache files land at the
+   same path). `literature_connectors.py` repointed to the new module. Only-add;
+   173 research_harness tests + 16 citation tests green before any deletion.
+2. `refactor: retire autoresearch orchestrator + old API + 164 tests` — one
+   commit, the revert unit. `git rm` of 97 files: 62 modules under
+   `services/autoresearch/` (incl. the 13975-line `project_paper_orchestrator.py`,
+   orchestrator, writer, codegen, benchmarks, idea_brief, experiment_factory,
+   review_publish, release_governance, deployment, repository, ~50 others),
+   `api/autoresearch.py` + `api/autoresearch_deployments.py` (the only mounted
+   routers reaching the old brain), 3 test files
+   (`test_autoresearch_regressions.py` 164 shape tests, `test_e2e_pipeline.py`,
+   `glm_paper_smoke.py` — all imported deleted modules directly), and
+   `prompts/autoresearch/` (research_harness does not read it). Plus:
+   `services/autoresearch/__init__.py` slimmed to export nothing (so importing
+   `literature_connectors` no longer pulls deleted modules), and 2 imports + 2
+   `include_router` lines dropped from `main.py`.
+
+**Verification (all green, no revert needed):**
+
+- `uvicorn main:app` boots; `/health` ok; **0** autoresearch routes, **10**
+  research-harness routes remain.
+- Full backend suite: **185 passed, 1 deselected** (baseline was 362; the 177
+  deleted tests came from the 3 retired files). research_harness subset:
+  **173 passed** (155 harness + 8 compat + 10 publish) — the 164 shape tests are
+  fully replaced.
+- `frontend && npm run build` succeeds (frontend never called the old API).
+
+**Result vs completion criteria:**
+
+1. `project_paper_orchestrator.py` is **gone**; `services/autoresearch/` shrank
+   from 64 files / ~71822 lines to **2 files / 1415 lines**
+   (`literature_connectors.py` + slimmed `__init__.py`).
+2. `research_harness` depends on the old tree **only** via
+   `literature_connectors` — full external-dep profile unchanged
+   (`config.settings`, `schemas.autoresearch`, `services.autoresearch.literature_connectors`,
+   `services.llm.*`, `services.sandbox.runner`, `services.workspace`). No new
+   old-brain dependency.
+3. 164 shape tests replaced by compat(8) + harness(155) + publish(10); all pass;
+   app boots; frontend builds.
+4. `run.json` / `artifact.json` backward compat intact via
+   `autoresearch_compat/projection.py` (untouched this session).
+5. All CLAUDE.md non-negotiable baselines preserved — every honesty gate lives in
+   `research_harness/` and no V2.x gate file was touched (only `literature_cache.py`
+   was added under `research_harness/utils/`).
+
+This clears plan §7 P2 and the §1 *"packaging-over-thinking"* debt in code
+volume: the repo now matches the *"brain is in research_harness"* assertion.
+
+

@@ -20,7 +20,7 @@ from schemas.autoresearch import (
     AutoResearchNoveltyRiskLevel,
     AutoResearchResearchBriefRead,
 )
-from services.autoresearch.repository import (
+from services.research_harness.utils.literature_cache import (
     literature_scout_cache_key,
     load_literature_scout_cache,
     save_literature_scout_cache,

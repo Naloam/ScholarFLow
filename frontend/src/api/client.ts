@@ -5,7 +5,9 @@
 import type {
   AuthConfig,
   AuthSessionResponse,
+  DeploymentStatus,
   ProjectSummary,
+  PublishBundleManifest,
   ReauditResponse,
   RunStatus,
   SaveDraftResponse,
@@ -170,6 +172,28 @@ export function reauditPaper(projectId: string): Promise<ReauditResponse> {
   return request<ReauditResponse>(
     `/api/research-harness/projects/${encodeURIComponent(projectId)}/paper/reaudit`,
     { method: "POST" },
+  );
+}
+
+// ---- Session 14: publish-bundle + deployment listing ----
+
+export function getPublishBundle(projectId: string): Promise<PublishBundleManifest> {
+  return request<PublishBundleManifest>(
+    `/api/research-harness/projects/${encodeURIComponent(projectId)}/publish-bundle`,
+  );
+}
+
+/**
+ * Direct .zip download URL (browser-handled, not a JSON request). Append as an
+ * <a href> / window.location — the browser streams the binary attachment.
+ */
+export function publishBundleDownloadUrl(projectId: string): string {
+  return `${API_BASE_URL}/api/research-harness/projects/${encodeURIComponent(projectId)}/publish-bundle?download=1`;
+}
+
+export function getDeployments(projectId: string): Promise<DeploymentStatus> {
+  return request<DeploymentStatus>(
+    `/api/research-harness/projects/${encodeURIComponent(projectId)}/deployments`,
   );
 }
 

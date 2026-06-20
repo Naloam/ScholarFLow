@@ -276,3 +276,67 @@ export interface PortfolioSummary {
   rows?: PortfolioCandidateRow[];
   note?: string;
 }
+
+// ---- Session 14: P3 publication surface (publish-bundle manifest) ----
+
+export interface PublishBundleAuditGate {
+  gate: boolean;
+  total_claims?: number;
+  verified_count?: number;
+  unverified_count?: number;
+  citation_unverified_count?: number;
+  omission_unverified_count?: number;
+}
+
+export interface PublishBundleMetricSummary {
+  execution_status?: string | null;
+  primary_metric?: string | null;
+  overall_beats_baseline?: boolean;
+  any_significant?: boolean;
+  seed_count?: number;
+  datasets?: BaselineDataset[];
+}
+
+export interface PublishBundleProvenance {
+  created_at?: string | null;
+  updated_at?: string | null;
+  datasets?: string[];
+  seed_count?: number;
+  candidate_count?: number;
+  run_steps_done?: string[];
+}
+
+/**
+ * The publish-bundle manifest. The honesty contract: `publishable` is false
+ * whenever the audit gate failed or the honest verdict is a non-publishable
+ * outcome; `publishable_reason` explains why. The full honest verdict +
+ * unverified count are always present (transparency, never suppression).
+ */
+export interface PublishBundleManifest {
+  manifest_version?: string;
+  project_id: string;
+  idea?: string;
+  best_candidate_id?: string | null;
+  honest_verdict?: AnchoredVerdict | Record<string, unknown>;
+  portfolio_verdict?: string | null;
+  audit_gate: PublishBundleAuditGate;
+  publishable: boolean;
+  publishable_reason: string;
+  metric_summary?: PublishBundleMetricSummary;
+  provenance?: PublishBundleProvenance;
+  bundle_files?: string[];
+}
+
+/** Read-only deployment status (GET /deployments). No auto-deploy. */
+export interface DeploymentStatus {
+  project_id: string;
+  has_bundle: boolean;
+  publishable?: boolean;
+  publishable_reason?: string;
+  honest_verdict?: string | null;
+  portfolio_verdict?: string | null;
+  audit_gate?: boolean;
+  unverified_count?: number;
+  bundle_files?: string[];
+  manifest_path?: string;
+}

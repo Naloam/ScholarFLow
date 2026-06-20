@@ -628,6 +628,66 @@ code {
   background: var(--surface);
 }
 
+/* ---- Session 14: Publish card ---- */
+.report__publish {
+  margin-top: 28px;
+}
+.publish__banner {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 10px 0 14px;
+  background: var(--surface);
+}
+.publish__banner--ok {
+  border-color: #2e8b57;
+  background: rgba(46, 139, 87, 0.08);
+}
+.publish__banner--gated {
+  border-color: #b94a48;
+  background: rgba(185, 74, 72, 0.08);
+}
+.publish__banner-headline {
+  font-weight: 600;
+  font-size: 15px;
+}
+.publish__banner-reason {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-top: 4px;
+}
+.publish__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.publish__metric-summary,
+.publish__provenance {
+  font-size: 13px;
+  line-height: 1.4;
+}
+.publish__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.publish__disabled-note {
+  font-size: 12px;
+  color: #b94a48;
+}
+.publish__bundle-files {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.btn.is-disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* Inline [UNVERIFIED] marker inserted by the AuditorAgent. Loud on purpose —
    a human scanning the draft must instantly see which claims the gate rejected. */
 .unverified {

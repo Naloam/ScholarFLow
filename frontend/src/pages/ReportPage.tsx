@@ -21,6 +21,7 @@ import { PaperEditor } from "../components/PaperEditor";
 import { AuditLedger } from "../components/AuditLedger";
 import { HonestGateCards } from "../components/HonestGateCards";
 import { PortfolioCard } from "../components/PortfolioCard";
+import { PublishCard } from "../components/PublishCard";
 import { ReviewerWeaknesses } from "../components/ReviewerWeaknesses";
 import { Spinner } from "../components/Spinner";
 
@@ -180,6 +181,8 @@ export function ReportPage() {
       {data?.audit || data?.draft ? (
         <AuditLedger audit={data?.audit ?? null} grounding={data?.grounding ?? null} />
       ) : null}
+
+      <PublishCard projectId={projectId} />
 
       <ReviewerWeaknesses review={data?.review ?? null} />
     </div>

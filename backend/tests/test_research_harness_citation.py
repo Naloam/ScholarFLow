@@ -97,10 +97,19 @@ def test_offline_path_does_not_import_httpx(monkeypatch) -> None:
     """The default (offline) path must stay network-free — no httpx import, no
     DBLP/CrossRef call. CI relies on this."""
     monkeypatch.setenv("SCHOLARFLOW_OFFLINE_LLM", "1")
+    # Save & restore httpx so this purity check does not leak into later tests
+    # (starlette's TestClient accesses httpx._client — a popped httpx breaks it).
+    original_httpx = sys.modules.get("httpx")
     sys.modules.pop("httpx", None)
-    draft = _draft_with_citations(_PAPERS[0]["title"], "A Hallucinated Paper About Nothing Real At All")
-    citation.verify_citations(draft, _PAPERS)  # live=None → auto → offline
-    assert "httpx" not in sys.modules, "offline citation path imported httpx (network side-effect)"
+    try:
+        draft = _draft_with_citations(_PAPERS[0]["title"], "A Hallucinated Paper About Nothing Real At All")
+        citation.verify_citations(draft, _PAPERS)  # live=None → auto → offline
+        assert "httpx" not in sys.modules, "offline citation path imported httpx (network side-effect)"
+    finally:
+        if original_httpx is not None:
+            sys.modules["httpx"] = original_httpx
+        else:
+            sys.modules.pop("httpx", None)
 
 
 def test_live_path_only_runs_when_not_offline(monkeypatch) -> None:

@@ -123,6 +123,58 @@ def _metric_mentioned(name: str, draft_lower: str) -> bool:
     return any(tok in draft_lower for tok in _distinctive_metric_tokens(name))
 
 
+# Minimum significant digits for a measured value to count as a "distinctive"
+# anchor. Below this (e.g. 0.9, 1.0, 0.5) a value is too likely to appear in prose
+# by coincidence and must not be allowed to clear a real omission (only-add).
+_DISTINCTIVE_VALUE_MIN_DIGITS: int = 4
+
+
+def _value_anchor_forms(value: Any) -> list[str]:
+    """Distinctive literal string forms of a measured value, to anchor "the draft
+    discussed this metric" on the actual evidence rather than on the English name.
+
+    Returns the value's round-trip string form when it is DISTINCTIVE (≥4
+    significant digits after trimming leading/trailing zeros); otherwise ``[]`` —
+    generic values (``0.9`` / ``1.0`` / ``0.5``) are intentionally NOT anchors.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return []
+    text = repr(value) if isinstance(value, float) else str(value)
+    digits = re.sub(r"[^0-9]", "", text)
+    significant = digits.lstrip("0").rstrip("0")
+    if len(significant) < _DISTINCTIVE_VALUE_MIN_DIGITS:
+        return []
+    return [text]
+
+
+def _metric_value_mentioned(
+    name: str, metrics: dict[str, Any], draft_lower: str
+) -> bool:
+    """Does the draft quote one of ``name``'s real measured values?
+
+    Value-anchoring (S17, only-add): a draft that reports the metric's number need
+    not also use the canonical English name to count as "discussed" — this is what
+    lets a Chinese draft reporting ``0.025962`` for ``calibration_error`` pass the
+    omitted-material gate. Pulls the summary values the Writer copies into prose
+    (``baseline_comparison.datasets``) plus per-seed values (``results``).
+    """
+    if not name or not draft_lower:
+        return False
+    target = name.lower()
+    forms: set[str] = set()
+    bc = metrics.get("baseline_comparison") or {}
+    if isinstance(bc, dict) and (bc.get("metric_name") or "").lower() == target:
+        for dataset in bc.get("datasets") or []:
+            if not isinstance(dataset, dict):
+                continue
+            for key in ("baseline_metric", "proposed_metric"):
+                forms.update(_value_anchor_forms(dataset.get(key)))
+    for row in metrics.get("results") or []:
+        if isinstance(row, dict) and (row.get("metric_name") or "").lower() == target:
+            forms.update(_value_anchor_forms(row.get("metric_value")))
+    return any(form in draft_lower for form in forms)
+
+
 def _material_metric_names(metrics: dict[str, Any], primary_name: str | None) -> set[str]:
     """Metrics material to the hypothesis's main target: the abstention family
     (always material when present) + any metric whose name carries a material
@@ -158,6 +210,12 @@ def _omitted_material_metrics(
     omitted: list[dict[str, Any]] = []
     for i, name in enumerate(sorted(candidates), start=1):
         if _metric_mentioned(name, draft_lower):
+            continue
+        # Value-anchoring (S17, only-add): a draft that quotes the metric's real
+        # measured value need not also use the canonical English name to count as
+        # discussed. A metric genuinely absent (neither name nor value) is still
+        # flagged below — never loosened.
+        if _metric_value_mentioned(name, metrics, draft_lower):
             continue
         omitted.append(
             {

@@ -691,4 +691,44 @@ gap means a Chinese draft's claims are effectively unaudited.
 This is a rigor improvement, deferred to S17; it does not weaken any baseline and
 the first `publishable=true` stands.
 
+---
+
+## Session 17 (2026-06-20) — Value-anchored omission gate (S17 candidate #1, DONE)
+
+The cheapest of the three S17 candidates landed: **value-anchoring** for the
+omitted-material-metric gate. A material metric is now treated as "discussed"
+when the draft contains one of its real measured values (from
+`baseline_comparison.datasets` + `results`) — in addition to, not instead of, the
+English-name match. This is the root-cause fix for the false omission that Session
+16's rescue worked around: a Chinese draft that reports `0.025962` no longer needs
+to also spell `calibration_error` to pass the gate (verified end-to-end against
+the `live_session10_12_tabular` draft — reverting the S16 English-name edit still
+yields `omission=0`).
+
+**Only-add / never-loosen** (`auditor.py`):
+- `_value_anchor_forms(value)` — returns the value's round-trip string form only
+  when it is **distinctive** (≥4 significant digits after trimming leading/trailing
+  zeros). Generic values (`0.9` / `1.0` / `0.5`) return `[]` so they cannot
+  coincidentally clear a real omission.
+- `_metric_value_mentioned(name, metrics, draft_lower)` — collects the metric's
+  real values and checks any distinctive form appears in the draft.
+- One extra `continue` in `_omitted_material_metrics` after the `_metric_mentioned`
+  check. `audit_draft` / `annotate_draft` / the V2.2 gate logic otherwise untouched.
+
+Locked by `test_research_harness_auditor_value_anchoring.py` (9 tests, CI-tracked
+via the `.gitignore` negation list): the Chinese-draft-with-value-but-no-English-name
+case is no longer omitted; a genuinely-absent metric (neither name nor value) is
+still flagged; a generic value in the draft cannot false-clear an omission. Full
+backend suite: **203 passed, 1 deselected** (was 194; +9 new), no regressions.
+
+**Still open (deferred):** value-anchoring closes the *omission* half of the
+language-coverage gap, but the *claim-extraction* half remains — a Chinese result
+sentence still does not trigger the English `_CLAIM_CUES`, so `total_claims≈0`
+for a Chinese draft (the gate passes because nothing was audited, not because
+claims were positively verified). That is S17 candidate #3 (structured /
+multilingual claims) and is a larger change; it does not block the
+`publishable=true` honesty contract, which still holds.
+
+
+
 

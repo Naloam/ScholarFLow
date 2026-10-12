@@ -669,11 +669,15 @@ def build_evidence_items(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     bc = metrics.get("baseline_comparison") or {}
+    primary_metric = bc.get("metric_name") or ""
     for i, d in enumerate(bc.get("datasets") or []):
         if not isinstance(d, dict):
             continue
+        # primary metric name in the summary (S19 fix): claims citing
+        # "dataset + metric" previously matched only 1 keyword (< the ≥2
+        # overlap threshold) and failed Rule 5 despite citing real numbers.
         summary = (
-            f"on {d.get('dataset')}: proposed {d.get('proposed_system')}="
+            f"on {d.get('dataset')} [{primary_metric}]: proposed {d.get('proposed_system')}="
             f"{d.get('proposed_metric')} vs baseline {d.get('baseline_system')}="
             f"{d.get('baseline_metric')}; beats_baseline={d.get('beats_baseline')}; "
             f"delta={d.get('delta')}"

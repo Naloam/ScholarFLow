@@ -52,3 +52,11 @@ mark unsupported claims `[UNVERIFIED]` — so grounding your claims now is in yo
 Markdown with `## Section` headings matching the outline. Concise (workshop-paper scale). Same
 language as the hypothesis. Inline `<!-- audit-claim ... -->` markers (Rule 7) are part of the
 output and must follow the sentences they bind.
+
+7. **Marker discipline (learned from live S18/S19 runs — violations are rejected):**
+   - the `metric=` name must be copied VERBATIM from the evidence pack / comparison tables; never invent compound names like `macro_f1_scifact` — write `macro_f1` and name the dataset in the sentence;
+   - `proposed=`/`baseline=` values must be verbatim recorded values; never put self-computed cross-dataset aggregates into a marker (prose may say "overall/derived", no marker);
+   - seed counts / sample sizes are NOT metrics — never emit markers for them;
+   - omit the `baseline=` field when no recorded baseline value exists — never write 0 or an estimate;
+   - sentences citing numbers must name the dataset in the SAME sentence (the audit matches per-sentence).
+8. **Output**

@@ -35,3 +35,13 @@
 
 1. `idea_20261012145834_001` 多粒度证据聚合的 RAG 忠实性评估框架（claim 域）→ run s19（进行中）
 2. 待补：tabular 域候选 ×1、跨域稳健性方法学 ×1
+
+## 进度更新（2026-10-13 02:00）
+
+- M3 ✅：论文 #2（s19_granular_faithfulness，RAG 忠实性三值聚合+选择性弃权）完整 run，
+  三候选全执行（h3 negative / h4 no_comparison / h5 negative），双稿修至 **EN gate=True 20/0 · ZH gate=True 23/0**。
+- M2 ✅（系统侧）：论文 #1 portfolio 版中文稿 gate=True 19/0（三假设族负结果框架）。
+- M5 ✅：idea 池中文查重（CJK 双元组）、跨数据集稳健性汇总表。
+- 机器加固（本轮 live 教训回写）：writer prompt 标记纪律（禁复合指标名/派生值/seed 数/占位 baseline）；
+  evidence item summary 带指标名；审计器子句级中文否定域 + 重审剥离自身 [UNVERIFIED] 标记。
+- 测试 231 绿。**等待人工节点**：论文 #1/#2 选刊 + AI 披露决策 + 定稿。

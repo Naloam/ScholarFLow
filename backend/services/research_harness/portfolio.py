@@ -128,6 +128,8 @@ def select_portfolio(
     cap = MAX_K
     if budget_hint is not None and budget_hint > 0:
         cap = min(cap, budget_hint)
+    if not k or k <= 0:  # callers may pass None for "default" (CLI --portfolio-k)
+        k = DEFAULT_K
     effective_k = max(0, min(k, cap, len(ranked)))
     top_k = ranked[:effective_k]
 

@@ -319,6 +319,9 @@ def run_step_experiment(project_id: str, idea: str, portfolio_k: int | None = No
     """
     from services.research_harness import portfolio as portfolio_mod
 
+    # CLI passes --portfolio-k=None for "default"; normalize once (S18 live fix).
+    k = portfolio_k if portfolio_k and portfolio_k > 0 else portfolio_mod.DEFAULT_K
+
     notes = load_literature_notes(project_id)
     candidates = load_candidates(project_id)
     if not candidates:
@@ -327,11 +330,11 @@ def run_step_experiment(project_id: str, idea: str, portfolio_k: int | None = No
             raise RuntimeError("No selected hypothesis on disk. Run --steps idea first.")
         candidates = [selected]
 
-    metrics = run_portfolio_experiments(project_id, idea, notes, candidates, k=portfolio_k)
+    metrics = run_portfolio_experiments(project_id, idea, notes, candidates, k=k)
     best_bc = (metrics.get("baseline_comparison") or {})
     logger.info(
         "ExperimentEngineer complete (portfolio k=%s): status=%s beats_baseline=%s",
-        portfolio_k or portfolio_mod.DEFAULT_K,
+        k,
         metrics.get("execution_status"),
         best_bc.get("overall_beats_baseline"),
     )

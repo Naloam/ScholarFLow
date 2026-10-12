@@ -45,6 +45,7 @@ docs/
 docs/*
 !docs/goal.md
 !docs/research-harness-roadmap.md
+!docs/GOAL_PAPERS.md
 
 # AI config and prompt files
 AGENTS.md

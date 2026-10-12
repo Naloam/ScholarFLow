@@ -376,10 +376,23 @@ def _evidence_overlap(claim_text: str, items: list[dict[str, Any]]) -> list[dict
 
 
 def _real_metric_values(name: str, metrics: dict[str, Any]) -> dict[str, list[float]]:
-    """Real proposed/baseline values for metric ``name`` from ``baseline_comparison``.
-    Used to ground a structured claim's cited numbers in actual evidence."""
+    """Real proposed/baseline values for metric ``name`` from the metrics of record.
+    Used to ground a structured claim's cited numbers in actual evidence.
+
+    S18 extension (only-add): besides ``baseline_comparison`` (the hypothesis's
+    anchored primary-metric table), values are also grounded from the per-system
+    ``results`` rows (mean over seeds) and ``abstention_metrics`` — that is where
+    strong baselines (BM25), ablations, and diagnostic metrics (spearman /
+    error_rate) actually live. Bucketing is by system name: systems named
+    ``proposed*`` ground the proposed side; every other system grounds the
+    baseline side (a claim like "uniform voting 0.494 < BM25 0.537" cites two
+    baseline-side values — both must exist, which this makes checkable)."""
     proposed: list[float] = []
     baseline: list[float] = []
+
+    def _bucket(system: str, value: float) -> None:
+        (proposed if "proposed" in (system or "").lower() else baseline).append(float(value))
+
     bc = metrics.get("baseline_comparison") or {}
     if isinstance(bc, dict) and (bc.get("metric_name") or "").lower() == (name or "").lower():
         for d in bc.get("datasets") or []:
@@ -389,6 +402,24 @@ def _real_metric_values(name: str, metrics: dict[str, Any]) -> dict[str, list[fl
                 proposed.append(float(d["proposed_metric"]))
             if isinstance(d.get("baseline_metric"), (int, float)):
                 baseline.append(float(d["baseline_metric"]))
+
+    for r in metrics.get("results") or []:
+        if not isinstance(r, dict):
+            continue
+        if (r.get("metric_name") or "").lower() != (name or "").lower():
+            continue
+        if isinstance(r.get("metric_value"), (int, float)):
+            _bucket(r.get("system_name") or "", float(r["metric_value"]))
+
+    abst = metrics.get("abstention_metrics") or {}
+    if isinstance(abst, dict) and name in abst:
+        for _dataset, systems in abst[name].items():
+            if not isinstance(systems, dict):
+                continue
+            for system, value in systems.items():
+                if isinstance(value, (int, float)):
+                    _bucket(str(system), float(value))
+
     return {"proposed": proposed, "baseline": baseline}
 
 

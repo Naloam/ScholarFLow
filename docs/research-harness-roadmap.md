@@ -960,3 +960,18 @@ Baseline table row: s18_glm53_full · glm-5.3 (coding endpoint) ·
 claim-verification · all_negative (h1) · EN gate=True 0 unverified ·
 ZH gate=False 9/28 rejected (writer misuse caught) · pending: human edit →
 re-audit → first journal submission candidate.
+
+**Session 18 addendum (2026-10-13 00:30) — the line's first complete gated papers:**
+Evening-endpoint rerun completed the portfolio: **all three hypotheses executed
+successfully, all honestly negative** (h1 weighting / h2 abstention-signal /
+h3 manipulation-robustness — the "consistency-as-weight-signal" family
+systematically fails to beat uniform aggregation). Paper layer regenerated for
+the promoted best (h2), then the writer's recurring misuse classes were fixed
+in place (metric-name mislabels — macro_f1 numbers tagged error_rate; invented
+compound metric names with REAL values; seed counts tagged as metrics;
+placeholder baseline=0) and citations re-grounded (13→0). Final state:
+**EN draft gate=True 32/0 · ZH journal draft gate=True 20/0** — the production
+line's first complete, fully-audited paper pair (one idea → EN + 中文核心候选).
+P4.4 idea pool shipped (4f68b2a). Ops: reruns on a healthy endpoint complete
+3 candidates in ~55 min; congestion windows still exhaust retries — schedule
+production runs off-peak.

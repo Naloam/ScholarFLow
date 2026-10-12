@@ -1,0 +1,7 @@
+# Experiment-sandbox dependencies — mirrors the allow-list enforced in
+# services/research_harness/sandbox_capabilities.py. Generated experiment code
+# may only use these + the Python standard library.
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+sentence-transformers>=2.7

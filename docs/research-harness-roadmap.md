@@ -841,3 +841,68 @@ Chinese draft.
 
 
 
+
+## Session 18 (2026-10-12) — Restart: new LLM key, big cleanup, P4 journal pipeline
+
+**Context:** project dormant since 2026-06-21. User returns with a new goal: publish
+multiple papers in domestic/international core journals as first or solo author. The
+system's job changes from "research demo" to "paper production line".
+
+**Done this session:**
+
+1. **LLM restart.** New key in `.env`; `glm-5.3` (token plan) returns 1113 on the
+   account — plan not yet bound/active (user to fix in bigmodel console). Interim
+   main path: `glm-4.5-flash` (free tier, stable, reasoning model). `glm-4.7-flash`
+   also free but intermittently 1305-overloaded. Switch back to `glm-5.3` when the
+   plan activates (one line in `.env`).
+2. **Physical cleanup (commit 2862cc9).** Deleted the pre-rebuild remnants that S15
+   had left in place: 17 old API routers, `backend/agents/`, 17 dead service
+   packages, `frontend/src.legacy` + `e2e.legacy` (git-tracked corpses), stale docs
+   (`api-reference.md` described endpoints that no longer exist), dead deps
+   (websockets/psycopg/python-docx). `schemas/autoresearch.py` trimmed 6380→614
+   lines by AST transitive-closure extraction of the 8 symbols still imported by
+   research_harness/sandbox/literature_connectors. Filesystem garbage removed
+   (~660MB: nested `backend/backend/`, duplicate venv, old run data moved to
+   `~/.Trash`). Backend now 20,382 lines of Python. Offline suite: 213 passed;
+   frontend builds clean.
+3. **Docs rewritten to reality.** `AGENTS.md` (stale FROZEN list dropped — those
+   files no longer exist; journal-pipeline rules added), `CLAUDE.md` (module names
+   fixed), `README.md`/`README_CN.md` (previously described the deleted system),
+   `backend/requirements-experiment.txt` created (documents the sandbox allow-list).
+4. **Live restart run** `live_restart_20261012` (idea: 证据集语义一致性加权投票 vs
+   均匀多数投票 for claim verification) — serves double duty: end-to-end restart
+   verification + the S17 pending item (Writer `audit-claim` marker compliance on a
+   live run). Status at doc-writing time: literature stage, real S2/arXiv/Crossref
+   results landing.
+
+**P4 — Core-journal publication pipeline (the plan)**
+
+Goal: N papers per cycle, each traceable to an audited run, human-edited via the
+TipTap re-audit loop. Ordered work items:
+
+- **P4.1 Chinese journal-format writer.** New writer variant emitting 中文核心期刊
+  structure (摘要/关键词/引言/相关工作/方法/实验/结论) in Chinese, with
+  `audit-claim` markers preserved for the gate. One new prompt + a `journal_format`
+  flag on the write step; the auditor stays language-independent by design.
+- **P4.2 GB/T 7714-2015 citation formatter.** `citation.py` extension: verified
+  citations → GB/T 7714 reference list + in-text numbering. (Verified-only rule
+  stays: unverified refs are dropped or marked, never silently kept.)
+- **P4.3 Dataset-scale expansion.** Slices 474/500 → 1-2k+ per domain (SciFact
+  train has headroom); raise seed budget where the 600s cap allows. Journals expect
+  robustness across datasets — the portfolio already gives multi-candidate; add a
+  cross-dataset aggregation table to the report generator.
+- **P4.4 Idea pool manager.** Batch topic intake → literature novelty pre-check →
+  ranked queue of run-ready ideas (domain-tagged, deduped against prior runs'
+  `papers.jsonl`). Feeds the production cadence.
+- **P4.5 LLM main path upgrade.** `glm-5.3` once the token plan is active; keep
+  `glm-4.5-flash` as the documented fallback. Re-baseline a live run after the
+  switch.
+- **P4.6 Integrity contract (standing).** Human edit + re-audit before any
+  submission; disclose AI assistance per target-journal policy; `publishable=true`
+  ≠ submit-ready. The author (user) owns every claim.
+
+Non-goals (unchanged): agent-framework rewrites, venue adapters beyond journal
+markdown, GPU-scale experiments.
+
+**Baseline table addition:** `live_restart_20261012` (glm-4.5-flash, restarted
+2026-10-12) — outcome recorded below when complete.

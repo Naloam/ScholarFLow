@@ -1,117 +1,56 @@
 # ScholarFlow
 
-ScholarFlow 是一个 AI 驱动的自动化学术研究平台，在工作空间内编排完整的学术研究生命周期——从选题、实验执行到论文撰写与审稿。
+ScholarFlow 是一个自动科研系统：输入一个研究 idea，系统自动完成全流程——真实文献检索（arXiv / Semantic Scholar / Crossref）、假设生成、实验代码生成与执行（真实 subprocess、CPU 级）、统计评估、诚实的研究报告、论文草稿撰写，以及拒绝无依据论断的审计门。当前目标（P4）：把通过审计的 run 转化为核心期刊论文稿件（一作/独立作者），产出前必须经过人工编辑 + 重新审计闭环。
 
-## 快速开始
+## 实际能力
 
-### 1. 环境要求
-
-- Python 3.12+
-- Node.js 18+
-- 一个 LLM API 密钥（DeepSeek、OpenAI 或任何 litellm 兼容的提供商）
-
-### 2. 配置环境变量
+一条命令跑完整流程：
 
 ```bash
-cp .env.example .env
+cd backend && ../.venv/bin/python ../scripts/v0_run.py --idea "..." --project-id my_run
 ```
 
-编辑 `.env`，至少配置一个 LLM 提供商：
+在 `backend/data/research_workspace/<project_id>/` 产出：
+
+| 阶段 | 产出 | 保证 |
+|---|---|---|
+| literature | `papers.jsonl`、`notes.md`、`gap_map.md` | 真实检索论文，无伪造引用 |
+| idea | `candidates.json`、`selected.json` | 假设带文献支撑的 `core_novelty` |
+| experiment | `candidates/*/artifacts/metrics.json` | 真实数据集（SciFact、VitaminC、表格切片）上的真实数值，多 seed + 显著性检验 |
+| review | `reviewer_round_1.md` | 引用 run 自身数字的具体批评 |
+| report | `research_report.md`、`conclusion.md` | 负结果保持负结果（硬编码结论门） |
+| write | `paper/draft.md` | 缺证据的论断内联 `[UNVERIFIED]` 标记 |
+| audit | `ledger/claim_audit.json` | 确定性审计门（不用 LLM 审 LLM）；结构化 `audit-claim` 标记按数值核验 |
+| publish | `publish_bundle.zip` | 任何诚实门不过则 `publishable=false` |
+
+Portfolio 执行独立跑 top-K 个假设候选并诚实聚合（结论冲突时如实写 `mixed_portfolio`）。TipTap 编辑器允许人工修改草稿，保存后重新过审计门——人加的无依据论断同样会被标记。
+
+## 架构
+
+- **后端**（FastAPI，`backend/`）：研究大脑全部在 `services/research_harness/`（约 7k 行）——pipeline、实验工程师、evidence/auditor 诚实门、writer、publish。LLM 调用统一走 `services/llm/client.py`（基于 litellm）。2026 年 6 月物理退役了旧 `autoresearch` 系统（约 7.2 万行），仅按设计保留 `literature_connectors.py`。
+- **前端**（React 19 + Vite + TipTap，`frontend/`）：五个页面——Projects、Run、Workspace、Report（论文编辑器 + 发布卡片）、Settings。
+- **测试**：213 个离线测试（`cd backend && SCHOLARFLOW_OFFLINE_LLM=1 ../.venv/bin/python -m pytest tests/ -m "not live_research" -q`）；live 端到端需显式开启（`-m live_research`，真实 LLM + 额度）。
+
+## 安装
 
 ```bash
-# 方案 A — DeepSeek（推荐，性价比高）
-DEEPSEEK_API_KEY=sk-your-key-here
-LLM_MODEL=deepseek/deepseek-chat
-LLM_API_BASE=https://api.deepseek.com
-
-# 方案 B — OpenAI
-OPENAI_API_KEY=sk-your-key-here
-LLM_MODEL=openai/gpt-4o-mini
-
-# 数据库 — 本地开发使用 SQLite 即可
-DATABASE_URL=sqlite:///backend/dev.db
+python -m venv .venv && source .venv/bin/activate
+pip install -e "backend[dev]" -r backend/requirements-experiment.txt
+cp .env.example .env   # 然后设置 LITELLM_API_KEY / LLM_MODEL / LLM_API_BASE
 ```
 
-### 3. 安装依赖
+后端：`cd backend && PYTHONPATH=. ../.venv/bin/uvicorn main:app --reload`
+前端：`cd frontend && npm install && npm run dev`
 
-```bash
-# 后端
-python -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
+## 诚实的局限
 
-# 前端
-cd frontend && npm install && cd ..
-```
+- 数据切片 ≤500 例、单实验 ≤10 分钟 CPU（无 GPU）——workshop 级证据强度，不是 SOTA 竞争；扩容是 P4 工作项。
+- "沙箱"用宿主 Python 直接执行生成代码（无隔离）——仅限可信单人环境。
+- 审计门的 prose 启发式以英文为中心；中文草稿依赖结构化 `audit-claim` 标记（S17）。
+- `publishable=true` 只代表诚实门通过，不代表可直接投稿。
 
-### 4. 启动服务
+## 文档
 
-```bash
-# 终端 1 — 后端（端口 8000）
-cd backend && PYTHONPATH=. python -m uvicorn main:app --reload
-
-# 终端 2 — 前端（端口 5173）
-cd frontend && npm run dev
-```
-
-在浏览器打开 **http://localhost:5173**。
-
-### 5. 使用工作空间
-
-ScholarFlow 工作空间通过分阶段的研究工作流引导你完成整个流程：
-
-| 阶段 | 面板                       | 操作                                                                           |
-| ---- | -------------------------- | ------------------------------------------------------------------------------ |
-| 1    | **项目启动器**（左侧边栏） | 输入标题、主题和模板，点击 **Create Project**                                  |
-| 2    | **研究路线图**（左侧边栏） | 查看自动生成的研究计划和假设                                                   |
-| 3    | **编辑器**（中央区域）     | 点击 **Generate Draft** 通过 LLM 生成完整论文大纲，使用富文本编辑器编辑        |
-| 4    | **文件管理器**（左侧边栏） | 保存草稿、跟踪版本，点击 **Download Latest Export** 导出 Markdown              |
-| 5    | **审阅面板**（右侧边栏）   | 点击 **Run Review** 检查证据覆盖率，标记 `[NEEDS_EVIDENCE]`，进行相似度筛查    |
-| 6    | **操作控制台**（中央右侧） | 点击 **Start Run** 启动完整的自动研究流水线：规划 → 代码生成 → 执行 → 论文生成 |
-| 7    | **部署**（右侧边栏）       | 导出并下载最终发布包                                                           |
-
-**典型工作流：** 创建项目 → 生成草稿 → 编辑 → 保存 → 运行审阅 → 启动研究 → 下载最终发布包
-
-### 6. 配置选项
-
-主要环境变量（完整列表参见 `.env.example`）：
-
-| 变量            | 默认值                     | 说明                                              |
-| --------------- | -------------------------- | ------------------------------------------------- |
-| `LLM_MODEL`     | `gpt-4o-mini`              | litellm 模型标识符（如 `deepseek/deepseek-chat`） |
-| `LLM_API_BASE`  | —                          | 非 OpenAI 提供商的 API 地址                       |
-| `DATABASE_URL`  | `sqlite:///backend/dev.db` | PostgreSQL 或 SQLite 连接字符串                   |
-| `AUTH_REQUIRED` | `false`                    | 是否启用身份认证                                  |
-| `DATA_DIR`      | `backend/data`             | 项目数据存储目录                                  |
-
-## 文档索引
-
-仓库内已跟踪的权威文档：
-
-- `CLAUDE.md`：AI 开发会话的项目指令与约定
-- `SCHOLARFLOW_CORE_REBUILD_PLAN_v2.md`：重建诊断与 V0–V3 计划
-- `docs/research-harness-roadmap.md`：各版本进度 + P2/P3 的明确触发条件
-- `docs/api-reference.md`：自动研究和注册表 API
-
-本地开发深度文档（存在于开发机、被 gitignore——fresh clone 中没有）：
-
-- `PROJECT_PLAN.md`：权威路线图和阶段优先级
-- `AGENTS.md`：人类与 AI 贡献者规则
-- `SYSTEM_PROMPT.md`：后续 AI 开发会话的长期默认 prompt
-- `docs/architecture.md`：当前和目标架构
-- `docs/fars-reference.md`：公开 FARS 信号及 ScholarFlow 应如何借鉴
-
-## 开发入口
-
-- 后端：`cd backend && PYTHONPATH=. ../.venv/bin/uvicorn main:app --reload`
-- 前端：`cd frontend && npm run dev`
-- 前端构建：`cd frontend && npm run build`
-
-## 核心路径
-
-- 自动研究编排：`backend/services/autoresearch/orchestrator.py`
-- 实验执行：`backend/services/autoresearch/runner.py`
-- 执行平面：`backend/services/autoresearch/execution.py`
-- 持久化与清单：`backend/services/autoresearch/repository.py`
-- 论文生成：`backend/services/autoresearch/writer.py`
-- 数据模型：`backend/schemas/autoresearch.py`
+- `AGENTS.md` —— 贡献规则与当前目标
+- `docs/research-harness-roadmap.md` —— 逐 session 历史记录、live run 基线表、P2–P4 计划
+- `SCHOLARFLOW_CORE_REBUILD_PLAN_v2.md` —— 2026 年 6 月导致重建的失败诊断

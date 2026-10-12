@@ -89,6 +89,37 @@ def _coerce_text(value, limit: int) -> str:
     return _truncate(value, limit)
 
 
+def _metrics_for_prompt(metrics: dict) -> dict:
+    """Bounded metrics view for the reviewer prompt (S18 live fix).
+
+    The raw metrics.json at Session-10 scale (per-seed results) is ~4MB —
+    sending it whole blows context/latency and produced tonight's empty
+    reviewer responses. Keep every aggregate the reviewer reasons over;
+    reduce ``results`` to per-(system, metric, dataset) means + seed counts."""
+    view = {
+        k: v for k, v in metrics.items()
+        if k != "results"
+    }
+    results = metrics.get("results") or []
+    grouped: dict[tuple, list[dict]] = {}
+    for r in results:
+        key = (r.get("system_name", ""), r.get("metric_name", ""), r.get("dataset_name", ""))
+        grouped.setdefault(key, []).append(r)
+    agg = []
+    for (system, metric, dataset), entries in sorted(grouped.items()):
+        values = [float(e.get("metric_value")) for e in entries if isinstance(e.get("metric_value"), (int, float))]
+        agg.append({
+            "system_name": system,
+            "metric_name": metric,
+            "dataset_name": dataset,
+            "mean_metric_value": round(sum(values) / len(values), 6) if values else None,
+            "seeds": len(entries),
+            "n_test": entries[0].get("n_test"),
+        })
+    view["results"] = agg
+    return view
+
+
 def run_reviewer_agent(
     project_id: str,
     idea: str,
@@ -106,7 +137,7 @@ def run_reviewer_agent(
         _load_prompt("reviewer_v1.md")
         .replace("{idea}", idea)
         .replace("{hypothesis_json}", json.dumps(selected_hypothesis, ensure_ascii=False, indent=2))
-        .replace("{results_json}", json.dumps(metrics, ensure_ascii=False, indent=2))
+        .replace("{results_json}", json.dumps(_metrics_for_prompt(metrics), ensure_ascii=False, indent=2))
         .replace("{stats_json}", json.dumps(baseline_comparison, ensure_ascii=False, indent=2))
         .replace("{notes_summary}", notes_summary)
     )
@@ -154,6 +185,18 @@ def run_reviewer_agent(
     return review
 
 
+def _bounded_results(metrics: dict) -> str:
+    """S18 live fix: metrics['results'] at Session-10 scale (512 seeds × datasets
+    × systems) is megabytes — never inline it whole into a text artifact. A
+    bounded sample is the honest evidence; the full data of record stays in
+    metrics.json."""
+    results = metrics.get("results") or []
+    if not results:
+        return "none"
+    sample = ", ".join(repr(r) for r in results[:3])
+    return f"{len(results)} entries (full data in metrics.json); first 3: [{sample}]"
+
+
 def _fallback_review(metrics: dict) -> dict:
     """LLM 解析失败时的诚实兜底：不伪造优点，只记录无法评审。"""
     if metrics.get("execution_status") != "success":
@@ -165,7 +208,7 @@ def _fallback_review(metrics: dict) -> dict:
                 {
                     "issue": "Experiment failed to execute after repair attempts; no metric results exist.",
                     "severity": "major",
-                    "evidence": f"execution_status={metrics.get('execution_status')}, results={metrics.get('results')}",
+                    "evidence": f"execution_status={metrics.get('execution_status')}, results={_bounded_results(metrics)}",
                 }
             ],
             "required_experiments": [
@@ -183,11 +226,11 @@ def _fallback_review(metrics: dict) -> dict:
         "summary": "Reviewer generation failed; review is a minimal honest placeholder based on raw metrics.",
         "strengths": [],
         "weaknesses": [
-            {
-                "issue": "Automated reviewer critique could not be generated; only raw metrics are available.",
-                "severity": "major",
-                "evidence": f"results={metrics.get('results')}",
-            }
+                {
+                    "issue": "Automated reviewer critique could not be generated; only raw metrics are available.",
+                    "severity": "major",
+                    "evidence": f"results={_bounded_results(metrics)}",
+                }
         ],
         "required_experiments": [
             {

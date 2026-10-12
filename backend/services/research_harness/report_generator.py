@@ -53,13 +53,21 @@ def _results_table(metrics: dict) -> str:
     results = metrics.get("results", []) or []
     if not results:
         return "_(no results — execution did not produce metric values)_\n"
-    header = "| system | metric | value | n_test | dataset |\n|---|---|---|---|---|\n"
-    rows = "".join(
-        f"| {r.get('system_name', '')} | {r.get('metric_name', '')} | {r.get('metric_value', '')} "
-        f"| {r.get('n_test', '')} | {r.get('dataset_name', '')} |\n"
-        for r in results
-    )
-    return header + rows
+    header = "| system | metric | value (mean over seeds) | seeds | n_test | dataset |\n|---|---|---|---|---|---|\n"
+    # S18 live fix: results carry one row per seed — printing them raw produced a
+    # 21k-row table. Aggregate honestly: mean value + seed count per
+    # (system, metric, dataset); the full per-seed data of record is metrics.json.
+    grouped: dict[tuple, list[dict]] = {}
+    for r in results:
+        key = (r.get("system_name", ""), r.get("metric_name", ""), r.get("dataset_name", ""))
+        grouped.setdefault(key, []).append(r)
+    rows = []
+    for (system, metric, dataset), entries in grouped.items():
+        values = [float(e.get("metric_value")) for e in entries if isinstance(e.get("metric_value"), (int, float))]
+        mean = f"{sum(values) / len(values):.6f}" if values else ""
+        n_test = entries[0].get("n_test", "")
+        rows.append(f"| {system} | {metric} | {mean} | {len(entries)} | {n_test} | {dataset} |\n")
+    return header + "".join(rows)
 
 
 def _baseline_block(metrics: dict) -> str:
@@ -465,7 +473,15 @@ def generate_research_report(
         sections.append(abstention)
 
     sections.append("## Reviewer Critique Summary\n\n")
-    sections.append(reviewer_md or "_(reviewer_round_1.md unavailable)_\n")
+    # S18 live fix: a pathological/degraded reviewer artifact can be megabytes;
+    # the report inlines a bounded excerpt and points at the file of record.
+    if reviewer_md is None:
+        sections.append("_(reviewer_round_1.md unavailable)_\n")
+    elif len(reviewer_md) > 6000:
+        sections.append(reviewer_md[:6000])
+        sections.append(f"\n…(truncated — full critique in reviews/reviewer_round_1.md, {len(reviewer_md)} chars)\n")
+    else:
+        sections.append(reviewer_md)
 
     sections.append("\n## Follow-up\n\n")
     chosen = decision.get("selected_action")

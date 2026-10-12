@@ -906,3 +906,27 @@ markdown, GPU-scale experiments.
 
 **Baseline table addition:** `live_restart_20261012` (glm-4.5-flash, restarted
 2026-10-12) — outcome recorded below when complete.
+
+**Session 18 restart-run outcome (recorded 2026-10-12 15:40, honest):**
+`live_restart_20261012` was stopped by operator after ~45 min in the literature
+stage. Verified before stopping: key auth + endpoint OK, glm-4.5-flash callable,
+76 real papers retrieved (S2/arXiv/Crossref, fresh), pipeline orchestration +
+workspace writes working. Blocked: the free tier was rate-limiting AND
+model-overloaded (16 retry events, 2 calls exhausted all 4 retries → notes
+batches silently dropped) — ~1 call / 8 min effective. Completing a run on the
+free tier is impractical; S17 marker-compliance live verification remains
+pending until the glm-5.3 token plan is active (user action), then rerun:
+`cd backend && ../.venv/bin/python ../scripts/v0_run.py --idea "..." --project-id <id>`
+(June baselines: 15-50 min end-to-end on a paid tier).
+
+**Session 18 also shipped (P4 journal pipeline, first two items):**
+- P4.2 GB/T 7714-2015 reference formatter (`citation.build_gbt7714_references` /
+  `build_journal_references`), verified-only contract, commit ea3457e.
+- P4.1 Chinese core-journal writer (`writer.write_journal_zh` →
+  `paper/draft_journal_zh.md`, prompt `writer_journal_zh_v1.md`, pre-built
+  verifiable reference list) + auditor parameterization + **Chinese prose audit
+  coverage** (compound cues + negation guard + zh sentence terminators; a
+  Chinese "显著优于" with no significant favorable result now fails Rule 1 —
+  the S16 language gap is closed for the journal path), commit e0b43ae.
+  Deliberate behavior change, one legacy test updated to point-estimate
+  phrasing (English-equivalent convention). Suite: 221 passed.

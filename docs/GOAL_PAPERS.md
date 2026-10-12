@@ -45,3 +45,13 @@
 - 机器加固（本轮 live 教训回写）：writer prompt 标记纪律（禁复合指标名/派生值/seed 数/占位 baseline）；
   evidence item summary 带指标名；审计器子句级中文否定域 + 重审剥离自身 [UNVERIFIED] 标记。
 - 测试 231 绿。**等待人工节点**：论文 #1/#2 选刊 + AI 披露决策 + 定稿。
+
+## 进度更新（2026-10-13 02:40）
+
+- **论文 #1 投稿包就绪**（等人工终审）：`s18_glm53_full/paper/submission/`
+  含 manuscript.md（干净稿 13.7KB）、cover_letter.md、ai_disclosure.md、checklist.md。
+  精修内容：补齐 H2 真实弃答/Spearman 数值（稿中原"未提供数值"的说法与数据记录不符，已改正）、
+  表 2 指标名统一为 macro_f1、系统内部术语清理、GB/T 7714 重复标识修复（P4.2 格式化器 bug）。
+  精修后重审 **gate=True 27/0**。标记版原稿保留作数值溯源（draft_journal_zh_portfolio.md）。
+- 人工节点问题（选刊/AI 披露/优先级）已于 02:00 提交用户，未获回复；按默认继续：
+  中文核心优先 + 如实披露（可改）+ 先打磨论文 #1。

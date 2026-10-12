@@ -435,9 +435,11 @@ def _gbt_authors_field(authors: list[str] | None) -> str:
 
 
 def _gbt_doc_type_and_tail(paper: dict[str, Any]) -> tuple[str, str]:
-    """Return (``[J]``/``[C]``/``[EB/OL]`` marker, venue-year tail). We only
-    render metadata we actually hold — volume/pages are omitted rather than
-    fabricated."""
+    """Return (head-suffix, venue-year tail). The type marker lives ONLY in the
+    head-suffix (S18 submission fix — it used to appear in both halves,
+    producing ``[EB/OL]. [EB/OL].`` doublets): ``[J]. `` / ``[C]//`` /
+    ``[EB/OL]. ``. The tail carries venue/year/URL only; volume/pages are
+    omitted rather than fabricated."""
     venue = (paper.get("venue") or "").strip()
     year = paper.get("year")
     arxiv = paper.get("arxiv_id") or (
@@ -447,17 +449,17 @@ def _gbt_doc_type_and_tail(paper: dict[str, Any]) -> tuple[str, str]:
     venue_l = venue.lower()
 
     if arxiv:
-        tail = f"[EB/OL]. ({year})[{_gbt_today()}]. {url or f'https://arxiv.org/abs/{arxiv}'}."
-        return "[EB/OL]", tail
+        tail = f"({year})[{_gbt_today()}]. {url or f'https://arxiv.org/abs/{arxiv}'}."
+        return "[EB/OL]. ", tail
     if any(k in venue_l for k in ("conference", "proceedings", "symposium", "workshop", "meeting")):
-        tail = f"[C]//{venue}, {year}." if year else f"[C]//{venue}."
-        return "[C]", tail
+        tail = f"{venue}, {year}." if year else f"{venue}."
+        return "[C]//", tail
     if venue:
-        tail = f"[J]. {venue}, {year}." if year else f"[J]. {venue}."
-        return "[J]", tail
+        tail = f"{venue}, {year}." if year else f"{venue}."
+        return "[J]. ", tail
     # Metadata-only connector hit with no venue: electronic resource.
-    tail = f"[EB/OL]. ({year})[{_gbt_today()}]. {url}." if url else (f"[EB/OL]. ({year})." if year else "[EB/OL].")
-    return "[EB/OL]", tail
+    tail = f"({year})[{_gbt_today()}]. {url}." if url else (f"({year})." if year else "")
+    return "[EB/OL]. ", tail
 
 
 def _gbt_today() -> str:
@@ -467,16 +469,26 @@ def _gbt_today() -> str:
 
 
 def format_paper_gbt7714(paper: dict[str, Any]) -> str:
-    """One ``papers.jsonl`` entry as a GB/T 7714-2015 reference string."""
+    """One ``papers.jsonl`` entry as a GB/T 7714-2015 reference string.
+
+    The type marker ([J]/[C]/[EB/OL]) is emitted ONCE, in the head; the tail
+    carries venue/year/URL only (S18 submission fix: both halves used to carry
+    the marker, producing ``[EB/OL]. [EB/OL].`` doublets)."""
     title = (paper.get("title") or "").strip()
     authors = _gbt_authors_field(paper.get("authors"))
-    marker, tail = _gbt_doc_type_and_tail(paper)
+    marker_suffix, tail = _gbt_doc_type_and_tail(paper)
     doi = (paper.get("doi") or "").strip()
-    head = f"{authors}. {title}{marker}. " if authors else f"{title}{marker}. "
+    head = f"{authors}. {title}{marker_suffix}" if authors else f"{title}{marker_suffix}"
     entry = head + tail
     if doi:
         entry = entry.rstrip(".") + f". DOI:{doi}."
     return entry
+
+
+def strip_type_marker_from_tail(tail: str) -> str:
+    """Tail sanitizer: drop a leading duplicate type marker (defense in depth for
+    tails built by older versions)."""
+    return re.sub(r"^\[(?:J|C|EB/OL|D|M|N|R|S|P|A|DB|CP|EB|Z)\](?://)?\s*", "", tail or "")
 
 
 def build_gbt7714_references(

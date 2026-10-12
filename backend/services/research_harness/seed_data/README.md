@@ -8,16 +8,16 @@ Each file is JSONL with the unified schema:
 {"id": "...", "claim": "...", "evidence": "...", "evidence_title": "...", "label": "SUPPORT|REFUTE", "source": "..."}
 ```
 
-## scifact_slice.jsonl — 100 examples (50 SUPPORT / 50 REFUTE)
+## scifact_slice.jsonl — 474 examples (237 SUPPORT / 237 REFUTE) — source-limited, full labeled set
 - **Source**: [allenai/scifact](https://github.com/allenai/scifact) — *Fact or Fiction: Verifying
   Scientific Claims*, Wadden et al. 2020. License: **CC BY 4.0**.
 - **Task**: scientific claim verification — given a claim and an evidence abstract, predict SUPPORT/REFUTE.
-- **Construction**: 100-example balanced slice of the SciFact **dev** split. For each claim we attach
+- **Construction**: balanced slice of ALL labeled SciFact claims (dev + train). For each claim we attach
   the gold-cited corpus abstract as `evidence`; CONTRADICT → REFUTE. NEI claims excluded (clean binary task).
 - Downloaded (session 3, 2026-06-15) from the official S3 tarball
   `https://scifact.s3-us-west-2.amazonaws.com/release/latest/data.tar.gz`.
 
-## citation_faithfulness_slice.jsonl — 100 examples (50 FAITHFUL / 50 PARSING_ERROR)
+## citation_faithfulness_slice.jsonl — 948 examples (474 FAITHFUL / 474 PARSING_ERROR, P4.3: all claims × 2 classes, circular half-shift donor)
 
 **Session 4 (2026-06-16)** — the citation-specific dataset requested by the Session 3 reviewer
 (`test_on_second_dataset` must_have: "create a dataset that contains simulated citation parsing
@@ -50,3 +50,7 @@ errors"). The general claim-verification slices (SciFact/VitaminC) don't directl
 Session 2's experiment failed on n=3 because the LLM-generated loader guessed a GitHub URL that 404'd.
 Committing verified slices removes that entire failure class. The `DATASET_REGISTRY` in
 `../datasets.py` exposes these with absolute-path loaders that experiment code copies verbatim.
+
+> P4.3 (2026-10-12): expanded vitaminc/citation_faithfulness/digits to journal-review scale via
+> `scripts/build_seed_slices_v3.py` (deterministic, sorted by id). scifact/breast_cancer stay at
+> their full-source sizes, honestly attributed.

@@ -61,7 +61,7 @@ def domain_agnostic_note() -> str:
         "- 禁止用 GPU（no .cuda(), no device='cuda'）——CPU 推理即可。\n"
         "- 数据集策略：**必须使用 `DATASET_REGISTRY`（见下方注册表），用注册表给的绝对路径 loader "
         "原样粘进 load_data()。禁止 urllib.request 下载自创 URL；禁止随机生成的假数据作正式实验数据。**\n"
-        f"- 单次运行必须 ≤ {MAX_EXPERIMENT_SECONDS} 秒；每个数据集截到 ≤ 500 条；降低模型/检索复杂度。\n"
+        f"- 单次运行必须 ≤ {MAX_EXPERIMENT_SECONDS} 秒；每个数据集截到 ≤ 2000 条（claim 域）/ ≤ 1600 条（structured 域）；降低模型/检索复杂度。\n"
     )
 
 
@@ -82,8 +82,8 @@ def domain_method_note(domain: str | None = None) -> str:
             "**禁止把 proposed 降级成 TF-IDF / Jaccard / 词法匹配**——那正是 Session 3 reviewer 戳的"
             "「方法-假设不匹配」major weakness。\n"
             "- **SentenceTransformer 模型只 load 一次并缓存复用**（module 级全局变量）。先对每个数据集的全部 "
-            "(claim, evidence)（≤500 条）一次性算好归一化句向量，再在 bootstrap 重采样里只做下标取值 + 余弦"
-            "——Session 10 实测该路径在 512 seed × 500 例 × 3 数据集下计算量 <1 秒，**seed 应贴近 512**。\n"
+            "(claim, evidence)（≤2000 条）一次性算好归一化句向量，再在 bootstrap 重采样里只做下标取值 + 余弦"
+            "——Session 10 实测该路径在 512 seed × 2000 例 × 3 数据集下计算量秒级，**seed 应贴近 512**。\n"
             "- baseline 分两层（Session 10）：① **弱基线** TF-IDF / Jaccard 词法相似度；"
             "② **强基线 `stronger_baseline`** = BM25 (Okapi) 词法检索 + 浅层分数融合/阈值校准——proposed 的 win "
             "**必须越过强基线 BM25**，不能只赢弱基线 TF-IDF（VICTOR / VERIRAG 见 Future Work，需 GPU/大模型）。\n"

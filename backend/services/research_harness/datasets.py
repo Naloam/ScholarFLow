@@ -64,12 +64,12 @@ DATASET_REGISTRY: tuple[DatasetSpec, ...] = (
             "(distinct from SciFact)."
         ),
         file_path=SEED_DIR / "vitaminc_slice.jsonl",
-        n_examples=500,
-        label_balance="250 SUPPORT / 250 REFUTE",
+        n_examples=2000,
+        label_balance="1000 SUPPORT / 1000 REFUTE",
         positive_label="SUPPORT",
         negative_label="REFUTE",
         metric_hint="macro_f1 / accuracy",
-        attribution="tals/vitaminc (CC BY-SA 4.0), 500-example balanced held-out dev slice",
+        attribution="tals/vitaminc (CC BY-SA 4.0), 2000-example balanced held-out dev slice (P4.3 journal-scale expansion)",
     ),
     DatasetSpec(
         key="citation_faithfulness",
@@ -82,12 +82,12 @@ DATASET_REGISTRY: tuple[DatasetSpec, ...] = (
             "'detect citation parsing errors'. Derived deterministically from allenai/scifact."
         ),
         file_path=SEED_DIR / "citation_faithfulness_slice.jsonl",
-        n_examples=474,
-        label_balance="237 FAITHFUL / 237 PARSING_ERROR",
+        n_examples=948,
+        label_balance="474 FAITHFUL / 474 PARSING_ERROR",
         positive_label="FAITHFUL",
         negative_label="PARSING_ERROR",
         metric_hint="macro_f1 / accuracy",
-        attribution="derived from allenai/scifact (CC BY 4.0); deterministic faithful/mismatched pairs",
+        attribution="derived from allenai/scifact (CC BY 4.0); deterministic faithful/mismatched pairs over ALL 474 claims (P4.3)",
     ),
     # ------------------------------------------------------------------ #
     # Session 12: non-retrieval domains (proves the brain is not overfit).
@@ -123,12 +123,12 @@ DATASET_REGISTRY: tuple[DatasetSpec, ...] = (
             "Method must be a feature classifier on the pixels, NOT sentence-transformer cosine."
         ),
         file_path=SEED_DIR / "digits_slice.jsonl",
-        n_examples=500,
-        label_balance="250 even / 250 odd",
+        n_examples=1600,
+        label_balance="800 even / 800 odd",
         positive_label="1",
         negative_label="0",
         metric_hint="macro_f1 / accuracy",
-        attribution="sklearn.datasets.load_digits (real handwritten digits), balanced held-out slice",
+        attribution="sklearn.datasets.load_digits (real handwritten digits), balanced held-out slice (P4.3 expansion)",
         domain="structured",
         feature_schema='{"id","features":[64 floats 0..1],"label":0|1,"label_name"}',
     ),

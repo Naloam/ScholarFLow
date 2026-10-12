@@ -930,3 +930,33 @@ pending until the glm-5.3 token plan is active (user action), then rerun:
   the S16 language gap is closed for the journal path), commit e0b43ae.
   Deliberate behavior change, one legacy test updated to point-estimate
   phrasing (English-equivalent convention). Suite: 221 passed.
+
+**Session 18 final outcome (2026-10-12 23:00, honest):** `s18_glm53_full`
+(glm-5.3 via the coding endpoint, idea: 证据一致性加权投票 vs 均匀多数投票)
+— **completed end-to-end** after three real fixes the live run itself surfaced:
+`portfolio_k=None` crash (420e5c3), empty-response 0-byte drafts (fdb3d1f),
+and a 4.2MB per-seed metrics blob inlined into prompts/reviews/reports
+(3fa2f02 — reviewer prompt now aggregate-bounded; fallback review evidence
+bounded; results table mean-aggregated). Final state:
+
+- Portfolio: h1 executed honestly (2/3 datasets win, vitaminc loses) →
+  hypothesis-anchored **NEGATIVE** (primary macro_f1 below bar); h2/h3
+  `failed_after_3_repairs` (endpoint congestion) — recorded, not fabricated.
+- **S17 CLOSED: Writer marker compliance CONFIRMED live** — English draft
+  gate=True with 6/6 `audit-claim` markers value-verified (16 verified,
+  0 unverified). The June-open question is answered: glm-5.3 complies.
+- **P4.1 Chinese journal draft: first live output** (23.5KB, 25 markers,
+  19 verified / 9 correctly REJECTED — writer mixed cross-dataset values,
+  tagged seed counts as metrics, cited a metric absent from metrics.json;
+  the gate caught all three misuse classes). gate=False → the TipTap
+  human-edit + re-audit loop now has a precise 9-item worklist. That is
+  the designed production workflow, not a failure.
+- Ops note: `LLM_SOFT_TIMEOUT_SECONDS=600` in .env — long draft generations
+  exceed the 110s default under evening endpoint load (4×110s retries
+  exhausted the budget; 600s completes in one attempt).
+- P4.3 applied in the same session (b74815c): slices at journal scale.
+
+Baseline table row: s18_glm53_full · glm-5.3 (coding endpoint) ·
+claim-verification · all_negative (h1) · EN gate=True 0 unverified ·
+ZH gate=False 9/28 rejected (writer misuse caught) · pending: human edit →
+re-audit → first journal submission candidate.

@@ -34,9 +34,20 @@ def _paper_dir(project_id: str) -> Path:
 
 def _call_writer(prompt: str) -> str:
     """One writer-model call. The writer model (``LLM_WRITER_MODEL``) may differ from the
-    main reasoning model; falls back to the default chat model when unset."""
+    main reasoning model; falls back to the default chat model when unset.
+
+    Raises RuntimeError on an empty response (S18 live fix): chat() returns an
+    empty FALLBACK_RESPONSE after exhausting retries, and writing that as a
+    "successful" draft produces a 0-byte paper that pretends the step worked.
+    Callers treat the raise as a non-fatal paper-layer failure (timeline records
+    it honestly); retrying the step regenerates the draft."""
     response = chat([{"role": "user", "content": prompt}], model=settings.llm_writer_model)
-    return get_message_content(response)
+    content = get_message_content(response)
+    if not content.strip():
+        raise RuntimeError(
+            "writer LLM returned empty content (gateway timeout/degradation) — refusing to write an empty draft"
+        )
+    return content
 
 
 def _baseline_summary(metrics: dict[str, Any]) -> str:

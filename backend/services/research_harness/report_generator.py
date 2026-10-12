@@ -70,6 +70,66 @@ def _results_table(metrics: dict) -> str:
     return header + "".join(rows)
 
 
+def _robustness_table(metrics: dict) -> str:
+    """P4.3/M5 — cross-dataset robustness pivot: rows = systems, columns =
+    datasets, cells = mean of the anchored primary metric over seeds, plus a
+    "wins vs lexical baseline" column. Journals expect exactly this view; it is
+    derived from the same per-seed ``results`` rows as the results table (no new
+    data). Returns "" when there is nothing to pivot."""
+    bc = metrics.get("baseline_comparison") or {}
+    primary = bc.get("metric_name")
+    results = metrics.get("results") or []
+    if not primary or not results:
+        return ""
+    higher_better = (bc.get("direction") or "higher_is_better") == "higher_is_better"
+
+    datasets: list[str] = []
+    for d in bc.get("datasets") or []:
+        name = d.get("dataset")
+        if name and name not in datasets:
+            datasets.append(name)
+    if not datasets:
+        return ""
+
+    pivot: dict[tuple[str, str], float] = {}
+    counts: dict[tuple[str, str], int] = {}
+    for r in results:
+        if (r.get("metric_name") or "") != primary:
+            continue
+        ds = r.get("dataset_name")
+        if ds not in datasets:
+            continue
+        key = (r.get("system_name") or "", ds)
+        if isinstance(r.get("metric_value"), (int, float)):
+            pivot[key] = pivot.get(key, 0.0) + float(r["metric_value"])
+            counts[key] = counts.get(key, 0) + 1
+    means = {k: v / counts[k] for k, v in pivot.items() if counts.get(k)}
+    systems = sorted({s for s, _ in means})
+    lexical = [s for s in systems if "lexical" in s.lower()]
+    ref = lexical[0] if lexical else None
+
+    header = (
+        f"### Cross-dataset robustness (mean {primary} over seeds)\n\n"
+        f"| system | {' | '.join(datasets)} | wins vs {ref or 'baseline'} |\n"
+        f"|---|{'---|' * (len(datasets) + 1)}\n"
+    )
+    rows = []
+    for s in systems:
+        cells = [f"{means[(s, d)]:.4f}" if (s, d) in means else "—" for d in datasets]
+        wins = 0
+        if ref and s != ref:
+            for d in datasets:
+                a, b = means.get((s, d)), means.get((ref, d))
+                if a is not None and b is not None and (
+                    (a > b) if higher_better else (a < b)
+                ):
+                    wins += 1
+            rows.append(f"| {s} | {' | '.join(cells)} | {wins}/{len(datasets)} |\n")
+        else:
+            rows.append(f"| {s} | {' | '.join(cells)} | — |\n")
+    return header + "".join(rows)
+
+
 def _baseline_block(metrics: dict) -> str:
     bc = metrics.get("baseline_comparison", {}) or {}
     datasets = bc.get("datasets") or []
@@ -458,6 +518,10 @@ def generate_research_report(
 
     sections.append("## Results\n\n")
     sections.append(_results_table(metrics))
+    robustness = _robustness_table(metrics)
+    if robustness:
+        sections.append("\n")
+        sections.append(robustness)
     sections.append("\n**Baseline comparison**\n\n")
     sections.append(_baseline_block(metrics))
     sections.append(f"\n_attempts_used: {metrics.get('attempts_used')}, "

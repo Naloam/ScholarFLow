@@ -331,4 +331,55 @@ def run_writer_agent(
     draft_path = _paper_dir(project_id) / "draft.md"
     write_draft(project_id, idea, selected, metrics, contribution, outline)
     run_quality_loop(project_id, metrics, selected)
+    # P4.1 — Chinese core-journal draft, best-effort: never blocks the English
+    # draft (the paper layer stays non-fatal; the zh audit is a separate ledger).
+    try:
+        write_journal_zh(project_id, idea, selected, metrics, contribution, outline)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[WriterAgent] journal-zh draft failed (non-fatal): %s", exc)
     return draft_path
+
+
+# --------------------------------------------------------------------------- #
+# P4.1 — Chinese core-journal draft (journal pipeline)
+# --------------------------------------------------------------------------- #
+
+
+def write_journal_zh(
+    project_id: str,
+    idea: str,
+    selected: dict,
+    metrics: dict,
+    contribution: str,
+    outline: str,
+) -> Path:
+    """中文核心期刊结构初稿 → ``paper/draft_journal_zh.md``.
+
+    The reference list is pre-built (GB/T 7714) from ``papers.jsonl`` — English
+    draft citations first, topped up by relevance — so every citation the prompt
+    allows is verifiable by the offline gate by construction. The draft keeps
+    ``audit-claim`` markers (language-independent), so the same Auditor gates it
+    (pipeline audits it into ``ledger/claim_audit_zh.json``).
+    """
+    papers = _load_papers(project_id)
+    draft_raw = _paper_dir(project_id) / "draft.raw.md"
+    draft_text = draft_raw.read_text(encoding="utf-8") if draft_raw.exists() else None
+    refs = citation.build_journal_references(papers, draft_text=draft_text)
+    gbt_block = "\n".join(f"{r['marker']} {r['entry']}" for r in refs) or "_(无已检索文献——参考文献表留空)_"
+
+    prompt = (
+        load_prompt("writer_journal_zh_v1.md")
+        .replace("{idea}", idea)
+        .replace("{outline}", outline)
+        .replace("{contribution}", contribution)
+        .replace("{hypothesis_json}", json.dumps(selected or {}, ensure_ascii=False, indent=2))
+        .replace("{evidence_pack}", evidence.build_evidence_pack(metrics, selected))
+        .replace("{honesty_constraints}", evidence.build_honesty_constraints(metrics, selected))
+        .replace("{gbt_references}", gbt_block)
+    )
+    text = _call_writer(prompt)
+    zh_path = _paper_dir(project_id) / "draft_journal_zh.md"
+    zh_path.write_text(text, encoding="utf-8")
+    (_paper_dir(project_id) / "draft_journal_zh.raw.md").write_text(text, encoding="utf-8")
+    logger.info("[WriterAgent] journal-zh draft written: %s (%d chars)", zh_path, len(text))
+    return zh_path

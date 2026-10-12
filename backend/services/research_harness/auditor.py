@@ -50,16 +50,69 @@ _SPIN_CUES: tuple[str, ...] = (
 # A sentence is a "claim" worth auditing if it carries any result or spin cue.
 _CLAIM_CUES: tuple[str, ...] = _RESULT_CUES + _SPIN_CUES
 
+# P4.1 — Chinese cue coverage. Same convention-anchored philosophy as the English
+# sets: compound forms only, chosen so the honest phrasings the writer prompt
+# instructs ("差异不具有统计显著性", "在部分数据集上未提升") do NOT contain them.
+# Every Chinese cue goes through _non_negated_has: an occurrence preceded (within
+# 3 chars) by 不/未/无/非/没 is a negation ("未显著优于基线"), not a claim.
+_ZH_RESULT_CUES: tuple[str, ...] = (
+    "显著优于", "显著高于", "显著低于", "显著超过", "显著提升", "显著改善",
+    "优于基线", "超过基线", "全面优于", "一致优于", "胜过基线", "取得最优",
+)
+_ZH_SPIN_CUES: tuple[str, ...] = (
+    "具有竞争力", "有竞争力", "有前景", "具有前景", "前景广阔",
+    "先进水平", "领先水平", "业界领先",
+)
+_ZH_CLAIM_CUES: tuple[str, ...] = _ZH_RESULT_CUES + _ZH_SPIN_CUES
+_ZH_SIG_CUES: tuple[str, ...] = (
+    "显著优于", "显著高于", "显著低于", "显著超过", "显著提升", "显著改善",
+)
+
 # Universal-scope phrases → "outperforms across all datasets" style overclaim.
 _SCOPE_PHRASES: tuple[str, ...] = (
     "all datasets", "every dataset", "across all", "all three", "all of the",
     "uniformly", "consistently", "in every", "on each dataset", "broadly",
     "generalization", "generalizes", "robustly",
 )
+_ZH_SCOPE_PHRASES: tuple[str, ...] = (
+    "所有数据集", "全部数据集", "每个数据集", "各个数据集", "在所有情况下", "一致地", "广泛适用",
+)
+
+# Negation guard for Chinese cues: look-back window before a cue occurrence.
+_ZH_NEGATION_CHARS = "不未无非没"
+
+
+def _non_negated_has(sentence: str, cues: tuple[str, ...], window: int = 3) -> bool:
+    """True when ``sentence`` carries a cue occurrence NOT preceded by a Chinese
+    negation (未/不/无/非/没 within ``window`` chars). English substrings keep
+    using :func:`_has_any` untouched."""
+    for cue in cues:
+        start = 0
+        while True:
+            i = sentence.find(cue, start)
+            if i < 0:
+                break
+            prefix = sentence[max(0, i - window):i]
+            if not any(c in prefix for c in _ZH_NEGATION_CHARS):
+                return True
+            start = i + 1
+    return False
+
+
+def _is_claim_sentence(sentence: str) -> bool:
+    return _has_any(sentence, _CLAIM_CUES) or _non_negated_has(sentence, _ZH_CLAIM_CUES)
+
+
+def _is_spin_sentence(sentence: str) -> bool:
+    if _non_negated_has(sentence, _ZH_SPIN_CUES):
+        return True
+    return _has_any(sentence, _SPIN_CUES) and not _has_any(sentence, _RESULT_CUES)
 
 # Split on sentence-final punctuation followed by whitespace + a capital/structural opener.
 # Resists splitting on decimals like "0.003" (the "." there is followed by a digit, not whitespace).
-_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(“\"`\[])")
+# Chinese sentence terminators (。！？；) split unconditionally — Chinese text uses no
+# inter-sentence space, so the lookahead guard cannot apply (P4.1).
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(“\"`\[])|(?<=[。！？；])")
 
 
 def _project_dir(project_id: str) -> Path:
@@ -253,9 +306,9 @@ def extract_claims(draft_text: str) -> list[dict[str, Any]]:
     claims: list[dict[str, Any]] = []
     idx = 0
     for sentence in _split_sentences(body):
-        if not _has_any(sentence, _CLAIM_CUES):
+        if not _is_claim_sentence(sentence):
             continue
-        category = "spin" if _has_any(sentence, _SPIN_CUES) and not _has_any(sentence, _RESULT_CUES) else "result"
+        category = "spin" if _is_spin_sentence(sentence) else "result"
         idx += 1
         claims.append({"id": f"claim_{idx}", "text": sentence, "category": category})
     return claims
@@ -397,25 +450,28 @@ def _classify_claim(claim: dict[str, Any], metrics: dict[str, Any], items: list[
     )
 
     # Rule 1 — significance overclaim: claims significant superiority with no significant favorable result.
-    sig_superiority = "significantly" in text_lower and _has_any(text, ("outperform", "superior", "improve", "better", "beats"))
+    sig_superiority = ("significantly" in text_lower and _has_any(text, ("outperform", "superior", "improve", "better", "beats"))) or _non_negated_has(text, _ZH_SIG_CUES)
     if sig_superiority and not has_sig:
         return _verdict(cid, "unverified", text, [],
                         "claims a significant superiority but no statistically significant favorable result exists", cat)
 
     # Rule 2 — scope overclaim: uniform/general superiority while the method lost on some dataset.
-    if _has_any(text, _SCOPE_PHRASES) and lost:
+    if (_has_any(text, _SCOPE_PHRASES) or _non_negated_has(text, _ZH_SCOPE_PHRASES)) and lost:
         return _verdict(
             cid, "unverified", text, [],
             f"claims uniform/general superiority but the proposed method lost on: {', '.join(lost)}", cat,
         )
 
     # Rule 3 — positive spin on a negative result.
-    if v == "negative" and _has_any(text, ("competitive", "promising", "state-of-the-art", "sota")):
+    if v == "negative" and (
+        _has_any(text, ("competitive", "promising", "state-of-the-art", "sota"))
+        or _non_negated_has(text, _ZH_SPIN_CUES)
+    ):
         return _verdict(cid, "unverified", text, [],
                         "uses competitive/promising/state-of-the-art wording for a negative result", cat)
 
     # Rule 4 — global superiority without a dataset qualifier while overall not beating baseline.
-    bare_superiority = _has_any(text, ("outperforms the baseline", "beats the baseline", "superior to the baseline"))
+    bare_superiority = _has_any(text, ("outperforms the baseline", "beats the baseline", "superior to the baseline")) or _non_negated_has(text, ("优于基线", "超过基线", "胜过基线"))
     if bare_superiority and not names_dataset and (metrics.get("baseline_comparison") or {}).get("overall_beats_baseline") is False:
         return _verdict(cid, "unverified", text, [],
                         "claims to outperform the baseline overall but the proposed method does not beat it overall", cat)
@@ -666,12 +722,25 @@ def _strip_self_injected_omission_block(draft_text: str) -> str:
     return cleaned
 
 
-def run_auditor_agent(project_id: str, metrics: dict[str, Any]) -> dict[str, Any]:
-    """Read paper/draft.md, audit it, write ledger + annotated draft + report annotation."""
+def run_auditor_agent(
+    project_id: str,
+    metrics: dict[str, Any],
+    *,
+    draft_relpath: str = "paper/draft.md",
+    ledger_name: str = "claim_audit.json",
+    annotate_report: bool = True,
+) -> dict[str, Any]:
+    """Read a paper draft, audit it, write ledger + annotated draft (+ report annotation).
+
+    ``draft_relpath``/``ledger_name`` let the same gate run on the Chinese journal
+    draft (P4.1: ``paper/draft_journal_zh.md`` → ``ledger/claim_audit_zh.json``,
+    with ``annotate_report=False`` so the research report's audit section stays
+    anchored to the English draft).
+    """
     proj = _project_dir(project_id)
-    draft_path = proj / "paper" / "draft.md"
+    draft_path = proj / draft_relpath
     if not draft_path.exists():
-        logger.warning("[AuditorAgent] no paper/draft.md for %s — skipping audit", project_id)
+        logger.warning("[AuditorAgent] no %s for %s — skipping audit", draft_relpath, project_id)
         return {"gate": False, "skipped": True, "reason": "no_draft"}
 
     draft_text = draft_path.read_text(encoding="utf-8")
@@ -707,15 +776,16 @@ def run_auditor_agent(project_id: str, metrics: dict[str, Any]) -> dict[str, Any
 
     ledger_dir = proj / "ledger"
     ledger_dir.mkdir(parents=True, exist_ok=True)
-    (ledger_dir / "claim_audit.json").write_text(
+    (ledger_dir / ledger_name).write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # Rewrite draft.md with inline [UNVERIFIED] markers; keep draft.raw.md pristine.
+    # Rewrite the draft with inline [UNVERIFIED] markers; keep the .raw draft pristine.
     annotated = annotate_draft(draft_text, result)
     draft_path.write_text(annotated, encoding="utf-8")
 
-    _annotate_report(project_id, result)
+    if annotate_report:
+        _annotate_report(project_id, result)
 
     logger.info(
         "[AuditorAgent] %s: gate=%s verified=%d unverified=%d",

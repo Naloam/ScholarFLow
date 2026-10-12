@@ -521,6 +521,40 @@ def build_gbt7714_references(
     return {"references": ordered, "unverified": unverified}
 
 
+def build_journal_references(
+    papers: list[dict[str, Any]],
+    draft_text: str | None = None,
+    max_refs: int = 25,
+) -> list[dict[str, str]]:
+    """Reference list for the journal writer (P4.1).
+
+    Order: citations verified in ``draft_text`` first (draft order), topped up by
+    ``relevance_score`` from the retrieved literature, capped at ``max_refs``,
+    renumbered ``[1]..[n]``. Every entry comes from ``papers.jsonl``, so the
+    offline citation gate verifies them by construction.
+    """
+    refs: list[dict[str, str]] = []
+    if draft_text:
+        refs = list(build_gbt7714_references(draft_text, papers)["references"])
+    have = {_normalize_title(r["title"]) for r in refs}
+    rest = [
+        p for p in papers or []
+        if isinstance(p, dict) and _normalize_title(p.get("title") or "") not in have
+    ]
+    rest.sort(key=lambda p: float(p.get("relevance_score") or 0.0), reverse=True)
+    for p in rest:
+        if len(refs) >= max_refs:
+            break
+        title = (p.get("title") or "").strip()
+        if not title:
+            continue
+        refs.append({"marker": "", "title": title, "entry": format_paper_gbt7714(p)})
+    return [
+        {"marker": f"[{i}]", "title": r["title"], "entry": r["entry"]}
+        for i, r in enumerate(refs[:max_refs], start=1)
+    ]
+
+
 __all__ = [
     "titles_match",
     "extract_citations",
@@ -528,6 +562,7 @@ __all__ = [
     "verify_citations_live",
     "format_paper_gbt7714",
     "build_gbt7714_references",
+    "build_journal_references",
     "DBLP_SEARCH_URL",
     "CROSSREF_API_URL",
 ]

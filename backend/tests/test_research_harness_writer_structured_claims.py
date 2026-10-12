@@ -81,7 +81,9 @@ def test_compliant_writer_draft_flows_to_verified_structured_claim(
     canned = (
         "# 草稿\n\n"
         "## 结果\n\n"
-        "提出方法的期望校准误差为 0.025962，显著优于基线的 0.047393。\n"
+        # Point-estimate phrasing (mirrors English "lower than the baseline's"): P4.1 made
+        # Chinese prose auditable, so an unbacked "显著优于" would now (correctly) fail Rule 1.
+        "提出方法的期望校准误差为 0.025962，低于基线的 0.047393。\n"
         "<!-- audit-claim metric=calibration_error proposed=0.025962 baseline=0.047393 -->\n"
     )
     monkeypatch.setattr(

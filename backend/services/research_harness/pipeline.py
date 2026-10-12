@@ -534,6 +534,8 @@ def run_step_audit(project_id: str, idea: str) -> dict:
     Reads paper/draft.md (produced by the write step) and metrics.json. A failed
     audit is recorded on disk + the report (never silently passed); an exception is
     caught as non-fatal so the honest report is never blocked by an audit problem.
+    The Chinese journal draft (P4.1), when present, gets the same gate into its own
+    ledger — also non-fatal for the same reason.
     """
     from services.research_harness.auditor import run_auditor_agent
 
@@ -542,9 +544,23 @@ def run_step_audit(project_id: str, idea: str) -> dict:
         raise RuntimeError("No metrics on disk. Run --steps report first.")
     result = run_auditor_agent(project_id, metrics)
     logger.info(
-        "Audit complete: gate=%s verified=%s unverified=%s",
+        "[pipeline] Audit complete: gate=%s verified=%s unverified=%s",
         result.get("gate"), result.get("verified_count"), result.get("unverified_count"),
     )
+    if (Path(WORKSPACE_ROOT) / project_id / "paper" / "draft_journal_zh.md").exists():
+        try:
+            zh = run_auditor_agent(
+                project_id, metrics,
+                draft_relpath="paper/draft_journal_zh.md",
+                ledger_name="claim_audit_zh.json",
+                annotate_report=False,
+            )
+            logger.info(
+                "[pipeline] journal-zh audit: gate=%s verified=%s unverified=%s",
+                zh.get("gate"), zh.get("verified_count"), zh.get("unverified_count"),
+            )
+        except Exception as exc:  # noqa: BLE001 — zh audit is additive, never blocks
+            logger.warning("[pipeline] journal-zh audit failed (non-fatal): %s", exc)
     return result
 
 

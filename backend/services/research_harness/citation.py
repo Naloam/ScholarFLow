@@ -394,11 +394,140 @@ def _search_crossref(client: Any, title: str) -> str | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# GB/T 7714-2015 reference formatting (P4.2 — journal pipeline)
+# --------------------------------------------------------------------------- #
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_GBT_MAX_AUTHORS = 3
+
+
+def _gbt_format_author(name: str) -> str:
+    """One author in GB/T 7714 form. CJK names pass through unchanged; Western
+    names become ``SURNAME I`` (caps surname + initials, no periods)."""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    if _CJK_RE.search(name):
+        return name
+    parts = name.replace(".", " ").split()
+    if len(parts) == 1:
+        return parts[0].upper()
+    surname = parts[-1].upper()
+    initials = "".join(p[0].upper() for p in parts[:-1] if p)
+    return f"{surname} {initials}".strip()
+
+
+def _gbt_authors_field(authors: list[str] | None) -> str:
+    """Author list per GB/T 7714: first 3, then ", et al." (or ", 等" when the
+    author list is Chinese). Unknown authors fall back to the title-first form
+    handled by the caller."""
+    names = [a for a in (authors or []) if a and a.strip()]
+    if not names:
+        return ""
+    has_cjk = any(_CJK_RE.search(a) for a in names)
+    et_al = ", 等" if has_cjk else ", et al"
+    formatted = [_gbt_format_author(a) for a in names[:_GBT_MAX_AUTHORS]]
+    field = ", ".join(f for f in formatted if f)
+    if len(names) > _GBT_MAX_AUTHORS:
+        field += et_al
+    return field
+
+
+def _gbt_doc_type_and_tail(paper: dict[str, Any]) -> tuple[str, str]:
+    """Return (``[J]``/``[C]``/``[EB/OL]`` marker, venue-year tail). We only
+    render metadata we actually hold — volume/pages are omitted rather than
+    fabricated."""
+    venue = (paper.get("venue") or "").strip()
+    year = paper.get("year")
+    arxiv = paper.get("arxiv_id") or (
+        (paper.get("paper_id") or "").startswith("arxiv:") and paper.get("paper_id")[6:]
+    )
+    url = (paper.get("url") or "").strip()
+    venue_l = venue.lower()
+
+    if arxiv:
+        tail = f"[EB/OL]. ({year})[{_gbt_today()}]. {url or f'https://arxiv.org/abs/{arxiv}'}."
+        return "[EB/OL]", tail
+    if any(k in venue_l for k in ("conference", "proceedings", "symposium", "workshop", "meeting")):
+        tail = f"[C]//{venue}, {year}." if year else f"[C]//{venue}."
+        return "[C]", tail
+    if venue:
+        tail = f"[J]. {venue}, {year}." if year else f"[J]. {venue}."
+        return "[J]", tail
+    # Metadata-only connector hit with no venue: electronic resource.
+    tail = f"[EB/OL]. ({year})[{_gbt_today()}]. {url}." if url else (f"[EB/OL]. ({year})." if year else "[EB/OL].")
+    return "[EB/OL]", tail
+
+
+def _gbt_today() -> str:
+    from datetime import date
+
+    return date.today().isoformat()
+
+
+def format_paper_gbt7714(paper: dict[str, Any]) -> str:
+    """One ``papers.jsonl`` entry as a GB/T 7714-2015 reference string."""
+    title = (paper.get("title") or "").strip()
+    authors = _gbt_authors_field(paper.get("authors"))
+    marker, tail = _gbt_doc_type_and_tail(paper)
+    doi = (paper.get("doi") or "").strip()
+    head = f"{authors}. {title}{marker}. " if authors else f"{title}{marker}. "
+    entry = head + tail
+    if doi:
+        entry = entry.rstrip(".") + f". DOI:{doi}."
+    return entry
+
+
+def build_gbt7714_references(
+    draft_text: str,
+    papers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a renumbered GB/T 7714 reference list for a draft.
+
+    **Verified-only contract** (mirrors the audit gate): a reference is formatted
+    only if its draft citation resolved to a retrieved paper. Citations that
+    failed verification are returned separately under ``unverified`` — they are
+    never silently kept in the list the author would submit.
+
+    Returns ``{"references": [{"marker": "[1]", "title": ..., "entry": ...}, ...]
+    (draft citation order, renumbered), "unverified": [raw titles]}``.
+    """
+    verdicts = verify_citations(draft_text, papers, live=False)
+    unverified = [v["raw_title"] for v in verdicts if v.get("verdict") != "verified"]
+
+    references: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for v in verdicts:  # verdicts follow draft citation order (extract_citations order)
+        if v.get("verdict") != "verified":
+            continue
+        paper = next((p for p in papers if titles_match(v["raw_title"], p.get("title") or "")), None)
+        if paper is None:
+            unverified.append(v["raw_title"])
+            continue
+        key = _normalize_title(paper.get("title") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        references.append(paper)
+
+    ordered: list[dict[str, str]] = []
+    for i, paper in enumerate(references, start=1):
+        ordered.append({
+            "marker": f"[{i}]",
+            "title": paper.get("title") or "",
+            "entry": format_paper_gbt7714(paper),
+        })
+    return {"references": ordered, "unverified": unverified}
+
+
 __all__ = [
     "titles_match",
     "extract_citations",
     "verify_citations",
     "verify_citations_live",
+    "format_paper_gbt7714",
+    "build_gbt7714_references",
     "DBLP_SEARCH_URL",
     "CROSSREF_API_URL",
 ]

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,22 @@ logger = logging.getLogger(__name__)
 
 POOL_FILENAME = "idea_pool.json"
 STATUSES = ("queued", "running", "done", "retired")
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _pool_tokens(text: str) -> set[str]:
+    """ASCII words (3+ chars, stop-stripped — same as evidence.keywords) plus CJK
+    character bigrams. Bigrams are the standard cheap CJK token: they let a
+    Chinese idea overlap-match Chinese paper titles from S2/Crossref (evidence.
+    keywords is ASCII-only, which pre-checked every Chinese idea at 0.0)."""
+    tokens = set(evidence.keywords(text))
+    cjk = "".join(_CJK_RE.findall(text or ""))
+    if len(cjk) == 1:
+        tokens.add(cjk)
+    for i in range(len(cjk) - 1):
+        tokens.add(cjk[i:i + 2])
+    return tokens
 
 
 def _pool_path(pool_root: Path | None = None) -> Path:
@@ -89,12 +106,12 @@ def novelty_precheck(
     system has SEEN (not necessarily by the literature at large) — flag, don't
     block: the live literature step makes the real novelty call at run time.
     """
-    idea_kw = evidence.keywords(idea)
+    idea_kw = _pool_tokens(idea)
     if not idea_kw:
         return {"overlap_score": 0.0, "top_overlaps": []}
     scored: list[tuple[float, str]] = []
     for title in _prior_paper_titles(pool_root):
-        title_kw = evidence.keywords(title)
+        title_kw = _pool_tokens(title)
         if not title_kw:
             continue
         overlap = len(idea_kw & title_kw) / len(idea_kw)

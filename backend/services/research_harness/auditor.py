@@ -78,21 +78,30 @@ _ZH_SCOPE_PHRASES: tuple[str, ...] = (
     "所有数据集", "全部数据集", "每个数据集", "各个数据集", "在所有情况下", "一致地", "广泛适用",
 )
 
-# Negation guard for Chinese cues: look-back window before a cue occurrence.
+# Negation guard for Chinese cues. Clause-scoped (S18 portfolio fix): a cue is
+# negated when 不/未/无/非/没 appears anywhere between the start of its clause
+# and the cue — Chinese negation ("未能……稳定优于基线") can precede the cue by
+# many characters, so the old fixed 3-char window produced false superiority
+# hits on honest negative sentences. Clause boundaries: ，。；：！？、）.
 _ZH_NEGATION_CHARS = "不未无非没"
+_ZH_CLAUSE_BOUNDARY = "，。；：！？、）"
 
 
 def _non_negated_has(sentence: str, cues: tuple[str, ...], window: int = 3) -> bool:
     """True when ``sentence`` carries a cue occurrence NOT preceded by a Chinese
-    negation (未/不/无/非/没 within ``window`` chars). English substrings keep
-    using :func:`_has_any` untouched."""
+    negation (未/不/无/非/没 within the same clause, min 3 chars). English
+    substrings keep using :func:`_has_any` untouched."""
     for cue in cues:
         start = 0
         while True:
             i = sentence.find(cue, start)
             if i < 0:
                 break
-            prefix = sentence[max(0, i - window):i]
+            clause_start = max(sentence.rfind(b, 0, i) for b in _ZH_CLAUSE_BOUNDARY) + 1
+            # negation scope: back to the EARLIER of the clause start or the
+            # min-3-char window (max() here would wrongly clip to the near
+            # window and miss distant clause-scope negations like 未能……稳定优于基线)
+            prefix = sentence[min(clause_start, i - window):i]
             if not any(c in prefix for c in _ZH_NEGATION_CHARS):
                 return True
             start = i + 1
@@ -775,10 +784,14 @@ def run_auditor_agent(
         return {"gate": False, "skipped": True, "reason": "no_draft"}
 
     draft_text = draft_path.read_text(encoding="utf-8")
-    # Re-audit hygiene (only-add): strip our OWN previously-injected omission block so
-    # the marker can't pseudo-clear an omission or trigger a false citation. Real
-    # omissions are still detected from the human content.
+    # Re-audit hygiene (only-add): strip our OWN previously-injected markers so
+    # the marker text can't pseudo-clear an omission, trigger a false citation,
+    # or (S18 portfolio case) re-enter claim extraction as if it were the
+    # author's prose — e.g. an old "[UNVERIFIED: claims to outperform the
+    # baseline overall…]" contains English superiority cues. Real content is
+    # still detected from what the human/Writer actually wrote.
     draft_text = _strip_self_injected_omission_block(draft_text)
+    draft_text = re.sub(r"\[UNVERIFIED:[^\]]*\]", "", draft_text)
 
     papers: list[dict[str, Any]] = []
     papers_path = proj / "literature" / "papers.jsonl"

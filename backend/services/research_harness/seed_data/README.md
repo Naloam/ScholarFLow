@@ -54,3 +54,10 @@ Committing verified slices removes that entire failure class. The `DATASET_REGIS
 > P4.3 (2026-10-12): expanded vitaminc/citation_faithfulness/digits to journal-review scale via
 > `scripts/build_seed_slices_v3.py` (deterministic, sorted by id). scifact/breast_cancer stay at
 > their full-source sizes, honestly attributed.
+
+## wine_red_tabular.jsonl — 434 examples (217 good / 217 not_good) — source-limited
+- **Source**: UCI Wine Quality (red vinho verde), Cortez et al. 2009, CC BY 4.0.
+- **Task**: 11 physicochemical features → quality ≥ 7 = good. Built by `scripts/build_tabular_slices.py` (P4/M4).
+
+## wine_white_tabular.jsonl — 2000 examples (1000 good / 1000 not_good)
+- Same source/protocol as the red variant; different distribution — a cross-dataset robustness pair.

@@ -113,6 +113,47 @@ DATASET_REGISTRY: tuple[DatasetSpec, ...] = (
         domain="tabular",
         feature_schema='{"id","features":[30 floats],"label":0|1,"label_name"}',
     ),
+    # ------------------------------------------------------------------ #
+    # P4/M4 — UCI Wine Quality slices (paper #3, tabular-domain breadth).
+    # ------------------------------------------------------------------ #
+    DatasetSpec(
+        key="wine_red_tabular",
+        task="tabular_classification",
+        description=(
+            "Physicochemical tabular binary classification (domain=tabular). 11 numeric "
+            "wine measurements → quality>=7 = good(1) else not_good(0). Real data from "
+            "UCI Wine Quality (red vinho verde). Method must be a tabular classifier, "
+            "NOT sentence-transformer cosine."
+        ),
+        file_path=SEED_DIR / "wine_red_tabular.jsonl",
+        n_examples=434,
+        label_balance="217 good / 217 not_good (source-limited: red has few high-quality rows)",
+        positive_label="1",
+        negative_label="0",
+        metric_hint="macro_f1 / accuracy",
+        attribution="UCI Wine Quality, red variant (Cortez et al. 2009, CC BY 4.0), balanced slice",
+        domain="tabular",
+        feature_schema='{"id","features":[11 floats],"label":0|1,"label_name","quality_raw"}',
+    ),
+    DatasetSpec(
+        key="wine_white_tabular",
+        task="tabular_classification",
+        description=(
+            "Physicochemical tabular binary classification (domain=tabular). 11 numeric "
+            "wine measurements → quality>=7 = good(1) else not_good(0). Real data from "
+            "UCI Wine Quality (white vinho verde) — same feature space as the red variant, "
+            "different distribution (cross-dataset robustness pair)."
+        ),
+        file_path=SEED_DIR / "wine_white_tabular.jsonl",
+        n_examples=2000,
+        label_balance="1000 good / 1000 not_good",
+        positive_label="1",
+        negative_label="0",
+        metric_hint="macro_f1 / accuracy",
+        attribution="UCI Wine Quality, white variant (Cortez et al. 2009, CC BY 4.0), balanced slice",
+        domain="tabular",
+        feature_schema='{"id","features":[11 floats],"label":0|1,"label_name","quality_raw"}',
+    ),
     DatasetSpec(
         key="digits_structured",
         task="structured_image_classification",

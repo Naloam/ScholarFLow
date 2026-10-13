@@ -118,6 +118,13 @@ def domain_method_note(domain: str | None = None) -> str:
             "不得复用同一函数导致跨 system 数值恒等（数值恒等 = 假消融/假对比）。\n"
             "  4. seed 数 ≥128；所有 system 共用同一组 (train_idx, test_idx) 以保证配对统计检验；"
             "模型/校准器在每个 seed 内重新 fit（不要跨 seed 复用 fit 结果）。\n"
+            "- 🔴 **墙钟预算（s20 实测教训：3 数据集 × 6 系统 × 全量 seed 必然超过 600s 上限，"
+            "repair 救不回时长超限）**：总执行 ≤600s，留 20% 余量按 ≤480s 设计。预算公式："
+            "`单次 fit 秒数 × 系统数 × seed 数 × 数据集数 ≤ 480`。先在 1 个 seed 上实测单次 fit 耗时，"
+            "再反推 seed 预算（每数据集 seed 数 = 480 ÷ (fit 秒 × 系统数 × 数据集数)，下限 128，"
+            "不足 128 就砍系统数——系统数 ≤5 且必须有 baseline/proposed/≥1 ablation）。"
+            "用 `time.perf_counter()` 按数据集设墙钟守卫（到 480×(该数据集序号+1)/数据集总数 即截断后续 seed），"
+            "并把实际 seed 数写进每条 __RESULT__（已有 seed 字段即可）。**超时不是可修复的错误——设计时就不许超**。\n"
         )
     if d == "structured":
         return (

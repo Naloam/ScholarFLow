@@ -74,3 +74,4 @@ PROJECT_PLAN.md
 # SQLite databases
 *.sqlite3
 *.db
+papers_output/

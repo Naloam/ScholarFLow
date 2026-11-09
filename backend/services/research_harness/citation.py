@@ -50,13 +50,14 @@ def _normalize_title(title: str) -> str:
 
 
 def titles_match(a: str, b: str) -> bool:
-    """Fuzzy title equality: exact / containment / long shared prefix on the
-    normalized form.
+    """Fuzzy title equality: exact / containment on the normalized form.
 
     Ported from ``citation_verifier.CitationVerifier._titles_match`` so citation
     matching agrees with the frozen verifier's notion of "same paper". Titles are
     long, so the containment path is safe against accidental short-string hits in
     practice (callers also drop candidates shorter than ``_MIN_TITLE_LEN``).
+    A shared prefix is a containment (of the shorter title in the longer one),
+    so prefix relations need no separate branch.
     """
     na = _normalize_title(a)
     nb = _normalize_title(b)
@@ -65,13 +66,7 @@ def titles_match(a: str, b: str) -> bool:
     if na == nb:
         return True
     # One title contained in the other (handles truncation / subtitle trimming).
-    if na in nb or nb in na:
-        return True
-    # Long shared prefix (≈ the verifier's >20-char prefix rule).
-    shorter = min(len(na), len(nb))
-    if shorter > 20 and na[:shorter] == nb[:shorter]:
-        return True
-    return False
+    return na in nb or nb in na
 
 
 # --------------------------------------------------------------------------- #
@@ -86,8 +81,6 @@ _MIN_TITLE_LEN = 10
 _REF_HEADING_RE = re.compile(r"^#{1,6}\s*(references|bibliography|works cited)\b\s*$", re.IGNORECASE)
 _ANY_HEADING_RE = re.compile(r"^#{1,6}\s")
 
-# In-text numeric / author-year markers: [1], [1,2], [1-3], [Smith, 2023], [Smith et al., 2023].
-_INLINE_MARKER_RE = re.compile(r"\[((?:\d+(?:\s*[-,]\s*\d+)+|\d+(?:\s*,\s*\d+)*|[A-Z][A-Za-z'\-]+(?:\s+et\s+al\.?)?,\s*\d{4}[a-z]?))\]")
 # A quoted title, optionally bolded: **"Title"** / "Title" / *"Title"*.
 _QUOTED_TITLE_RE = re.compile(r'\*{0,2}"([^"]+)"\*{0,2}')
 # Italic title in a reference line: *Title*. or _Title_.
@@ -192,17 +185,6 @@ def _extract_inline_titles(body: str) -> list[dict[str, str]]:
         if _is_plausible_title(title):
             out.append({"marker": m.group(0)[:32], "raw_title": title})
     return out
-
-
-def _inline_marker_tokens(body: str) -> list[str]:
-    """All in-text ``[n]`` / ``[Author, Year]`` tokens (for the 'no reference entry'
-    diagnostic — not for title matching by themselves)."""
-    seen: list[str] = []
-    for m in _INLINE_MARKER_RE.finditer(body):
-        token = m.group(0)
-        if token not in seen:
-            seen.append(token)
-    return seen
 
 
 def extract_citations(draft_text: str) -> list[dict[str, str]]:

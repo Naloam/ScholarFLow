@@ -42,6 +42,18 @@ def test_titles_match_rejects_unrelated() -> None:
     assert citation.titles_match("ab", "ab") is True  # exact short still matches
 
 
+def test_titles_match_containment_covers_prefix_relations() -> None:
+    # Pin the matching semantics to exact / containment: a shared prefix is a
+    # containment of the shorter title in the longer one, in either argument
+    # order, with no separate prefix rule to drift from the frozen verifier.
+    base = "Calibration Of Retrieval Evidences Abstention"
+    extended = base + " A Followup Study With New Benchmarks"
+    assert citation.titles_match(base, extended) is True
+    assert citation.titles_match(extended, base) is True
+    # Near-miss: long shared prefix that diverges before either contains the other.
+    assert citation.titles_match(base, base.replace("Abstention", "Attributed")) is False
+
+
 # --------------------------------------------------------------------------- #
 # extract_citations + verify_citations (offline, synthetic papers)
 # --------------------------------------------------------------------------- #

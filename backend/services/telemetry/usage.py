@@ -87,8 +87,11 @@ def record_usage_event(
         prompt_cache_hit_tokens=prompt_cache_hit_tokens,
         prompt_cache_miss_tokens=prompt_cache_miss_tokens,
     )
-    db = db_module.SessionLocal()
+    # 会话获取放进 try：惰性 engine 创建失败（如缺驱动）也不能让遥测
+    # 打断主链路——本函数的契约就是 best-effort。
+    db = None
     try:
+        db = db_module.SessionLocal()
         db.add(
             UsageEvent(
                 id=f"usage_{uuid4().hex}",
@@ -106,6 +109,8 @@ def record_usage_event(
         )
         db.commit()
     except Exception:
-        db.rollback()
+        if db is not None:
+            db.rollback()
     finally:
-        db.close()
+        if db is not None:
+            db.close()
